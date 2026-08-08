@@ -24,6 +24,7 @@ add_library(emusc
   reverb.h
   settings.cc
   settings.h
+  slew_calc.h
   svf.cc
   svf.h
   synth.cc

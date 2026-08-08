@@ -24,6 +24,7 @@
 #include "control_rom.h"
 #include "envelope.h"
 #include "settings.h"
+#include "slew_calc.h"
 #include "wave_generator.h"
 
 #include <array>
@@ -47,6 +48,8 @@ public:
   void note_off();
 
 private:
+  bool _initRunComplete;
+
   int _dynLevel;
   int _dynLevelMode;
   int _prevDynLevel;
@@ -77,8 +80,13 @@ private:
   Settings *_settings;
   int8_t _partId;
 
+  SlewCalc _tvDyn, _tvEnv;
+  uint16_t _dynLevelEC, _envLevelEC;         // External chip's mirror of levels
+  std::array<float, 256> _slewDynGain, _slewEnvGain;
+
   TVA();
 
+  void _init_update(void);
   void _init_envelope(ControlRom &ctrlRom, int sampleIndex, int instrumentIndex,
                       uint8_t cVelocity);
 
@@ -94,6 +102,8 @@ private:
 
   static void _smooth(int mode, float start, float target,
                       std::array<float, 256> &gain);
+  void _slew_function_dynvol(uint16_t mode);
+  void _slew_function_envelope(uint16_t mode);
   };
 
 }

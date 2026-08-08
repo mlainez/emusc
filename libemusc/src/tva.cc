@@ -16,21 +16,6 @@
  *  along with libEmuSC. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// TVA: Controlling volume changes and stereo positioning over time
-//
-// To find the TVA envelope levels (volume), the following parameters are used:
-//  - Partial level
-//  - Bias level
-//  - Velocity
-//  - Sample level
-//  - Instrument level
-//  - Envelope levels in ROM (L1 - L4)
-// These parameters are calculated by using lookup tables, and the sum is used
-// in another lookup table to find the correct envelope output levels.
-//
-// Pan (stereo position) is also using a lookup table to find the correct level
-// for each channel (left and right).
-
 
 #include "tva.h"
 
@@ -48,20 +33,23 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
          WaveGenerator *LFO1, WaveGenerator *LFO2, Settings *settings,
          int8_t partId, uint16_t instrumentIndex, int partialId)
   : Envelope(ctrlRom.lookupTables),
+    _initRunComplete(false),
+    _prevDynLevel(0),
+    _envLevel(0),
     _LFO1(LFO1),
     _LFO2(LFO2),
     _lfo1FadeComplete(false),
     _lfo2FadeComplete(false),
     _LUT(ctrlRom.lookupTables),
-    _prevDynLevel(0),
-    _envLevel(0),
+    _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _key(key),
     _drumSet(settings->get_param(PatchParam::UseForRhythm, partId)),
     _panpot(-1),
     _panpotLocked(false),
-    _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _settings(settings),
-    _partId(partId)
+    _partId(partId),
+    _dynLevelEC(0), _envLevelEC(0),
+    _slewDynGain{}, _slewEnvGain{}
 {
   int cVelocity = _get_velocity_from_vcurve(velocity);
   _init_envelope(ctrlRom, sampleIndex, instrumentIndex, cVelocity);
@@ -76,8 +64,6 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _panpotR = _LUT.TVAPanpot[0x80 - _panpot];
     _panpotLocked = true;
   }
-
-  update(true);
 }
 
 
@@ -86,15 +72,14 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
 // interpolated / smoothed across and inside control loops of 256 samples.
 void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
 {
-  std::array<float, 256> dynGain, envGain;
   auto norm = [](float v) { return v / 32768.0f; };
-  _smooth(_dynLevelMode, norm(_prevDynLevel), norm(_dynLevel), dynGain);
-  _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), envGain);
+  _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), _slewEnvGain);
 
   float panL = _panpotL / 127.0f;
   float panR = _panpotR / 127.0f;
+
   for (int i = 0; i < 256; i++) {
-    float sample = dryBus[0][i] * dynGain[i] * envGain[i];
+    float sample = dryBus[0][i] * _slewDynGain[i] * _slewEnvGain[i];
     dryBus[0][i] = sample * panR;
     dryBus[1][i] = sample * panL;
   }
@@ -113,6 +98,13 @@ void TVA::note_off()
 //  - TVA dynamic level (expression, LFOs, controllers, volume levels)
 void TVA::update(bool reset)
 {
+  // Run a specialized initialization update on first iteration
+  if (!_initRunComplete) {
+    _init_update();
+    _initRunComplete = true;
+    return;
+  }
+
   // Update LFO depth parameters based on fade-in status
   if (!_lfo1FadeComplete)
     _update_lfo_depth(1);
@@ -125,21 +117,56 @@ void TVA::update(bool reset)
   // Iterate 8 ticks for the TVA envelope
   _iterate_phase();
 
-  _update_dynamic_level();
-  _update_panpot_level(reset);
+  // Slew control
+  _slew_function_dynvol(_dynLevelMode);
 
-  // 1: Multiply with the fade stuff that is never used...
-  int currDynLevel = _dynLevel;
+  // TODO: Move over to proper slew function for envelope output
+  //  _slew_function_envelope(_envLevelMode);
+
+
+  _update_dynamic_level();
+
+  // TODO: Apply fade to dynamic volume if we are in portamento mode
   _dynLevel = (_dynLevel * 0xffff) >> 16;
 
-  // If changes are really small, skip smoothing
-  if (std::abs(_dynLevel - currDynLevel) <= 0x10)
+  // Update dynamic volume mode
+  if (std::abs(_prevDynLevel - _dynLevel) <= 0x10)
     _dynLevelMode = 0xff00;
   else
-    _dynLevelMode = (_dynLevel & 0xff00) | 0x00b4;
+    _dynLevelMode = (_dynLevel & 0xff00) | 0xb4;
+
+  _update_panpot_level(reset);
 
   if (0)
     std::cout << "TVA dv=0x" << std::hex << _dynLevel
+              << " (mode=0x" << _dynLevelMode
+              << ")  env=0x" << _envLevel
+              << " (mode=0x" << _envLevelMode << ")" << std::endl;
+}
+
+
+// Initial update for initializing dynamic volume and envelope runs
+void TVA::_init_update(void)
+{
+  // Initialize dynamic volume level & mode (0xba -> instant jump)
+  _update_dynamic_level();
+  _dynLevelMode = (_dynLevel & 0xff00) | 0xba;
+
+  _update_panpot_level(true);
+
+  // Initialize envelope track
+  _init_new_phase(Phase::Attack1);
+
+  // Make an initial envelope run and ensure proper slew mode
+  _iterate_phase();
+  if ((_envLevelMode & 0xff) == 0xaf)
+    _envLevelMode = (_envLevelMode & 0xff00) | 0xba;
+
+  _slew_function_dynvol(_dynLevelMode);
+//  _slew_function_envelope(_envLevelMode);
+
+  if(0)
+    std::cout << "TVA init dv=0x" << std::hex << _dynLevel
               << " (mode=0x" << _dynLevelMode
               << ")  env=0x" << _envLevel
               << " (mode=0x" << _envLevelMode << ")" << std::endl;
@@ -523,10 +550,6 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                                 _instPartial.TVAETVSens12 - 0x40, cVelocity);
   set_time_velocity_sensitivity(Envelope::Type::TVA, 1,
                                 _instPartial.TVAETVSens35 - 0x40, cVelocity);
-
-  // Ignoring the pre-run of the envelope for TVA, assuming it is not needed
-  // by EmuSC
-  _init_new_phase(Phase::Attack1);
 }
 
 
@@ -601,6 +624,38 @@ void TVA::_init_new_phase(enum Phase newPhase)
 }
 
 
+void TVA::_slew_function_dynvol(uint16_t mode)
+{
+  if ((mode & 0xff) == 0x00) {
+    SlewCalc::set_level_direct(_dynLevelEC, (uint16_t) (_dynLevel >> 1));
+    float g = _dynLevelEC / 16384.0f;
+    _slewDynGain.fill(g);
+    return;
+  }
+
+  for (int i = 0; i < 256; i++)
+    _slewDynGain[i] = _tvDyn.tick(mode, _dynLevelEC, 0) / 16384.0f;
+
+  _dynLevel = _dynLevelEC << 1;
+}
+
+
+void TVA::_slew_function_envelope(uint16_t mode)
+{
+  if ((mode & 0xff) == 0x00) {
+    SlewCalc::set_level_direct(_envLevelEC, (uint16_t) (_envLevel >> 1));
+    float g = _envLevelEC / 16384.0f;
+    _slewEnvGain.fill(g);
+    return;
+  }
+
+  for (int i = 0; i < 256; i++)
+    _slewEnvGain[i] = _tvEnv.tick(mode, _envLevelEC, 1) / 16384.0f;
+
+  _envLevel = _envLevelEC << 1;
+}
+
+
 // Simplified linear smoothing used inside control block
 // The SC-55 is observed to do integer math and report back deviation from
 // intended target value to avoid drift. We use float and clamp to target
@@ -627,4 +682,5 @@ void TVA::_smooth(int mode, float start, float target,
   gain[255] = target;
 }
 
-}
+
+}  // namespace EmuSC
