@@ -222,8 +222,9 @@ GeneralSettings::GeneralSettings(MainWindow *mainWindow, Emulator *emulator,
   QSettings settings;
   if (!settings.contains("Synth/auto_power_on")) {
     settings.setValue("Synth/auto_power_on", true);
-    settings.setValue("Synth/show_statusbar", false);
-    settings.setValue("Synth/startup_animations", "all");
+    settings.setValue("Synth/show_statusbar", true);
+    settings.setValue("Synth/show_midi_activity", "statusbar");
+    settings.setValue("Synth/startup_animations", "always");
 
     QColor bkgColor = _scene->get_lcd_bkg_on_color_reset();
     QColor activeColor = _scene->get_lcd_active_on_color_reset();
@@ -300,8 +301,8 @@ void GeneralSettings::reset(void)
 
   QSettings settings;
   settings.setValue("Synth/auto_power_on", true);
-  settings.setValue("Synth/show_statusbar", false);
-  settings.setValue("Synth/show_midi_activity", "always");
+  settings.setValue("Synth/show_statusbar", true);
+  settings.setValue("Synth/show_midi_activity", "statusbar");
   settings.setValue("Synth/startup_animations", "always");
   settings.setValue("Synth/lcd_bkg_color", bkgColor.name());
   settings.setValue("Synth/lcd_active_color", activeColor.name());
