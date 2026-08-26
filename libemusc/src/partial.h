@@ -74,6 +74,8 @@ private:
   int _drumSet;           // 0 = Not a drumset, 1 & 2 is drumset 0 & 1
   bool _drumRxNoteOff;    // Static parameter (cannot change during a note)
 
+  bool _sampleRunComplete; // Non-looping sample reached its end in this block
+
   WaveGenerator *_LFO2;
 
   WaveOscillator *_waveOscillator;

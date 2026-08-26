@@ -55,6 +55,7 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
   : _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _settings(settings),
     _partId(partId),
+    _sampleRunComplete(false),
     _LFO2(NULL),
     _pitch(NULL),
     _tvf(NULL),
@@ -120,6 +121,19 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
   _tvf->apply_sample_set(partialBuf[0]);
   _tva->apply_sample_set(partialBuf);
 
+  // The oscillator reports the end of a non-looping sample while it is still
+  // filling the current control block. Terminating the TVA from inside that
+  // report sets the envelope and dynamic levels to zero before the block is
+  // amplified, so the samples the oscillator had already produced are
+  // multiplied by zero and lost. Samples shorter than one control block are
+  // lost in their entirety, which is why "Square Click" and the other short
+  // one-shot percussion sounds rendered as digital silence (PROVENANCE.md
+  // P-0039). Terminate the voice only once the block has been amplified.
+  if (_sampleRunComplete) {
+    _sampleRunComplete = false;
+    _tva->set_phase(Envelope::Phase::Terminated);
+  }
+
   for (int i = 0; i < 256; i++) {
     dryBus[0][i] += partialBuf[0][i];
     dryBus[1][i] += partialBuf[1][i];
@@ -158,7 +172,7 @@ void Partial::first_run_cb(void)
   if (_ctrlSample->loopMode != 2)
     _pitch->first_sample_run_complete();
   else
-    _tva->set_phase(Envelope::Phase::Terminated);
+    _sampleRunComplete = true;
 }
 
 }
