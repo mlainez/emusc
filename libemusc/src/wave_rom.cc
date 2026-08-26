@@ -161,7 +161,14 @@ int WaveRom::_read_samples(std::vector<char> &romData,
     uint8_t sByte   = romData[((sAddress & 0xFFFFF) >> 5) | (sAddress & 0xF00000)];
     uint8_t sNibble = (sAddress & 0x10) ? (sByte >> 4) : (sByte & 0x0F);
     int32_t final   = ((data << sNibble) << 14);
-    sample += (float) final / (1 << 31);
+
+    // Normalize the accumulated delta to [-1, 1). The divisor must be a
+    // positive constant: written as "1 << 31" it overflows a signed int and
+    // becomes -2^31, which negates every delta and therefore inverts the
+    // polarity of every sample set - and with it all audio output. Measured
+    // against reference output on 42 isolated notes and drum hits, all of
+    // which came out sign reversed (emusc-match finding P-0040).
+    sample += (float) final / 2147483648.0f;         // 2^31
     s.samplesF.push_back(sample);
   }
 
