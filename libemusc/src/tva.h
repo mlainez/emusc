@@ -96,6 +96,7 @@ private:
 
   int _get_bias_level(int km, int biasPoint);
   int _get_velocity_from_vcurve(uint8_t velocity);
+  int _get_level_velocity(int cVelocity);
 
   void _init_new_phase(enum Phase newPhase);
   void _iterate_phase(void);

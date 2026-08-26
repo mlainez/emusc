@@ -488,6 +488,22 @@ int TVA::_get_velocity_from_vcurve(uint8_t velocity)
 }
 
 
+// How much of the velocity's level attenuation a partial actually gets is set
+// by its TVA Level Velocity Sensitivity: the velocity is moved towards the
+// maximum by that fraction of the distance, so 0 keeps the full attenuation
+// and 127 removes it. Most capital tones are at 0 -- which is why this went
+// unnoticed -- but the pianos and basses use 5-30 and the whole MT-32 set
+// (variation 127) uses up to 100.
+// Measured against the reference: P-0054 (levels of variation bank 127 and of
+// the capital tones over key and velocity), P-0055 (the fit of this formula).
+int TVA::_get_level_velocity(int cVelocity)
+{
+  int vSens = std::clamp((int) _instPartial.TVALvlVSens, 0, 127);
+
+  return 127 - (((127 - cVelocity) * (127 - vSens)) / 127);
+}
+
+
 void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                          int instrumentIndex, uint8_t cVelocity)
 {
@@ -509,7 +525,8 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
       levelIndex = std::max(1, levelIndex - biasLevel);
   }
 
-  levelIndex = std::max(levelIndex - _LUT.TVALevelIndex[cVelocity], 1);
+  levelIndex = std::max(levelIndex -
+                        _LUT.TVALevelIndex[_get_level_velocity(cVelocity)], 1);
   levelIndex = std::max(levelIndex - _LUT.TVALevelIndex[ctrlRom.sample(sampleIndex).volume], 1);
   levelIndex = std::max(levelIndex - _LUT.TVALevelIndex[ctrlRom.instrument(instrumentIndex).volume], 1);
 

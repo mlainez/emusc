@@ -341,6 +341,7 @@ int ControlRom::_read_instruments(std::ifstream &romFile)
       i.partials[p].TVFETVSens12  = data[62];
       i.partials[p].TVFETVSens35  = data[63];
       i.partials[p].TVALvlVelCur  = data[64];
+      i.partials[p].TVALvlVSens   = data[66];
       i.partials[p].volume        = data[69];
       i.partials[p].TVABiasPoint  = data[70];
       i.partials[p].TVABiasLevel  = data[71];

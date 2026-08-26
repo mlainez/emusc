@@ -131,6 +131,8 @@ public:
     uint8_t TVFETVSens35;   // TVF Envelope Time Velocity Sensitivity (T3 - T5)
 
     uint8_t TVALvlVelCur;
+    uint8_t TVALvlVSens;    // TVA Level Velocity Sensitivity:
+                            // 0 = full velocity attenuation, 127 = none
     int8_t volume;          // Volume attenuation (0x7f - 0)
     uint8_t TVABiasPoint;   // TVA Bias Point, 0=V shape, 1=key>85, 2=flat curve
     uint8_t TVABiasLevel;
