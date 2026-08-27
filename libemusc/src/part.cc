@@ -20,6 +20,7 @@
 #include "part.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 
@@ -66,10 +67,24 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
       _settings->update_pitchBend_factor(_id);
     }
 
+    // Each part sends its OWN signal to the effect buses, at its own send
+    // level, and the buses accumulate across parts. Collecting this part's
+    // notes in a local block first is what makes that possible: the shared dry
+    // bus already holds every part processed before this one, so scaling it
+    // would send those parts at this part's send level and would let the last
+    // sounding part overwrite what the others sent.
+    //
+    // Measured on the SC-55mkII (PROVENANCE.md P-0175): two parts struck
+    // together, one with reverb send 127 and the other with send 0, produce
+    // exactly the reverb of the sending part alone - the same level to 0.00 dB
+    // and the same spectral centroid as that part rendered on its own - in
+    // either part order. Sends are per part and the bus is a sum.
+    std::array<std::array<float, 256>, 2> partBus = {};
+
     // Get next sample from active notes, delete those which are finished
     std::list<Note*>::iterator itr = _notes.begin();
     while (itr != _notes.end()) {
-      bool finished = (*itr)->get_sample_set(dryBus);
+      bool finished = (*itr)->get_sample_set(partBus);
 
       if (finished) {
  //      std::cout << "Both partials have finished -> delete note" << std::endl;
@@ -81,22 +96,22 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     }
 
     // Store last (highest) value for future queries (typically for bar display)
-    auto itL = std::max_element(dryBus[0].begin(), dryBus[0].end());
+    auto itL = std::max_element(partBus[0].begin(), partBus[0].end());
     _lastPeakSample = *itL;
-    auto itR = std::max_element(dryBus[0].begin(), dryBus[0].end());
+    auto itR = std::max_element(partBus[1].begin(), partBus[1].end());
     _lastPeakSample = std::max(_lastPeakSample, *itR);
 
     float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / 128.0f;
-    chorusBus = dryBus;
-    auto& elementC = reinterpret_cast<float(&)[2 * 256]>(chorusBus);
-    for (size_t i = 0; i < 2 * 256; ++i)
-      elementC[i] *= chorusSL;
-
     float reverbSL = _settings->get_param(PatchParam::ReverbSendLevel, _id) / 128.0f;
-    reverbBus = dryBus;
-    auto& elementR = reinterpret_cast<float(&)[2 * 256]>(reverbBus);
-    for (size_t i = 0; i < 2 * 256; ++i)
-      elementR[i] *= reverbSL;
+
+    for (int c = 0; c < 2; c++) {
+      for (int i = 0; i < 256; i++) {
+        float sample = partBus[c][i];
+        dryBus[c][i]    += sample;
+        chorusBus[c][i] += sample * chorusSL;
+        reverbBus[c][i] += sample * reverbSL;
+      }
+    }
   }
 
   // Export envelopes and LFOs to external client

@@ -409,7 +409,17 @@ void Synth::midi_input_sysex(uint8_t *data, uint16_t length)
     checksum += (int) data[i];
   while (checksum >= 128)
     checksum -= 128;
-  if (data[length - 2] != 128 - checksum) {
+  // The manual's rule (SC-55mkII OM p.104) gives 128 when the remainder is 0,
+  // but a transmitted byte is 7 bit, so the byte sent in that case is 0 - the
+  // only 7-bit value that satisfies the property the SC-55 OM p.73 states,
+  // "the least significant 7 bits are zero when values for an address, size,
+  // and that checksum are summed". Comparing against an unmasked 128 rejected
+  // every message whose checksum lands on zero, one address/value combination
+  // in 128. Measured on the SC-55mkII (PROVENANCE.md P-0180): reverb time 0x0b
+  // (address 40 01 34, checksum 00) is accepted by the hardware and shortens
+  // the tail to T60 = 0.42 s, between the 0.40 s of time 0x0a and the 0.44 s
+  // of time 0x0c, while libEmuSC discarded it and stayed at the default 1.93 s.
+  if (data[length - 2] != ((128 - checksum) & 0x7f)) {
     std::cerr << "libEmuSC: Roland SysEx message received with corrupt "
 	      << "checksum. Message discarded." << std::endl;
     return;
