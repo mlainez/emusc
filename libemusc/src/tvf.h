@@ -78,6 +78,11 @@ private:
 
   int _resIndexFreq;
   int _resIndexUsed;
+
+  // First cutoff-table index whose coefficient exceeds the 0xe600 cap that
+  // _iterate_phase() applies, i.e. the first index the filter cannot reach.
+  static const int _cutoffCeiling = 121;
+
   int _resonance;
 
   int _envDepth;

@@ -342,10 +342,37 @@ void TVF::_init_freq_and_res(void)
   tm3 = std::clamp(tm3, -0x32, cofOffsetRaises ? 0x3f : 0x10);
   int bptm3 = (tm3 < 0 || cofOffsetRaises) ? _instPartial.TVFBaseFlt + tm3
                                            : _instPartial.TVFBaseFlt;
+  // _iterate_phase() clamps the same sum to 0x7f before it uses it
+  // (accCoFreq); this one did not, so a large positive offset ran the
+  // resonance lookup off the end of the cutoff table while the cutoff itself
+  // stopped at 0x7f.
+  bptm3 = std::min(bptm3, 0x7f);
+
   int cofIndex = std::clamp(envLevelMax + (bptm3 << 8), 0, 0x7fff);
   cofIndex = std::min(cofIndex + 0xff, 0x7fff);
 
-  int cof = _LUT.TVFCutoffFreq[cofIndex >> 8];
+  // The cutoff this filter can reach is capped in _iterate_phase() at the
+  // coefficient 0xe600, which is cutoff index 120.3; _cutoffCeiling is the
+  // first table index above that cap.  Reading TVFResonanceFreq above it
+  // asks what resonance a cutoff the filter never uses would allow, and the
+  // table answers 0 there, so the damping index collapses to its floor of 8
+  // and the filter rings where the reference does not.  Measured
+  // (PROVENANCE.md P-0161) on five tones whose filter is static, at keys 24,
+  // 36 and 60: with the part parameter driven past that point the
+  // reference's damping index settles at 10, which is TVFResonanceFreq at
+  // _cutoffCeiling exactly, not at 8.
+  //
+  // Only the offset is held back, never the partial's own base and envelope:
+  // with no positive offset cofIndex is already cofIndexNoOffset, so this is
+  // a no-op there, and the SC-55 generation - which ignores positive offsets
+  // altogether (P-0133) - is untouched.
+  int cofIndexNoOffset =
+    std::clamp(envLevelMax + (_instPartial.TVFBaseFlt << 8), 0, 0x7fff);
+  cofIndexNoOffset = std::min(cofIndexNoOffset + 0xff, 0x7fff);
+  int cutoffIdx = std::min(cofIndex >> 8,
+                           std::max(cofIndexNoOffset >> 8, _cutoffCeiling));
+
+  int cof = _LUT.TVFCutoffFreq[cutoffIdx];
   int rfIndex = (2 * cof) + 0xff;
   rfIndex = rfIndex > 0xffff ? 0xff00 : rfIndex;
   _resIndexFreq = _LUT.TVFResonanceFreq[(rfIndex >> 8)];
