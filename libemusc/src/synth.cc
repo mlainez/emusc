@@ -329,8 +329,34 @@ void Synth::midi_input_sysex(uint8_t *data, uint16_t length)
   if (!_settings->get_param(SystemParam::RxSysEx))
     return;
   
-  // Verify correct SysEx status codes and Manufacturer ID: Roland = 0x41
-  if (data[0] != 0xf0 || data[1] != 0x41 || data[length - 1] != 0xf7)
+  if (data[0] != 0xf0 || data[length - 1] != 0xf7)
+    return;
+
+  // Universal non-realtime "Turn General MIDI System On":
+  //   F0H 7EH 7FH 09H 01H F7H
+  // 7EH universal non-realtime, 7FH broadcast, sub-ID#1 09H General MIDI
+  // message, sub-ID#2 01H General MIDI On (SC-55mkII Owner's Manual p.93).
+  // The manual states the message sets every internal parameter to the
+  // General MIDI System Level 1 defaults, takes about 50 ms to execute, and
+  // is ignored when Rx.GM On is off. Only the broadcast device ID triggers
+  // it; a message carrying any other device ID is ignored (P-0090).
+  //
+  // What it leaves behind differs from the GS reset below only in the two
+  // receive switches Settings::set_gm_mode() handles -- see the comment
+  // there.
+  if (length == 6 && data[1] == 0x7e && data[2] == 0x7f &&
+      data[3] == 0x09 && data[4] == 0x01) {
+    if (!_settings->get_param(SystemParam::RxGMOn))
+      return;
+
+    midiMutex.lock();
+    reset(SoundMap::GS_GM, true);
+    midiMutex.unlock();
+    return;
+  }
+
+  // Everything below is a Roland exclusive message: Manufacturer ID 0x41
+  if (data[1] != 0x41)
     return;
 
   // Verify correct SysEx Device ID

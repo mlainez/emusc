@@ -642,6 +642,22 @@ void Settings::_initialize_drumSet_params(void)
 
 void Settings::set_gm_mode(void)
 {
+  // "Turn General MIDI System On" sets every internal parameter to the
+  // General MIDI System Level 1 defaults. Those are the same defaults the GS
+  // reset establishes, with one documented exception: "( Rx.NRPN SW and
+  // Rx.Bank sel SW will be turned OFF by this message.)" -- SC-55mkII Owner's
+  // Manual p.93, where the corresponding note under "GS reset" on the same
+  // page says both switches are turned ON instead.
+  //
+  // That exception belongs to the mkII. The original SC-55's manual documents
+  // neither this message nor an Rx.Bank-Select switch (its receive chart on
+  // p.76 lists only manufacturer ID 41H), and measurement agrees: on the
+  // SC-55 a bank-selected variation tone and an NRPN both still take effect
+  // after the message, while on the SC-55mkII neither does (P-0090). So the
+  // SC-55 reaches plain GS defaults here and nothing more.
+  if (_ctrlRom.generation() == ControlRom::SynthGen::SC55)
+    return;
+
   for (int p = 0; p < 16; p ++) {           // TODO: Support SC-88 with 32 parts
     uint8_t partAddr = _convert_to_roland_part_id_LUT[p];
     _patchParams[(int) PatchParam::RxNRPN       | (partAddr << 8)] = 0x0;
