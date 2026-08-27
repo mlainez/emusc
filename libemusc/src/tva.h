@@ -49,6 +49,7 @@ public:
 
 private:
   bool _initRunComplete;
+  bool _firstBlock;                          // First control block of the note
 
   int _dynLevel;
   int _dynLevelMode;
@@ -103,7 +104,7 @@ private:
   void _iterate_phase(void);
 
   static void _smooth(int mode, float start, float target,
-                      std::array<float, 256> &gain);
+                      std::array<float, 256> &gain, bool firstBlock);
   void _slew_function_dynvol(uint16_t mode);
   void _slew_function_envelope(uint16_t mode);
   };

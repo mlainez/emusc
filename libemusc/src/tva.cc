@@ -34,6 +34,7 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
          int8_t partId, uint16_t instrumentIndex, int partialId)
   : Envelope(ctrlRom.lookupTables),
     _initRunComplete(false),
+    _firstBlock(true),
     _dynLevel(0),
     _prevDynLevel(0),
     _envLevel(0),
@@ -82,7 +83,9 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
 void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
 {
   auto norm = [](float v) { return v / 32768.0f; };
-  _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), _slewEnvGain);
+  _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), _slewEnvGain,
+          _firstBlock);
+  _firstBlock = false;
 
   float panL = _panpotL / 127.0f;
   float panR = _panpotR / 127.0f;
@@ -242,19 +245,38 @@ void TVA::_update_dynamic_level()
   if (_dynLevel < 0) _dynLevel = 0;
 
   // 4: Add LFO1 and LFO2, including accumulated controller value for TVA Depth
-  int lfoDepth = std::abs(_lfo1Depth +
+  //
+  // The depth is SIGNED: the top bit of the control ROM's depth byte inverts
+  // the modulation, and _update_lfo_depth() above negates the depth for it.
+  // Taking the absolute value here threw that sign away three lines after it
+  // was computed, so an inverted tone was modulated in phase instead of anti-
+  // phase. Measured on Flute, whose byte 72 is 0x87 (depth 7, inverted) and
+  // which also carries a pitch LFO depth, so the phase between its amplitude
+  // and pitch modulation is a property of the tone: the reference puts them
+  // 174.7 degrees apart on the mkII and 175.4 on the SC-55, this engine put
+  // them 10.8 degrees apart on both. Tones without the flag agreed to within
+  // 17 degrees, so it was the flag and not a general phase error
+  // (PROVENANCE.md P-0152). The flag is set on 29 of 469 mkII
+  // instrument-partials and 28 of 417 on the SC-55.
+  //
+  // The clamp becomes symmetric for the same reason. How a *controller* TVA
+  // depth combines with an inverted ROM depth is not measured - the tones
+  // above were rendered with no modulation wheel - so the two terms are still
+  // summed before clamping, as they were, and LFO2 now sums in the same order
+  // as LFO1 rather than taking the absolute value of only its own term.
+  int lfoDepth = _lfo1Depth +
     _settings->get_acc_control_param(Settings::ControllerParam::LFO1TVADepth,
-                                     _partId));
-  lfoDepth = std::min(lfoDepth, 0x7f00);
+                                     _partId);
+  lfoDepth = std::clamp(lfoDepth, -0x7f00, 0x7f00);
 
   int mod = _LFO1->value() > 0 ? (_LFO1->value() * lfoDepth + 0x7fff) >> 15 :
                                  (_LFO1->value() * lfoDepth) >> 15;
   _dynLevel = std::max(_dynLevel + mod, 0);
 
-  lfoDepth = std::abs(_lfo2Depth) +
+  lfoDepth = _lfo2Depth +
     _settings->get_acc_control_param(Settings::ControllerParam::LFO2TVADepth,
                                      _partId);
-  lfoDepth = std::min(lfoDepth, 0x7f00);
+  lfoDepth = std::clamp(lfoDepth, -0x7f00, 0x7f00);
 
   mod = _LFO2->value() > 0 ? (_LFO2->value() * lfoDepth + 0x7fff) >> 15 :
                              (_LFO2->value() * lfoDepth) >> 15;
@@ -360,7 +382,13 @@ void TVA::_iterate_phase(void)
 
   } else if (_phaseDuration <= 8) {
     _envLevel = (_phaseEndValue << 8);
-    phaseAccumulator = (_phaseEndValue << 8) - prevIntEnvValue;
+    // phaseAccumulator is the level here, not yet the change: the common
+    // "phaseAccumulator -= prevIntEnvValue" below turns it into one, as it
+    // does for the two branches further down.  Subtracting the previous level
+    // here as well doubled the magnitude that picks the slew speed, so a
+    // segment that ends inside one control period was given a speed for twice
+    // the distance.  Measured: PROVENANCE.md P-0156.
+    phaseAccumulator = (_phaseEndValue << 8);
     tvaHigh = (_phaseEndValue << 8);
     _phasePosition = 0xffff;
     segmentIndex = _LUT.EnvSegmentCurve[_phaseDuration];
@@ -397,7 +425,7 @@ void TVA::_iterate_phase(void)
 
     if (_phasePosition >= 0xffff) {
       tvaHigh = _phaseEndValue << 8;
-      phaseAccumulator = tvaHigh - prevIntEnvValue;
+      phaseAccumulator = tvaHigh;             // see the note above
       _envLevel = tvaHigh; // TODO: Rounding error has been observed
 
     } else {
@@ -689,12 +717,13 @@ void TVA::_slew_function_envelope(uint16_t mode)
 }
 
 
-// Simplified linear smoothing used inside control block
-// The SC-55 is observed to do integer math and report back deviation from
-// intended target value to avoid drift. We use float and clamp to target
-// (for now).
+// The envelope level moves inside the control block at the rate the mode's
+// speed byte encodes, and holds once it is there.  The hardware does this in
+// integer arithmetic with a dither that gives the accumulator a fractional
+// average slope; the dither is smaller than one level unit (1/32768 of full
+// gain), so this uses float and lands exactly on the target instead.
 void TVA::_smooth(int mode, float start, float target,
-                  std::array<float, 256> &gain)
+                  std::array<float, 256> &gain, bool firstBlock)
 {
   // The mode's low byte is the slew speed, read here as the slew functions
   // above read it. Two speeds reach the target within the block's first
@@ -708,21 +737,77 @@ void TVA::_smooth(int mode, float start, float target,
   // out ~14 dB down. Measured: P-0053 (the interpolation) and P-0062 (the
   // reference's first-block level), verified in P-0063.
   int speed = mode & 0xff;
-  if (speed == 0x00 || speed == 0xba) {
+  if (speed == 0x00 || speed == 0xba || start == target) {
     for (int i = 0; i < 256; i++)
       gain[i] = target;
     return;
   }
 
-  // All other mode values are ignored => linear ramp
-  float step = (target - start) / 256.0f;
-  float level = start;
-  for (int i = 0; i < 256; i++) {
-    level += step;
-    gain[i] = level;
+  // A note's first control block is the exception: it covers the whole period
+  // whatever rate the speed byte carries.  Measured twice - P-0062 found the
+  // 256-sample ramp the best of eight models on all sixteen of its first
+  // blocks that were in a ramp mode, and PROVENANCE.md P-0155 measures a
+  // first block whose encoded rate would cover the period twice over and
+  // finds the reference still taking the whole period.  Why the first block
+  // differs is not explained here.
+  float step;
+  if (firstBlock) {
+    step = std::fabs(target - start) / 256.0f;
+  } else {
+    // Every other speed the envelope writes is one of slew_calc.h's linear
+    // modes, and its two nibbles give the per-sample increment: an unsigned
+    // mantissa (with an implied leading bit unless the high nibble is zero)
+    // shifted by the high nibble.  This is the same arithmetic
+    // _slew_function_envelope() runs through SlewCalc::tick(), lifted out
+    // here so the envelope's own level stays the target.
+    //
+    // Measured on the SC-55mkII (PROVENANCE.md P-0154): a note held on Sine
+    // Wave (bank 8, PC 81), whose TVA envelope is flat at maximum for the
+    // whole hold, released with the release-time part parameter set so the
+    // fall takes one control period.  The fall is linear in amplitude, and
+    // its length is set by the speed byte, not by the control period: 90 % to
+    // 10 % of the sustain level in 0.77 ms for speed 0xaf and 3.05 ms for
+    // speed 0x90, where a ramp across the whole period takes 6.40 ms.  Where
+    // the ramp reaches the target early the level then holds for the rest of
+    // the period, which the same measurement shows directly as a plateau.
+    int hi = (speed >> 4) & 0x0f;
+    bool w1 = (hi == 0);
+    bool w2 = w1 || (speed & 0x10);
+    bool w3 = !(speed & 0x80) ||
+              (!(speed & 0x40) && (!w2 || !(speed & 0x20)));
+
+    if (w3) {                                // linear mode
+      int shift = (10 - ((hi & 14) | (w2 ? 1 : 0))) & 15;
+      int inc = (((speed & 15) << 9) | (w1 ? 0 : 0x2000)) >> shift;
+      step = inc / (16.0f * 16384.0f);       // level units -> gain units
+    } else {
+      // An exponential mode other than the instant jump above. No tone in
+      // either control ROM was observed to reach one, so there is nothing
+      // measured to reproduce; cover the block as before.
+      step = 0.0f;
+    }
+
+    // The ramp never outlasts the control period: where the encoded rate is
+    // slower than that, the reference still completes the move inside the
+    // period (measured on the same tone with the attack-time part parameter,
+    // speed 0x70: 8.0 ms, against the 16 ms its encoded rate alone gives).
+    step = std::max(step, std::fabs(target - start) / 256.0f);
   }
 
-  // Clamp to target at last value to avoid any drift
+  float level = start;
+  if (target > start) {
+    for (int i = 0; i < 256; i++) {
+      level = std::min(level + step, target);
+      gain[i] = level;
+    }
+  } else {
+    for (int i = 0; i < 256; i++) {
+      level = std::max(level - step, target);
+      gain[i] = level;
+    }
+  }
+
+  // Land exactly on the target, so the block boundary carries no drift
   gain[255] = target;
 }
 
