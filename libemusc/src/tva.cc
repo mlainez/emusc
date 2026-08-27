@@ -685,8 +685,19 @@ void TVA::_slew_function_envelope(uint16_t mode)
 void TVA::_smooth(int mode, float start, float target,
                   std::array<float, 256> &gain)
 {
-  // 0xff00 => use target as fixed value for all samples
-  if (mode == 0xff00) {
+  // The mode's low byte is the slew speed, read here as the slew functions
+  // above read it. Two speeds reach the target within the block's first
+  // sample and hold it for the rest of the block:
+  //   0x00 => no slew (the envelope writes this mode as 0xff00)
+  //   0xba => instant jump (slew_calc.h), which _init_update() sets for a
+  //           note's first control block
+  // Interpolating either of them from the previous level spreads a note's
+  // initial level over its first 256 samples, so the first 8 ms of every note
+  // comes out too quiet and percussion shorter than one control block comes
+  // out ~14 dB down. Measured: P-0053 (the interpolation) and P-0062 (the
+  // reference's first-block level), verified in P-0063.
+  int speed = mode & 0xff;
+  if (speed == 0x00 || speed == 0xba) {
     for (int i = 0; i < 256; i++)
       gain[i] = target;
     return;
