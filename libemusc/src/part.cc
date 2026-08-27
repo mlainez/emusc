@@ -217,7 +217,7 @@ int Part::get_note_partials(uint8_t key)
 // The voice this part gives up when one is taken from it. Measured on both
 // models: a voice already in its release phase goes before a voice that is
 // still held, however much older the held one is, and within each group the
-// oldest goes first (PROVENANCE.md P-xxxx).
+// oldest goes first (PROVENANCE.md P-0078).
 bool Part::steal_candidate(uint32_t &serial, bool &releasing)
 {
   bool found = false;
