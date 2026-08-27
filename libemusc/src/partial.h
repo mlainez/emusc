@@ -49,6 +49,7 @@ public:
   bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus);
 
   void stop(void);
+  void damp(float dBPerMillisecond);
   void update(void);
 
   void first_run_cb(void);
@@ -75,6 +76,13 @@ private:
   bool _drumRxNoteOff;    // Static parameter (cannot change during a note)
 
   bool _sampleRunComplete; // Non-looping sample reached its end in this block
+
+  // Voice stealing: the partial is faded out over a few hundred samples and
+  // then terminated, while the note that took its place already sounds.
+  bool  _damping;
+  bool  _dampComplete;
+  float _dampGain;
+  float _dampFactor;       // Gain factor applied per sample while damping
 
   WaveGenerator *_LFO2;
 

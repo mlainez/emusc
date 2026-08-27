@@ -49,11 +49,27 @@ public:
   void update(void);
 
   int get_last_peak_sample(void);
+
+  // Partials this part is currently using. Partials that have been handed
+  // over to another note (damped) are no longer this part's and are not
+  // counted.
   int get_num_partials(void);
+
+  // Whether a note on this key would sound on this part at all, and the
+  // number of partials it would need
+  bool accepts_note(uint8_t key);
+  int get_note_partials(uint8_t key);
+
+  // Voice allocation. steal_candidate() names the voice this part would give
+  // up if one had to be taken from it: the oldest voice already in its
+  // release phase, or, if it has none, its oldest voice. steal_voice() damps
+  // that voice and returns the number of partials it released.
+  bool steal_candidate(uint32_t &serial, bool &releasing);
+  int steal_voice(uint32_t serial, float dBPerMillisecond);
 
   // MIDI Channel Voice Messages
   int set_program(uint8_t index, int8_t bank = -1, bool ignRxPC = false);
-  int add_note(uint8_t key, uint8_t velocity);
+  int add_note(uint8_t key, uint8_t velocity, uint32_t serial = 0);
   int stop_note(uint8_t key);
   int control_change(uint8_t msgId, uint8_t value);
   int channel_pressure(uint8_t value);

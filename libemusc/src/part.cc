@@ -173,31 +173,105 @@ int Part::get_num_partials(void)
 
   int numPartials = 0;
   for (auto &n: _notes)
-    numPartials += n->get_num_partials();
+    if (!n->is_damped())
+      numPartials += n->get_num_partials();
+
+  return numPartials;
+}
+
+
+// Whether a note on this key would be accepted by this part at all. A note
+// the part discards must not take a voice from another one.
+bool Part::accepts_note(uint8_t key)
+{
+  // Check if part is muted or rxNoteMessage is disabled
+  if (_settings->get_param(PatchParam::Mute, _id) ||
+      _settings->get_param(SystemParam::Mute) ||
+      !_settings->get_param(PatchParam::RxNoteMessage, _id))
+    return false;
+
+  // Check if key is outside part configured key range
+  if (key < _settings->get_param(PatchParam::KeyRangeLow, _id) ||
+      key > _settings->get_param(PatchParam::KeyRangeHigh, _id))
+    return false;
+
+  // If note is a drum -> check if drum accepts note on
+  uint8_t rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
+  if (rhythm != mode_Norm &&
+      !(_settings->get_param(DrumParam::RxNoteOn, rhythm - 1, key)))
+    return false;
+
+  return true;
+}
+
+
+int Part::get_note_partials(uint8_t key)
+{
+  if (!accepts_note(key))
+    return 0;
+
+  return Note::partial_count(_ctrlRom, _settings, _id, key);
+}
+
+
+// The voice this part gives up when one is taken from it. Measured on both
+// models: a voice already in its release phase goes before a voice that is
+// still held, however much older the held one is, and within each group the
+// oldest goes first (PROVENANCE.md P-xxxx).
+bool Part::steal_candidate(uint32_t &serial, bool &releasing)
+{
+  bool found = false;
+  releasing = false;
+
+  _notesMutex->lock();
+
+  for (auto &n : _notes) {              // _notes is in note on order
+    if (n->is_damped() || n->get_num_partials() == 0)
+      continue;
+
+    if (!found) {                       // Oldest voice of this part
+      serial = n->serial();
+      found = true;
+    }
+
+    if (n->is_releasing()) {            // Oldest voice already released
+      serial = n->serial();
+      releasing = true;
+      break;
+    }
+  }
+
+  _notesMutex->unlock();
+
+  return found;
+}
+
+
+int Part::steal_voice(uint32_t serial, float dBPerMillisecond)
+{
+  int numPartials = 0;
+
+  _notesMutex->lock();
+
+  for (auto &n : _notes) {
+    if (n->serial() == serial && !n->is_damped()) {
+      numPartials = n->get_num_partials();
+      n->damp(dBPerMillisecond);
+      break;
+    }
+  }
+
+  _notesMutex->unlock();
 
   return numPartials;
 }
 
 
 // Note: Mute cancels all active keys in part, and all new keys are ignored
-int Part::add_note(uint8_t key, uint8_t keyVelocity)
+int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial)
 {
-  // 1. Check if part is muted or rxNoteMessage is disabled
-  if (_settings->get_param(PatchParam::Mute, _id) ||
-      _settings->get_param(SystemParam::Mute) ||
-      !_settings->get_param(PatchParam::RxNoteMessage, _id))
-    return 0;
-
-  // 2. Check if key is outside part configured key range
-  if (key < _settings->get_param(PatchParam::KeyRangeLow, _id) ||
-      key > _settings->get_param(PatchParam::KeyRangeHigh, _id))
-    return 0;
-
-  // 4. If note is a drum -> check if drum accepts note on
-  uint8_t drumSetIndex = _settings->get_param(PatchParam::ToneNumber, _id);
-  uint8_t rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
-  if (rhythm != mode_Norm &&
-      !(_settings->get_param(DrumParam::RxNoteOn, rhythm - 1, key)))
+  // 1., 2. & 4. Mute, rxNoteMessage, key range and the drum's note on flag
+  if (!accepts_note(key))
     return 0;
 
   // 5. Calculate corrected key velocity based on velocity sens depth & offset
@@ -221,7 +295,7 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity)
 
   _notesMutex->lock();
 
-  Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id);
+  Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id, serial);
   _notes.push_back(n);
 
   _notesMutex->unlock();

@@ -83,6 +83,11 @@ public:
   uint16_t get_param_uint16(enum PatchParam pp, int8_t part = -1);
   uint8_t  get_param_nib16(enum PatchParam pp, int8_t part = -1);
   uint8_t  get_patch_param(uint16_t address, int8_t part = -1);
+
+  // Voice reserve of a part, in partials. The sixteen reserve bytes are one
+  // block addressed in Roland's part order, not in MIDI channel order
+  // (SC-55 OM p.79 "PARTIAL RESERVE", SC-55mkII OM p.98 "VOICE RESERVE").
+  uint8_t  get_partial_reserve(int8_t part);
   uint8_t  get_param(enum DrumParam, uint8_t map, uint8_t key);
   int8_t* get_param_ptr(enum DrumParam, uint8_t map);
 

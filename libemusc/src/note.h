@@ -38,12 +38,26 @@ class Note
 {
 public:
   Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
-       Settings *settings, int8_t partId);
+       Settings *settings, int8_t partId, uint32_t serial = 0);
   ~Note();
 
   void stop(void);
   void stop(uint8_t key);
   void sustain(bool state);
+
+  // Voice allocation. A note keeps its partials until they have finished, so
+  // a note in its release phase still occupies them; damp() hands them over
+  // to a new note while this one fades out.
+  void damp(float dBPerMillisecond);
+
+  uint32_t serial(void) { return _serial; }
+  bool is_releasing(void) { return _releasing; }
+  bool is_damped(void) { return _damped; }
+
+  // Number of partials a note on this key would use in this part, without
+  // creating it. Used to decide how many voices a note on needs.
+  static int partial_count(ControlRom &ctrlRom, Settings *settings,
+                           int8_t partId, uint8_t key);
 
   void update(void);
 
@@ -61,6 +75,13 @@ private:
 
   bool _sustain;
   bool _stopped;
+  bool _releasing;           // Note off has released the partials
+  bool _damped;              // Partials handed over to another note
+
+  const uint32_t _serial;    // Note on order, for voice allocation
+
+  static uint16_t _instrument_index(ControlRom &ctrlRom, Settings *settings,
+                                    int8_t partId, uint8_t key);
 
   const double _7bScale;     // Constant: 1 / 127
 

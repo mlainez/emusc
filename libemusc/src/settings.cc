@@ -96,6 +96,16 @@ uint8_t Settings::get_param(enum PatchParam pp, int8_t part)
 }
 
 
+uint8_t Settings::get_partial_reserve(int8_t part)
+{
+  if (part < 0 || part > 15)
+    return 0;
+
+  return _patchParams[(int) PatchParam::PartialReserve +
+                      _convert_to_roland_part_id_LUT[part]];
+}
+
+
 uint8_t* Settings::get_param_ptr(enum PatchParam pp, int8_t part)
 {
   int address = (int) pp;

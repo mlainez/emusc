@@ -242,6 +242,9 @@ public:
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
   const uint8_t max_polyphony(void);
 
+  // Rate at which a partial whose voice has been taken is faded out
+  const float voice_damp_rate(void);
+
   std::vector<std::vector<std::string>> get_instruments_list(void);
   std::vector<std::vector<std::string>> get_partials_list(void);
   std::vector<std::vector<std::string>> get_samples_list(void);
@@ -279,6 +282,15 @@ private:
   static constexpr uint8_t _maxPolyphonySC55     = 24;
   static constexpr uint8_t _maxPolyphonySC55mkII = 28;
   static constexpr uint8_t _maxPolyphonySC88     = 64;
+
+  // Fade applied to a partial when its voice is given to another note, in dB
+  // per millisecond. Measured by taking a sounding voice away and comparing
+  // the render against one where it was left alone: the level falls linearly
+  // in dB, at 18.0 dB/ms on the SC-55 and 8.4 dB/ms on the SC-55mkII, in both
+  // cases independent of the tone's own release (PROVENANCE.md P-0080).
+  // Not measured on the SC-88; it uses the SC-55mkII figure.
+  static constexpr float _voiceDampRateSC55     = 18.0f;
+  static constexpr float _voiceDampRateSC55mkII =  8.4f;
 
   static const std::vector<uint32_t> _banksSC55;
 

@@ -148,6 +148,7 @@ private:
   std::mutex midiMutex;
 
   struct std::vector<Part> _parts;
+  uint32_t _noteSerial = 0;   // Note on order, for voice allocation
   std::vector<std::function<void(const int)>> _partMidiModCallbacks;
   std::vector<std::function<void(const int)>> _partChangeCallbacks;
 
@@ -185,6 +186,8 @@ private:
   void _init_parts(void);
 // int _export_sample_24(std::vector<int32_t> &sampleSet, std::string filename);
   void _add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity);
+  int _partials_in_use(void);
+  int _steal_partials(Part &requester);
 
   void _midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length);
 

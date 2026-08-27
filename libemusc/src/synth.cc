@@ -101,21 +101,99 @@ void Synth::reset(SoundMap sm, bool resetParts)
 }
 
 
-void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity)
+int Synth::_partials_in_use(void)
 {
   int partialsUsed = 0;
   for (auto &p: _parts)
     partialsUsed += p.get_num_partials();
 
-  // TODO: Prioritize parts / MIDI channels based on info in owners manual
-  // FIXME: Reduce voice count when volume envelope is corrected!
-  if (partialsUsed > _ctrlRom.max_polyphony() * 2)
-    std::cout << "EmuSC: New note on ignored due to voice limit"
-	      << std::endl;
-  else
-    for (auto &p: _parts)
-      if (p.midi_channel() == midiChannel)
-	p.add_note(key, velocity);
+  return partialsUsed;
+}
+
+
+// Take one partial from a sounding voice so that a note on the requesting
+// part can have it. Returns the number of partials released, 0 if none may be
+// taken. The rule was measured on both models:
+//
+//  * a part that is already using more partials than its own voice reserve
+//    takes the partial back from itself, even when other parts have voices
+//    that are older or already in their release phase;
+//  * otherwise the partial comes from the parts that are over their reserve:
+//    a voice already released before a voice still held, oldest first;
+//  * if no part is over its reserve there is nothing to take and the note
+//    does not sound at all.
+//
+// The reserve defaults sum to 24 on both models, so on the SC-55mkII four
+// partials are free for whichever part asks first (SC-55 OM p.79,
+// SC-55mkII OM p.98; PROVENANCE.md P-0077, P-0078, P-0079).
+int Synth::_steal_partials(Part &requester)
+{
+  uint32_t serial = 0;
+  bool releasing = false;
+
+  if (requester.get_num_partials() >
+      _settings->get_partial_reserve(requester.id()) &&
+      requester.steal_candidate(serial, releasing)) {
+    int freed = requester.steal_voice(serial, _ctrlRom.voice_damp_rate());
+    if (freed > 0)
+      return freed;
+  }
+
+  Part *victim = NULL;
+  uint32_t victimSerial = 0;
+  bool victimReleasing = false;
+
+  for (auto &p: _parts) {
+    if (p.get_num_partials() <= _settings->get_partial_reserve(p.id()))
+      continue;
+
+    uint32_t s = 0;
+    bool r = false;
+    if (!p.steal_candidate(s, r))
+      continue;
+
+    if (!victim || (r && !victimReleasing) ||
+        (r == victimReleasing && s < victimSerial)) {
+      victim = &p;
+      victimSerial = s;
+      victimReleasing = r;
+    }
+  }
+
+  if (!victim)
+    return 0;
+
+  return victim->steal_voice(victimSerial, _ctrlRom.voice_damp_rate());
+}
+
+
+void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity)
+{
+  // The Sound Canvas has a fixed number of partials: 24 on the SC-55 ("Maximum
+  // Polyphony 24 (partials)", SC-55 OM p.86) and 28 on the SC-55mkII
+  // (SC-55mkII OM p.98). A note needs one partial per partial of its tone, and
+  // when they are all in use it takes them from voices that are sounding.
+  const int maxPolyphony = _ctrlRom.max_polyphony();
+
+  for (auto &p: _parts) {
+    if (p.midi_channel() != midiChannel)
+      continue;
+
+    int needed = p.get_note_partials(key);
+    if (needed <= 0)                     // Undefined tone: nothing will sound
+      continue;
+
+    bool haveVoices = true;
+    while (_partials_in_use() + needed > maxPolyphony) {
+      if (_steal_partials(p) <= 0) {
+        haveVoices = false;
+        break;
+      }
+    }
+
+    if (haveVoices)
+      p.add_note(key, velocity, ++_noteSerial);
+  }
 }
 
 /* Not used -> WaveRom as part of sample dump to disk

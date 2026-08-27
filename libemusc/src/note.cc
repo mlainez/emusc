@@ -26,11 +26,40 @@
 namespace EmuSC {
 
 
+// Instrument index a note on this key uses in this part.
+// Note: toneBank is used as drumSet index for rhythm parts
+uint16_t Note::_instrument_index(ControlRom &ctrlRom, Settings *settings,
+                                 int8_t partId, uint8_t key)
+{
+  uint8_t toneBank = settings->get_param(PatchParam::ToneNumber, partId);
+  uint8_t toneIndex = settings->get_param(PatchParam::ToneNumber2, partId);
+
+  if (settings->get_param(PatchParam::UseForRhythm, partId) == 0)
+    return ctrlRom.variation(toneBank)[toneIndex];
+
+  return ctrlRom.drumSet(toneBank).preset[key];
+}
+
+
+int Note::partial_count(ControlRom &ctrlRom, Settings *settings,
+                        int8_t partId, uint8_t key)
+{
+  uint16_t instrumentIndex = _instrument_index(ctrlRom, settings, partId, key);
+  if (instrumentIndex == 0xffff)       // Undefined instrument / drum: silent
+    return 0;
+
+  return std::bitset<2>(ctrlRom.instrument(instrumentIndex).partialsUsed).count();
+}
+
+
 Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
-	   Settings *settings, int8_t partId)
+	   Settings *settings, int8_t partId, uint32_t serial)
   : _key(key),
     _sustain(false),
     _stopped(false),
+    _releasing(false),
+    _damped(false),
+    _serial(serial),
     _7bScale(1/127.0),
     _settings(settings),
     _partId(partId)
@@ -38,14 +67,7 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   _partial[0] = _partial[1] = NULL;
 
   // 1. Find correct instrument index for note
-  // Note: toneBank is used as drumSet index for rhythm parts
-  uint8_t toneBank = settings->get_param(PatchParam::ToneNumber, partId);
-  uint8_t toneIndex = settings->get_param(PatchParam::ToneNumber2, partId);
-  uint16_t instrumentIndex;
-  if (settings->get_param(PatchParam::UseForRhythm, partId) == 0)
-    instrumentIndex = ctrlRom.variation(toneBank)[toneIndex];
-  else
-    instrumentIndex = ctrlRom.drumSet(toneBank).preset[key];
+  uint16_t instrumentIndex = _instrument_index(ctrlRom, settings, partId, key);
 
   if (instrumentIndex == 0xffff)        // Ignore undefined instruments / drums
     return;
@@ -93,6 +115,8 @@ void Note::stop(void)
     _stopped = true;
 
   } else {
+    _releasing = true;
+
     if (_partial[0])
       _partial[0]->stop();
 
@@ -108,12 +132,26 @@ void Note::stop(uint8_t key)
     if (_sustain)                       // Hold pedal (hold1) or Sostenuto
       _stopped = true;
 
+    _releasing = true;
+
     if (_partial[0])
       _partial[0]->stop();
 
     if (_partial[1])
       _partial[1]->stop();
   }
+}
+
+
+void Note::damp(float dBPerMillisecond)
+{
+  _damped = true;
+
+  if (_partial[0])
+    _partial[0]->damp(dBPerMillisecond);
+
+  if (_partial[1])
+    _partial[1]->damp(dBPerMillisecond);
 }
 
 

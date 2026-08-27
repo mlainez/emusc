@@ -848,6 +848,24 @@ const uint8_t ControlRom::max_polyphony(void)
 }
 
 
+const float ControlRom::voice_damp_rate(void)
+{
+  switch (_synthModel)
+    {
+    case sm_SC55:
+    case sm_SCC1:
+      return _voiceDampRateSC55;
+
+    case sm_SC55mkII:
+    case sm_SC88:
+    case sm_SC88Pro:
+      return _voiceDampRateSC55mkII;
+    }
+
+  return _voiceDampRateSC55mkII;
+}
+
+
 int ControlRom::dump_demo_songs(std::string path)
 {
   int index = 1;

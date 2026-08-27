@@ -56,6 +56,10 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
     _settings(settings),
     _partId(partId),
     _sampleRunComplete(false),
+    _damping(false),
+    _dampComplete(false),
+    _dampGain(1),
+    _dampFactor(1),
     _LFO2(NULL),
     _pitch(NULL),
     _tvf(NULL),
@@ -110,7 +114,7 @@ Partial::~Partial()
 
 bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
 {
-  if (_tva->finished())
+  if (_tva->finished() || _dampComplete)
     return 1;
 
   std::array<std::array<float, 256>, 2> partialBuf = {};
@@ -134,6 +138,20 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
     _tva->set_phase(Envelope::Phase::Terminated);
   }
 
+  // A partial whose voice was taken by another note is faded out rather than
+  // cut off; the fade is a fixed rate per model and is independent of the
+  // tone's own release (PROVENANCE.md P-0080).
+  if (_damping) {
+    for (int i = 0; i < 256; i++) {
+      partialBuf[0][i] *= _dampGain;
+      partialBuf[1][i] *= _dampGain;
+      _dampGain *= _dampFactor;
+    }
+
+    if (_dampGain < 1e-4)              // -80 dB, below a 16 bit sample step
+      _dampComplete = true;
+  }
+
   for (int i = 0; i < 256; i++) {
     dryBus[0][i] += partialBuf[0][i];
     dryBus[1][i] += partialBuf[1][i];
@@ -151,6 +169,25 @@ void Partial::stop(void)
     if (_tvf) _tvf->note_off();
     if (_tva) _tva->note_off();
   }
+}
+
+
+// Give up this partial's voice: fade it out at a fixed rate and terminate it.
+// Unlike a note off this is not the tone's release; the rate is a property of
+// the synth, measured on both models (PROVENANCE.md P-0080).
+void Partial::damp(float dBPerMillisecond)
+{
+  if (_damping)
+    return;
+
+  // The fade steps once per sample of the voice loop, which runs at libEmuSC's
+  // fixed 32 kHz internal rate (resampler.h), not at the host's output rate.
+  const float internalRate = 32000.0;
+
+  float dBPerSample = dBPerMillisecond * 1000.0 / internalRate;
+  _dampFactor = std::pow(10.0, -dBPerSample / 20.0);
+  _dampGain = 1;
+  _damping = true;
 }
 
 
