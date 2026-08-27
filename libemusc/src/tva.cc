@@ -34,12 +34,17 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
          int8_t partId, uint16_t instrumentIndex, int partialId)
   : Envelope(ctrlRom.lookupTables),
     _initRunComplete(false),
+    _dynLevel(0),
     _prevDynLevel(0),
     _envLevel(0),
     _LFO1(LFO1),
     _LFO2(LFO2),
     _lfo1FadeComplete(false),
     _lfo2FadeComplete(false),
+    _lfo1Depth(0),                 // Both LFOs start their fade-in at 0, and
+    _lfo2Depth(0),                 // _update_lfo_depth() only runs from the
+                                   // second control block onwards, so the
+                                   // first block must find a depth of 0 here
     _LUT(ctrlRom.lookupTables),
     _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _key(key),

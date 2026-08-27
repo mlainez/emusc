@@ -60,6 +60,10 @@ TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
     _LFO2(LFO2),
     _lfo1FadeComplete(false),
     _lfo2FadeComplete(false),
+    _lfo1Depth(0),                 // _init_envelope() below scales _lfo1Depth
+    _lfo2Depth(0),                 // by the LFO fade and _iterate_phase()
+                                   // reads both, all before the first
+                                   // _update_lfo_depth() call
     _LUT(LUT),
     _instPartial(instPartial),
     _resonance(0x40),
