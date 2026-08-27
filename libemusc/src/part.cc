@@ -696,13 +696,24 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
   // Implemented according to SC-55 Owner's Manual page 42-45
   int rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
   if (rhythm == mode_Norm) {
-    uint16_t instrument = _ctrlRom.variation(bank)[index];
-    if (bank < 63 && index < 120) {
-      while (instrument == 0xffff)
-	instrument = _ctrlRom.variation(--bank)[index];
+    // What the synth does when the variation table has no tone at
+    // [index, bank] is one of the places the two generations disagree
+    // (P-0190, P-0192). The SC-55 substitutes the base of the variation's
+    // own group of eight - the bank number with its low three bits cleared -
+    // and the capital if that is undefined as well; but it does so only for
+    // bank numbers up to 63 and program numbers up to 120. Above either
+    // bound, and on the SC-55mkII at every bank and program, nothing is
+    // substituted: the bank is left as it was received, Note finds 0xffff in
+    // the variation table and starts a note with no partials, so the part is
+    // silent until another bank or program is selected. Notes that are
+    // already sounding keep the instrument they started with and are not
+    // affected either way (P-0190).
+    if (_ctrlRom.variation(bank)[index] == 0xffff &&
+	_settings->generation() == ControlRom::SynthGen::SC55 &&
+	bank < 64 && index < 120) {
+      int8_t groupBase = bank & ~7;
+      bank = (_ctrlRom.variation(groupBase)[index] != 0xffff) ? groupBase : 0;
     }
-    if (instrument == 0xffff) // FIXME: Just a workaround
-      bank = 0;
 
     _settings->set_param(PatchParam::ToneNumber, bank, _id);
 
