@@ -355,6 +355,42 @@ void Synth::midi_input_sysex(uint8_t *data, uint16_t length)
     return;
   }
 
+  // Universal realtime "Master Volume":
+  //   F0H 7FH 7FH 04H 01H llH mmH F7H
+  // 7FH universal realtime, 7FH broadcast, sub-ID#1 04H Device Control,
+  // sub-ID#2 01H Master Volume, "The LSB (llH) is ignored (value = 0)"
+  // (SC-55mkII Owner's Manual p.93; the byte list on that page misprints
+  // sub-ID#2 as 02H, but the message line above it reads 01H and only 01H
+  // is acted upon -- P-0109).
+  //
+  // The same manual's system parameter table prints this message as a second
+  // way of writing the GS master volume: "40 00 04 ... MASTER VOLUME 0 - 127
+  // (= F0 7F 7F 04 01 00 vv F7)" (mkII p.97), and measurement agrees. The two
+  // share one register, one level curve and one default, so acting on the
+  // message is a write to SystemParam::Volume, which every part already
+  // scales its level by (P-0108). Only the broadcast device ID triggers it,
+  // as for the message above, and the LSB is discarded: the rendered audio is
+  // byte-identical for every llH (P-0107).
+  //
+  // The SC-55 ignores this message while honouring the GS parameter, so it is
+  // gated on the generation (P-0109). Its manual is consistent: it lists
+  // MASTER VOLUME 40 00 04 with no universal equivalent (SC-55 OM p.78) and
+  // its exclusive section covers manufacturer ID 41H only (p.77).
+  if (length == 8 && data[1] == 0x7f && data[2] == 0x7f &&
+      data[3] == 0x04 && data[4] == 0x01) {
+    if (_ctrlRom.generation() == ControlRom::SynthGen::SC55)
+      return;
+
+    midiMutex.lock();
+    _settings->set_param(SystemParam::Volume, data[6]);
+
+    for (const auto &cb : _partMidiModCallbacks)     // Update user interface
+      cb(-1);
+
+    midiMutex.unlock();
+    return;
+  }
+
   // Everything below is a Roland exclusive message: Manufacturer ID 0x41
   if (data[1] != 0x41)
     return;
