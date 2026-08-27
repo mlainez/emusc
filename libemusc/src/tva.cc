@@ -49,6 +49,10 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _key(key),
     _drumSet(settings->get_param(PatchParam::UseForRhythm, partId)),
+    _panpotBase(ctrlRom.instrument(instrumentIndex).panKeyFlw ?
+                ctrlRom.lookupTables.TVAPanKeyFollow[key] :
+                (int) ctrlRom.instrument(instrumentIndex)
+                        .partials[partialId].panpot),
     _panpot(-1),
     _panpotLocked(false),
     _settings(settings),
@@ -270,7 +274,14 @@ void TVA::_update_panpot_level(bool reset)
   if (_panpotLocked)               // Do not update panpot if in random mode
     return;
 
-  int newPanpot = _instPartial.panpot +
+  // Nine SC-55mkII instruments carry a non-zero panKeyFlw and take their pan
+  // position from the control ROM's key follow curve at the note's key
+  // instead of from the partial's own panpot; every other instrument, and
+  // every SC-55 one, uses the partial's panpot as before. Both are the same
+  // kind of number and enter the sum in the same place, so the part and
+  // system pan offsets and the clamp below are unchanged (PROVENANCE.md
+  // P-0124).
+  int newPanpot = _panpotBase +
     _settings->get_param(PatchParam::PartPanpot, _partId) +
     _settings->get_param(SystemParam::Pan) - 0x80;
 

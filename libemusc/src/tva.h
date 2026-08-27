@@ -72,6 +72,7 @@ private:
   uint8_t _key;
   int _drumSet;
 
+  int _panpotBase;
   int _panpot;
   int _panpotL;
   int _panpotR;

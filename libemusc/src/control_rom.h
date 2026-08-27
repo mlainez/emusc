@@ -166,6 +166,7 @@ public:
     uint8_t LFO1Fade;
     uint8_t partialsUsed;   // Bit 0 & 1 => which of the two partials are in use
     uint8_t pitchCurve;
+    uint8_t panKeyFlw;      // Non-zero selects the TVA pan key follow curve
 
     struct InstPartial partials[2];
   };
@@ -189,6 +190,8 @@ public:
     std::array<int, 136> KeyMapperIndex;
     int KeyMapperOffset;
     std::vector<uint8_t> KeyMapper;
+
+    std::array<uint8_t, 128> TVAPanKeyFollow;
 
     // CPUROM
     std::array<int,      21> PitchParamScale;
@@ -302,12 +305,21 @@ private:
 
     int KeyMapperIndex;
     int KeyMapper;
+
+    // TVA pan key follow curve, or 0 if this generation has none. The SC-55
+    // has none: no instrument in its control ROM selects one (Instrument::
+    // panKeyFlw is 0 on all 386 records) and the SC-55mkII's address holds
+    // unrelated 16-bit data in the SC-55 ROM. The SC-55mkII's curve is a
+    // 128-byte table of pan positions biased by 0x40, preceded by a four
+    // entry selector whose first entry is 0xffff and whose remaining three
+    // all point at this curve (PROVENANCE.md P-0122).
+    int TVAPanKeyFollow;
   };
 
   const _ProgMemoryMapLUT SC55_1_21_Prog_LUT {
-    0x3d1e8, 0x3dc72, 0x3dd82 };
+    0x3d1e8, 0x3dc72, 0x3dd82, 0 };
   const _ProgMemoryMapLUT SC55mkII_1_01_Prog_LUT {
-    0x3d1e8, 0x3dd7c, 0x3de8c };
+    0x3d1e8, 0x3dd7c, 0x3de8c, 0x3f814 };
 
   struct _CPUMemoryMapLUT {
     int PitchParamScale;

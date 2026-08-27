@@ -278,6 +278,7 @@ int ControlRom::_read_instruments(std::ifstream &romFile)
     i.LFO1Fade     = data[17];
     i.partialsUsed = data[18];
     i.pitchCurve   = data[19];
+    i.panKeyFlw    = data[31];
 
     // We have 2 partial parameters sets; starting in bank position 34 & 126
     for (int p = 0; p < 2; p++) {
@@ -588,6 +589,14 @@ int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
   romFile.seekg(PROGmmLUT->KeyMapper);
   romFile.read(reinterpret_cast<char*> (lookupTables.KeyMapper.data()), kmSize);
   lookupTables.KeyMapperOffset = PROGmmLUT->KeyMapper - 0x30000;
+
+  if (PROGmmLUT->TVAPanKeyFollow) {
+    romFile.seekg(PROGmmLUT->TVAPanKeyFollow);
+    romFile.read(reinterpret_cast<char*> (lookupTables.TVAPanKeyFollow.data()),
+                 lookupTables.TVAPanKeyFollow.size());
+  } else {
+    lookupTables.TVAPanKeyFollow.fill(0x40);       // Centre for every key
+  }
 
   return 0;
 }
