@@ -113,12 +113,10 @@ void Resampler::_buildTable(float cutoff)
   for (int p = 0; p <= NPHASE; ++p) {
     double frac = static_cast<double>(p) / NPHASE;
 
-    double sum = 0.0;
-    for (int k = 0; k < TAPS; ++k) {
-      int n = k - HALF + 1;             // Tap offset
-      double x = n - frac;              // Distance from interpolation point
-
-      // Windowed sinc, scaled so the prototype has the right cutoff
+    // Windowed sinc at a distance of x input samples from the interpolation
+    // point: the prototype low-pass, scaled so it has the right cutoff, times
+    // a Kaiser window over the full support [-HALF, HALF].
+    auto hw = [&](double x) {
       double arg = 2.0 * cutoff * x;
       double sinc;
       if (std::abs(arg) < 1e-9)
@@ -126,13 +124,37 @@ void Resampler::_buildTable(float cutoff)
       else
         sinc = 2.0 * cutoff * std::sin(M_PI * arg) / (M_PI * arg);
 
-      // Kaiser window over the full support [-HALF, HALF]
       double wn  = x / HALF;
       double win = 0.0;
       if (std::abs(wn) <= 1.0)
         win = _i0(BETA * std::sqrt(std::max(0.0, 1.0 - wn * wn))) / i0beta;
 
-      double coeff = sinc * win;
+      return sinc * win;
+    };
+
+    double sum = 0.0;
+    for (int k = 0; k < TAPS; ++k) {
+      int n = k - HALF + 1;             // Tap offset
+      double x = n - frac;              // Distance from interpolation point
+
+      // The reference's output stage holds each sample of a stream at half the
+      // output rate for two output samples, and that hold costs it audible
+      // high frequency: measured oracle-minus-candidate is -0.17 dB at 4 kHz,
+      // -1.19 at 10.7 and -1.98 at 13.45, matching 20*log10(cos(pi f / fs)) to
+      // within 0.1 dB in 24 of 26 bands from 3 to 13.5 kHz on both romsets
+      // (PROVENANCE.md P-0148). Averaging the prototype with a copy of itself
+      // delayed by half an INPUT sample multiplies its response by
+      // |cos(pi f / (2 * 32000))| and so reproduces that droop -- without
+      // emitting any image, and at any host rate, unlike actually holding.
+      //
+      // This is a deliberate fit to the oracle. Whether the hold belongs to
+      // SC-55 hardware or to the reference's own output stage is NOT
+      // established; this project holds no recording of real hardware, and
+      // PROTOCOL.md section 7 names that hazard. The project owner accepted
+      // the fit explicitly on 2026-08-27 (P-0150). Revisit if hardware
+      // evidence ever contradicts it: deleting the second term restores the
+      // previous response exactly.
+      double coeff = 0.5 * (hw(x) + hw(x - 0.5));
       _table[p * TAPS + k] = static_cast<float>(coeff);
       sum += coeff;
     }
