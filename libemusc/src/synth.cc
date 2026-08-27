@@ -339,7 +339,7 @@ void Synth::midi_input_sysex(uint8_t *data, uint16_t length)
   // The manual states the message sets every internal parameter to the
   // General MIDI System Level 1 defaults, takes about 50 ms to execute, and
   // is ignored when Rx.GM On is off. Only the broadcast device ID triggers
-  // it; a message carrying any other device ID is ignored (P-0090).
+  // it; a message carrying any other device ID is ignored (P-0093).
   //
   // What it leaves behind differs from the GS reset below only in the two
   // receive switches Settings::set_gm_mode() handles -- see the comment

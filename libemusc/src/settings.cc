@@ -653,7 +653,7 @@ void Settings::set_gm_mode(void)
   // neither this message nor an Rx.Bank-Select switch (its receive chart on
   // p.76 lists only manufacturer ID 41H), and measurement agrees: on the
   // SC-55 a bank-selected variation tone and an NRPN both still take effect
-  // after the message, while on the SC-55mkII neither does (P-0090). So the
+  // after the message, while on the SC-55mkII neither does (P-0092). So the
   // SC-55 reaches plain GS defaults here and nothing more.
   if (_ctrlRom.generation() == ControlRom::SynthGen::SC55)
     return;
