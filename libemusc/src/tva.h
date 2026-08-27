@@ -94,6 +94,7 @@ private:
 
   void _init_update(void);
   void _init_envelope(ControlRom &ctrlRom, int sampleIndex, int instrumentIndex,
+                      uint8_t cVelocityLvl,
                       uint8_t cVelocity);
 
   void _update_dynamic_level(void);
@@ -103,6 +104,8 @@ private:
   int _get_bias_level(int km, int biasPoint);
   int _get_velocity_from_vcurve(uint8_t velocity);
   int _get_level_velocity(int cVelocity);
+  uint8_t _lvlVSensEff;   // partial 0: its own byte 66; partial 1: the SUM of
+                          // both partials' byte 66 (measured; see tva.cc)
 
   void _init_new_phase(enum Phase newPhase);
   void _iterate_phase(void);

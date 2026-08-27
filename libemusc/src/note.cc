@@ -96,21 +96,29 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   // But there are instances where there is a mismatch in the Control ROM,
   // where a defined partial have fewer sample IDs than break points. This is
   // most likely bugs by Roland, but the SC-55 simply ignores these partials.
+  // Each partial carries a velocity range (bytes 65 and 67 of its 92-byte
+  // record) and does not sound at all outside it. Measured on the SC-55mkII:
+  // E.Piano 2v below velocity 75 is its first partial alone (the candidate
+  // playing both partials was +6..+7 dB loud), and Funk Gt.2 switches
+  // partials between velocities 115 and 116 (PROVENANCE.md, anomalies lane
+  // pending B; P-0101). The level velocity rescale above the low bound is
+  // TVA's (tva.cc), which sees the raw velocity here.
   std::bitset<2> partialBits(ctrlRom.instrument(instrumentIndex).partialsUsed);
-  if (partialBits.test(0)) {
+  for (int p = 0; p < 2; p++) {
+    if (!partialBits.test(p))
+      continue;
+    const ControlRom::InstPartial &instPartial =
+      ctrlRom.instrument(instrumentIndex).partials[p];
+    uint8_t low = instPartial.velRangeLow;
+    uint8_t high = (instPartial.velRangeHigh > 0) ? instPartial.velRangeHigh
+                                                  : 127;
+    if (velocity < low || velocity > high)
+      continue;
     try {
-      _partial[0] = new Partial(0, key, velocity, instrumentIndex, ctrlRom,
-				waveRom, _LFO1, settings, partId);
+      _partial[p] = new Partial(p, key, velocity, instrumentIndex, ctrlRom,
+                                waveRom, _LFO1, settings, partId);
     } catch (std::string errorMsg) {
-      _partial[0] = NULL;
-    }
-  }
-  if (partialBits.test(1)) {
-    try {
-      _partial[1] = new Partial(1, key, velocity, instrumentIndex, ctrlRom,
-				waveRom, _LFO1, settings, partId);
-    } catch (std::string errorMsg) {
-      _partial[1] = NULL;
+      _partial[p] = NULL;
     }
   }
 }

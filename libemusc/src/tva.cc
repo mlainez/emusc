@@ -61,8 +61,38 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _dynLevelEC(0), _envLevelEC(0),
     _slewDynGain{}, _slewEnvGain{}
 {
+  // The velocity the LEVEL chain sees is rescaled by the partial's velocity
+  // range low bound: (v - low) * 127 / (127 - low), so the bound maps to 0
+  // and 127 stays 127. Measured on the SC-55mkII: E.Piano 2v's second
+  // partial fades in above velocity 75 on exactly this rescaled velocity,
+  // while Funk Gt.2's second partial enters BRIGHT at velocity 116, so the
+  // TVF and the envelope-time paths keep the raw velocity (PROVENANCE.md,
+  // anomalies lane pending B).
+  int lvlVelocity = velocity;
+  if (_instPartial.velRangeLow > 0 && _instPartial.velRangeLow < 127) {
+    lvlVelocity = ((velocity - _instPartial.velRangeLow) * 127) /
+                  (127 - _instPartial.velRangeLow);
+    lvlVelocity = std::clamp(lvlVelocity, 0, 127);
+  }
+  // The velocity sensitivity the second partial receives is the SUM of the
+  // two partials' sensitivity bytes. Measured on the SC-55mkII (PROVENANCE.md,
+  // anomalies lane pending C): decomposing two-partial MT-32 tones per
+  // partial, partial 1's velocity attenuation follows s0+s1 (Fantasy, s 40/50:
+  // within 0.15 dB of the s=90 curve at every velocity 32..127), while
+  // partial 0 follows its own byte alone. This is also P-0055's residual: the
+  // fit it declined to apply is the law.
+  _lvlVSensEff = _instPartial.TVALvlVSens;
+  if (partialId == 1 &&
+      (ctrlRom.instrument(instrumentIndex).partialsUsed & 0x01)) {
+    int sum = (int) _instPartial.TVALvlVSens +
+              (int) ctrlRom.instrument(instrumentIndex).partials[0].TVALvlVSens;
+    _lvlVSensEff = (uint8_t) std::min(sum, 127);
+  }
+
   int cVelocity = _get_velocity_from_vcurve(velocity);
-  _init_envelope(ctrlRom, sampleIndex, instrumentIndex, cVelocity);
+  int cVelocityLvl = _get_velocity_from_vcurve((uint8_t) lvlVelocity);
+  _init_envelope(ctrlRom, sampleIndex, instrumentIndex,
+                 (uint8_t) cVelocityLvl, cVelocity);
 
   // Calculate random pan if part pan or drum pan value is 0 (RND)
   // A note is locked to RND if it is started with that setting
@@ -551,14 +581,15 @@ int TVA::_get_velocity_from_vcurve(uint8_t velocity)
 // the capital tones over key and velocity), P-0055 (the fit of this formula).
 int TVA::_get_level_velocity(int cVelocity)
 {
-  int vSens = std::clamp((int) _instPartial.TVALvlVSens, 0, 127);
+  int vSens = std::clamp((int) _lvlVSensEff, 0, 127);
 
   return 127 - (((127 - cVelocity) * (127 - vSens)) / 127);
 }
 
 
 void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
-                         int instrumentIndex, uint8_t cVelocity)
+                         int instrumentIndex, uint8_t cVelocityLvl,
+                         uint8_t cVelocity)
 {
   // First step is to calculate correct initial phase levels
   int levelIndex = std::max(0xff - _LUT.TVALevelIndex[_instPartial.volume], 1);
@@ -579,7 +610,7 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   }
 
   levelIndex = std::max(levelIndex -
-                        _LUT.TVALevelIndex[_get_level_velocity(cVelocity)], 1);
+                        _LUT.TVALevelIndex[_get_level_velocity(cVelocityLvl)], 1);
   levelIndex = std::max(levelIndex - _LUT.TVALevelIndex[ctrlRom.sample(sampleIndex).volume], 1);
   levelIndex = std::max(levelIndex - _LUT.TVALevelIndex[ctrlRom.instrument(instrumentIndex).volume], 1);
 
