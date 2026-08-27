@@ -68,6 +68,9 @@ TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
     _instPartial(instPartial),
     _resonance(0x40),
     _envLevel(0),
+    _envLevelMode(0xff00),
+    _prevEnvLevel(0),
+    _coFreq{},
     _key(key),
     _settings(settings),
     _partId(partId)
@@ -114,9 +117,53 @@ void TVF::apply_sample_set(std::array<float, 256> &dryBus)
   if (_svf == nullptr)
     return;
 
+  _smooth_cutoff();
+
   for (int i = 0; i < 256; i++) {
+    _svf->set_cutoff_freq(_coFreq[i]);
     dryBus[i] = _svf->process_sample(dryBus[i]);
   }
+}
+
+
+// The cutoff frequency moves inside the control period, it does not step at
+// the period boundary.  Measured (PROVENANCE.md P-0134): a cutoff step of 50
+// semitones, driven from the part parameter half-way through a held note,
+// takes about 6.3 ms on the reference and under 1 ms on this engine, which
+// applied the whole step at the first sample of the next period.
+//
+// The mode _iterate_phase() writes carries the speed of that move in its low
+// byte, in the encoding slew_calc.h documents.  Two speeds land on the first
+// sample and hold:
+//   0x00  the level did not change this period (written as the mode 0xff00)
+//   0xaf  "fast to target, land exactly and pin", which _iterate_phase()
+//         writes for a segment of zero duration - including a note's first
+//         control period.  The TVA's equivalent was measured at about 0.5 ms
+//         (P-0062), and the arithmetic in slew_calc.h gives about 1 ms here;
+//         both are shorter than the 8 ms period, so they are taken as
+//         immediate.
+// Every other speed is treated as a linear ramp across the period.  That is
+// the same simplification TVA::_smooth() makes for the TVA envelope, and it
+// keeps the settled cutoff exactly at the value _iterate_phase() computed,
+// which is what the reference's steady state measures at; the reference's
+// per-sample shape inside the period is finer than the measurement resolves.
+void TVF::_smooth_cutoff(void)
+{
+  int speed = _envLevelMode & 0xff;
+
+  if (speed == 0x00 || speed == 0xaf || _envLevel == _prevEnvLevel) {
+    _coFreq.fill(_envLevel);
+    return;
+  }
+
+  float level = _prevEnvLevel;
+  float step = (_envLevel - _prevEnvLevel) / 256.0f;
+  for (int i = 0; i < 256; i++) {
+    level += step;
+    _coFreq[i] = (int) level;
+  }
+
+  _coFreq[255] = _envLevel;                  // land exactly on the target
 }
 
 
@@ -140,8 +187,9 @@ void TVF::update(void)
 
   _iterate_phase();
 
-  // Update filter coefficients
-  _svf->set_cutoff_freq(_envLevel);
+  // Update filter coefficients.  The cutoff is set per sample by
+  // _smooth_cutoff() from apply_sample_set(); the resonance is a control-rate
+  // parameter and moves one step per period (_iterate_phase()).
   _svf->set_resonance(_resonance);
 
   if (0)
@@ -279,9 +327,21 @@ void TVF::_init_freq_and_res(void)
   envLevelMax = std::max(envLevelMax, _L4Init);
   envLevelMax = std::max(envLevelMax, _L5Init);
 
+  // On the mkII generation a positive TVF Cutoff Frequency raises the
+  // partial's base cutoff, one cutoff step per parameter step, and the
+  // resonance the cutoff admits is read at the raised position.  On the SC-55
+  // generation a positive value does nothing at all: the cutoff stays at the
+  // partial's own base.  Measured on Warm Pad, C4, over the whole parameter
+  // range (PROVENANCE.md P-0133): the mkII's fitted cutoff runs +2 -> +2.1,
+  // +8 -> +8.2, +16 -> +15.7, +32 -> +30.3, +40 -> +39.6 cutoff steps and
+  // then saturates at the top of the cutoff table, while the SC-55 stays
+  // within 0.1 of its base for every value from +2 to +63.
   int tm3 = _settings->get_param(PatchParam::TVFCutoffFreq, _partId) - 0x40;
-  tm3 = std::clamp(tm3, -0x32, 0x10);
-  int bptm3 = tm3 < 0 ? _instPartial.TVFBaseFlt + tm3 : _instPartial.TVFBaseFlt;
+  bool cofOffsetRaises =
+    _settings->generation() != ControlRom::SynthGen::SC55;
+  tm3 = std::clamp(tm3, -0x32, cofOffsetRaises ? 0x3f : 0x10);
+  int bptm3 = (tm3 < 0 || cofOffsetRaises) ? _instPartial.TVFBaseFlt + tm3
+                                           : _instPartial.TVFBaseFlt;
   int cofIndex = std::clamp(envLevelMax + (bptm3 << 8), 0, 0x7fff);
   cofIndex = std::min(cofIndex + 0xff, 0x7fff);
 
@@ -416,10 +476,15 @@ void TVF::_iterate_phase(void)
     }
   }
 
+  // See _init_freq_and_res(): only the mkII generation lets the parameter
+  // raise the cutoff above the partial's own base (PROVENANCE.md P-0133)
   int tmCF = _settings->get_param(PatchParam::TVFCutoffFreq, _partId);
-  tmCF = std::clamp(tmCF, 0xe, 0x50);
+  bool cofOffsetRaises =
+    _settings->generation() != ControlRom::SynthGen::SC55;
+  tmCF = std::clamp(tmCF, 0xe, cofOffsetRaises ? 0x7f : 0x50);
   int accCoFreq = std::clamp(_instPartial.TVFBaseFlt + (tmCF - 0x40), 0,
-                          (int) _instPartial.TVFBaseFlt);
+                             cofOffsetRaises ? 0x7f
+                                             : (int) _instPartial.TVFBaseFlt);
 
   uint16_t accDepth = _ipLevelInit + (accCoFreq << 8);
   accDepth = std::clamp((int) accDepth, 0, INT16_MAX);

@@ -133,6 +133,11 @@ public:
   void set_channels(int channels) { _channels = channels; }
   inline int channels(void) { return _channels; }
 
+  // Which generation of the hardware the loaded control ROM is; a few
+  // parameter responses differ between them
+  inline enum ControlRom::SynthGen generation(void)
+  { return _ctrlRom.generation(); }
+
   int get_acc_control_param(enum ControllerParam cp, int part)
   { part = std::clamp(part, 0, 15);
     return _accControlParams[part][static_cast<int>(cp)]; }

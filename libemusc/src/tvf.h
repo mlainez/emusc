@@ -86,6 +86,8 @@ private:
   int _envLevelMode;
   int _prevEnvLevel;
 
+  std::array<int, 256> _coFreq;    // Cutoff frequency for each sample
+
   uint8_t _key;
   int _velocity;
 
@@ -117,6 +119,8 @@ private:
 
   void _init_new_phase(enum Phase newPhase);
   void _iterate_phase(void);
+
+  void _smooth_cutoff(void);
 };
 
 }
