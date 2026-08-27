@@ -37,6 +37,22 @@ uint16_t Note::_instrument_index(ControlRom &ctrlRom, Settings *settings,
   if (settings->get_param(PatchParam::UseForRhythm, partId) == 0)
     return ctrlRom.variation(toneBank)[toneIndex];
 
+  // ToneNumber holds the drum set index on a rhythm part, but Part's control
+  // change handler writes the raw bank-select value there for every part, and
+  // set_program() only repairs it when update_drum_set() succeeds. A bank
+  // select followed by a program that is not a drum program therefore leaves a
+  // value of up to 127 here, and _drumSets holds about ten entries - so this
+  // read went out of bounds. It was reachable from an ordinary MIDI stream:
+  // the same illegal program produced three different renders for three
+  // different bank-select values, two of 256 stimuli were not reproducible
+  // between runs of the same binary, and one render crashed.
+  //
+  // An index with no drum set behind it has no sound to make, so it takes the
+  // same path as an undefined instrument: partial_count() and the Note
+  // constructor already treat 0xffff as silent.
+  if (toneBank >= ctrlRom.numDrumSets())
+    return 0xffff;
+
   return ctrlRom.drumSet(toneBank).preset[key];
 }
 
