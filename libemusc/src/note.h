@@ -50,6 +50,7 @@ public:
   // to a new note while this one fades out.
   void damp(float dBPerMillisecond);
 
+  uint8_t key(void) { return _key; }
   uint32_t serial(void) { return _serial; }
   bool is_releasing(void) { return _releasing; }
   bool is_damped(void) { return _damped; }

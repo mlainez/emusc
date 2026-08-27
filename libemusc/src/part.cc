@@ -267,6 +267,57 @@ int Part::steal_voice(uint32_t serial, float dBPerMillisecond)
 }
 
 
+// A drum set gives some of its sounds an assign group, and two sounds in the
+// same group cannot be heard at once: the SC-55mkII owner's manual prints
+// "[EXC n]" against them and says "Percussion sound of the same number will
+// not be heard at the same time" (p.88, and p.89 for the SFX and CM-64/32L
+// sets). The number it prints is the drum set's assign group byte, which
+// ControlRom already reads and Settings already publishes as
+// DrumParam::AssignGroupNumber, so the parameter is taken from Settings and
+// a GS drum setup edit changes the grouping as it should.
+//
+// Measured on both models: the sounding note is not stopped but faded out,
+// at 9.4 dB/ms on the SC-55mkII and 17.9 dB/ms on the SC-55, which is the
+// fade a voice that has been taken away gets (P-0080), so the same rate is
+// used here. Every ordered pair within a group behaves the same way, a note
+// against itself included: a closed hi-hat cuts an open one, an open one
+// cuts a closed one, and a second closed hi-hat cuts the first. Notes in
+// different groups, and notes with no group, never touch each other, and the
+// grouping does not reach across parts - a second part set to rhythm cuts
+// nothing on this one (PROVENANCE.md P-0085).
+int Part::choke_assign_group(uint8_t key, float dBPerMillisecond)
+{
+  uint8_t rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
+  if (rhythm == mode_Norm)
+    return 0;
+
+  uint8_t group = _settings->get_param(DrumParam::AssignGroupNumber,
+                                       rhythm - 1, key);
+  if (group == 0)                       // 0 means the sound is not grouped
+    return 0;
+
+  int numPartials = 0;
+
+  _notesMutex->lock();
+
+  for (auto &n : _notes) {
+    if (n->is_damped())
+      continue;
+
+    if (_settings->get_param(DrumParam::AssignGroupNumber,
+                             rhythm - 1, n->key()) != group)
+      continue;
+
+    numPartials += n->get_num_partials();
+    n->damp(dBPerMillisecond);
+  }
+
+  _notesMutex->unlock();
+
+  return numPartials;
+}
+
+
 // Note: Mute cancels all active keys in part, and all new keys are ignored
 int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial)
 {

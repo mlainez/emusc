@@ -67,6 +67,10 @@ public:
   bool steal_candidate(uint32_t &serial, bool &releasing);
   int steal_voice(uint32_t serial, float dBPerMillisecond);
 
+  // Rhythm parts only: silence every note sounding on this part that shares
+  // the new key's assign group. Returns the number of partials released.
+  int choke_assign_group(uint8_t key, float dBPerMillisecond);
+
   // MIDI Channel Voice Messages
   int set_program(uint8_t index, int8_t bank = -1, bool ignRxPC = false);
   int add_note(uint8_t key, uint8_t velocity, uint32_t serial = 0);

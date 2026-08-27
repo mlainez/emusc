@@ -183,6 +183,11 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity)
     if (needed <= 0)                     // Undefined tone: nothing will sound
       continue;
 
+    // A drum sound in an assign group silences the others in its group before
+    // it takes a voice of its own, so the partials it frees are available to
+    // it (SC-55mkII OM p.88-89; PROVENANCE.md P-0085)
+    p.choke_assign_group(key, _ctrlRom.voice_damp_rate());
+
     bool haveVoices = true;
     while (_partials_in_use() + needed > maxPolyphony) {
       if (_steal_partials(p) <= 0) {
