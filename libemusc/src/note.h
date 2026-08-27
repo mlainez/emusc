@@ -62,7 +62,8 @@ public:
 
   void update(void);
 
-  bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus);
+  bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+		      std::array<float, 256> &sendBus);
 
   int get_num_partials(void);
 

@@ -37,8 +37,11 @@ public:
   SystemEffects(Settings *settings);
   ~SystemEffects();
 
-  int apply(std::array<std::array<float, 256>, 2> &chorusBus,
-	    std::array<std::array<float, 256>, 2> &reverbBus,
+  // Both effects take a single input sample per frame, and the parts feed
+  // them their pre-pan signal (PROVENANCE.md P-0182), so the two input buses
+  // are mono. The outputs are stereo.
+  int apply(std::array<float, 256> &chorusBus,
+	    std::array<float, 256> &reverbBus,
 	    std::array<std::array<float, 256>, 2> &chorusOut,
 	    std::array<std::array<float, 256>, 2> &reverbOut);
   void update(void);

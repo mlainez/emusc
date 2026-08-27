@@ -172,7 +172,8 @@ void Note::update(void)
 }
 
 
-bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
+bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+			  std::array<float, 256> &sendBus)
 {
   bool finished[2] = {0, 0};
 
@@ -181,7 +182,7 @@ bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
     if  (_partial[p] == NULL)
       finished[p] = 1;
     else
-      finished[p] = _partial[p]->get_sample_set(dryBus);
+      finished[p] = _partial[p]->get_sample_set(dryBus, sendBus);
   }
 
   if (finished[0] == true && finished[1] == true)

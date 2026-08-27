@@ -46,7 +46,11 @@ public:
 	  WaveGenerator *LFO1, Settings *settings, int8_t partId);
   ~Partial();
 
-  bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus);
+  // dryBus accumulates the panned stereo signal; sendBus accumulates the same
+  // signal taken before the panner, for the effect sends (PROVENANCE.md
+  // P-0182).
+  bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+		      std::array<float, 256> &sendBus);
 
   void stop(void);
   void damp(float dBPerMillisecond);

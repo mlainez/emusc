@@ -43,9 +43,12 @@ public:
   Part(uint8_t id, Settings *settings, ControlRom &cRom, WaveRom &wRom);
   ~Part();
 
+  // The dry bus is stereo; the two effect buses are mono, because the send is
+  // taken from the part's signal before its panner (PROVENANCE.md P-0182) and
+  // the chorus and the reverb each take a single input sample.
   int get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
-		     std::array<std::array<float, 256>, 2> &chrousBus,
-		     std::array<std::array<float, 256>, 2> &reverbBus);
+		     std::array<float, 256> &chorusBus,
+		     std::array<float, 256> &reverbBus);
   void update(void);
 
   int get_last_peak_sample(void);

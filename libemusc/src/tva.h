@@ -43,7 +43,11 @@ public:
 
   void update(bool reset = false);
   void apply(double *sample);
-  void apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus);
+  // dryBus receives the partial's panned stereo output. sendBuf receives the
+  // same block as it stands *before* the panner, which is where the reverb and
+  // chorus sends are taken from (PROVENANCE.md P-0182).
+  void apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+			std::array<float, 256> &sendBuf);
 
   void note_off();
 

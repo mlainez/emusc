@@ -501,11 +501,10 @@ void Synth::_process_samples(void)
   _systemEffects->update();
 
   // Clear all relative buffers before accumulating new samples
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 2; i++)
     _dryBus[i].fill(0.0f);
-    _chorusBus[i].fill(0.0f);
-    _reverbBus[i].fill(0.0f);
-  }
+  _chorusBus.fill(0.0f);
+  _reverbBus.fill(0.0f);
   std::fill(_hostSampleBufL.begin(), _hostSampleBufL.end(), 0.0f);
   std::fill(_hostSampleBufR.begin(), _hostSampleBufR.end(), 0.0f);
 

@@ -53,8 +53,8 @@ SystemEffects::~SystemEffects()
 
 
 // System Effects always produce 2 channel & 32kHz (native) output.
-int SystemEffects::apply(std::array<std::array<float, 256>, 2> &chorusBus,
-			 std::array<std::array<float, 256>, 2> &reverbBus,
+int SystemEffects::apply(std::array<float, 256> &chorusBus,
+			 std::array<float, 256> &reverbBus,
 			 std::array<std::array<float, 256>, 2> &chorusOut,
 			 std::array<std::array<float, 256>, 2> &reverbOut)
 {
@@ -62,14 +62,13 @@ int SystemEffects::apply(std::array<std::array<float, 256>, 2> &chorusBus,
 
   for (int i = 0; i < 256; i ++) {
     float cSample[2] = { 0, 0 };
-    float cInput = 0.5f * (chorusBus[0][i] + chorusBus[1][i]);
-    _chorus->process_sample(cInput, cSample, &cReverbSend);
+    _chorus->process_sample(chorusBus[i], cSample, &cReverbSend);
 
     chorusOut[0][i] = cSample[0];
     chorusOut[1][i] = cSample[1];
 
     float rSample[2] = { 0, 0 };
-    float rInput = 0.5f * (reverbBus[0][i] + reverbBus[1][i]) + cReverbSend;
+    float rInput = reverbBus[i] + cReverbSend;
     _reverb->process_sample(rInput, rSample);
 
     reverbOut[0][i] = rSample[0];

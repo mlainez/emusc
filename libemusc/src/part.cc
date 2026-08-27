@@ -51,8 +51,8 @@ Part::~Part()
 
 // All Sound Canvas modules generates 256 samples per control update.
 int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
-			 std::array<std::array<float, 256>, 2> &chorusBus,
-			 std::array<std::array<float, 256>, 2> &reverbBus)
+			 std::array<float, 256> &chorusBus,
+			 std::array<float, 256> &reverbBus)
 {
   _notesMutex->lock();
 
@@ -81,10 +81,18 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     // either part order. Sends are per part and the bus is a sum.
     std::array<std::array<float, 256>, 2> partBus = {};
 
+    // The send is taken from the part's signal as it stands before the part's
+    // panner, so it is collected separately from the panned stereo block.
+    // Measured on the SC-55mkII (PROVENANCE.md P-0182): with a fixed reverb
+    // send, sweeping CC10 from 0 to 127 leaves the reverb's level unchanged to
+    // 0.00 dB at every one of nine pan positions, and the chorus with it,
+    // while the dry signal pans as it should.
+    std::array<float, 256> partSend = {};
+
     // Get next sample from active notes, delete those which are finished
     std::list<Note*>::iterator itr = _notes.begin();
     while (itr != _notes.end()) {
-      bool finished = (*itr)->get_sample_set(partBus);
+      bool finished = (*itr)->get_sample_set(partBus, partSend);
 
       if (finished) {
  //      std::cout << "Both partials have finished -> delete note" << std::endl;
@@ -104,13 +112,11 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / 128.0f;
     float reverbSL = _settings->get_param(PatchParam::ReverbSendLevel, _id) / 128.0f;
 
-    for (int c = 0; c < 2; c++) {
-      for (int i = 0; i < 256; i++) {
-        float sample = partBus[c][i];
-        dryBus[c][i]    += sample;
-        chorusBus[c][i] += sample * chorusSL;
-        reverbBus[c][i] += sample * reverbSL;
-      }
+    for (int i = 0; i < 256; i++) {
+      dryBus[0][i] += partBus[0][i];
+      dryBus[1][i] += partBus[1][i];
+      chorusBus[i] += partSend[i] * chorusSL;
+      reverbBus[i] += partSend[i] * reverbSL;
     }
   }
 

@@ -112,18 +112,20 @@ Partial::~Partial()
 }
 
 
-bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
+bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+			     std::array<float, 256> &sendBus)
 {
   if (_tva->finished() || _dampComplete)
     return 1;
 
   std::array<std::array<float, 256>, 2> partialBuf = {};
+  std::array<float, 256> partialSend = {};
   _waveOscillator->get_sample_set(_pitch,
                                   _settings->get_pitchBend_factor(_partId),
                                   partialBuf[0]);
 
   _tvf->apply_sample_set(partialBuf[0]);
-  _tva->apply_sample_set(partialBuf);
+  _tva->apply_sample_set(partialBuf, partialSend);
 
   // The oscillator reports the end of a non-looping sample while it is still
   // filling the current control block. Terminating the TVA from inside that
@@ -145,6 +147,7 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
     for (int i = 0; i < 256; i++) {
       partialBuf[0][i] *= _dampGain;
       partialBuf[1][i] *= _dampGain;
+      partialSend[i]   *= _dampGain;
       _dampGain *= _dampFactor;
     }
 
@@ -155,6 +158,7 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
   for (int i = 0; i < 256; i++) {
     dryBus[0][i] += partialBuf[0][i];
     dryBus[1][i] += partialBuf[1][i];
+    sendBus[i]   += partialSend[i];
   }
 
   return 0;

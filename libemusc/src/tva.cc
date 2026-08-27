@@ -80,7 +80,8 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
 // TVA consists of two values: dynamic volume corrections and envelope level.
 // Each of these levels have their own "mode" variable controlling how they are
 // interpolated / smoothed across and inside control loops of 256 samples.
-void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
+void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
+			   std::array<float, 256> &sendBuf)
 {
   auto norm = [](float v) { return v / 32768.0f; };
   _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), _slewEnvGain,
@@ -90,8 +91,16 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus)
   float panL = _panpotL / 127.0f;
   float panR = _panpotR / 127.0f;
 
+  // The amplified sample before the panner is the signal the effect sends are
+  // taken from, so it is handed back separately. Measured on the SC-55mkII
+  // (PROVENANCE.md P-0182): sweeping a part's pan across CC10 = 0..127 with a
+  // fixed reverb send leaves the reverb's level unchanged to 0.00 dB, and the
+  // chorus likewise, while the dry signal pans normally. Taking the send from
+  // the panned signal instead makes it vary with pan position by 1.5 dB and
+  // lose 4.6 dB at centre, since the pan table's centre gain is 75/127.
   for (int i = 0; i < 256; i++) {
     float sample = dryBus[0][i] * _slewDynGain[i] * _slewEnvGain[i];
+    sendBuf[i] = sample;
     dryBus[0][i] = sample * panR;
     dryBus[1][i] = sample * panL;
   }

@@ -165,8 +165,11 @@ private:
   int _hostSampleBufWIndex;
 
   std::array<std::array<float, 256>, 2> _dryBus;
-  std::array<std::array<float, 256>, 2> _chorusBus;
-  std::array<std::array<float, 256>, 2> _reverbBus;
+
+  // Mono: each part contributes its signal from before its own panner
+  // (PROVENANCE.md P-0182), and each effect takes one input sample per frame.
+  std::array<float, 256> _chorusBus;
+  std::array<float, 256> _reverbBus;
 
   std::array<std::array<float, 256>, 2> _chorusOut;
   std::array<std::array<float, 256>, 2> _reverbOut;
