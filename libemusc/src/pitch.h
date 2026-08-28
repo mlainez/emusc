@@ -95,6 +95,7 @@ private:
   int _samplePitchOffsetSust;
   int _samplePitchOffsetActive;
   int _portamentoDelta;
+  int _portamentoRem;
   int _releasePitch;
   int _targetPitch;
 
@@ -119,9 +120,26 @@ private:
   // The pitch the last note on each part settled at, which is what an ordinary
   // portamento glides FROM. The slot ring above is a voice-slot mechanism and
   // says nothing about which part a slot belonged to.
+  //
+  // Two arrays, not one, because a note has up to TWO partials and both must
+  // glide from the SAME predecessor. With a single array the first partial
+  // overwrote the source before the second one read it, so the second partial
+  // glided from its own note - a delta of nearly zero - and started at the
+  // target pitch while its sibling glided (PROVENANCE.md P-0278). Every
+  // two-partial tone was affected; Lead 2 (sawtooth) is one, and it is the
+  // tone R10's artefact glides on.
   static std::array<int, 16> _lastPitchOnPart;
+  static std::array<int, 16> _pendingPitchOnPart;
 
   Pitch();
+
+public:
+  // Called once by Note before its partials are constructed: the pitch the
+  // PREVIOUS note left behind becomes the source every partial of this note
+  // glides from.
+  static void begin_note(int partId);
+
+private:
 
   void _init_envelope(uint8_t envelope);
   int _init_portamento(bool portamento, bool legato);

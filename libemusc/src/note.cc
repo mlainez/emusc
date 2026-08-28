@@ -18,6 +18,7 @@
 
 
 #include "note.h"
+#include "pitch.h"
 
 #include <bitset>
 #include <iostream>
@@ -122,6 +123,10 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   // partials between velocities 115 and 116 (PROVENANCE.md, anomalies lane
   // pending B; P-0101). The level velocity rescale above the low bound is
   // TVA's (tva.cc), which sees the raw velocity here.
+  // Once per note, before any partial: fix the pitch that every partial of
+  // this note will glide from (PROVENANCE.md P-0278).
+  Pitch::begin_note(partId);
+
   std::bitset<2> partialBits(ctrlRom.instrument(instrumentIndex).partialsUsed);
   for (int p = 0; p < 2; p++) {
     if (!partialBits.test(p))

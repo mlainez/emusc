@@ -41,6 +41,11 @@ std::array<int, 16> Pitch::_lastPitchOnPart = [] {
   a.fill(-1);                       // -1: this part has not played a note yet
   return a;
 }();
+std::array<int, 16> Pitch::_pendingPitchOnPart = [] {
+  std::array<int, 16> a{};
+  a.fill(-1);
+  return a;
+}();
 std::array<int, 28> Pitch::_portaBasePitch = {};
 int Pitch::_pbpIndex = -1;
 
@@ -337,6 +342,13 @@ void Pitch::_apply_scale_tuning_bp(void)
 }
 
 
+void Pitch::begin_note(int partId)
+{
+  if (partId >= 0 && partId < 16)
+    _lastPitchOnPart[partId] = _pendingPitchOnPart[partId];
+}
+
+
 int Pitch::_init_portamento(bool portamento, bool legato)
 {
   int delta = 0;
@@ -406,11 +418,16 @@ void Pitch::_init_envelope(uint8_t velocity)
   bool usePortamento = pOn ? true : false;
   _portamentoDelta = usePortamento ? _init_portamento(usePortamento, 0) : 0;
 
-  // Remember where this note sits, for the next note on this part to glide
-  // from. After the glide is computed, so a note glides from its predecessor
-  // and not from itself.
+
+
+  // Remember where this note sits, for the NEXT note on this part to glide
+  // from. Written to the pending slot, never to the live one: both partials of
+  // this note must still read the predecessor's pitch, and Note::Note promotes
+  // pending to live once per note before any partial is built.
   if (_partId >= 0 && _partId < 16)
-    _lastPitchOnPart[_partId] = _portaBasePitch[_pbpIndex];
+    _pendingPitchOnPart[_partId] = _portaBasePitch[_pbpIndex];
+
+  _portamentoRem = 0;
 
 
 
@@ -620,8 +637,30 @@ void Pitch::_iterate_phase(void)
     int pTime = _settings->get_param(PatchParam::PortamentoTime, _partId);
     int pRate = _LUT.PortamentoRate[pTime];
 
-    int pStep = 1 * pRate; //TODO: Move to central location (Settings?) for
-                           //       coordination between notes
+    // Two corrections, both measured against the machine on an ISOLATED glide
+    // whose predecessor had already fallen silent (PROVENANCE.md P-0278):
+    //
+    //   our ramp arrived 10 % LATE at every rate from CC5 48 upward
+    //     (+13, +11, +10, +10, +10 % at CC5 48, 64, 80, 96, 112), and
+    //   the machine's DESCENDING glide takes 20 % LONGER than its ascending
+    //     one (+20.9, +20.6, +20.1, +20.0 % at CC5 64, 80, 96, 112), which we
+    //     did not do at all - our two directions were within 2 % of each other.
+    //
+    // Those two together predict the -8 % we measured descending, which is how
+    // the pair was checked rather than fitted twice.
+    //
+    // The scale is applied in 1/128ths with the remainder carried between
+    // blocks: at CC5 112 pRate is small enough that plain integer division
+    // would throw the correction away entirely.
+    //
+    // _portamentoDelta is positive when the new note is BELOW the last one, so
+    // the first branch below is the descending case.
+    int num = ((_portamentoDelta >> 16) >= 0) ? 117 : 141;
+    int scaled = pRate * num + _portamentoRem;
+    int pStep = scaled >> 7;
+    _portamentoRem = scaled & 127;
+    if (pStep < 1)
+      pStep = 1;
 
     if ((_portamentoDelta >> 16) >= 0) {
       _portamentoDelta = std::max(_portamentoDelta - pStep, 0);
