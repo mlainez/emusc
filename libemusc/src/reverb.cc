@@ -37,6 +37,9 @@ Reverb::Reverb(Settings *settings)
     _gLoop(0.0f),
     _outGain(0.0f),
     _character(-1),
+    _pendingCharacter(-1),
+    _fadeRemaining(0),
+    _silenceRemaining(0),
     _preLPF(-1),
     _reverbTime(-1),
     _delayFeedback(-1)
@@ -47,9 +50,25 @@ Reverb::Reverb(Settings *settings)
 
 void Reverb::update(void)
 {
+  // A change of character starts a fade-out; the switch itself happens when
+  // the fade finishes. Measured on the SC-55mkII by writing a new character
+  // under a sounding tail: the wet falls from 0 to -27 dB over about 165 ms
+  // and then sits at the measurement floor, and the render stops depending on
+  // WHICH new character was chosen until 470 ms after the write - two
+  // different new characters are sample-identical until then. A linear
+  // amplitude ramp over 165 ms predicts -3.9, -11.3 and silence at 60, 120
+  // and 180 ms where the machine gives -4.4, -10.9 and -26.7.
+  //
+  // Writing the character it already has does nothing audible, so the fade is
+  // only armed on an actual change.
   int character = _settings->get_param(PatchParam::ReverbCharacter);
-  if (character != _character) {
-    _set_character(character);
+  if (character != _character && character != _pendingCharacter) {
+    if (_character < 0) {                 // first time: no tail to fade
+      _set_character(character);
+    } else {
+      _pendingCharacter = character;
+      _fadeRemaining = _fadeOutSamples;
+    }
     _reverbTime = -1;
     _delayFeedback = -1;
   }
@@ -74,6 +93,23 @@ void Reverb::update(void)
 void Reverb::process_sample(float input, float output[2])
 {
   if (_character < 0 || _character > 7) {
+    output[0] = output[1] = 0;
+    return;
+  }
+
+  // The silent window between the old character and the new one. Nothing is
+  // processed, so the new character's buffer is still empty when it starts and
+  // fills from nothing - which is what makes the new reverb appear gradually
+  // rather than at full level.
+  if (_silenceRemaining > 0) {
+    if (--_silenceRemaining == 0) {
+      int c = _pendingCharacter;
+      _pendingCharacter = -1;
+      _set_character(c);               // selects the registers and clears state
+      _reverbTime = -1;
+      _delayFeedback = -1;
+      update();                        // reverb time and level for the new one
+    }
     output[0] = output[1] = 0;
     return;
   }
@@ -160,8 +196,19 @@ void Reverb::process_sample(float input, float output[2])
 
   _sweepIndex = (_sweepIndex - 1) & rBufferMask;
 
-  output[0] = wetL * _outGain;
-  output[1] = wetR * _outGain;
+  float fade = 1.0f;
+  if (_fadeRemaining > 0) {
+    fade = (float) _fadeRemaining / (float) _fadeOutSamples;
+    if (--_fadeRemaining == 0) {
+      _silenceRemaining = _silenceSamples;
+      std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
+      _dampA = _dampB = 0.0f;
+      _preLpfState = 0.0f;
+    }
+  }
+
+  output[0] = wetL * _outGain * fade;
+  output[1] = wetR * _outGain * fade;
 }
 
 

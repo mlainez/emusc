@@ -131,6 +131,16 @@ private:
   float _outGain;                // Level / 32 (30][2]/[3] hi / 32)
 
   int _character;
+  int _pendingCharacter;
+
+  // A character change does not take effect at once: the machine fades the
+  // old tail out, goes silent, and only then starts the new character.
+  // Measured on the SC-55mkII, both counted in samples at 32 kHz.
+  static constexpr int _fadeOutSamples = 5280;    // 165 ms
+  static constexpr int _silenceSamples = 9760;    // to 470 ms after the write
+  int _fadeRemaining;
+  int _silenceRemaining;
+
   int _preLPF;
   int _reverbTime;
   int _delayFeedback;
