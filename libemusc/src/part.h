@@ -118,6 +118,10 @@ private:
 
   float _lastPeakSample;
 
+  // A bank select is LATCHED, not applied: the hardware keeps the tone it has
+  // until the next program change. -1 means nothing is waiting.
+  int _pendingBank;
+
   enum Mode {
     mode_Norm  = 0,
     mode_Drum1 = 1,

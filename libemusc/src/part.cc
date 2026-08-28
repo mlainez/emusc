@@ -31,6 +31,7 @@ Part::Part(uint8_t id, Settings *settings, ControlRom &ctrlRom, WaveRom &waveRom
   : _id(id),
     _settings(settings),
     _lastPeakSample(0),
+    _pendingBank(-1),
     _ctrlRom(ctrlRom),
     _waveRom(waveRom),
     _lastPitchBendRange(2)
@@ -435,9 +436,18 @@ int Part::control_change(uint8_t msgId, uint8_t value)
   bool updateGUI = false;
 
   if (msgId == 0) {                                    // Bank select
+    // LATCHED, not applied. The hardware keeps the tone it is playing until
+    // the next program change, and the SC-55mkII owner's manual (p.90) says
+    // so. Measured on the SC-55mkII: with the part on bank 0 program 4 and
+    // bank 8 defined for it (Detuned EP 1), a file that sends the program and
+    // then a bare CC0 = 8 renders BYTE-IDENTICALLY to one that never sent the
+    // bank at all, while a file that sends the bank and then a program change
+    // - in either order relative to each other - gets the bank-8 tone. Writing
+    // ToneNumber here made the bare bank select take effect at the next NOTE,
+    // so five corpus files played the wrong instrument at 29 places.
     // TODO: This check is only available for SC-55mkII+
     if (_settings->get_param(PatchParam::RxBankSelect, _id))
-      _settings->set_param(PatchParam::ToneNumber, value, _id);
+      _pendingBank = value;
 
   } else if (msgId == 1) {                             // Modulation
     if (_settings->get_param(PatchParam::RxModulation, _id))
@@ -705,6 +715,7 @@ void Part::reset(void)
   _partialReserve = 2;
 
   _lastPeakSample = 0;
+  _pendingBank = -1;
 }
 
 
@@ -716,8 +727,12 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
 		      !_settings->get_param(SystemParam::RxInstrumentChange)))
     return -1;
 
-  if (bank < 0)
-    bank = _settings->get_param(PatchParam::ToneNumber, _id);
+  if (bank < 0) {
+    // A latched bank select is spent here, and nowhere else.
+    bank = (_pendingBank >= 0) ? _pendingBank
+                               : _settings->get_param(PatchParam::ToneNumber, _id);
+    _pendingBank = -1;
+  }
 
   _settings->set_param(PatchParam::ToneNumber2, index, _id);
 
