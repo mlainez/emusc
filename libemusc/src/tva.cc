@@ -641,9 +641,22 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   _phaseShape[5] = (_instPartial.TVAEnvT5 & 0x80) ? 0 : 1;
 
   // Adjust time for Envelope Time Key Follow including Envelope Time Key Preset
-  set_time_key_follow(Envelope::Type::TVA, 0, _key,
+  // On a rhythm part the envelope time key follow sees the drum set's play
+  // key (DrumParam::PlayKeyNumber), not the note number, exactly as the
+  // pitch chain already does. Measured on the SC-55mkII STANDARD set, where
+  // Crash 1 (note 49), Splash (55) and Crash 2 (57) are one instrument
+  // record (time key follow byte 59) at play keys 60, 69 and 61: each note's
+  // single-strike decay slope matched the reference only under the play key
+  // (candidate/reference slope ratios 0.898/0.889/0.957 before, 1.001/0.979/
+  // 1.006 after), the toms' latent error of up to 17 dB on mk1 closed with
+  // it, and the two cymbals with key follow 0x40 (Ride 1, China) were exact
+  // either way (PROVENANCE.md, tone-records lane).
+  int tkfKey = _key;
+  if (_drumSet)
+    tkfKey = _settings->get_param(DrumParam::PlayKeyNumber, _drumSet - 1, _key);
+  set_time_key_follow(Envelope::Type::TVA, 0, tkfKey,
                       _instPartial.TVAETKeyF14 - 0x40, _instPartial.TVAETKeyFP14);
-  set_time_key_follow(Envelope::Type::TVA, 1, _key,
+  set_time_key_follow(Envelope::Type::TVA, 1, tkfKey,
                       _instPartial.TVAETKeyF5 - 0x40, _instPartial.TVAETKeyFP5);
 
   // Adjust time for Envelope Time Velocity Sensitivity
