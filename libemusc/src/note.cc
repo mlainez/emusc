@@ -82,6 +82,25 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
 {
   _partial[0] = _partial[1] = NULL;
 
+  // Every drum instrument carries its own effect depths in the drum set, and
+  // the part's send is scaled by them. Measured on the SC-55mkII (emusc-match
+  // PROVENANCE.md P-xxxx): with the part's reverb send full open, the two
+  // kicks and the three hi-hats sit 11.7-12.2 dB below the snare, the crashes
+  // and the rides, which agree with us to 0.7 dB. The control ROM gives those
+  // instruments Reverb Depth 0x20 and 0x1f against 0x7f for the rest, and
+  // 20*log10(32/127) is -11.98 dB. libEmuSC already reads this table into
+  // Settings and reads it back for a SysEx write - it just never applied it.
+  //
+  // A tonal part has no such table and sends at the part's level alone.
+  _reverbDepth = _chorusDepth = 1.0f;
+  uint8_t rhythm = settings->get_param(PatchParam::UseForRhythm, partId);
+  if (rhythm != 0) {
+    _reverbDepth =
+      settings->get_param(DrumParam::ReverbDepth, rhythm - 1, key) / 127.0f;
+    _chorusDepth =
+      settings->get_param(DrumParam::ChorusDepth, rhythm - 1, key) / 127.0f;
+  }
+
   // 1. Find correct instrument index for note
   uint16_t instrumentIndex = _instrument_index(ctrlRom, settings, partId, key);
 
@@ -197,16 +216,26 @@ void Note::update(void)
 
 
 bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
-			  std::array<float, 256> &sendBus)
+			  std::array<float, 256> &reverbSend,
+			  std::array<float, 256> &chorusSend)
 {
   bool finished[2] = {0, 0};
+
+  // The partials write their send into this note's own block, so the drum
+  // instrument's depths can be applied before it joins the part's send.
+  std::array<float, 256> noteSend = {};
 
   // Iterate both partials
   for (int p = 0; p < 2; p ++) {
     if  (_partial[p] == NULL)
       finished[p] = 1;
     else
-      finished[p] = _partial[p]->get_sample_set(dryBus, sendBus);
+      finished[p] = _partial[p]->get_sample_set(dryBus, noteSend);
+  }
+
+  for (int i = 0; i < 256; i ++) {
+    reverbSend[i] += noteSend[i] * _reverbDepth;
+    chorusSend[i] += noteSend[i] * _chorusDepth;
   }
 
   if (finished[0] == true && finished[1] == true)

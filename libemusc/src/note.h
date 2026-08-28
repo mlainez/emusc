@@ -66,7 +66,8 @@ public:
   void update(void);
 
   bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
-		      std::array<float, 256> &sendBus);
+		      std::array<float, 256> &reverbSend,
+		      std::array<float, 256> &chorusSend);
 
   int get_num_partials(void);
 
@@ -87,6 +88,11 @@ private:
 
   static uint16_t _instrument_index(ControlRom &ctrlRom, Settings *settings,
                                     int8_t partId, uint8_t key);
+
+  // Each drum instrument sends to the effects at its own depth, so the two
+  // sends have to be scaled per note rather than per part. 1.0 on a tonal part.
+  float _reverbDepth;
+  float _chorusDepth;
 
   const double _7bScale;     // Constant: 1 / 127
 

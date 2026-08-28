@@ -87,12 +87,16 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     // send, sweeping CC10 from 0 to 127 leaves the reverb's level unchanged to
     // 0.00 dB at every one of nine pan positions, and the chorus with it,
     // while the dry signal pans as it should.
-    std::array<float, 256> partSend = {};
+    // Two of them, because a drum instrument's reverb and chorus depths are
+    // separate bytes in the drum set and need not agree.
+    std::array<float, 256> partSendReverb = {};
+    std::array<float, 256> partSendChorus = {};
 
     // Get next sample from active notes, delete those which are finished
     std::list<Note*>::iterator itr = _notes.begin();
     while (itr != _notes.end()) {
-      bool finished = (*itr)->get_sample_set(partBus, partSend);
+      bool finished = (*itr)->get_sample_set(partBus, partSendReverb,
+                                            partSendChorus);
 
       if (finished) {
  //      std::cout << "Both partials have finished -> delete note" << std::endl;
@@ -115,8 +119,8 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     for (int i = 0; i < 256; i++) {
       dryBus[0][i] += partBus[0][i];
       dryBus[1][i] += partBus[1][i];
-      chorusBus[i] += partSend[i] * chorusSL;
-      reverbBus[i] += partSend[i] * reverbSL;
+      chorusBus[i] += partSendChorus[i] * chorusSL;
+      reverbBus[i] += partSendReverb[i] * reverbSL;
     }
   }
 
