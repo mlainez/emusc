@@ -571,20 +571,36 @@ int Part::control_change(uint8_t msgId, uint8_t value)
     updateGUI = true;
 
   } else if (msgId == 98) {                            // NRPN LSB
-    if (_settings->get_param(PatchParam::RxNRPN, _id))
+    if (_settings->get_param(PatchParam::RxNRPN, _id)) {
       _settings->set_param(PatchParam::NRPN_LSB, value, _id);
+      _settings->set_param(PatchParam::RPN_MSB, (uint8_t) 0x7f, _id);
+      _settings->set_param(PatchParam::RPN_LSB, (uint8_t) 0x7f, _id);
+    }
 
   } else if (msgId == 99) {                            // NRPN MSB
-    if (_settings->get_param(PatchParam::RxNRPN, _id))
+    if (_settings->get_param(PatchParam::RxNRPN, _id)) {
       _settings->set_param(PatchParam::NRPN_MSB, value, _id);
+      _settings->set_param(PatchParam::RPN_MSB, (uint8_t) 0x7f, _id);
+      _settings->set_param(PatchParam::RPN_LSB, (uint8_t) 0x7f, _id);
+    }
 
+  // Selecting an RPN deselects the NRPN and the other way round: there is one
+  // data-entry target, not two. Without this a file that used an NRPN and
+  // later an RPN left both selected, and the next CC6 wrote BOTH of them -
+  // measured at 2203.88 cents of pitch error when it fires (G-029).
   } else if (msgId == 100) {                           // RPN LSB
-    if (_settings->get_param(PatchParam::RxRPN, _id))
+    if (_settings->get_param(PatchParam::RxRPN, _id)) {
       _settings->set_param(PatchParam::RPN_LSB, value, _id);
+      _settings->set_param(PatchParam::NRPN_MSB, (uint8_t) 0x7f, _id);
+      _settings->set_param(PatchParam::NRPN_LSB, (uint8_t) 0x7f, _id);
+    }
 
   } else if (msgId == 101) {                           // RPN MSB
-    if (_settings->get_param(PatchParam::RxRPN, _id))
+    if (_settings->get_param(PatchParam::RxRPN, _id)) {
       _settings->set_param(PatchParam::RPN_MSB, value, _id);
+      _settings->set_param(PatchParam::NRPN_MSB, (uint8_t) 0x7f, _id);
+      _settings->set_param(PatchParam::NRPN_LSB, (uint8_t) 0x7f, _id);
+    }
 
   // Channel Mode messages
   } else if (msgId == 120) {                           // All Sounds Off

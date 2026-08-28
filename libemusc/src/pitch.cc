@@ -575,6 +575,27 @@ void Pitch::_iterate_phase(void)
   int masterTune = _settings->get_param_32nib(SystemParam::Tune) - 0x400;
   _targetPitch = std::max(_targetPitch + masterTune, 0);
 
+  // RPN 2, coarse tune, and RPN 1, fine tune. libEmuSC stored both and read
+  // back neither, so a part detuned by up to three semitones played in tune -
+  // and 6 of the 118 corpus files ask for it.
+  //
+  // Both laws measured on the SC-55mkII (emusc-match PROVENANCE.md P-xxxx) by
+  // reading the fundamental of a held tone. Coarse is exactly semitones:
+  // -24, -8, -1, +1, +8 and +24 give -2402.22, -797.24, -99.56, +100.05,
+  // +801.35 and +2404.05 cents, the residual being the estimator's own
+  // resolution. Fine is the 14-bit value read as +-100 cents: 0x00, 0x20,
+  // 0x30, 0x50, 0x60 and 0x7f give -99.43, -49.59, -24.73, +24.92, +50.22 and
+  // +98.31 against -100, -50, -25, +25, +50 and +98.4, and the LSB carries -
+  // 0x40 0x40 gives +0.58 cents where the law says +0.78.
+  //
+  // _targetPitch is in tenths of a cent, the same currency as master tune.
+  int coarse = _settings->get_param(PatchParam::PitchCoarseTune, _partId) - 0x40;
+  int fine =
+    ((_settings->get_param(PatchParam::PitchFineTune, _partId) << 7) |
+     _settings->get_param(PatchParam::PitchFineTune2, _partId)) - 0x2000;
+  if (coarse || fine)
+    _targetPitch = std::max(_targetPitch + coarse * 1000 + (fine * 1000) / 0x2000, 0);
+
   if (_portamentoDelta != 0) {
     int pTime = _settings->get_param(PatchParam::PortamentoTime, _partId);
     int pRate = _LUT.PortamentoRate[pTime];
