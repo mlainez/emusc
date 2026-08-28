@@ -504,7 +504,14 @@ int Part::control_change(uint8_t msgId, uint8_t value)
 
   } else if (msgId == 10) {                            // Panpot
     if (_settings->get_param(PatchParam::RxPanpot, _id)) {
-      _settings->set_param(PatchParam::PartPanpot, value, _id);
+      // Value 0 of the PART PARAMETER means random pan, and Roland documents
+      // it that way - but CC10 = 0 is hard left, and the two write the same
+      // parameter. Measured on the SC-55mkII: CC10 = 0 and CC10 = 1 produce
+      // the SAME render, -30.8 dB left and silence right, while the SysEx
+      // parameter set to 0 does randomise. So the controller is clamped to a
+      // minimum of 1 on its way in, and only the SysEx path can ask for RND.
+      _settings->set_param(PatchParam::PartPanpot,
+                           (uint8_t) std::max<int>(value, 1), _id);
       updateGUI = true;
     }
 
