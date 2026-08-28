@@ -84,7 +84,7 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
 
   // Every drum instrument carries its own effect depths in the drum set, and
   // the part's send is scaled by them. Measured on the SC-55mkII (emusc-match
-  // PROVENANCE.md P-xxxx): with the part's reverb send full open, the two
+  // PROVENANCE.md P-0239): with the part's reverb send full open, the two
   // kicks and the three hi-hats sit 11.7-12.2 dB below the snare, the crashes
   // and the rides, which agree with us to 0.7 dB. The control ROM gives those
   // instruments Reverb Depth 0x20 and 0x1f against 0x7f for the rest, and

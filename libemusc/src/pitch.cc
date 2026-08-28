@@ -588,7 +588,7 @@ void Pitch::_iterate_phase(void)
   // back neither, so a part detuned by up to three semitones played in tune -
   // and 6 of the 118 corpus files ask for it.
   //
-  // Both laws measured on the SC-55mkII (emusc-match PROVENANCE.md P-xxxx) by
+  // Both laws measured on the SC-55mkII (emusc-match PROVENANCE.md P-0242) by
   // reading the fundamental of a held tone. Coarse is exactly semitones:
   // -24, -8, -1, +1, +8 and +24 give -2402.22, -797.24, -99.56, +100.05,
   // +801.35 and +2404.05 cents, the residual being the estimator's own

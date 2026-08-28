@@ -119,37 +119,32 @@ int Synth::_partials_in_use(void)
 }
 
 
-// Take one partial from a sounding voice so that a note on the requesting
-// part can have it. Returns the number of partials released, 0 if none may be
-// taken. The rule was measured on both models:
+// Take one partial from a sounding voice so that a new note can have it.
+// Returns the number of partials released, 0 if none may be taken. Measured
+// on both models (PROVENANCE.md P-0077..P-0080 and the cross-part entries
+// this change cites):
 //
-//  * a part that is already using more partials than its own voice reserve
-//    takes the partial back from itself, even when other parts have voices
-//    that are older or already in their release phase;
-//  * otherwise the partial comes from the parts that are over their reserve:
-//    a voice already released before a voice still held, oldest first;
-//  * if no part is over its reserve there is nothing to take and the note
-//    does not sound at all.
+//  * the victim is chosen among the parts using more partials than their own
+//    voice reserve, and it is the one with the highest part number, counted
+//    in the order of the voice-reserve table (40 01 10, SC-55mkII OM p.98):
+//    part 16 first, down through part 1, with the rhythm part -- part 10,
+//    the table's first byte -- given up last of all. The part asking for the
+//    voice gets no preference, and neither note age nor release state plays
+//    any role in choosing the part;
+//  * within the chosen part, a voice already in its release phase goes
+//    before a voice still held, and the oldest goes first in each group;
+//  * a part at or below its reserve is never taken from: when no part is
+//    over its reserve, there is nothing to take and the new note does not
+//    sound at all.
 //
 // The reserve defaults sum to 24 on both models, so on the SC-55mkII four
 // partials are free for whichever part asks first (SC-55 OM p.79,
 // SC-55mkII OM p.98; PROVENANCE.md P-0077, P-0078, P-0079).
-int Synth::_steal_partials(Part &requester)
+int Synth::_steal_partials(void)
 {
-  uint32_t serial = 0;
-  bool releasing = false;
-
-  if (requester.get_num_partials() >
-      _settings->get_partial_reserve(requester.id()) &&
-      requester.steal_candidate(serial, releasing)) {
-    int freed = requester.steal_voice(serial, _ctrlRom.voice_damp_rate());
-    if (freed > 0)
-      return freed;
-  }
-
   Part *victim = NULL;
+  int victimRank = -1;
   uint32_t victimSerial = 0;
-  bool victimReleasing = false;
 
   for (auto &p: _parts) {
     if (p.get_num_partials() <= _settings->get_partial_reserve(p.id()))
@@ -160,11 +155,17 @@ int Synth::_steal_partials(Part &requester)
     if (!p.steal_candidate(s, r))
       continue;
 
-    if (!victim || (r && !victimReleasing) ||
-        (r == victimReleasing && s < victimSerial)) {
+    // The part's number in the voice-reserve table's order: part 10 (the
+    // rhythm part, id 9) is the table's byte 0, parts 1-9 are bytes 1-9 and
+    // parts 11-16 are bytes 10-15.
+    int rank = (p.id() == 9) ? 0 : (p.id() < 9 ? p.id() + 1 : p.id());
+
+    (void) r;                           // the release state picks the voice
+                                        // within the part, never the part
+    if (rank > victimRank) {
       victim = &p;
+      victimRank = rank;
       victimSerial = s;
-      victimReleasing = r;
     }
   }
 
@@ -199,7 +200,7 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
 
     bool haveVoices = true;
     while (_partials_in_use() + needed > maxPolyphony) {
-      if (_steal_partials(p) <= 0) {
+      if (_steal_partials() <= 0) {
         haveVoices = false;
         break;
       }
