@@ -65,8 +65,19 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
     _settings(settings),
     _partId(partId)
 {
+  // UseForRhythm is 0 = off, 1 = map 1, 2 = map 2, so the drum-map table
+  // index is _drumSet - 1, as every other DrumParam consumer already passes
+  // (tva.cc, partial.cc, note.cc). Passing _drumSet itself made a map-1 part
+  // read map 2's play-key table - wrong whenever the two maps hold different
+  // drum sets - and made a map-2 part read past the end of the two-map
+  // parameter array, so its play key was garbage and every drum on such a
+  // part sounded at a wildly wrong, typically subsonic, pitch. Measured on
+  // the SC-55mkII (emusc-match P-0256): a part set to map 2 by SysEx
+  // 40 1x 15 02 played Standard-set toms at 17-18 Hz instead of 71-168 Hz,
+  // and TR-808 toms on map 1 sat 3-8 semitones high because they took the
+  // Standard set's play keys from the other map's table.
   if (_drumSet)
-    _dKey = _settings->get_param(DrumParam::PlayKeyNumber, _drumSet, key);
+    _dKey = _settings->get_param(DrumParam::PlayKeyNumber, _drumSet - 1, key);
 
   _keyFollowOffset = (std::abs(_key - 60) *
       _LUT.PitchParamScale[std::abs(_instPartial.pitchKeyFlw - 0x49)] & 0xffff);

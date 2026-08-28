@@ -471,23 +471,34 @@ int Part::control_change(uint8_t msgId, uint8_t value)
     // NRPN
     msb = _settings->get_param(PatchParam::NRPN_MSB, _id);
     lsb = _settings->get_param(PatchParam::NRPN_LSB, _id);
+    // The NRPN 01 xx parameters are documented with a data range of
+    // 0E-72 (+/-50 around 40), and the machine CLAMPS a value outside it to
+    // the nearest bound rather than discarding the write: on the SC-55mkII,
+    // renders with data 7F are bit-identical to renders with data 72, and
+    // renders with 00 to renders with 0E, for every parameter guarded below
+    // (vibrato rate/depth/delay, TVF cutoff/resonance, and the three
+    // envelope times; emusc-match P-0258). Rejecting instead of clamping
+    // silently dropped e.g. a decay time of 7F, which on a trumpet leaves
+    // the TVF's decay at its tone default while the machine holds the filter
+    // open ~8 dB brighter at 4 kHz through the whole sustain.
+    uint8_t clamped = std::clamp<uint8_t>(value, 0x0e, 0x72);
     if (msb != 0x7f && lsb != 0x7f)
-      if (msb == 0x01 && lsb == 0x08 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::VibratoRate, value, _id);
-      } else if (msb == 0x01 && lsb == 0x09 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::VibratoDepth, value, _id);
-      } else if (msb == 0x01 && lsb == 0x0a && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::VibratoDelay, value, _id);
-      } else if (msb == 0x01 && lsb == 0x20 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::TVFCutoffFreq, value, _id);
-      } else if (msb == 0x01 && lsb == 0x21 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::TVFResonance, value, _id);
-      } else if (msb == 0x01 && lsb == 0x63 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::TVFAEnvAttack, value, _id);
-      } else if (msb == 0x01 && lsb == 0x64 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::TVFAEnvDecay, value, _id);
-      } else if (msb == 0x01 && lsb == 0x66 && value >= 0x0e && value <= 0x72) {
-	_settings->set_param(PatchParam::TVFAEnvRelease, value, _id);
+      if (msb == 0x01 && lsb == 0x08) {
+	_settings->set_param(PatchParam::VibratoRate, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x09) {
+	_settings->set_param(PatchParam::VibratoDepth, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x0a) {
+	_settings->set_param(PatchParam::VibratoDelay, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x20) {
+	_settings->set_param(PatchParam::TVFCutoffFreq, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x21) {
+	_settings->set_param(PatchParam::TVFResonance, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x63) {
+	_settings->set_param(PatchParam::TVFAEnvAttack, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x64) {
+	_settings->set_param(PatchParam::TVFAEnvDecay, clamped, _id);
+      } else if (msb == 0x01 && lsb == 0x66) {
+	_settings->set_param(PatchParam::TVFAEnvRelease, clamped, _id);
       } else if (msb == 0x18) {
 	int map = _settings->get_param(PatchParam::UseForRhythm, _id) - 1;
 	if (map == 0 || map == 1)
