@@ -52,10 +52,6 @@ void Chorus::update(void)
   _preA = (8 * k) / 64.0f;
   _preB = (0x3f - 8 * k) / 64.0f;
 
-  // Rate: pitch = round(23.75*n + 23.33) sub_phase units/tick
-  int rp = std::clamp((int) _settings->get_param(PatchParam::ChorusRate), 0, 127);
-  int pitchAt200 = (int) lroundf(23.75f * rp + 23.33f);
-
   // Depth: loop span = 10*n samples (minimum 2)
   int depth = std::clamp((int) _settings->get_param(PatchParam::ChorusDepth), 0, 127);
   _span = std::max(2, 10 * depth);
@@ -64,8 +60,21 @@ void Chorus::update(void)
   int delay = std::clamp((int) _settings->get_param(PatchParam::ChorusDelay), 0, 127);
   _loopOfs = 1 + 6 * delay;
 
-  _phaseInc = (uint16_t) std::max(0L,
-                                  lroundf((float) pitchAt200 * _span / 200.0f));
+  // Rate: measured from the reference machine (PROVENANCE.md P-0274), the LFO
+  // frequency follows
+  //
+  //   f = 0.00531706 * floor(23.75 * rate) * span / (span + 11)  [Hz]
+  //
+  // to better than 0.1 % over rate 1..127 and depth 1..127, and the LFO is
+  // frozen at rate 0.  floor(23.75 * rate) is (95 * rate) / 4 exactly in
+  // integer arithmetic.  The sweep automaton below ticks at 32000 Hz, takes
+  // one address step per 0x4000 of sub-phase, and consumes 2*span + 2 steps
+  // per triangle cycle (one step is spent turning around at each edge), so
+  // the increment that lands it on f is f * 0x4000 * (2*span + 2) / 32000.
+  int rp = std::clamp((int) _settings->get_param(PatchParam::ChorusRate), 0, 127);
+  int rateUnits = (95 * rp) / 4;
+  double fLfo = 0.00531706 * rateUnits * _span / (double) (_span + 11);
+  _phaseInc = (uint16_t) lround(fLfo * 16384.0 * (2 * _span + 2) / 32000.0);
 
   int feedback = std::clamp((int) _settings->get_param(PatchParam::ChorusFeedback), 0, 127);
   _g3F = (feedback >> 1) / 64.0f;
