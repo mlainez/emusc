@@ -18,6 +18,7 @@
 
 
 #include "reverb.h"
+#include "control_rom.h"
 
 #include <algorithm>
 #include <cmath>
@@ -246,7 +247,23 @@ void Reverb::_set_reverb_time(int reverbTime)
 
   int rt = std::clamp(reverbTime, 0, 127);
   if (_character >= 0 && _character <= 5) {
-    _gLoop = (_timeTargetLUT[rt] >> 1) / 64.0f;         // Measured & verified
+    // Reverb time. What this used to index was a table, but the table is a
+    // rounded straight line - round(1.7731*rt - 0.48) saturating at 191 - and
+    // it made our T60 10.5 to 11.8 % LONG across a 4.7x range of reverb time
+    // on the mkII (PROVENANCE.md P-0296, P-0300, P-0303).
+    //
+    // Corrected by inverting our own measured T60(gLoop) curve against the
+    // machine's T60. The SC-55 and the SC-55mkII need different lines: the
+    // SC-55's reverb decays about 1.09x slower than the mkII's at the same
+    // reverb time (TASK-077), so one law for both cannot fit either, and
+    // before this change ours sat between them and matched neither.
+    //
+    // After it, four reverb times each: mkII +1.3, +0.2, +0.7, +1.1 %, and
+    // SC-55 within the same band (P-0304).
+    const bool sc55 = _settings->generation() == ControlRom::SynthGen::SC55;
+    int lut = sc55 ? std::min((int) lroundf(1.860f * rt -  8.8f), 190)
+                   : std::min((int) lroundf(1.829f * rt - 11.9f), 187);
+    _gLoop = std::max(lut, 0) / 2 / 64.0f;
 
   } else if (_character == 6 || _character == 7) {      // Measured & verified
     uint16_t tapR = (uint16_t)(0x16 + 112 * rt);
