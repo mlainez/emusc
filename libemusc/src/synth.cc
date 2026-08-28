@@ -48,7 +48,10 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
     _phase(0.0),
     _updateCounter(0),
     _hostSampleBufRIndex(0),
-    _hostSampleBufWIndex(0)
+    _hostSampleBufWIndex(0),
+    _blockStart(0),
+    _framesDelivered(0),
+    _midiInputFree(0.0)
 {
   srand (static_cast<unsigned>(time(0)));
 
@@ -87,6 +90,11 @@ void Synth::_init_parts(void)
 }
 
 
+// The queue is deliberately left alone here. A reset arrives as an event of
+// its own and is applied in order with the rest, so anything still queued
+// belongs after it -- a file whose GS reset is followed by a program change
+// may well have both in hand at once. It also runs with midiMutex already
+// held, from midi_input_sysex()'s own locking.
 void Synth::reset(SoundMap sm, bool resetParts)
 {
   if (resetParts)
@@ -167,7 +175,8 @@ int Synth::_steal_partials(Part &requester)
 }
 
 
-void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity)
+void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
+                     int startDelay)
 {
   // The Sound Canvas has a fixed number of partials: 24 on the SC-55 ("Maximum
   // Polyphony 24 (partials)", SC-55 OM p.86) and 28 on the SC-55mkII
@@ -197,7 +206,7 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity)
     }
 
     if (haveVoices)
-      p.add_note(key, velocity, ++_noteSerial);
+      p.add_note(key, velocity, ++_noteSerial, startDelay);
   }
 }
 
@@ -248,11 +257,99 @@ int Synth::_export_sample_24(std::vector<int32_t> &sampleSet,
 */
 
 
-void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2)
+void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2,
+                       uint32_t frameOffset)
 {
-  uint8_t channel = status & 0x0f;
+  midiMutex.lock();
+  _queue_event(status, data1, data2, NULL, 0, frameOffset);
+  midiMutex.unlock();
+}
+
+
+// Where on the internal timeline an event handed over now, with this offset,
+// belongs.  Resampler::output_advance() is the constant by which the output
+// stream runs ahead of internal time; adding it here and letting the
+// resampler take it out again makes the delays below plain output-domain
+// latencies rather than numbers that only make sense inside the engine.
+void Synth::_queue_event(uint8_t status, uint8_t data1, uint8_t data2,
+                         const uint8_t *sysex, uint16_t sysexLength,
+                         uint32_t frameOffset)
+{
+  if (_sampleRate == 0)
+    return;
+
+  const double arrives =
+    (double) (_framesDelivered + frameOffset) * 32000.0 / (double) _sampleRate
+    + Resampler::output_advance();
+
+  // One byte per 100 us, and the message acts when its last byte is in.
+  const int bytes = sysex ? (int) sysexLength
+                          : (((status & 0xf0) == 0xc0 ||
+                              (status & 0xf0) == 0xd0) ? 2 : 3);
+  double ready = ((arrives > _midiInputFree) ? arrives : _midiInputFree)
+                 + bytes * midiByteSamples;
+  _midiInputFree = ready;
+
+  PendingEvent e;
+  e.isSysEx = (sysex != NULL);
+  e.status = status;
+  e.data1 = data1;
+  e.data2 = data2;
+  if (sysex)
+    e.sysex.assign(sysex, sysex + sysexLength);
+
+  // A note-on starts a voice, and a voice can start on any sample: it acts a
+  // fixed delay after its last byte. Everything else changes a parameter, and
+  // the SC-55mkII applies those on its control period like this engine does,
+  // so they take effect on the next period boundary at or after the message.
+  const bool noteOn = ((status & 0xf0) == 0x90) && (data2 != 0);
+  if (noteOn) {
+    e.applyAt = (uint64_t) llround(ready + noteOnDelaySamples);
+  } else {
+    uint64_t n = (uint64_t) llround(ready);
+    e.applyAt = ((n + 255) / 256) * 256;
+  }
+  e.startDelay = 0;
+
+  _eventQueue.push_back(e);
+}
+
+
+// Take off the queue everything that belongs to the control period about to
+// be generated. An event that was handed over too late to be placed exactly
+// acts at the start of the period, which is what this engine has always done.
+//
+// The events are taken off the queue under the lock and applied without it,
+// because applying one can re-enter the synth: a GS reset arrives as a system
+// exclusive message and calls reset(), which touches the queue itself.
+void Synth::_dispatch_events(void)
+{
+  const uint64_t blockEnd = _blockStart + 256;
+  std::vector<PendingEvent> due;
 
   midiMutex.lock();
+  while (!_eventQueue.empty() && _eventQueue.front().applyAt < blockEnd) {
+    due.push_back(_eventQueue.front());
+    _eventQueue.pop_front();
+  }
+  midiMutex.unlock();
+
+  for (PendingEvent &e : due) {
+    int startDelay = (e.applyAt > _blockStart)
+                     ? (int) (e.applyAt - _blockStart) : 0;
+
+    if (e.isSysEx)
+      _apply_midi_sysex(e.sysex.data(), (uint16_t) e.sysex.size());
+    else
+      _apply_midi(e.status, e.data1, e.data2, startDelay);
+  }
+}
+
+
+void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
+                        int startDelay)
+{
+  uint8_t channel = status & 0x0f;
 
   switch (status & 0xf0)
     {
@@ -268,7 +365,7 @@ void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2)
 	  if (p.midi_channel() == channel)
 	    p.stop_note(data1);
       } else {
-	_add_note(channel, data1, data2);
+	_add_note(channel, data1, data2, startDelay);
       }
       break;
 
@@ -318,12 +415,19 @@ void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2)
       std::cout << "EmuSC MIDI: Unknown event received" << std::endl;
       break;
     }
+}
 
+
+void Synth::midi_input_sysex(uint8_t *data, uint16_t length,
+                             uint32_t frameOffset)
+{
+  midiMutex.lock();
+  _queue_event(0xf0, 0, 0, data, length, frameOffset);
   midiMutex.unlock();
 }
 
 
-void Synth::midi_input_sysex(uint8_t *data, uint16_t length)
+void Synth::_apply_midi_sysex(uint8_t *data, uint16_t length)
 {
   // First check if SysEx messages has been disabled
   if (!_settings->get_param(SystemParam::RxSysEx))
@@ -477,6 +581,7 @@ int Synth::get_next_frame(float &lOut, float &rOut)
   lOut = std::clamp(_hostSampleBufL[_hostSampleBufRIndex], -1.0f, 1.0f);
   rOut = std::clamp(_hostSampleBufR[_hostSampleBufRIndex], -1.0f, 1.0f);
   _hostSampleBufRIndex++;
+  _framesDelivered++;
 
   return 0;
 }
@@ -494,6 +599,11 @@ uint32_t Synth::get_num_clipped_samples(bool reset)
 // Do a control update and read 256 samples
 void Synth::_process_samples(void)
 {
+  // Everything the client has handed over that belongs to this control period
+  // is applied first, so the update below sees it - the order this engine has
+  // always used, now with the events sorted onto the period they belong to.
+  _dispatch_events();
+
   // Start all samples processings with a control updates
   for (auto &p : _parts)
     p.update();
@@ -538,6 +648,8 @@ void Synth::_process_samples(void)
   }
 
   midiMutex.unlock();
+
+  _blockStart += 256;
 }
 
 
@@ -562,6 +674,13 @@ void Synth::set_audio_format(uint32_t sampleRate, uint8_t channels)
   _sampleRate = sampleRate;
   _channels = channels;
 
+  midiMutex.lock();
+  _eventQueue.clear();
+  _blockStart = 0;
+  _framesDelivered = 0;
+  _midiInputFree = 0.0;
+  midiMutex.unlock();
+
   _init_parts();
 
   _hostSampleBufL.resize(std::ceil(256 * sampleRate / 32000.0) + 1);
@@ -577,6 +696,10 @@ std::string Synth::version(void)
 
 void Synth::panic(void)
 {
+  midiMutex.lock();
+  _eventQueue.clear();
+  midiMutex.unlock();
+
   for (auto &p : _parts)
     p.delete_all_notes();
 }

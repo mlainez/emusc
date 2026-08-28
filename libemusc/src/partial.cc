@@ -51,11 +51,14 @@ namespace EmuSC {
 
 Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
 		 uint16_t instrumentIndex, ControlRom &ctrlRom, WaveRom &waveRom,
-		 WaveGenerator *LFO1, Settings *settings, int8_t partId)
+		 WaveGenerator *LFO1, Settings *settings, int8_t partId,
+		 int startDelay)
   : _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _settings(settings),
     _partId(partId),
     _sampleRunComplete(false),
+    _startDelay((startDelay < 0) ? 0 : ((startDelay > 255) ? 255 : startDelay)),
+    _delayDrained(false),
     _damping(false),
     _dampComplete(false),
     _dampGain(1),
@@ -66,6 +69,10 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
     _tva(NULL),
     _pitchAdj(0)
 {
+  _delayL.fill(0.0f);
+  _delayR.fill(0.0f);
+  _delayS.fill(0.0f);
+
   _drumSet = settings->get_param(PatchParam::UseForRhythm, partId);
   if (_drumSet)
     _drumRxNoteOff = _settings->get_param(DrumParam::RxNoteOff, _drumSet-1,key);
@@ -115,53 +122,88 @@ Partial::~Partial()
 bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			     std::array<float, 256> &sendBus)
 {
-  if (_tva->finished() || _dampComplete)
+  const bool finished = (_tva->finished() || _dampComplete);
+
+  // A finished voice generates nothing, but one that started inside a control
+  // period still owes the samples its start delay pushed past the end of the
+  // last period. Emit those once, then report the voice as done.
+  if (finished && (_startDelay == 0 || _delayDrained))
     return 1;
 
   std::array<std::array<float, 256>, 2> partialBuf = {};
   std::array<float, 256> partialSend = {};
-  _waveOscillator->get_sample_set(_pitch,
-                                  _settings->get_pitchBend_factor(_partId),
-                                  partialBuf[0]);
 
-  _tvf->apply_sample_set(partialBuf[0]);
-  _tva->apply_sample_set(partialBuf, partialSend);
+  if (finished) {
+    _delayDrained = true;
+  } else {
+    _waveOscillator->get_sample_set(_pitch,
+                                    _settings->get_pitchBend_factor(_partId),
+                                    partialBuf[0]);
 
-  // The oscillator reports the end of a non-looping sample while it is still
-  // filling the current control block. Terminating the TVA from inside that
-  // report sets the envelope and dynamic levels to zero before the block is
-  // amplified, so the samples the oscillator had already produced are
-  // multiplied by zero and lost. Samples shorter than one control block are
-  // lost in their entirety, which is why "Square Click" and the other short
-  // one-shot percussion sounds rendered as digital silence (PROVENANCE.md
-  // P-0039). Terminate the voice only once the block has been amplified.
-  if (_sampleRunComplete) {
-    _sampleRunComplete = false;
-    _tva->set_phase(Envelope::Phase::Terminated);
-  }
+    _tvf->apply_sample_set(partialBuf[0]);
+    _tva->apply_sample_set(partialBuf, partialSend);
 
-  // A partial whose voice was taken by another note is faded out rather than
-  // cut off; the fade is a fixed rate per model and is independent of the
-  // tone's own release (PROVENANCE.md P-0080).
-  if (_damping) {
-    for (int i = 0; i < 256; i++) {
-      partialBuf[0][i] *= _dampGain;
-      partialBuf[1][i] *= _dampGain;
-      partialSend[i]   *= _dampGain;
-      _dampGain *= _dampFactor;
+    // The oscillator reports the end of a non-looping sample while it is still
+    // filling the current control block. Terminating the TVA from inside that
+    // report sets the envelope and dynamic levels to zero before the block is
+    // amplified, so the samples the oscillator had already produced are
+    // multiplied by zero and lost. Samples shorter than one control block are
+    // lost in their entirety, which is why "Square Click" and the other short
+    // one-shot percussion sounds rendered as digital silence (PROVENANCE.md
+    // P-0039). Terminate the voice only once the block has been amplified.
+    if (_sampleRunComplete) {
+      _sampleRunComplete = false;
+      _tva->set_phase(Envelope::Phase::Terminated);
     }
 
-    if (_dampGain < 1e-4)              // -80 dB, below a 16 bit sample step
-      _dampComplete = true;
+    // A partial whose voice was taken by another note is faded out rather than
+    // cut off; the fade is a fixed rate per model and is independent of the
+    // tone's own release (PROVENANCE.md P-0080).
+    if (_damping) {
+      for (int i = 0; i < 256; i++) {
+        partialBuf[0][i] *= _dampGain;
+        partialBuf[1][i] *= _dampGain;
+        partialSend[i]   *= _dampGain;
+        _dampGain *= _dampFactor;
+      }
+
+      if (_dampGain < 1e-4)              // -80 dB, below a 16 bit sample step
+        _dampComplete = true;
+    }
   }
 
-  for (int i = 0; i < 256; i++) {
-    dryBus[0][i] += partialBuf[0][i];
-    dryBus[1][i] += partialBuf[1][i];
-    sendBus[i]   += partialSend[i];
+  if (_startDelay == 0) {
+    for (int i = 0; i < 256; i++) {
+      dryBus[0][i] += partialBuf[0][i];
+      dryBus[1][i] += partialBuf[1][i];
+      sendBus[i]   += partialSend[i];
+    }
+
+    return 0;
   }
 
-  return 0;
+  // The voice started _startDelay samples into some control period, so what
+  // it plays in this one is the tail held over from the last period followed
+  // by the head of what it has just generated; the rest is held over again.
+  const int d = _startDelay;
+
+  for (int i = 0; i < d; i++) {
+    dryBus[0][i] += _delayL[i];
+    dryBus[1][i] += _delayR[i];
+    sendBus[i]   += _delayS[i];
+  }
+  for (int i = d; i < 256; i++) {
+    dryBus[0][i] += partialBuf[0][i - d];
+    dryBus[1][i] += partialBuf[1][i - d];
+    sendBus[i]   += partialSend[i - d];
+  }
+  for (int i = 0; i < d; i++) {
+    _delayL[i] = partialBuf[0][256 - d + i];
+    _delayR[i] = partialBuf[1][256 - d + i];
+    _delayS[i] = partialSend[256 - d + i];
+  }
+
+  return _delayDrained ? 1 : 0;
 }
 
 

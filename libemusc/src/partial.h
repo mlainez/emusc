@@ -41,9 +41,14 @@ namespace EmuSC {
 class Partial
 {
 public:
+  // startDelay is where inside the current control period the voice starts,
+  // in samples [0, 256).  Everything about the voice - oscillator, envelopes
+  // and LFOs - then runs on a timeline of its own that begins there, which is
+  // what the SC-55mkII does (PROVENANCE.md P-0229).
   Partial(int partialId, uint8_t key, uint8_t velocity,
 	  uint16_t instrumentIndex, ControlRom &controlRom, WaveRom &waveRom,
-	  WaveGenerator *LFO1, Settings *settings, int8_t partId);
+	  WaveGenerator *LFO1, Settings *settings, int8_t partId,
+	  int startDelay = 0);
   ~Partial();
 
   // dryBus accumulates the panned stereo signal; sendBus accumulates the same
@@ -80,6 +85,18 @@ private:
   bool _drumRxNoteOff;    // Static parameter (cannot change during a note)
 
   bool _sampleRunComplete; // Non-looping sample reached its end in this block
+
+  // Sub-period start.  The voice generates its 256 samples per control period
+  // exactly as a voice starting on the period boundary does; they are written
+  // into the part's buffer _startDelay samples late, and the samples pushed
+  // past the end of the period are held here for the next one.  That is the
+  // same thing as giving the voice its own control-period phase, and it is
+  // why the first period a voice ever plays is a partial one.
+  const int _startDelay;
+  bool _delayDrained;      // the held tail has been emitted; the voice is done
+  std::array<float, 256> _delayL;
+  std::array<float, 256> _delayR;
+  std::array<float, 256> _delayS;
 
   // Voice stealing: the partial is faded out over a few hundred samples and
   // then terminated, while the note that took its place already sounds.

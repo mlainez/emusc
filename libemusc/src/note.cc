@@ -69,7 +69,7 @@ int Note::partial_count(ControlRom &ctrlRom, Settings *settings,
 
 
 Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
-	   Settings *settings, int8_t partId, uint32_t serial)
+	   Settings *settings, int8_t partId, uint32_t serial, int startDelay)
   : _key(key),
     _sustain(false),
     _stopped(false),
@@ -116,7 +116,7 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
       continue;
     try {
       _partial[p] = new Partial(p, key, velocity, instrumentIndex, ctrlRom,
-                                waveRom, _LFO1, settings, partId);
+                                waveRom, _LFO1, settings, partId, startDelay);
     } catch (std::string errorMsg) {
       _partial[p] = NULL;
     }

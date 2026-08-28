@@ -37,8 +37,11 @@ namespace EmuSC {
 class Note
 {
 public:
+  // startDelay: where inside the current control period this note starts,
+  // in samples [0, 256).  See Partial.
   Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
-       Settings *settings, int8_t partId, uint32_t serial = 0);
+       Settings *settings, int8_t partId, uint32_t serial = 0,
+       int startDelay = 0);
   ~Note();
 
   void stop(void);

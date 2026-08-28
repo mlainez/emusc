@@ -29,6 +29,7 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -74,8 +75,16 @@ public:
 
   // Add start() and stop()? Won't start if sampleRate is not set?
 
-  void midi_input(uint8_t status, uint8_t data1, uint8_t data2);
-  void midi_input_sysex(uint8_t *data, uint16_t length);
+  // MIDI in.  frameOffset says how far in the future the event happens, in
+  // output frames counted from the frame get_next_frame() will return next.
+  // A client that plays a file or a sequence knows this and can hand events
+  // over early; one that is fed a live MIDI stream leaves it at 0 and gets
+  // what it always got. The synth applies a note-on at the exact sample it
+  // falls on when it can, because the SC-55mkII does (PROVENANCE.md P-0229).
+  void midi_input(uint8_t status, uint8_t data1, uint8_t data2,
+                  uint32_t frameOffset = 0);
+  void midi_input_sysex(uint8_t *data, uint16_t length,
+                        uint32_t frameOffset = 0);
 
   int get_next_frame(float &lOut, float &rOut);
   uint32_t get_num_clipped_samples(bool reset = true);
@@ -159,6 +168,33 @@ private:
   float _phaseIncrement;      // SC-55 samples per host sample
   int   _updateCounter;       // Counts SC-55 samples, fires at 256
 
+  // Event scheduling, on the internal 32 kHz timeline.  _blockStart is the
+  // first sample of the control period about to be generated and
+  // _framesDelivered counts the output frames get_next_frame() has returned,
+  // which is what a client's frameOffset is measured from.
+  uint64_t _blockStart;
+  uint64_t _framesDelivered;
+
+  // The input is read at one MIDI byte per 100 us, so a message whose bytes
+  // arrive while an earlier message is still being read waits for it. This is
+  // the internal sample at which the input becomes free again.
+  double _midiInputFree;
+
+  struct PendingEvent {
+    uint64_t applyAt;         // internal sample this event acts on
+    bool     isSysEx;
+    int      startDelay;      // sub-period offset, note-on only
+    uint8_t  status, data1, data2;
+    std::vector<uint8_t> sysex;
+  };
+  std::deque<PendingEvent> _eventQueue;
+
+  // MIDI bytes per second on the way in, and the fixed delay from the last
+  // byte of a note-on to the first sample of the voice it starts, in internal
+  // samples. Both measured on the SC-55mkII (PROVENANCE.md P-0229).
+  static constexpr double midiByteSamples = 32000.0 * 0.0001;   // 100 us
+  static constexpr double noteOnDelaySamples = 32000.0 * 0.0020; // 2.0 ms
+
   std::vector<float> _hostSampleBufL;
   std::vector<float> _hostSampleBufR;
   int _hostSampleBufRIndex;
@@ -188,7 +224,19 @@ private:
 
   void _init_parts(void);
 // int _export_sample_24(std::vector<int32_t> &sampleSet, std::string filename);
-  void _add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity);
+  void _add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
+                 int startDelay);
+
+  // Put an event on the queue with the internal sample it acts on, and take
+  // the queue's head events off again when the period they belong to is
+  // generated.
+  void _queue_event(uint8_t status, uint8_t data1, uint8_t data2,
+                    const uint8_t *sysex, uint16_t sysexLength,
+                    uint32_t frameOffset);
+  void _dispatch_events(void);
+  void _apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
+                   int startDelay);
+  void _apply_midi_sysex(uint8_t *data, uint16_t length);
   int _partials_in_use(void);
   int _steal_partials(Part &requester);
 

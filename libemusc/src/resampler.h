@@ -47,6 +47,15 @@ public:
   static constexpr int   NPHASE = 512;   // Polyphase table resolution
   static constexpr float BETA   = 9.0f;  // Kaiser beta (~ -70 dB stopband)
 
+  // How far the output stream runs ahead of the internal timeline, in
+  // internal samples.  Output frame f is interpolated at input position
+  // HALF + f * ratio, and the kernel's centre of mass sits a further quarter
+  // of an input sample ahead because every row is averaged with a copy of
+  // itself delayed by half an input sample (the output-stage droop of
+  // PROVENANCE.md P-0150).  So frame 0 shows internal sample 16.25, and
+  // anything that places an event by absolute time has to carry the constant.
+  static constexpr double output_advance(void) { return HALF + 0.25; }
+
 private:
   static constexpr int TAPS = 2 * HALF;
   static constexpr int RING = 64;        // Input ring buffer (> 2*HALF, pow2)

@@ -340,7 +340,8 @@ int Part::choke_assign_group(uint8_t key, float dBPerMillisecond)
 
 
 // Note: Mute cancels all active keys in part, and all new keys are ignored
-int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial)
+int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
+                   int startDelay)
 {
   // 1., 2. & 4. Mute, rxNoteMessage, key range and the drum's note on flag
   if (!accepts_note(key))
@@ -367,7 +368,8 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial)
 
   _notesMutex->lock();
 
-  Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id, serial);
+  Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id, serial,
+                     startDelay);
   _notes.push_back(n);
 
   _notesMutex->unlock();
