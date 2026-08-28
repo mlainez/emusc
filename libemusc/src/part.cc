@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cmath>
 #include <iostream>
 
@@ -192,15 +193,44 @@ int Part::get_last_peak_sample(void)
 }
 
 
+// How many partials this part occupies for VOICE ALLOCATION. On a normal
+// part every sounding (non-damped) note counts. On a rhythm part only the
+// NEWEST sounding voice of each drum key counts: when a drum key is
+// retriggered, the machine lets the older voice ring on to its natural end
+// but no longer counts it against the polyphony budget, on any gap from
+// 0.1 s to 2 s and for every older voice of the key, while a lone drum
+// voice is counted for its whole life (about 5.2 s for Ride Cymbal 1) and
+// voices on DIFFERENT drum keys are all counted. Measured on the SC-55mkII
+// with a refusal probe whose every verdict was cross-checked against this
+// code's own allocation log (PROVENANCE.md P-0283): 26 reserved sines plus
+// ride+ride left room for a 27th-reserve probe note where ride+crash and a
+// restruck melodic vibraphone did not, and with four ride voices and 24
+// sines the machine accepted exactly three more notes before its self-steal
+// began - the arithmetic of "newest per key", not "all" (ours before this
+// change) and not "none". The reference demonstrably RENDERS more than 28
+// voices at once in these scenes, so the 28 is an allocation budget, not a
+// render limit, and the uncounted voices must keep sounding.
 int Part::get_num_partials(void)
 {
   if (_notes.size() == 0)
     return 0;
 
   int numPartials = 0;
-  for (auto &n: _notes)
-    if (!n->is_damped())
-      numPartials += n->get_num_partials();
+
+  if (_settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm) {
+    for (auto &n: _notes)
+      if (!n->is_damped())
+        numPartials += n->get_num_partials();
+  } else {
+    // _notes is kept in note-on order, so the last sounding note of a key
+    // is the newest and its partial count survives.
+    std::map<uint8_t, int> newestOfKey;
+    for (auto &n: _notes)
+      if (!n->is_damped())
+        newestOfKey[n->key()] = n->get_num_partials();
+    for (auto &kv : newestOfKey)
+      numPartials += kv.second;
+  }
 
   return numPartials;
 }
