@@ -36,6 +36,11 @@ namespace EmuSC {
 
 
 int Pitch::_portaTargetPitch = 0;
+std::array<int, 16> Pitch::_lastPitchOnPart = [] {
+  std::array<int, 16> a{};
+  a.fill(-1);                       // -1: this part has not played a note yet
+  return a;
+}();
 std::array<int, 28> Pitch::_portaBasePitch = {};
 int Pitch::_pbpIndex = -1;
 
@@ -325,15 +330,21 @@ int Pitch::_init_portamento(bool portamento, bool legato)
 {
   int delta = 0;
 
-  if (portamento) {
-    int pControl = _settings->get_param(PatchParam::PortamentoControl, _partId);
-    if (pControl != 0xFF) {
-      uint32_t scaled = pControl * 1000;
-      delta = (int32_t) scaled - _portaBasePitch[_pbpIndex];
-    }
+  // Where the glide starts. Ordinarily it is the pitch of the previous note on
+  // THIS PART; CC84, Portamento Control, names a source key explicitly and
+  // takes precedence when it has been sent.
+  //
+  // Both halves were wrong. PortamentoControl defaults to 0, not to 0xff, so
+  // the test below never failed and every glide started from key 0 - which is
+  // why the one case that did glide, mono mode, swept 226 cents where the
+  // reference swept 587. And the previous-note branch was unreachable, because
+  // this function is only ever called with portamento true.
+  int pControl = _settings->get_param(PatchParam::PortamentoControl, _partId);
+  if (pControl > 0) {
+    delta = (int32_t) (pControl * 1000) - _portaBasePitch[_pbpIndex];
 
-  } else {
-    delta = _portaTargetPitch - _portaBasePitch[_pbpIndex];
+  } else if (_partId >= 0 && _partId < 16 && _lastPitchOnPart[_partId] >= 0) {
+    delta = _lastPitchOnPart[_partId] - _portaBasePitch[_pbpIndex];
   }
 
   if (0)
@@ -376,22 +387,20 @@ void Pitch::_init_envelope(uint8_t velocity)
 
   // calculate the 0xffc5: Portamento needs to be on, mono mode
   int pOn = _settings->get_param(PatchParam::Portamento, _partId); // 1 = On
-  int pMode = _settings->get_param(PatchParam::PolyMode, _partId); // 0 = mono
-  // But how do we know of other keys being down? legato is trouble..
-  bool usePortamento = (pOn && !pMode) ? true : false;
+  // NOT gated on mono. Measured on the SC-55mkII: with CC65 on and the part in
+  // POLY mode - which is where every corpus file leaves it - a note played
+  // after another on the same part glides, over 55 ms at CC5 32 and 3.04 s at
+  // CC5 112. The mono gate is why libEmuSC's renders with portamento enabled
+  // were bit-identical to renders with it off.
+  bool usePortamento = pOn ? true : false;
   _portamentoDelta = usePortamento ? _init_portamento(usePortamento, 0) : 0;
 
-  int pCtrl = _settings->get_param(PatchParam::PortamentoControl, _partId) +
-              _instPartial.coarsePitch - 0x40;
-  pCtrl = std::clamp(pCtrl, 0, 0x7f);
+  // Remember where this note sits, for the next note on this part to glide
+  // from. After the glide is computed, so a note glides from its predecessor
+  // and not from itself.
+  if (_partId >= 0 && _partId < 16)
+    _lastPitchOnPart[_partId] = _portaBasePitch[_pbpIndex];
 
-  if (0)
-    std::cout << "TMP PORTAMENTO CTRL=" << pCtrl
-              << " On=" << pOn
-              << " polyMode=" << pMode
-              << std::endl;
-
-  // TODO: PORTAMENTO NOT COMPLETE!
 
 
   // Find Pitch Envelope Velocity Sensitvity

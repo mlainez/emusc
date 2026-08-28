@@ -116,6 +116,11 @@ private:
   static std::array<int, 28> _portaBasePitch;
   static int _pbpIndex;
 
+  // The pitch the last note on each part settled at, which is what an ordinary
+  // portamento glides FROM. The slot ring above is a voice-slot mechanism and
+  // says nothing about which part a slot belonged to.
+  static std::array<int, 16> _lastPitchOnPart;
+
   Pitch();
 
   void _init_envelope(uint8_t envelope);
