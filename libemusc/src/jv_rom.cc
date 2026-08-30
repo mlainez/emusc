@@ -20,9 +20,10 @@
  *  along with libEmuSC. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "jv1080_rom.h"
+#include "jv_rom.h"
 
 #include <cctype>
+#include <string>
 #include <cmath>
 #include <fstream>
 
@@ -33,14 +34,31 @@ namespace EmuSC {
 // each wave ROM socket is drawn as a table of <net WADn> <pin> <ROM pin WAm>.
 // ROM address bit m is driven by tone-generator line WAD[ADDR_ORDER[m]].
 // Transcription verified against the page rendered at 400 dpi.
-const int JV1080Rom::ADDR_ORDER[JV1080Rom::WAVE_ADDR_BITS] = {
+const int JVRom::ADDR_ORDER[JVRom::WAVE_ADDR_BITS] = {
   1, 2, 0, 3, 4, 18, 17, 16, 15, 5, 6, 13, 7, 12, 10, 9, 11, 8, 14, 19, 20
 };
 
 
-JV1080Rom::JV1080Rom(std::string romPath)
+// Both machines were mapped by measuring their own ROMs. They share every
+// structure and differ only in these numbers.
+//
+// The JV-880's dumps read straight: identity ordering scores +0.9993 against
+// +0.9990 for the JV-1080 permutation. That margin is small, and it is recorded
+// as measured rather than claimed as settled - the JV-880's own service notes
+// have not been consulted, and if they show a permutation this is where it goes.
+const JVRom::Layout JVRom::LAYOUTS[] = {
+  { Model::JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x7a808, 0x56ac6, 0x075c7a, 4, true  },
+  { Model::JV880,  "JV-880",   256 * 1024, 0x000004, 0,      0,       0x0028c4, 2, false },
+};
+const int JVRom::LAYOUT_COUNT = (int) (sizeof(LAYOUTS) / sizeof(LAYOUTS[0]));
+
+
+JVRom::JVRom(std::string romPath)
   : _ok(false)
 {
+  // Definite even if detection fails, so model_name() is never garbage.
+  _layout = { Model::Unknown, "unknown", 0, 0, 0, 0, 0, 0, false };
+
   std::ifstream file(romPath, std::ios::binary | std::ios::in);
   if (!file.is_open()) {
     _error = "Unable to open JV-1080 program ROM: " + romPath;
@@ -51,35 +69,45 @@ JV1080Rom::JV1080Rom(std::string romPath)
   std::streamoff len = file.tellg();
   file.seekg(0);
 
-  // The one dump we hold is 1 MB. A different size is not fatal - the tables
-  // are located by structure - but it is worth refusing something clearly
-  // wrong, such as a wave ROM handed in by mistake.
-  if (len < 0x80000 || len > 0x400000) {
-    _error = "Unexpected JV-1080 program ROM size";
-    return;
-  }
-
   _rom.resize((size_t) len);
   file.read((char *) &_rom[0], len);
   file.close();
 
-  if (!_read_table(WAVEFORM_HINT, _waveforms)) {
-    _error = "No waveform table found in JV-1080 program ROM";
+  // Try the layout whose program ROM size matches first, then the others: size
+  // narrows the guess but does not prove it, and a layout is only accepted once
+  // its waveform table actually parses. That way a wrong guess fails loudly
+  // instead of reading garbage at a plausible-looking offset.
+  for (int pass = 0; pass < 2 && !_ok; pass++) {
+    for (int i = 0; i < LAYOUT_COUNT; i++) {
+      const Layout &L = LAYOUTS[i];
+      bool sizeMatches = ((size_t) len == L.promSize);
+      if (sizeMatches != (pass == 0))
+        continue;
+
+      _waveforms.clear();
+      if (!_read_table(L.waveformHint, _waveforms))
+        continue;
+
+      _layout = L;
+      _ok = true;
+      break;
+    }
+  }
+
+  if (!_ok) {
+    _error = "No JV waveform table found in this program ROM";
     return;
   }
 
-  // Both of these are optional: a firmware revision that lacks one, or that
-  // moves it beyond what _find_table() can recover, should not make the ROM
-  // unusable for the table that was found.
-  _read_table(LOOP_HINT, _loops);
-  _read_effects(EFFECT_HINT);
-  _read_samples(SAMPLE_HINT);
-
-  _ok = true;
+  // Optional: a machine without one, or a revision that moves it beyond what
+  // _find_table() recovers, should not make the ROM unusable for what was found.
+  if (_layout.loopHint)   _read_table(_layout.loopHint, _loops);
+  if (_layout.effectHint) _read_effects(_layout.effectHint);
+  _read_samples(_layout.sampleHint);
 }
 
 
-JV1080Rom::~JV1080Rom()
+JVRom::~JVRom()
 {}
 
 
@@ -87,7 +115,7 @@ JV1080Rom::~JV1080Rom()
 // alphanumerics rejects the runs of punctuation that appear inside the panel
 // text, which is where a naive scan goes wrong - see the false positives noted
 // in docs/jv1080-rom-notes.md.
-bool JV1080Rom::_name_like(uint32_t off, int minAlnum) const
+bool JVRom::_name_like(uint32_t off, int minAlnum) const
 {
   if ((size_t) off + NAME_LEN > _rom.size())
     return false;
@@ -108,7 +136,7 @@ bool JV1080Rom::_name_like(uint32_t off, int minAlnum) const
 // Walk backwards from any record inside the table to find its first record.
 // The hint is a measurement from one dump, so it is treated as "somewhere in
 // the table" rather than "the start of the table".
-uint32_t JV1080Rom::_find_table(uint32_t hint) const
+uint32_t JVRom::_find_table(uint32_t hint) const
 {
   if (!_name_like(hint))
     return 0;
@@ -121,7 +149,7 @@ uint32_t JV1080Rom::_find_table(uint32_t hint) const
 }
 
 
-bool JV1080Rom::_read_table(uint32_t hint, std::vector<Waveform> &out)
+bool JVRom::_read_table(uint32_t hint, std::vector<Waveform> &out)
 {
   uint32_t base = _find_table(hint);
   if (!base)
@@ -156,7 +184,7 @@ bool JV1080Rom::_read_table(uint32_t hint, std::vector<Waveform> &out)
 
 // The effects table numbers itself - "01:STEREO-EQ", "02:OVERDRIVE" - so it is
 // read by following that numbering rather than by trusting a record count.
-bool JV1080Rom::_read_effects(uint32_t hint)
+bool JVRom::_read_effects(uint32_t hint)
 {
   for (uint32_t off = hint; (size_t) off + EFFECT_STRIDE <= _rom.size();
        off += EFFECT_STRIDE) {
@@ -181,9 +209,9 @@ bool JV1080Rom::_read_effects(uint32_t hint)
 // An entry is recognised by its own consistency - start <= loop <= end, in
 // range, and a plausible length - rather than by a count, because the table
 // does not fill the space available to it.
-bool JV1080Rom::_read_samples(uint32_t hint)
+bool JVRom::_read_samples(uint32_t hint)
 {
-  const uint32_t WAVE_SPACE = (uint32_t) WAVE_ROMS * WAVE_ROM_SIZE;
+  const uint32_t WAVE_SPACE = (uint32_t) _layout.waveRoms * WAVE_ROM_SIZE;
 
   auto u24 = [this](uint32_t o) -> uint32_t {
     if ((size_t) o + 3 > _rom.size()) return 0;
@@ -244,7 +272,7 @@ bool JV1080Rom::_read_samples(uint32_t hint)
 }
 
 
-std::vector<int> JV1080Rom::waveform_samples(int waveformIndex) const
+std::vector<int> JVRom::waveform_samples(int waveformIndex) const
 {
   std::vector<int> out;
   if (waveformIndex < 0 || (size_t) waveformIndex >= _waveforms.size())
@@ -262,12 +290,13 @@ std::vector<int> JV1080Rom::waveform_samples(int waveformIndex) const
 }
 
 
-bool JV1080Rom::load_wave_roms(const std::vector<std::string> &paths)
+bool JVRom::load_wave_roms(const std::vector<std::string> &paths)
 {
   _waveRoms.clear();
 
-  if ((int) paths.size() != WAVE_ROMS) {
-    _error = "JV-1080 needs exactly 4 wave ROMs";
+  if ((int) paths.size() != _layout.waveRoms) {
+    _error = std::string(_layout.name) + " needs exactly " +
+             std::to_string(_layout.waveRoms) + " wave ROMs";
     return false;
   }
 
@@ -298,13 +327,16 @@ bool JV1080Rom::load_wave_roms(const std::vector<std::string> &paths)
 // One byte of the flat 8 MB wave space. The top two bits of the address pick
 // the device; the remaining 21 are what the tone generator drives, and they
 // reach the ROM's pins through the permutation of ADDR_ORDER.
-uint8_t JV1080Rom::_wave_byte(uint32_t addr) const
+uint8_t JVRom::_wave_byte(uint32_t addr) const
 {
   size_t rom = addr >> WAVE_ADDR_BITS;
   if (rom >= _waveRoms.size())
     return 0;
 
   uint32_t logical = addr & ((1u << WAVE_ADDR_BITS) - 1);
+  if (!_layout.permuteAddress)
+    return _waveRoms[rom][logical];
+
   uint32_t physical = 0;
   for (int m = 0; m < WAVE_ADDR_BITS; m++)
     physical |= ((logical >> ADDR_ORDER[m]) & 1u) << m;
@@ -313,7 +345,7 @@ uint8_t JV1080Rom::_wave_byte(uint32_t addr) const
 }
 
 
-std::vector<int16_t> JV1080Rom::decode_sample(int sampleIndex, int dcWindow) const
+std::vector<int16_t> JVRom::decode_sample(int sampleIndex, int dcWindow) const
 {
   std::vector<int16_t> pcm;
   if (sampleIndex < 0 || (size_t) sampleIndex >= _samples.size() ||
@@ -344,9 +376,12 @@ std::vector<int16_t> JV1080Rom::decode_sample(int sampleIndex, int dcWindow) con
     if (rom >= _waveRoms.size()) break;
 
     uint32_t logical = addr & ((1u << WAVE_ADDR_BITS) - 1);
-    uint32_t phys = 0;
-    for (int m = 0; m < WAVE_ADDR_BITS; m++)
-      phys |= ((logical >> ADDR_ORDER[m]) & 1u) << m;
+    uint32_t phys = logical;
+    if (_layout.permuteAddress) {
+      phys = 0;
+      for (int m = 0; m < WAVE_ADDR_BITS; m++)
+        phys |= ((logical >> ADDR_ORDER[m]) & 1u) << m;
+    }
 
     int8_t   data    = (int8_t) _waveRoms[rom][phys];
     uint32_t shAddr  = ((phys & 0xFFFFF) >> 5) | (phys & 0xF00000);

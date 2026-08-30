@@ -20,15 +20,22 @@
  *  along with libEmuSC. If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Reader for the Roland JV-1080 program ROM.
+// Reader for the Roland JV family program ROMs (JV-880, JV-1080).
 //
 // SCOPE, AND WHY THIS IS A SEPARATE CLASS FROM ControlRom.
-// The JV-1080 is a patch synth, not a Sound Canvas: four tones per patch, its
-// own envelope and filter structure, and a patch/performance model that the GS
-// part model does not describe. Whether libEmuSC can host that at all is an
-// open question, so nothing here touches ControlRom or the SC-55 paths. If the
+// These are patch synths, not Sound Canvases: four tones per patch, their own
+// envelope and filter structure, and a patch/performance model that the GS part
+// model does not describe. Whether libEmuSC can host that at all is an open
+// question, so nothing here touches ControlRom or the SC-55 paths. If the
 // answer turns out to be "yes, as a generation", this collapses into that; if
 // "no", it is already separate.
+//
+// THE TWO MACHINES SHARE A LAYOUT, WHICH IS WHY ONE CLASS SERVES BOTH.
+// Both keep a 60-byte waveform record table and an 18-byte sample table with
+// three 24-bit addresses, both encode wave data the same way, and both put a
+// MIDI root key in the same header byte. Only the offsets, the number of wave
+// ROMs, and whether the address bus is permuted differ - so those are a per
+// model table (see Layout) rather than a second class.
 //
 // WHAT IS ESTABLISHED HERE AND WHAT IS NOT.
 // The table offsets, the record stride and the field boundaries below were
@@ -40,8 +47,8 @@
 // emulate this machine, so no render can currently confirm either reading.
 // Treat them as hypotheses that a later reference will confirm or move.
 
-#ifndef __JV1080_ROM_H__
-#define __JV1080_ROM_H__
+#ifndef __JV_ROM_H__
+#define __JV_ROM_H__
 
 #include <cstdint>
 #include <string>
@@ -49,9 +56,24 @@
 
 namespace EmuSC {
 
-class JV1080Rom
+class JVRom
 {
 public:
+  enum class Model { Unknown, JV880, JV1080 };
+
+  // What differs between the machines. Everything else is shared.
+  struct Layout {
+    Model       model;
+    const char *name;
+    size_t      promSize;      // program ROM size, used to pick a candidate
+    uint32_t    waveformHint;  // somewhere inside the 60-byte record table
+    uint32_t    loopHint;      // second bank of the same record type, 0 if none
+    uint32_t    effectHint;    // self-numbering "NN:NAME" table, 0 if none
+    uint32_t    sampleHint;    // somewhere inside the 18-byte sample table
+    int         waveRoms;      // how many wave ROM devices the space spans
+    bool        permuteAddress;// JV-1080 permutes; JV-880 dumps read straight
+  };
+
   // A 60-byte record: 12-byte name, 15-byte curve, 11 x uint16, 11 x 0xff.
   struct Waveform {
     std::string name;               // 12 bytes, space-padded ASCII
@@ -67,8 +89,14 @@ public:
   // boundary inside the block is NOT established and naming its parts would be
   // guessing. It is stored whole until something can confirm the reading.
 
-  explicit JV1080Rom(std::string romPath);
-  ~JV1080Rom();
+  // Detects the machine from the program ROM: its size narrows the candidates
+  // and the tables must then actually parse, so a wrong guess fails loudly
+  // rather than reading garbage at plausible-looking offsets.
+  explicit JVRom(std::string romPath);
+  ~JVRom();
+
+  Model model(void) const { return _layout.model; }
+  const char *model_name(void) const { return _layout.name; }
 
   // Table A: the waveform multisamples (326 records in v1.0 - "Ac Piano1 A"
   // through "E.Bass"). Table B: a second bank of the same geometry, names
@@ -101,7 +129,7 @@ public:
   // Load the four wave ROMs, in the order they occupy the 8 MB address space.
   // Returns false and sets error() if any file is missing or the wrong size.
   bool load_wave_roms(const std::vector<std::string> &paths);
-  bool have_wave_roms(void) const { return _waveRoms.size() == WAVE_ROMS; }
+  bool have_wave_roms(void) const { return (int) _waveRoms.size() == _layout.waveRoms; }
 
   // Decode one sample to signed 16-bit PCM.
   //
@@ -130,7 +158,9 @@ public:
   // the rate.
   std::vector<int16_t> decode_sample(int sampleIndex, int dcWindow = 4096) const;
 
-  static constexpr int WAVE_ROMS     = 4;
+  int wave_roms(void) const { return _layout.waveRoms; }
+
+  static constexpr int MAX_WAVE_ROMS = 4;
   static constexpr int WAVE_ROM_SIZE = 2 * 1024 * 1024;
   static constexpr int WAVE_ADDR_BITS = 21;
 
@@ -155,12 +185,12 @@ private:
   // trusted constants: each is validated, and _find_table() re-locates the
   // table by structure if validation fails, so a different firmware revision
   // does not silently parse garbage the way a hardcoded stride would.
-  static constexpr uint32_t WAVEFORM_HINT = 0x71008;
-  static constexpr uint32_t LOOP_HINT     = 0x7a808;
-  static constexpr uint32_t EFFECT_HINT   = 0x56ac6;
   static constexpr int      EFFECT_STRIDE = 23;
-  static constexpr uint32_t SAMPLE_HINT   = 0x075c7a;
   static constexpr int      SAMPLE_STRIDE = 18;
+
+  static const Layout LAYOUTS[];
+  static const int    LAYOUT_COUNT;
+  Layout _layout;
 
   // Service notes p.15: ROM address bit m is driven by tone-generator line
   // WAD[ADDR_ORDER[m]]. Roland's own diagram of Roland's own board.
@@ -181,4 +211,4 @@ private:
 
 }
 
-#endif  // __JV1080_ROM_H__
+#endif  // __JV_ROM_H__
