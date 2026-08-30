@@ -238,7 +238,9 @@ public:
     SC55    = 0,
     SC55mk2 = 1,
     SC88    = 2,
-    SC88Pro = 3
+    SC88Pro = 3,
+    JV880   = 4,
+    JV1080  = 5
   };
 
   int dump_demo_songs(std::string path);
@@ -267,6 +269,7 @@ public:
   inline const std::array<std::array<uint16_t, 128>, 128>& variations() { return _variations; }
   inline const std::array<uint16_t, 128>& variation(int v) const { return _variations[v]; }
 
+  inline int numPartials(void) { return _partials.size(); }
   inline int numSampleSets(void) { return _samples.size(); }
   inline int numInstruments(void) { return _instruments.size(); }
   inline int numDrumSets(void) { return _drumSets.size(); }
@@ -286,6 +289,8 @@ private:
     sm_SCC1,              // ISA card version
     sm_SC88,
     sm_SC88Pro,
+    sm_JV880,
+    sm_JV1080,
   };
   enum SynthModel _synthModel;
 
@@ -400,6 +405,27 @@ private:
   uint16_t _native_endian_uint16(uint8_t *ptr);
   uint32_t _native_endian_3bytes_uint32(uint8_t *ptr);
   uint32_t _native_endian_4bytes_uint32(uint8_t *ptr);
+
+  // The JV family keeps no instrument, variation or drum-set tables in ROM -
+  // its patches live in battery-backed RAM - so only these two are read, into
+  // the same _partials and _samples the SC-55 path fills.
+  struct JVLayout {
+    enum SynthModel model;
+    const char     *name;
+    size_t          romSize;
+    uint32_t        partialHint;   // inside the 60-byte waveform record table
+    uint32_t        sampleHint;    // inside the 18-byte sample table
+    int             waveRoms;
+    enum SynthGen   generation;
+  };
+  static const JVLayout JV_LAYOUTS[];
+  static const int      JV_LAYOUT_COUNT;
+
+  bool _identify_jv(std::ifstream &romFile);
+  int  _read_jv_partials(std::ifstream &romFile, uint32_t hint);
+  int  _read_jv_samples(std::ifstream &romFile, uint32_t hint);
+
+  std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
 
   int _read_instruments(std::ifstream &romFile);
   int _read_partials(std::ifstream &romFile);

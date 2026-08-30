@@ -67,6 +67,21 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_model == "SC-88")
     throw(std::string("SC-88 ROM files are not supported yet!"));
 
+  // The JV family: only partials and samples live in ROM. There is no
+  // instrument, variation or drum-set table to read, and no separate CPU ROM
+  // holding lookup tables, so the SC-55 sequence below does not apply.
+  if (_synthModel == sm_JV880 || _synthModel == sm_JV1080) {
+    for (int i = 0; i < JV_LAYOUT_COUNT; i++) {
+      if (JV_LAYOUTS[i].model != _synthModel)
+        continue;
+      _read_jv_partials(romFile, JV_LAYOUTS[i].partialHint);
+      _read_jv_samples(romFile, JV_LAYOUTS[i].sampleHint);
+      break;
+    }
+    romFile.close();
+    return;
+  }
+
   // Read internal data structures from ROM file
   _read_instruments(romFile);
   _read_partials(romFile);
@@ -219,6 +234,10 @@ int ControlRom::_identify_model(std::ifstream &romFile)
     _synthModel = sm_SC88;
     _synthGeneration = SynthGen::SC88;
   }
+
+  // No GS banner: the JV family identifies itself by its table structure.
+  if (_model.empty() && _identify_jv(romFile))
+    return 0;
 
   if (_model.empty())        // No valid ROM file found    TODO: SC88 ??
     return -1;
@@ -1085,5 +1104,172 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 
   return romData;
 }
+
+
+// Both JV machines were mapped by measuring their own ROMs (P-0356, P-0361).
+// They share every structure with each other and differ only in these numbers;
+// the JV-880's dumps read straight where the JV-1080's address bus is permuted,
+// which WaveRom handles.
+const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
+  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 4, SynthGen::JV1080 },
+  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x0028c4, 2, SynthGen::JV880  },
+};
+const int ControlRom::JV_LAYOUT_COUNT =
+  (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
+
+
+// The JV control ROMs carry no GS banner, so the machine is identified by its
+// tables: a run of 60-byte records whose first field is a printable name. Size
+// narrows the candidates; the table must then actually parse.
+bool ControlRom::_identify_jv(std::ifstream &romFile)
+{
+  romFile.seekg(0, std::ios::end);
+  size_t size = (size_t) romFile.tellg();
+  romFile.seekg(0);
+  _jvRom.resize(size);
+  romFile.read((char *) &_jvRom[0], size);
+
+  auto namelike = [this](uint32_t o) -> bool {
+    if ((size_t) o + 12 > _jvRom.size()) return false;
+    int alnum = 0;
+    for (int i = 0; i < 12; i++) {
+      uint8_t ch = _jvRom[o + i];
+      if (ch < 0x20 || ch > 0x7e) return false;
+      if (isalnum(ch)) alnum++;
+    }
+    return alnum >= 3;
+  };
+
+  for (int pass = 0; pass < 2; pass++) {
+    for (int i = 0; i < JV_LAYOUT_COUNT; i++) {
+      const JVLayout &L = JV_LAYOUTS[i];
+      if ((size == L.romSize) != (pass == 0))
+        continue;
+      // require a run, not a single record: isolated printable triples occur
+      int run = 0;
+      for (int k = 0; k < 8; k++)
+        run += namelike(L.partialHint + k * 60) ? 1 : 0;
+      if (run < 8)
+        continue;
+      _synthModel      = L.model;
+      _synthGeneration = L.generation;
+      _model.assign(L.name);
+      _version.assign("?");
+      _date.assign("?");
+      return true;
+    }
+  }
+
+  _jvRom.clear();
+  return false;
+}
+
+
+// A 60-byte waveform record is a Partial: a name, note breakpoints (0x7f
+// padded, all values 20..120, i.e. MIDI keys) and indices into the sample
+// table, 0xFFFF marking an unused zone.
+int ControlRom::_read_jv_partials(std::ifstream &romFile, uint32_t hint)
+{
+  const int STRIDE = 60, NAME = 12, ZONES = 11;
+  auto namelike = [this](uint32_t o) -> bool {
+    if ((size_t) o + NAME > _jvRom.size()) return false;
+    int alnum = 0;
+    for (int i = 0; i < NAME; i++) {
+      uint8_t ch = _jvRom[o + i];
+      if (ch < 0x20 || ch > 0x7e) return false;
+      if (isalnum(ch)) alnum++;
+    }
+    return alnum >= 2;
+  };
+
+  uint32_t base = hint;
+  while (base >= (uint32_t) STRIDE && namelike(base - STRIDE))
+    base -= STRIDE;
+
+  for (uint32_t off = base; namelike(off); off += STRIDE) {
+    struct Partial p;
+    p.name.assign((const char *) &_jvRom[off], NAME);
+    p.name.erase(p.name.find_last_not_of(' ') + 1);
+
+    for (int i = 0; i < 16; i++)
+      p.breaks[i] = (i < 16) ? _jvRom[off + NAME + i] : 0;
+
+    for (int i = 0; i < 16; i++) {
+      if (i >= ZONES) { p.samples[i] = 0xFFFF; continue; }
+      uint32_t q = off + NAME + 16 + i * 2;
+      p.samples[i] = (uint16_t) ((_jvRom[q] << 8) | _jvRom[q + 1]);
+    }
+
+    _partials.push_back(p);
+  }
+
+  return 0;
+}
+
+
+// An 18-byte sample record is a Sample. The ROM stores start, loop and end as
+// absolute 24-bit addresses; the header - which holds the root key - sits in
+// the NEXT slot (P-0362). Every slot is kept, valid or not, because the
+// partials index this table positionally.
+int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
+{
+  const int STRIDE = 18;
+  int waveRoms = 2;
+  for (int i = 0; i < JV_LAYOUT_COUNT; i++)
+    if (JV_LAYOUTS[i].model == _synthModel) waveRoms = JV_LAYOUTS[i].waveRoms;
+  const uint32_t space = (uint32_t) waveRoms * 2 * 1024 * 1024;
+
+  auto u24 = [this](uint32_t o) -> uint32_t {
+    if ((size_t) o + 3 > _jvRom.size()) return 0;
+    return ((uint32_t) _jvRom[o] << 16) | ((uint32_t) _jvRom[o+1] << 8) | _jvRom[o+2];
+  };
+  auto valid = [&](uint32_t o) -> bool {
+    if ((size_t) o + STRIDE > _jvRom.size()) return false;
+    uint32_t s = u24(o + 9), l = u24(o + 12), e = u24(o + 15);
+    return s > 0 && s <= l && l <= e && e < space &&
+           (e - s) >= 32 && (e - s) < 0x40000;
+  };
+
+  const int RUN = 8;
+  uint32_t base = 0;
+  bool found = false;
+  for (uint32_t o = (hint > 0x400 ? hint - 0x400 : 0);
+       o + RUN * STRIDE < _jvRom.size() && o < hint + 0x400; o++) {
+    bool all = true;
+    for (int k = 0; k < RUN && all; k++)
+      all = valid(o + k * STRIDE);
+    if (all) { base = o; found = true; break; }
+  }
+  if (!found)
+    return -1;
+  while (base >= (uint32_t) STRIDE && valid(base - STRIDE))
+    base -= STRIDE;
+
+  int miss = 0;
+  for (uint32_t off = base; (size_t) off + STRIDE <= _jvRom.size(); off += STRIDE) {
+    struct Sample s = {};
+    uint32_t ho = off + STRIDE + 3;
+    s.rootKey = (ho < _jvRom.size()) ? _jvRom[ho] : 0;
+
+    if (valid(off)) {
+      uint32_t s0 = u24(off + 9), l0 = u24(off + 12), e0 = u24(off + 15);
+      s.address   = s0;
+      s.sampleLen = (uint16_t) (e0 - s0);
+      s.loopLen   = (uint16_t) (e0 - l0);
+      s.loopMode  = 0;
+      miss = 0;
+    } else if (++miss > 24) {
+      size_t keep = _samples.size() > (size_t) miss - 1
+                    ? _samples.size() - (miss - 1) : 0;
+      _samples.resize(keep);
+      break;
+    }
+
+    _samples.push_back(s);
+  }
+
+  return 0;
+}
+
 
 }
