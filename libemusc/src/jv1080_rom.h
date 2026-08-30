@@ -80,6 +80,55 @@ public:
   // and so is one of the few tables that confirms its own extent.
   const std::vector<std::string> &effects(void) const { return _effects; }
 
+  // One entry of the sample table: where a multisample lives in the wave ROMs.
+  // Base 0x075c7a, 18 bytes per entry, 662 valid entries in v1.0 - all found by
+  // measuring the ROM (docs/jv1080-rom-notes.md), not from any description of
+  // the machine. The three addresses always satisfy start <= loop <= end and
+  // fall inside the 8 MB wave space, which is what identifies the record.
+  struct Sample {
+    uint32_t start;                 // 24-bit, big-endian, in the 8 MB space
+    uint32_t loop;                  // loop point, absolute
+    uint32_t end;                   // one past the last byte
+    uint8_t  header[6];             // pitch, rate and mode - NOT YET DECODED
+  };
+
+  const std::vector<Sample> &samples(void) const { return _samples; }
+
+  // The eleven indices ending each waveform record point into samples(), and
+  // 0xFFFF marks an unused slot. This returns only the used ones.
+  std::vector<int> waveform_samples(int waveformIndex) const;
+
+  // Load the four wave ROMs, in the order they occupy the 8 MB address space.
+  // Returns false and sets error() if any file is missing or the wrong size.
+  bool load_wave_roms(const std::vector<std::string> &paths);
+  bool have_wave_roms(void) const { return _waveRoms.size() == WAVE_ROMS; }
+
+  // Decode one sample to signed 16-bit PCM.
+  //
+  // TWO STEPS, AND ONLY THE FIRST IS FULLY UNDERSTOOD.
+  //
+  // The address permutation is read from Roland's own service notes, page 15,
+  // where each wave ROM socket is drawn as a table mapping the tone generator's
+  // WAD lines to the ROM's WA pins (docs/service-notes/jv1080.md, F-1). It is
+  // verified: the diagram and the data agree.
+  //
+  // The samples are delta-coded - each byte is a change, not a value - which
+  // was established by our own measurement: integrating the byte stream lifts
+  // lag-1 autocorrelation from +0.008 to +0.949 and yields tonal audio (F-5).
+  // What is NOT known is where the encoder resets its integrator. Without that,
+  // the running sum drifts, and `dcWindow` suppresses the drift with a moving
+  // average instead. That is a WORKAROUND, not the format: it is why our decode
+  // is slightly less clean than it should be, and it will be replaced when the
+  // block structure is found.
+  //
+  // The playback RATE is likewise unknown - it lives in the undecoded 6-byte
+  // header - so the result is correct in shape but not yet in pitch.
+  std::vector<int16_t> decode_sample(int sampleIndex, int dcWindow = 128) const;
+
+  static constexpr int WAVE_ROMS     = 4;
+  static constexpr int WAVE_ROM_SIZE = 2 * 1024 * 1024;
+  static constexpr int WAVE_ADDR_BITS = 21;
+
   int  size(void) const { return (int) _rom.size(); }
   bool ok(void) const   { return _ok; }
   const std::string &error(void) const { return _error; }
@@ -92,6 +141,8 @@ private:
   std::vector<Waveform> _waveforms;
   std::vector<Waveform> _loops;
   std::vector<std::string> _effects;
+  std::vector<Sample> _samples;
+  std::vector<std::vector<uint8_t>> _waveRoms;
   bool _ok;
   std::string _error;
 
@@ -103,6 +154,12 @@ private:
   static constexpr uint32_t LOOP_HINT     = 0x7a808;
   static constexpr uint32_t EFFECT_HINT   = 0x56ac6;
   static constexpr int      EFFECT_STRIDE = 23;
+  static constexpr uint32_t SAMPLE_HINT   = 0x075c7a;
+  static constexpr int      SAMPLE_STRIDE = 18;
+
+  // Service notes p.15: ROM address bit m is driven by tone-generator line
+  // WAD[ADDR_ORDER[m]]. Roland's own diagram of Roland's own board.
+  static const int ADDR_ORDER[WAVE_ADDR_BITS];
 
   static constexpr int PARAM_OFF  = NAME_LEN;          // 12
   static constexpr int PARAM_LEN  = 16;
@@ -112,6 +169,8 @@ private:
   bool _name_like(uint32_t off, int minAlnum = 3) const;
   bool _read_table(uint32_t hint, std::vector<Waveform> &out);
   bool _read_effects(uint32_t hint);
+  bool _read_samples(uint32_t hint);
+  uint8_t _wave_byte(uint32_t addr) const;
   uint32_t _find_table(uint32_t hint) const;
 };
 

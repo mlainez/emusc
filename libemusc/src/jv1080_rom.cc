@@ -23,9 +23,19 @@
 #include "jv1080_rom.h"
 
 #include <cctype>
+#include <cmath>
 #include <fstream>
 
 namespace EmuSC {
+
+
+// Read from Roland's service notes, page 15, CIRCUIT DIAGRAM (EXP BASE), where
+// each wave ROM socket is drawn as a table of <net WADn> <pin> <ROM pin WAm>.
+// ROM address bit m is driven by tone-generator line WAD[ADDR_ORDER[m]].
+// Transcription verified against the page rendered at 400 dpi.
+const int JV1080Rom::ADDR_ORDER[JV1080Rom::WAVE_ADDR_BITS] = {
+  1, 2, 0, 3, 4, 18, 17, 16, 15, 5, 6, 13, 7, 12, 10, 9, 11, 8, 14, 19, 20
+};
 
 
 JV1080Rom::JV1080Rom(std::string romPath)
@@ -63,6 +73,7 @@ JV1080Rom::JV1080Rom(std::string romPath)
   // unusable for the table that was found.
   _read_table(LOOP_HINT, _loops);
   _read_effects(EFFECT_HINT);
+  _read_samples(SAMPLE_HINT);
 
   _ok = true;
 }
@@ -160,6 +171,177 @@ bool JV1080Rom::_read_effects(uint32_t hint)
   }
 
   return !_effects.empty();
+}
+
+
+
+// The sample table sits between the waveform table and the loop table. An entry
+// is 18 bytes: three of flags, a six-byte header that is not yet decoded, then
+// start, loop and end as 24-bit big-endian addresses into the 8 MB wave space.
+// An entry is recognised by its own consistency - start <= loop <= end, in
+// range, and a plausible length - rather than by a count, because the table
+// does not fill the space available to it.
+bool JV1080Rom::_read_samples(uint32_t hint)
+{
+  const uint32_t WAVE_SPACE = (uint32_t) WAVE_ROMS * WAVE_ROM_SIZE;
+
+  auto u24 = [this](uint32_t o) -> uint32_t {
+    if ((size_t) o + 3 > _rom.size()) return 0;
+    return ((uint32_t) _rom[o] << 16) | ((uint32_t) _rom[o + 1] << 8) | _rom[o + 2];
+  };
+  auto valid = [&](uint32_t o) -> bool {
+    if ((size_t) o + SAMPLE_STRIDE > _rom.size()) return false;
+    uint32_t s = u24(o + 9), l = u24(o + 12), e = u24(o + 15);
+    return s > 0 && s <= l && l <= e && e < WAVE_SPACE &&
+           (e - s) >= 32 && (e - s) < 0x40000;
+  };
+
+  if (!valid(hint))
+    return false;
+
+  uint32_t base = hint;
+  while (base >= (uint32_t) SAMPLE_STRIDE && valid(base - SAMPLE_STRIDE))
+    base -= SAMPLE_STRIDE;
+
+  // Tolerate a single unusable slot before giving up: the table has gaps.
+  for (uint32_t off = base; ; off += SAMPLE_STRIDE) {
+    if (!valid(off)) {
+      if (!valid(off + SAMPLE_STRIDE))
+        break;
+      continue;
+    }
+    struct Sample smp;
+    for (int i = 0; i < 6; i++)
+      smp.header[i] = _rom[off + 3 + i];
+    smp.start = u24(off + 9);
+    smp.loop  = u24(off + 12);
+    smp.end   = u24(off + 15);
+    _samples.push_back(smp);
+  }
+
+  return !_samples.empty();
+}
+
+
+std::vector<int> JV1080Rom::waveform_samples(int waveformIndex) const
+{
+  std::vector<int> out;
+  if (waveformIndex < 0 || (size_t) waveformIndex >= _waveforms.size())
+    return out;
+
+  for (int i = 0; i < 11; i++) {
+    uint16_t v = _waveforms[waveformIndex].index[i];
+    if (v == 0xFFFF)                       // the unused marker
+      continue;
+    if ((size_t) v < _samples.size())
+      out.push_back((int) v);
+  }
+
+  return out;
+}
+
+
+bool JV1080Rom::load_wave_roms(const std::vector<std::string> &paths)
+{
+  _waveRoms.clear();
+
+  if ((int) paths.size() != WAVE_ROMS) {
+    _error = "JV-1080 needs exactly 4 wave ROMs";
+    return false;
+  }
+
+  for (const std::string &p : paths) {
+    std::ifstream f(p, std::ios::binary | std::ios::in);
+    if (!f.is_open()) {
+      _error = "Unable to open wave ROM: " + p;
+      _waveRoms.clear();
+      return false;
+    }
+    f.seekg(0, std::ios::end);
+    std::streamoff len = f.tellg();
+    f.seekg(0);
+    if (len != WAVE_ROM_SIZE) {
+      _error = "Wave ROM has unexpected size: " + p;
+      _waveRoms.clear();
+      return false;
+    }
+    std::vector<uint8_t> data((size_t) len);
+    f.read((char *) &data[0], len);
+    _waveRoms.push_back(std::move(data));
+  }
+
+  return true;
+}
+
+
+// One byte of the flat 8 MB wave space. The top two bits of the address pick
+// the device; the remaining 21 are what the tone generator drives, and they
+// reach the ROM's pins through the permutation of ADDR_ORDER.
+uint8_t JV1080Rom::_wave_byte(uint32_t addr) const
+{
+  size_t rom = addr >> WAVE_ADDR_BITS;
+  if (rom >= _waveRoms.size())
+    return 0;
+
+  uint32_t logical = addr & ((1u << WAVE_ADDR_BITS) - 1);
+  uint32_t physical = 0;
+  for (int m = 0; m < WAVE_ADDR_BITS; m++)
+    physical |= ((logical >> ADDR_ORDER[m]) & 1u) << m;
+
+  return _waveRoms[rom][physical];
+}
+
+
+std::vector<int16_t> JV1080Rom::decode_sample(int sampleIndex, int dcWindow) const
+{
+  std::vector<int16_t> pcm;
+  if (sampleIndex < 0 || (size_t) sampleIndex >= _samples.size() ||
+      !have_wave_roms())
+    return pcm;
+
+  const struct Sample &s = _samples[sampleIndex];
+  uint32_t count = s.end - s.start;
+  if (!count)
+    return pcm;
+
+  // Each byte is a signed change, so the waveform is their running sum.
+  std::vector<double> x(count);
+  double acc = 0.0;
+  for (uint32_t i = 0; i < count; i++) {
+    acc += (double) (int8_t) _wave_byte(s.start + i);
+    x[i] = acc;
+  }
+
+  // Without the encoder's reset points the sum drifts. A moving average
+  // approximates the drift and is subtracted off. This is a stand-in for the
+  // block structure, not the format - see the note in the header.
+  if (dcWindow > 1 && (uint32_t) dcWindow < count) {
+    std::vector<double> smooth(count);
+    double run = 0.0;
+    int half = dcWindow / 2;
+    for (uint32_t i = 0; i < count; i++) {
+      run += x[i];
+      if (i >= (uint32_t) dcWindow) run -= x[i - dcWindow];
+      uint32_t n = (i < (uint32_t) dcWindow) ? i + 1 : (uint32_t) dcWindow;
+      smooth[i] = run / n;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+      uint32_t j = (i + half < count) ? i + half : count - 1;
+      x[i] -= smooth[j];
+    }
+  }
+
+  double peak = 0.0;
+  for (uint32_t i = 0; i < count; i++)
+    if (std::fabs(x[i]) > peak) peak = std::fabs(x[i]);
+  if (peak <= 0.0)
+    return pcm;
+
+  pcm.resize(count);
+  for (uint32_t i = 0; i < count; i++)
+    pcm[i] = (int16_t) (x[i] / peak * 30000.0);
+
+  return pcm;
 }
 
 }
