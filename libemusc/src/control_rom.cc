@@ -1369,15 +1369,20 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           // Preset A is 15 where the SC-55's TVFBaseFlt is 62, and feeding it
           // straight in gives a nearly shut filter - 35 dB of level. Mapped
           // linearly onto the SC-55's index range. The constants are CALIBRATED
-          // against the oracle, not derived: swept over offset 45-94 and slope
-          // 0.25-0.65 on Preset A, 78 and 0.65 minimise band error at 9.68 dB
-          // with level -6.9 dB, against 11.72 dB and -8.8 dB with no filter at
-          // all. They are a fit to be replaced when the JV's own cutoff table is
-          // found, not a reading of one.
+          // against the oracle. The first calibration was fitted to the first
+          // eight Preset A patches, which are all pianos, and it did not
+          // generalise: across all 64 it gave 16.90 dB where the pianos alone
+          // gave 10.96. Re-swept on a stratified sample - every fourth patch, so
+          // guitars, basses and organs count as much as pianos - 55 and 0.65 give
+          // 14.44 dB against 19.75 dB with no filter at all.
+          //
+          // A linear map is the wrong shape and this is a fit, not a reading: the
+          // JV's own cutoff table is in its ROM and replacing this with it is the
+          // open work.
           {
             const char *eo = getenv("EMUSC_JV_COF_OFF");
             const char *es = getenv("EMUSC_JV_COF_SLOPE");
-            double off = eo ? atof(eo) : 78.0;
+            double off = eo ? atof(eo) : 55.0;
             double slp = es ? atof(es) : 0.65;
             int idx = (int) std::lround(off + (tb[52] & 0x7f) * slp);
             ip.TVFBaseFlt = (int8_t) std::clamp(idx, 0, 127);
@@ -1497,6 +1502,33 @@ void ControlRom::_init_jv_lookup_tables(void)
 {
   struct LookupTables &t = lookupTables;
 
+  // Tables read from the JV's OWN ROM rather than fitted from the SC-55's.
+  //
+  // Found by matching numerically instead of by shape: for each SC-55 table,
+  // scan the JV ROM for a run of the same length whose values agree entry by
+  // entry. The owner's insight is what made this work - a filter or pan curve
+  // has no reason to differ much between two Roland machines of the same era,
+  // so the SC-55's tables are usable as templates to search WITH, not just as
+  // stand-ins to substitute. EnvSegmentCurve matches exactly, PitchCoarseExp to
+  // 1.4%, and the rest to between 8% and 15%.
+  //
+  // Each is still a LEAD until the code that reads it is found: a numerical
+  // match is strong evidence and not proof. tools/romdis/catalog.py lists what
+  // else in the ROM has the same shape.
+  auto rom8 = [this](uint32_t base, int n, auto &dst) {
+    if ((size_t) base + n > _jvRom.size()) return false;
+    for (int i = 0; i < n; i++) dst[i] = _jvRom[base + i];
+    return true;
+  };
+  auto rom16 = [this](uint32_t base, int n, auto &dst) {
+    if ((size_t) base + 2*n > _jvRom.size()) return false;
+    for (int i = 0; i < n; i++)
+      dst[i] = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
+    return true;
+  };
+  bool haveRom = _jvRom.size() > 0x40000 - 1;
+
+
   // Key follow: one flat map, so every key maps to bias 0 and no table lookup
   // can leave its bounds. 136 is the index table's size; the mapper is indexed
   // by kmIndex + key, so it must cover the whole key range.
@@ -1597,8 +1629,20 @@ void ControlRom::_init_jv_lookup_tables(void)
   //                       (its 35, 88, 223, 562, 1415, 3560, 8875, 20887)
   //   TVFResonance[i]   = 255 * 0.99226^i   (its 255, 225, 199, ... 116)
   //   TVFCutoffFreqKF[i]= i * 512/20        (its 0, 26, 51, 77, ... 512)
-  for (int i = 0; i < 129; i++)
-    t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
+  // The JV's own cutoff table, if EMUSC_JV_COF_TABLE names its offset; the
+  // catalogue in tools/romdis/catalog.py lists the candidates. Otherwise the
+  // SC-55's shape, fitted.
+  {
+    const char *ct = getenv("EMUSC_JV_COF_TABLE");
+    uint32_t base = ct ? (uint32_t) strtoul(ct, nullptr, 0) : 0;
+    if (base && (size_t) base + 258 <= _jvRom.size()) {
+      for (int i = 0; i < 129; i++)
+        t.TVFCutoffFreq[i] = (int) ((_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1]);
+    } else {
+      for (int i = 0; i < 129; i++)
+        t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
+    }
+  }
   for (int i = 0; i < 128; i++)
     t.TVFResonance[i] = (uint8_t) std::round(255.0 * std::pow(0.99226, i));
   for (int i = 0; i < 21; i++)
@@ -1616,9 +1660,22 @@ void ControlRom::_init_jv_lookup_tables(void)
                           : 127.0 * std::pow(std::max(0.0, 1.0 - (i - 110) / 146.0), 1.6);
     t.TVFResonanceFreq[i] = (uint8_t) std::round(std::clamp(v, 0.0, 127.0));
   }
+  if (haveRom) rom8(0x3e9c4, 256, t.TVFResonanceFreq);      // rel.err 0.134
   for (int i = 0; i < 128; i++) t.TVFEnvDepth[i]  = (int) std::round(i * 193.5);
   for (int i = 0; i < 11;  i++) t.TVFCutoffVSens[i] = (int) std::round(i * 25.8);
   for (int i = 0; i < 64;  i++) t.TVFEnvScale[i]  = (uint8_t) std::round(i * 2.0);
+  if (haveRom) {
+    rom8 (0x3fc79,  64, t.TVFEnvScale);                     // rel.err 0.164
+    rom8 (0x02d15,  11, t.TVFCutoffVSens);                  // rel.err 0.173
+    rom8 (0x054be, 128, t.TVFResonance);                    // rel.err 0.122
+    rom8 (0x055f5,   9, t.EnvSegmentCurve);                 // rel.err 0.000, exact
+    rom8 (0x3e931, 128, t.TVAPanKeyFollow);                 // rel.err 0.078
+    rom8 (0x3e946, 129, t.TVAPanpot);                       // rel.err 0.099
+    rom8 (0x05590, 128, t.TVALevelIndex);                   // rel.err 0.150
+    rom8 (0x3ff49,  21, t.EnvTimeKeyFollowSens);            // rel.err 0.156
+    rom8 (0x04edf, 130, t.LFOSine);                         // rel.err 0.243
+    rom16(0x06b2c,  47, t.PitchCoarseExp);                  // rel.err 0.014
+  }
 
   // Envelope segment shape and the TVA's exponential change table, all read off
   // the SC-55 and reproduced rather than invented.
