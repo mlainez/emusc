@@ -1346,6 +1346,23 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           ip.pitchKeyFlw    = 0x4a;
           ip.rootKeyOffset  = 64;
 
+          // Every "key follow" and "velocity sensitivity" field is read as
+          // (value - 0x40), so leaving them zero is not neutral - it is the
+          // maximum NEGATIVE adjustment, and it crushed every envelope time to
+          // nothing. A.Piano 1 fell to a tenth of its peak in 16 ms where the
+          // machine takes 896 ms, which is why every Preset A patch measured
+          // 20 dB quiet. 0x40 is the centre these are measured from.
+          ip.TVAETKeyF14 = ip.TVAETKeyF5  = 0x40;
+          ip.TVAETVSens12 = ip.TVAETVSens35 = 0x40;
+          ip.TVAETKeyFP14 = ip.TVAETKeyFP5 = 0;
+          ip.TVFETKeyF14 = ip.TVFETKeyF5  = 0x40;
+          ip.TVFETVSens12 = ip.TVFETVSens35 = 0x40;
+          ip.TVFETKeyFP14 = ip.TVFETKeyFP5 = 0;
+          ip.pitchETKeyF14 = ip.pitchETKeyF5 = 0x40;
+          ip.pitchETKeyFP14 = ip.pitchETKeyFP5 = 0;
+          ip.pitchEnvTVSens = 0x40;
+
+
           // The TVA envelope, from Roland's own parameter address map in the
           // JV-880 owner's manual (docs/service-notes/jv880-owner.md): seven
           // INTERLEAVED bytes, T1 L1 T2 L2 T3 L3 T4, with no L4 - T4 is the
@@ -1531,6 +1548,8 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
 
   _jvChannelPatch.fill(-1);
   _jvChannelLevel.fill(100);
+  _jvChannelReverb.fill(0);
+  _jvChannelChorus.fill(0);
   _jvChannelPan.fill(0x40);
   if (!base || (size_t) base + STRIDE > _jvRom.size())
     return -1;
@@ -1564,6 +1583,10 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
       // 0x1A) once the split pair at 16/17 is collapsed to one byte.
       _jvChannelLevel[chan] = pt[17] & 0x7f;
       _jvChannelPan[chan]   = pt[18] & 0x7f;
+      if (patch < (int) _jvInstSend.size()) {
+        _jvChannelReverb[chan] = _jvInstSend[patch].first;
+        _jvChannelChorus[chan] = _jvInstSend[patch].second;
+      }
     }
   }
 
@@ -1596,9 +1619,14 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
   for (int k = 0; k < 128; k++) {
     ds.preset[k] = 0xffff;
     ds.volume[k] = 0x7f;
-    ds.key[k]    = k;
+    // Every drum plays at its own natural pitch, not at the key struck: the
+    // SC-55's own drum sets put 60 in every entry of this table, and using the
+    // key instead transposes a kick down until it is muffled noise - which is
+    // what it sounded like. Flags 0x10 is note-on only; a drum is one-shot and
+    // must ignore note-off, which 0x11 does not.
+    ds.key[k]    = 60;
     ds.panpot[k] = 0x40;
-    ds.flags[k]  = 0x11;              // accept note on and note off
+    ds.flags[k]  = 0x10;
   }
 
   for (int k = 0; k < KEYS; k++) {
@@ -1626,6 +1654,23 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
     ip.pitchKeyFlw    = 0x4a;
     ip.rootKeyOffset  = 64;
 
+    // Every "key follow" and "velocity sensitivity" field is read as
+    // (value - 0x40), so leaving them zero is not neutral - it is the
+    // maximum NEGATIVE adjustment, and it crushed every envelope time to
+    // nothing. A.Piano 1 fell to a tenth of its peak in 16 ms where the
+    // machine takes 896 ms, which is why every Preset A patch measured
+    // 20 dB quiet. 0x40 is the centre these are measured from.
+    ip.TVAETKeyF14 = ip.TVAETKeyF5  = 0x40;
+    ip.TVAETVSens12 = ip.TVAETVSens35 = 0x40;
+    ip.TVAETKeyFP14 = ip.TVAETKeyFP5 = 0;
+    ip.TVFETKeyF14 = ip.TVFETKeyF5  = 0x40;
+    ip.TVFETVSens12 = ip.TVFETVSens35 = 0x40;
+    ip.TVFETKeyFP14 = ip.TVFETKeyFP5 = 0;
+    ip.pitchETKeyF14 = ip.pitchETKeyF5 = 0x40;
+    ip.pitchETKeyFP14 = ip.pitchETKeyFP5 = 0;
+    ip.pitchEnvTVSens = 0x40;
+
+
     // A drum is one shot: reach full level at once and hold, and let the sample
     // end the note. The rhythm record's own envelope bytes are not identified -
     // its 44 bytes are not the patch tone's 84, so the +74..+80 map does not
@@ -1644,5 +1689,8 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
 
   return 0;
 }
+
+
+
 
 }

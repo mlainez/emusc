@@ -495,6 +495,10 @@ void Settings::_initialize_patch_params(enum Mode m)
             _ctrlRom.jv_channel_level()[p];
           _patchParams[(int) PatchParam::PartPanpot     | (partAddr << 8)] =
             _ctrlRom.jv_channel_pan()[p];
+          _patchParams[(int) PatchParam::ReverbSendLevel | (partAddr << 8)] =
+            _ctrlRom.jv_channel_reverb()[p];
+          _patchParams[(int) PatchParam::ChorusSendLevel | (partAddr << 8)] =
+            _ctrlRom.jv_channel_chorus()[p];
         }
       }
 
