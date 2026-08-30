@@ -1652,9 +1652,13 @@ void ControlRom::_init_jv_lookup_tables(void)
   {
     const char *ct = getenv("EMUSC_JV_COF_TABLE");
     uint32_t base = ct ? (uint32_t) strtoul(ct, nullptr, 0) : 0;
+    const char *cs = getenv("EMUSC_JV_COF_SCALE");
+    double cscale = cs ? atof(cs) : 1.0;
     if (base && (size_t) base + 258 <= _jvRom.size()) {
-      for (int i = 0; i < 129; i++)
-        t.TVFCutoffFreq[i] = (int) ((_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1]);
+      for (int i = 0; i < 129; i++) {
+        int v = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
+        t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(v * cscale));
+      }
     } else {
       for (int i = 0; i < 129; i++)
         t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
@@ -1872,10 +1876,26 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
     // end the note. The rhythm record's own envelope bytes are not identified -
     // its 44 bytes are not the patch tone's 84, so the +74..+80 map does not
     // carry over.
-    ip.TVAEnvL1 = ip.TVAEnvL2 = ip.TVAEnvL3 = ip.TVAEnvL4 = 0x7f;
-    ip.TVAEnvT1 = 0x00;
-    ip.TVAEnvT2 = ip.TVAEnvT3 = ip.TVAEnvT4 = 0x7f;
-    ip.TVAEnvT5 = 0x20;
+    // A drum must DECAY - held flat it rings for ever, which is what the owner
+    // heard as "cymbals never seem to be released". EMUSC_JV_RHY_ENV names the
+    // record offset of the seven interleaved envelope bytes to try.
+    {
+      const char *re = getenv("EMUSC_JV_RHY_ENV");
+      int eo = re ? atoi(re) : -1;
+      if (eo >= 0 && eo + 7 <= STRIDE) {
+        ip.TVAEnvT1 = r[eo+0] & 0x7f; ip.TVAEnvL1 = r[eo+1] & 0x7f;
+        ip.TVAEnvT2 = r[eo+2] & 0x7f; ip.TVAEnvL2 = r[eo+3] & 0x7f;
+        ip.TVAEnvT3 = r[eo+4] & 0x7f; ip.TVAEnvL3 = r[eo+5] & 0x7f;
+        ip.TVAEnvL4 = ip.TVAEnvL3;
+        ip.TVAEnvT4 = 0x7f;
+        ip.TVAEnvT5 = r[eo+6] & 0x7f;
+      } else {
+        ip.TVAEnvL1 = 0x7f; ip.TVAEnvL2 = 0x60;
+        ip.TVAEnvL3 = ip.TVAEnvL4 = 0x00;   // decay to silence
+        ip.TVAEnvT1 = 0x00; ip.TVAEnvT2 = 0x40;
+        ip.TVAEnvT3 = 0x50; ip.TVAEnvT4 = 0x7f; ip.TVAEnvT5 = 0x20;
+      }
+    }
 
     ds.preset[FIRST_KEY + k] = (uint16_t) _instruments.size();
     _instruments.push_back(in);
