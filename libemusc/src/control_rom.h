@@ -257,6 +257,10 @@ public:
   std::string date(void) { return _date; }
   enum SynthGen generation(void) { return _synthGeneration; }
 
+  // JV only: which patch each MIDI channel plays, taken from the performance.
+  // -1 means no part of the performance listens on that channel.
+  inline const std::array<int, 16>& jv_channel_patch(void) { return _jvChannelPatch; }
+  inline int jv_drum_channel(void) { return _jvDrumChannel; }
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
   const uint8_t max_polyphony(void);
 
@@ -425,6 +429,10 @@ private:
       uint32_t        patchBankA;    // Internal; Preset A and B follow at +0x8000
                                      // each. Program changes select Internal, which is
                                      // the factory bank the machine powers on with
+    uint32_t        rhythm;        // 61 keys from 36, 44 bytes each, right after
+                                   // the Internal patch bank
+    uint32_t        performances;  // 16 records of 204 bytes, ending where the
+                                   // Internal patch bank begins
     int             waveRoms;
     enum SynthGen   generation;
   };
@@ -436,8 +444,12 @@ private:
   int  _read_jv_samples(std::ifstream &romFile, uint32_t hint);
   int  _read_jv_patches(std::ifstream &romFile, uint32_t bankA);
   void _init_jv_lookup_tables(void);
+  int  _read_jv_performances(std::ifstream &romFile, uint32_t base);
+  int  _read_jv_rhythm(std::ifstream &romFile, uint32_t base);
 
   std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
+  std::array<int, 16> _jvChannelPatch;
+  int _jvDrumChannel = 9;
 
   int _read_instruments(std::ifstream &romFile);
   int _read_partials(std::ifstream &romFile);

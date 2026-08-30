@@ -481,6 +481,18 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::RxSostenuto     | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::RxSoft          | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::PolyMode        | (partAddr << 8)] = 1;
+      // The JV takes each part's patch from the PERFORMANCE, not from a program
+      // change. Its own demo material sends no program change at all, so without
+      // this every part plays one default instrument. ToneNumber is the bank and
+      // ToneNumber+1 the program, and the JV variation table maps program n to
+      // instrument n, so the patch number goes straight in.
+      if (_ctrlRom.generation() == ControlRom::SynthGen::JV880 ||
+          _ctrlRom.generation() == ControlRom::SynthGen::JV1080) {
+        int patch = _ctrlRom.jv_channel_patch()[p];
+        if (patch >= 0)
+          _patchParams[(int) PatchParam::ToneNumber + 1 | (partAddr << 8)] = patch;
+      }
+
     
     // MIDI channel 10 defaults to rhythm mode 1 (Drum1) in GS mode
     if (_patchParams[(int) PatchParam::RxChannel  | (partAddr << 8)] == 9) {

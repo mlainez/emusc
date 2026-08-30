@@ -84,6 +84,8 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
       _read_jv_samples(romFile, JV_LAYOUTS[i].sampleHint);
       if (JV_LAYOUTS[i].patchBankA)
         _read_jv_patches(romFile, JV_LAYOUTS[i].patchBankA);
+        _read_jv_performances(romFile, JV_LAYOUTS[i].performances);
+        _read_jv_rhythm(romFile, JV_LAYOUTS[i].rhythm);
       break;
     }
       _init_jv_lookup_tables();
@@ -1127,8 +1129,8 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // the JV-880's dumps read straight where the JV-1080's address bus is permuted,
 // which WaveRom handles.
 const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
-  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 0,        4, SynthGen::JV1080 },
-  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x008ce0, 2, SynthGen::JV880  },
+  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 0,        0, 0, 4, SynthGen::JV1080 },
+  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x008ce0, 0x008020, 0x00e760, 2, SynthGen::JV880  },
 };
 const int ControlRom::JV_LAYOUT_COUNT =
   (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
@@ -1500,6 +1502,134 @@ void ControlRom::_init_jv_lookup_tables(void)
   }
   for (int i = 0; i < 257; i++)
     t.TVAEnvExpChange[i] = (int) std::min(65535.0, std::round(std::pow(2.0, i / 16.0)));
+}
+
+
+
+// A JV performance says which patch each of its eight parts plays and which MIDI
+// channel that part answers to. A file like the machine's own demo sends no
+// program change at all and relies entirely on this; without it every part falls
+// back to one default instrument and the whole piece plays on the wrong sound.
+//
+// The record is 204 bytes: a 12-byte name, 16 bytes of common data, then eight
+// parts of 22. Within a part, +16 is the patch number and +21 carries the
+// receive channel in its low nibble. Established by name agreement rather than
+// by probe, because performances live in battery-backed RAM and a ROM edit
+// cannot reach them - performance 0 is named "Syn Lead" and its parts all carry
+// patch 21, which is "SAW Lead"; performance 1, "Encounter X", carries JV
+// Heaven, Analog Pad 2, Arctic Winds, WhistlinAtom, X/Y/Z, Ice Hall and
+// DistanceCall. See docs/service-notes/jv880-owner.md.
+int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
+{
+  const int STRIDE = 204, COMMON = 28, PART = 22, PARTS = 8;
+  const int P_PATCH = 16, P_CHAN = 21;
+
+  _jvChannelPatch.fill(-1);
+  if (!base || (size_t) base + STRIDE > _jvRom.size())
+    return -1;
+
+  // Which performance the machine powers on with is held in its NVRAM, which we
+  // deliberately do not require (P-0374). Performance 0 is what a factory-state
+  // machine selects, and it is the one the demo material was made against.
+  const uint8_t *p = &_jvRom[base];
+
+  for (int t = 0; t < PARTS; t++) {
+    const uint8_t *pt = p + COMMON + t * PART;
+    int patch = pt[P_PATCH];
+    int chan  = pt[P_CHAN] & 0x0f;
+
+    // Part 8 is the rhythm part, not a patch part: the manual's own signal
+    // diagram shows parts 1-7 taking a Patch and part 8 taking a Rhythm set, and
+    // its +16 is 0 in every factory performance rather than a patch number. Its
+    // channel is the drum channel - 0xE9, channel 9, in all sixteen.
+    if (t == PARTS - 1) {
+      _jvDrumChannel = chan;
+      continue;
+    }
+    if (patch >= (int) _instruments.size())
+      continue;
+    // Earlier parts win: several parts may share a channel to layer sounds, and
+    // libEmuSC has one instrument per part where the JV has eight.
+    if (_jvChannelPatch[chan] < 0)
+      _jvChannelPatch[chan] = patch;
+  }
+
+  return 0;
+}
+
+
+
+// The JV's drums. Part 8 of a performance takes a Rhythm set rather than a
+// patch, and the set is one 44-byte record per key from 36 (C2) upward, 61 of
+// them, sitting immediately after the Internal patch bank - the two are
+// contiguous, as the performance table and the patch bank are.
+//
+// Byte +1 is the waveform, which the names settle beyond argument: key 36 is
+// "Bright Kick", 38 "90's Snare", 42 "Closed HAT 1", 46 "Open HAT 1". Byte +0
+// is the on/off switch, as it is in a patch tone.
+//
+// libEmuSC's drum path wants an INSTRUMENT per key, so each rhythm note becomes
+// one, appended after the patches. Their names come from the waveform, which
+// makes a drum map readable in the instrument list.
+int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
+{
+  const int STRIDE = 44, KEYS = 61, FIRST_KEY = 36;
+
+  if (!base || (size_t) base + KEYS * STRIDE > _jvRom.size())
+    return -1;
+
+  struct DrumSet ds = {};
+  ds.name = "JV Rhythm";
+  for (int k = 0; k < 128; k++) {
+    ds.preset[k] = 0xffff;
+    ds.volume[k] = 0x7f;
+    ds.key[k]    = k;
+    ds.panpot[k] = 0x40;
+    ds.flags[k]  = 0x11;              // accept note on and note off
+  }
+
+  for (int k = 0; k < KEYS; k++) {
+    const uint8_t *r = &_jvRom[base + k * STRIDE];
+    if (!r[0] || r[1] >= _partials.size())
+      continue;
+
+    struct Instrument in = {};
+    in.name = _partials[r[1]].name;
+    in.volume = 0x7f;
+    in.partialsUsed = 1;
+    for (int t = 0; t < 4; t++)
+      in.partials[t].partialIndex = 0xFFFF;
+
+    struct InstPartial &ip = in.partials[0];
+    ip.partialIndex   = r[1];
+    ip.panpot         = 0x40;
+    ip.coarsePitch    = 0x40;
+    ip.finePitch      = 0x40;
+    ip.volume         = 0x7f;
+    ip.velRangeLow    = 0;
+    ip.velRangeHigh   = 127;
+    ip.TVALvlVSens    = 127;
+    ip.TVFType        = 2;
+    ip.pitchKeyFlw    = 0x4a;
+    ip.rootKeyOffset  = 64;
+
+    // A drum is one shot: reach full level at once and hold, and let the sample
+    // end the note. The rhythm record's own envelope bytes are not identified -
+    // its 44 bytes are not the patch tone's 84, so the +74..+80 map does not
+    // carry over.
+    ip.TVAEnvL1 = ip.TVAEnvL2 = ip.TVAEnvL3 = ip.TVAEnvL4 = 0x7f;
+    ip.TVAEnvT1 = 0x00;
+    ip.TVAEnvT2 = ip.TVAEnvT3 = ip.TVAEnvT4 = 0x7f;
+    ip.TVAEnvT5 = 0x20;
+
+    ds.preset[FIRST_KEY + k] = (uint16_t) _instruments.size();
+    _instruments.push_back(in);
+  }
+
+  _drumSets.push_back(ds);
+  _drumSetsLUT.fill(0);               // one rhythm set, reachable from every bank
+
+  return 0;
 }
 
 }
