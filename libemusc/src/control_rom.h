@@ -422,7 +422,9 @@ private:
     size_t          romSize;
     uint32_t        partialHint;   // inside the 60-byte waveform record table
     uint32_t        sampleHint;    // inside the 18-byte sample table
-      uint32_t        patchBankA;    // Preset A; Preset B follows at +0x8000
+      uint32_t        patchBankA;    // Internal; Preset A and B follow at +0x8000
+                                     // each. Program changes select Internal, which is
+                                     // the factory bank the machine powers on with
     int             waveRoms;
     enum SynthGen   generation;
   };

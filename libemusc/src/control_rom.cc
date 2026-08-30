@@ -1128,7 +1128,7 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // which WaveRom handles.
 const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
   { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 0,        4, SynthGen::JV1080 },
-  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x010ce0, 2, SynthGen::JV880  },
+  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x008ce0, 2, SynthGen::JV880  },
 };
 const int ControlRom::JV_LAYOUT_COUNT =
   (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
@@ -1304,11 +1304,11 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
   // +1 selects a waveform; the rest is not identified yet (P-0373), so the
   // fields below carry neutral values rather than guesses.
   const int STRIDE = 362, NAME = 12, TONE0 = 26, TONE = 84, TONES = 4;
-  const int PER_BANK = 64, BANK_B = 0x8000;
+  const int PER_BANK = 64, BANK_STRIDE = 0x8000;
 
-  for (int bank = 0; bank < 2; bank++) {
+  for (int bank = 0; bank < 3; bank++) {
     for (int p = 0; p < PER_BANK; p++) {
-      uint32_t off = bankA + bank * BANK_B + p * STRIDE;
+      uint32_t off = bankA + bank * BANK_STRIDE + p * STRIDE;
       if ((size_t) off + STRIDE > _jvRom.size())
         return _instruments.size();
 
