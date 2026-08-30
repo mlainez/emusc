@@ -1434,9 +1434,22 @@ void ControlRom::_init_jv_lookup_tables(void)
 
   // Envelope phase times, same treatment: roughly a doubling every 16 steps,
   // fitted to the SC-55's (0, 159, 453, 994, 1990, 3827, 7211, 13448).
-  t.envelopeTime[0] = 0;
-  for (int i = 1; i < 128; i++)
-    t.envelopeTime[i] = (int) std::round(13448.0 * std::pow(2.0, (i - 112) / 16.6));
+  // Envelope times: the JV has its own table, and it is in the control ROM at
+  // 0x04c58 - 128 big-endian 16-bit entries, 128 rising to 16127 on a constant
+  // ratio of 1.0384 (a doubling every ~18 steps). It is the same shape and
+  // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
+  // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109
+  // against the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
+  const uint32_t ENV_TIME_TABLE = 0x04c58;
+  if (_jvRom.size() >= ENV_TIME_TABLE + 256) {
+    for (int i = 0; i < 128; i++)
+      t.envelopeTime[i] = (int) ((_jvRom[ENV_TIME_TABLE + i * 2] << 8) |
+                                  _jvRom[ENV_TIME_TABLE + i * 2 + 1]);
+  } else {
+    t.envelopeTime[0] = 0;
+    for (int i = 1; i < 128; i++)
+      t.envelopeTime[i] = (int) std::round(13448.0 * std::pow(2.0, (i - 112) / 16.6));
+  }
 
   t.TVAPanKeyFollow.fill(0);
   t.TVABiasLevel.fill(0);
