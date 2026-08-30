@@ -166,6 +166,7 @@ private:
   void _initialize_system_params(enum Mode = Mode::GS);
   void _initialize_patch_params(enum Mode = Mode::GS);
   void _initialize_drumSet_params();
+  void _apply_jv_performance();
 
   // BE / LE conversion
   inline bool _le_native(void) { uint16_t n = 1; return (*(uint8_t *) & n); }
