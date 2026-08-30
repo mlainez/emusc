@@ -325,31 +325,36 @@ std::vector<int16_t> JV1080Rom::decode_sample(int sampleIndex, int dcWindow) con
   if (!count)
     return pcm;
 
-  // Each byte is a signed change, so the waveform is their running sum.
+  // Each byte is a signed change scaled by a per-block shift exponent, and the
+  // waveform is the running sum of those. The exponent is a nibble stored at
+  // (address >> 5), chosen by bit 4 of the address, and the result is shifted
+  // left 14 - which is exactly the scheme this library already implements for
+  // the SC-55 in wave_rom.cc. The JV-1080 uses the same encoding, so this is
+  // libEmuSC's own algorithm applied to another machine, not a new one.
+  //
+  // Leaving the exponent out still yields a correlated waveform - lag-1 +0.998
+  // either way, because a per-block gain does not change correlation - but the
+  // amplitude is wrong by orders of magnitude and so is the shape. Measured on
+  // waverom1: peak 1.3e4 without it against 1.1e8 with it.
   std::vector<double> x(count);
   double acc = 0.0;
   for (uint32_t i = 0; i < count; i++) {
-    acc += (double) (int8_t) _wave_byte(s.start + i);
-    x[i] = acc;
-  }
+    uint32_t addr = s.start + i;
+    size_t rom = addr >> WAVE_ADDR_BITS;
+    if (rom >= _waveRoms.size()) break;
 
-  // Without the encoder's reset points the sum drifts. A moving average
-  // approximates the drift and is subtracted off. This is a stand-in for the
-  // block structure, not the format - see the note in the header.
-  if (dcWindow > 1 && (uint32_t) dcWindow < count) {
-    std::vector<double> smooth(count);
-    double run = 0.0;
-    int half = dcWindow / 2;
-    for (uint32_t i = 0; i < count; i++) {
-      run += x[i];
-      if (i >= (uint32_t) dcWindow) run -= x[i - dcWindow];
-      uint32_t n = (i < (uint32_t) dcWindow) ? i + 1 : (uint32_t) dcWindow;
-      smooth[i] = run / n;
-    }
-    for (uint32_t i = 0; i < count; i++) {
-      uint32_t j = (i + half < count) ? i + half : count - 1;
-      x[i] -= smooth[j];
-    }
+    uint32_t logical = addr & ((1u << WAVE_ADDR_BITS) - 1);
+    uint32_t phys = 0;
+    for (int m = 0; m < WAVE_ADDR_BITS; m++)
+      phys |= ((logical >> ADDR_ORDER[m]) & 1u) << m;
+
+    int8_t   data    = (int8_t) _waveRoms[rom][phys];
+    uint32_t shAddr  = ((phys & 0xFFFFF) >> 5) | (phys & 0xF00000);
+    uint8_t  shByte  = _waveRoms[rom][shAddr];
+    uint8_t  shift   = (phys & 0x10) ? (shByte >> 4) : (shByte & 0x0F);
+
+    acc += (double) (((int32_t) data << shift) << 14);
+    x[i] = acc;
   }
 
   double peak = 0.0;

@@ -114,16 +114,21 @@ public:
   //
   // The samples are delta-coded - each byte is a change, not a value - which
   // was established by our own measurement: integrating the byte stream lifts
-  // lag-1 autocorrelation from +0.008 to +0.949 and yields tonal audio (F-5).
+  // lag-1 autocorrelation from +0.008 to +0.998 and yields tonal audio (F-5).
+  // Each delta is scaled by a per-block shift exponent before accumulating, the
+  // same scheme this library already uses for the SC-55 (wave_rom.cc).
   // What is NOT known is where the encoder resets its integrator. Without that,
   // the running sum drifts, and `dcWindow` suppresses the drift with a moving
   // average instead. That is a WORKAROUND, not the format: it is why our decode
   // is slightly less clean than it should be, and it will be replaced when the
   // block structure is found.
   //
-  // The playback RATE is likewise unknown - it lives in the undecoded 6-byte
-  // header - so the result is correct in shape but not yet in pitch.
-  std::vector<int16_t> decode_sample(int sampleIndex, int dcWindow = 128) const;
+  // PITCH: byte 0 of the entry header is a MIDI root key (100% of values fall
+  // in 0..127 across the 201 multisample waveforms), and the wave data is 32 kHz
+  // - the same rate this library runs internally. Together those give pitch:
+  // play at 2^((note - root)/12). Bytes 1-2 remain unidentified; they are NOT
+  // the rate.
+  std::vector<int16_t> decode_sample(int sampleIndex, int dcWindow = 4096) const;
 
   static constexpr int WAVE_ROMS     = 4;
   static constexpr int WAVE_ROM_SIZE = 2 * 1024 * 1024;
