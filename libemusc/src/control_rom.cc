@@ -1344,17 +1344,29 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           ip.pitchKeyFlw    = 0x4a;
           ip.rootKeyOffset  = 64;
 
-          // PLACEHOLDER TVA envelope. The tone record's envelope bytes are not
-          // identified yet (TASK-141), and leaving these zero is not neutral:
-          // every phase time would be 0, the envelope would run to its final
-          // level - which is silence - before the first sample, and the note
-          // would never be heard. Full level with long phase times gives a note
-          // that simply holds while the key is down, which is the honest
-          // rendering of "we do not know the envelope yet".
-          ip.TVAEnvL1 = ip.TVAEnvL2 = ip.TVAEnvL3 = ip.TVAEnvL4 = 0x7f;
-          ip.TVAEnvT1 = 0x00;            // reach full level at once
-          ip.TVAEnvT2 = ip.TVAEnvT3 = ip.TVAEnvT4 = 0x7f;
-          ip.TVAEnvT5 = 0x30;            // a short release, so notes end
+          // The TVA envelope, from Roland's own parameter address map in the
+          // JV-880 owner's manual (docs/service-notes/jv880-owner.md): seven
+          // INTERLEAVED bytes, T1 L1 T2 L2 T3 L3 T4, with no L4 - T4 is the
+          // release to silence. Confirmed against the oracle by rewriting each
+          // byte and rendering: +74 collapses the peak to 0.035 while stretching
+          // the attack 6.3x (a long attack time), +78 moves attack monotonically,
+          // +80 nearly triples the release, and +81 raises the peak.
+          ip.TVAEnvT1 = tb[74] & 0x7f;
+          ip.TVAEnvL1 = tb[75] & 0x7f;
+          ip.TVAEnvT2 = tb[76] & 0x7f;
+          ip.TVAEnvL2 = tb[77] & 0x7f;
+          ip.TVAEnvT3 = tb[78] & 0x7f;
+          ip.TVAEnvL3 = tb[79] & 0x7f;
+
+          // libEmuSC has one phase more than the JV: L1-L4 with T1-T5, where T5
+          // is the release. The JV sustains at L3 and releases over T4, so hold
+          // the fourth phase at L3 and give the release the JV's T4.
+          ip.TVAEnvL4 = ip.TVAEnvL3;
+          ip.TVAEnvT4 = 0x7f;
+          ip.TVAEnvT5 = tb[80] & 0x7f;
+
+          // +81 is Dry Level (SysEx 0x70), confirmed monotonic on peak.
+          ip.volume   = tb[81] & 0x7f;
       }
 
       _instruments.push_back(in);
