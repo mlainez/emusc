@@ -196,26 +196,47 @@ bool JV1080Rom::_read_samples(uint32_t hint)
            (e - s) >= 32 && (e - s) < 0x40000;
   };
 
-  if (!valid(hint))
+  // Find the table by looking for a RUN of consecutive well-formed entries, not
+  // a single one: isolated triples elsewhere in the ROM can pass the test by
+  // chance, and starting on one would shift every index that follows.
+  const int RUN = 8;
+  uint32_t base = 0;
+  bool found = false;
+  for (uint32_t o = (hint > 0x400 ? hint - 0x400 : 0);
+       o + RUN * SAMPLE_STRIDE < _rom.size() && o < hint + 0x400; o++) {
+    bool all = true;
+    for (int k = 0; k < RUN && all; k++)
+      all = valid(o + k * SAMPLE_STRIDE);
+    if (all) { base = o; found = true; break; }
+  }
+  if (!found)
     return false;
-
-  uint32_t base = hint;
   while (base >= (uint32_t) SAMPLE_STRIDE && valid(base - SAMPLE_STRIDE))
     base -= SAMPLE_STRIDE;
 
-  // Tolerate a single unusable slot before giving up: the table has gaps.
-  for (uint32_t off = base; ; off += SAMPLE_STRIDE) {
-    if (!valid(off)) {
-      if (!valid(off + SAMPLE_STRIDE))
-        break;
-      continue;
-    }
+  // Store EVERY slot in order, valid or not. The waveform records index this
+  // table positionally, so compacting it - skipping the gaps - would silently
+  // renumber everything after the first gap. An unusable slot is kept with a
+  // zero length and rejected at decode time instead.
+  int miss = 0;
+  for (uint32_t off = base; (size_t) off + SAMPLE_STRIDE <= _rom.size();
+       off += SAMPLE_STRIDE) {
     struct Sample smp;
     for (int i = 0; i < 6; i++)
       smp.header[i] = _rom[off + 3 + i];
-    smp.start = u24(off + 9);
-    smp.loop  = u24(off + 12);
-    smp.end   = u24(off + 15);
+    if (valid(off)) {
+      smp.start = u24(off + 9);
+      smp.loop  = u24(off + 12);
+      smp.end   = u24(off + 15);
+      miss = 0;
+    } else {
+      smp.start = smp.loop = smp.end = 0;      // placeholder, keeps alignment
+      if (++miss > 24) {                        // a long dead stretch ends it
+        _samples.resize(_samples.size() > (size_t) miss - 1
+                        ? _samples.size() - (miss - 1) : 0);
+        break;
+      }
+    }
     _samples.push_back(smp);
   }
 
