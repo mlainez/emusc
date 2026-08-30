@@ -264,6 +264,7 @@ public:
 
   inline const std::array<int, 16>& jv_channel_level(void) { return _jvChannelLevel; }
   inline const std::array<int, 16>& jv_channel_pan(void) { return _jvChannelPan; }
+  inline const std::array<int, 16>& jv_channel_key_shift(void) { return _jvChannelKeyShift; }
   inline const std::array<int, 16>& jv_channel_reverb(void) { return _jvChannelReverb; }
   inline const std::array<int, 16>& jv_channel_chorus(void) { return _jvChannelChorus; }
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
@@ -456,6 +457,7 @@ private:
   std::array<int, 16> _jvChannelPatch;
   std::array<int, 16> _jvChannelLevel;
   std::array<int, 16> _jvChannelPan;
+  std::array<int, 16> _jvChannelKeyShift;
   std::vector<std::pair<uint8_t,uint8_t>> _jvInstSend;  // reverb, chorus per instrument
   std::array<int, 16> _jvChannelReverb;
   std::array<int, 16> _jvChannelChorus;

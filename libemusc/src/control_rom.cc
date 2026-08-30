@@ -1735,6 +1735,7 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
   _jvChannelReverb.fill(0);
   _jvChannelChorus.fill(0);
   _jvChannelPan.fill(0x40);
+  _jvChannelKeyShift.fill(0);
   if (!base || (size_t) base + STRIDE > _jvRom.size())
     return -1;
 
@@ -1784,6 +1785,11 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
       // 0x1A) once the split pair at 16/17 is collapsed to one byte.
       _jvChannelLevel[chan] = pt[17] & 0x7f;
       _jvChannelPan[chan]   = pt[18] & 0x7f;
+      // +19 is the part's coarse tune, in SIGNED semitones. Leaving it out put
+      // the demo's melody exactly one octave high - the owner heard it as the
+      // wrong musical key. Its values across the sixteen performances are all
+      // intervals a musician would choose: -12, +12, -7, -8, -2, +20, +24, -29.
+      _jvChannelKeyShift[chan] = (int8_t) pt[19];
       if (patch < (int) _jvInstSend.size()) {
         _jvChannelReverb[chan] = _jvInstSend[patch].first;
         _jvChannelChorus[chan] = _jvInstSend[patch].second;

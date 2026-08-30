@@ -480,27 +480,6 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::RxPortamento    | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::RxSostenuto     | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::RxSoft          | (partAddr << 8)] = 1;
-    _patchParams[(int) PatchParam::PolyMode        | (partAddr << 8)] = 1;
-      // The JV takes each part's patch from the PERFORMANCE, not from a program
-      // change. Its own demo material sends no program change at all, so without
-      // this every part plays one default instrument. ToneNumber is the bank and
-      // ToneNumber+1 the program, and the JV variation table maps program n to
-      // instrument n, so the patch number goes straight in.
-      if (_ctrlRom.generation() == ControlRom::SynthGen::JV880 ||
-          _ctrlRom.generation() == ControlRom::SynthGen::JV1080) {
-        int patch = _ctrlRom.jv_channel_patch()[p];
-        if (patch >= 0) {
-          _patchParams[(int) PatchParam::ToneNumber + 1 | (partAddr << 8)] = patch;
-          _patchParams[(int) PatchParam::PartLevel      | (partAddr << 8)] =
-            _ctrlRom.jv_channel_level()[p];
-          _patchParams[(int) PatchParam::PartPanpot     | (partAddr << 8)] =
-            _ctrlRom.jv_channel_pan()[p];
-          _patchParams[(int) PatchParam::ReverbSendLevel | (partAddr << 8)] =
-            _ctrlRom.jv_channel_reverb()[p];
-          _patchParams[(int) PatchParam::ChorusSendLevel | (partAddr << 8)] =
-            _ctrlRom.jv_channel_chorus()[p];
-        }
-      }
 
     
     // MIDI channel 10 defaults to rhythm mode 1 (Drum1) in GS mode
@@ -519,12 +498,41 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::VelocitySenseDepth | (partAddr << 8)] = 0x40;
     _patchParams[(int) PatchParam::VelocitySenseOffset| (partAddr << 8)] = 0x40;
     _patchParams[(int) PatchParam::PartPanpot         | (partAddr << 8)] = 0x40;
+
     _patchParams[(int) PatchParam::KeyRangeLow        | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::KeyRangeHigh       | (partAddr << 8)] = 0x7f;
     _patchParams[(int) PatchParam::CC1ControllerNumber| (partAddr << 8)] = 0x10;
     _patchParams[(int) PatchParam::CC2ControllerNumber| (partAddr << 8)] = 0x11;
     _patchParams[(int) PatchParam::ChorusSendLevel    | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::ReverbSendLevel    | (partAddr << 8)] = 0x28;
+
+      // The JV takes each part's patch, level, pan and tuning from the
+      // PERFORMANCE rather than from a program change - its own demo material
+      // sends no program change at all. ToneNumber is the bank and ToneNumber+1
+      // the program, and the JV variation table maps program n to instrument n,
+      // so the patch number goes straight in.
+      //
+      // THIS MUST RUN AFTER the generic per-part defaults above. Placed before
+      // them it was silently undone: PitchKeyShift and PartPanpot are both reset
+      // to 0x40 there, which cost an octave on the demo's melody and took a
+      // pitch measurement to find.
+      if (_ctrlRom.generation() == ControlRom::SynthGen::JV880 ||
+          _ctrlRom.generation() == ControlRom::SynthGen::JV1080) {
+        int patch = _ctrlRom.jv_channel_patch()[p];
+        if (patch >= 0) {
+          _patchParams[(int) PatchParam::ToneNumber + 1  | (partAddr << 8)] = patch;
+          _patchParams[(int) PatchParam::PartLevel       | (partAddr << 8)] =
+            _ctrlRom.jv_channel_level()[p];
+          _patchParams[(int) PatchParam::PartPanpot      | (partAddr << 8)] =
+            _ctrlRom.jv_channel_pan()[p];
+          _patchParams[(int) PatchParam::PitchKeyShift   | (partAddr << 8)] =
+            (uint8_t) std::clamp(0x40 + _ctrlRom.jv_channel_key_shift()[p], 0, 127);
+          _patchParams[(int) PatchParam::ReverbSendLevel | (partAddr << 8)] =
+            _ctrlRom.jv_channel_reverb()[p];
+          _patchParams[(int) PatchParam::ChorusSendLevel | (partAddr << 8)] =
+            _ctrlRom.jv_channel_chorus()[p];
+        }
+      }
     _patchParams[(int) PatchParam::RxBankSelect       | (partAddr << 8)] = 0x01;
 
     _patchParams[(int) PatchParam::PitchFineTune      | (partAddr << 8)] = 0x40;
