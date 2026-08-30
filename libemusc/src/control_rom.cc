@@ -504,6 +504,7 @@ int ControlRom::_read_samples(std::ifstream &romFile)
     s.rootKey = data[11];
     s.pitchInit = _native_endian_uint16((uint8_t *) &data[12]);
     s.pitchSust = _native_endian_uint16((uint8_t *) &data[14]);
+      s.reverse = false;              // SC-55 has no reverse playback
     
     if (s.sampleLen) {                          // Ignore empty parts
       _samples.push_back(s);
@@ -1112,7 +1113,7 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // which WaveRom handles.
 const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
   { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 4, SynthGen::JV1080 },
-  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x0028c4, 2, SynthGen::JV880  },
+  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 2, SynthGen::JV880  },
 };
 const int ControlRom::JV_LAYOUT_COUNT =
   (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
@@ -1213,62 +1214,64 @@ int ControlRom::_read_jv_partials(std::ifstream &romFile, uint32_t hint)
 // partials index this table positionally.
 int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
 {
-  const int STRIDE = 18;
+  // The sample table sits immediately after the waveform records. Each entry is
+  // 18 bytes (P-0371):
+  //
+  //   +0      unknown
+  //   +1..3   start, 24-bit big-endian
+  //   +4..6   loop
+  //   +7..9   end
+  //   +10..11 zero
+  //   +12     flag, 0/1/2 - most likely loop mode
+  //   +13     root key
+  //   +14..17 unidentified
+  //
+  // The entry count is not stored: it is what the waveform records reference,
+  // so it is derived from them. An earlier reading had the base 149.56 records
+  // out - a FRACTIONAL offset, so it read across record boundaries and produced
+  // plausible addresses that were wrong. Deriving the count is what catches
+  // that: a correct table yields exactly as many entries as are referenced.
   int waveRoms = 2;
   for (int i = 0; i < JV_LAYOUT_COUNT; i++)
     if (JV_LAYOUTS[i].model == _synthModel) waveRoms = JV_LAYOUTS[i].waveRoms;
-  const uint32_t space = (uint32_t) waveRoms * 2 * 1024 * 1024;
+  const uint32_t WAVE_SPACE = (uint32_t) waveRoms * 2 * 1024 * 1024;
+
+  size_t needed = 0;
+  for (const struct Partial &p : _partials)
+    for (int i = 0; i < 16; i++)
+      if (p.samples[i] != 0xFFFF && p.samples[i] + 1u > needed)
+        needed = p.samples[i] + 1u;
+  if (!needed)
+    return -1;
 
   auto u24 = [this](uint32_t o) -> uint32_t {
     if ((size_t) o + 3 > _jvRom.size()) return 0;
     return ((uint32_t) _jvRom[o] << 16) | ((uint32_t) _jvRom[o+1] << 8) | _jvRom[o+2];
   };
-  auto valid = [&](uint32_t o) -> bool {
-    if ((size_t) o + STRIDE > _jvRom.size()) return false;
-    uint32_t s = u24(o + 9), l = u24(o + 12), e = u24(o + 15);
-    return s > 0 && s <= l && l <= e && e < space &&
-           (e - s) >= 32 && (e - s) < 0x40000;
-  };
 
-  const int RUN = 8;
-  uint32_t base = 0;
-  bool found = false;
-  for (uint32_t o = (hint > 0x400 ? hint - 0x400 : 0);
-       o + RUN * STRIDE < _jvRom.size() && o < hint + 0x400; o++) {
-    bool all = true;
-    for (int k = 0; k < RUN && all; k++)
-      all = valid(o + k * STRIDE);
-    if (all) { base = o; found = true; break; }
-  }
-  if (!found)
-    return -1;
-  while (base >= (uint32_t) STRIDE && valid(base - STRIDE))
-    base -= STRIDE;
+  for (size_t i = 0; i < needed; i++) {
+    uint32_t o = hint + (uint32_t) i * 18;
+    if ((size_t) o + 18 > _jvRom.size())
+      break;
 
-  int miss = 0;
-  for (uint32_t off = base; (size_t) off + STRIDE <= _jvRom.size(); off += STRIDE) {
     struct Sample s = {};
-    uint32_t ho = off + STRIDE + 3;
-    s.rootKey = (ho < _jvRom.size()) ? _jvRom[ho] : 0;
-
-    if (valid(off)) {
-      uint32_t s0 = u24(off + 9), l0 = u24(off + 12), e0 = u24(off + 15);
+    uint32_t s0 = u24(o + 1), l0 = u24(o + 4), e0 = u24(o + 7);
+    if (s0 > 0 && s0 <= l0 && l0 <= e0 && e0 < WAVE_SPACE) {
       s.address   = s0;
       s.sampleLen = (uint16_t) (e0 - s0);
       s.loopLen   = (uint16_t) (e0 - l0);
-      s.loopMode  = 0;
-      miss = 0;
-    } else if (++miss > 24) {
-      size_t keep = _samples.size() > (size_t) miss - 1
-                    ? _samples.size() - (miss - 1) : 0;
-      _samples.resize(keep);
-      break;
+    // Bit 2 of the flag byte plays the sample backwards: every forward /
+    // "REV ..." pair in the waveform list shares one address and length and
+    // differs only in this bit (P-0372). The low two bits carry the SC-55's
+    // own loop semantics, so they are passed through unchanged.
+    s.loopMode  = _jvRom[o + 12] & 0x03;
+    s.reverse   = _jvRom[o + 12] & 0x04;
     }
-
+    s.rootKey = _jvRom[o + 13];
     _samples.push_back(s);
   }
 
-  return 0;
+  return _samples.empty() ? -1 : 0;
 }
 
 

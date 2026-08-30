@@ -53,6 +53,7 @@ public:
     uint8_t  rootKey;     // Base pitch of the sample
     uint16_t pitchInit;   // Pitch offset for first playback until loop point
     uint16_t pitchSust;   // Pitch offset used from first loop
+    bool     reverse;     // JV only: play the sample backwards
   };
 
   struct Partial {        // 48 bytes in total

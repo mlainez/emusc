@@ -51,11 +51,6 @@ private:
   int8_t   _unscramble_data(int8_t byte,
                             enum ControlRom::SynthGen synthGen);
 
-  // Map a JV wave address to its physical place: the permutation applies to
-  // the 21 low bits, within the 2 MB device the address falls in.
-  static uint32_t _jv_phys(uint32_t address,
-                           enum ControlRom::SynthGen synthGen);
-
   uint32_t _find_samples_rom_address(uint32_t address,
                                      enum ControlRom::SynthGen synthGen);
   int _read_samples(std::vector<char> &rom,
