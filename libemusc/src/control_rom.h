@@ -270,6 +270,13 @@ public:
   // Two parts may share a MIDI channel to layer two patches, which a
   // channel-keyed map cannot express and the machine's own demo relies on.
   struct JVPart { int patch, channel, level, pan, keyShift, reverb, chorus; bool rhythm; };
+
+  // The performance's own effect settings. The manual's Performance Common
+  // table gives Reverb Type at SysEx 0x0D, Level 0x0E, Time 0x0F, Feedback
+  // 0x10, then the chorus; in the ROM record they sit one lower, from +12.
+  struct JVEffects { int reverbType, reverbLevel, reverbTime, reverbFeedback,
+                     chorusLevel, chorusDepth; };
+  inline const JVEffects& jv_effects(void) { return _jvEffects; }
   inline const std::array<JVPart, 8>& jv_parts(void) { return _jvParts; }
   inline const std::array<int, 16>& jv_channel_reverb(void) { return _jvChannelReverb; }
   inline const std::array<int, 16>& jv_channel_chorus(void) { return _jvChannelChorus; }
@@ -465,6 +472,7 @@ private:
   std::array<int, 16> _jvChannelPan;
   std::array<int, 16> _jvChannelKeyShift;
   std::array<JVPart, 8> _jvParts;
+  JVEffects _jvEffects = { 4, 0x40, 0x40, 0, 0x40, 0x13 };
   std::vector<std::pair<uint8_t,uint8_t>> _jvInstSend;  // reverb, chorus per instrument
   std::array<int, 16> _jvChannelReverb;
   std::array<int, 16> _jvChannelChorus;

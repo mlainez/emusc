@@ -1170,6 +1170,15 @@ void Settings::_apply_jv_performance(void)
       _ctrlRom.generation() != ControlRom::SynthGen::JV1080)
     return;
 
+  // The performance's effect settings, applied before the parts.
+  const auto &fx = _ctrlRom.jv_effects();
+  _patchParams[(int) PatchParam::ReverbCharacter]     = fx.reverbType;
+  _patchParams[(int) PatchParam::ReverbLevel]         = fx.reverbLevel;
+  _patchParams[(int) PatchParam::ReverbTime]          = fx.reverbTime;
+  _patchParams[(int) PatchParam::ReverbDelayFeedback] = fx.reverbFeedback;
+  _patchParams[(int) PatchParam::ChorusLevel]         = fx.chorusLevel;
+  _patchParams[(int) PatchParam::ChorusDepth]         = fx.chorusDepth;
+
   const auto &jp = _ctrlRom.jv_parts();
   for (int p = 0; p < 16; p++) {
     uint8_t partAddr = _convert_to_roland_part_id_LUT[p];

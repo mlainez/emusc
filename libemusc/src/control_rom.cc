@@ -1830,6 +1830,22 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
   if ((size_t) base + (which + 1) * STRIDE > _jvRom.size()) which = 0;
   const uint8_t *p = &_jvRom[base + which * STRIDE];
 
+  // The performance's effect settings, from its common block. Read straight
+  // from the ROM rather than left at libEmuSC's Sound Canvas defaults, which is
+  // why the reverb sat about 40 dB below the machine's: performance 1 asks for
+  // level 99 and time 81 where the default is 64 and 64.
+  //
+  // The columns identify themselves across the sixteen performances: +12's low
+  // three bits are always 0..7 (a type), +13 runs 92..127 and +14 74..127 (a
+  // level and a time), +15 0..68 (a feedback). That is the manual's order for
+  // Performance Common, ROM offset = SysEx offset - 1.
+  _jvEffects.reverbType     = p[12] & 0x07;
+  _jvEffects.reverbLevel    = p[13] & 0x7f;
+  _jvEffects.reverbTime     = p[14] & 0x7f;
+  _jvEffects.reverbFeedback = p[15] & 0x7f;
+  _jvEffects.chorusLevel    = p[17] & 0x7f;
+  _jvEffects.chorusDepth    = p[18] & 0x7f;
+
   for (int t = 0; t < PARTS; t++) {
     const uint8_t *pt = p + COMMON + t * PART;
     int patch = pt[P_PATCH];
