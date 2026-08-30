@@ -1338,6 +1338,11 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
         ip.velRangeHigh = 127;
         ip.TVALvlVSens  = 127;
         ip.TVFType      = 2;             // no filter
+          // Key follow, at the SC-55's normal setting. pitchKeyFlw indexes a
+          // 21-entry table as |pitchKeyFlw - 0x49|, so 0 is both wrong and out
+          // of bounds; 0x4a and rootKeyOffset 64 are what SC-55 partials carry.
+          ip.pitchKeyFlw    = 0x4a;
+          ip.rootKeyOffset  = 64;
 
           // PLACEHOLDER TVA envelope. The tone record's envelope bytes are not
           // identified yet (TASK-141), and leaving these zero is not neutral:
@@ -1424,16 +1429,26 @@ void ControlRom::_init_jv_lookup_tables(void)
   t.TVAPanKeyFollow.fill(0);
   t.TVABiasLevel.fill(0);
   t.TVAPanpot.fill(0x40);                       // centre
-  t.TVAEnvExpChange.fill(0);
 
-  t.PitchParamScale.fill(0);
-  t.EnvTimeKeyFollowSens.fill(0);
+  // Key follow. PitchParamScale scales |key - 60| into the base pitch, so zero
+  // here means a note sounds at the same pitch whatever key is played - which is
+  // exactly what it did. The SC-55's is a straight ramp, 0..65535 over 21 steps.
+  for (int i = 0; i < 21; i++)
+    t.PitchParamScale[i] = (int) std::round(i * (65535.0 / 20.0));
+  for (int i = 0; i < 21; i++)
+    t.EnvTimeKeyFollowSens[i] = (uint8_t) std::round(i * (128.0 / 20.0));
   t.EnvTimeScale.fill(0);
   t.PitchEnvVelSens1.fill(0);
   t.PitchEnvVelSens2.fill(0);
   t.PitchEnvDepth.fill(0);
-  t.PitchFineExp.fill(0);
-  t.PitchCoarseExp.fill(0);
+  // Pitch. These two decide the playback rate, so zero here is not "neutral" -
+  // it means the sample never advances and no note is ever heard. Fitted to the
+  // SC-55's own tables: PitchCoarseExp spans an octave from 32768 (its measured
+  // 32768..64694), PitchFineExp is near-linear to 62237.
+  for (int i = 0; i < 47; i++)
+    t.PitchCoarseExp[i] = (int) std::round(32768.0 * std::pow(2.0, i / 46.87));
+  for (int i = 0; i < 256; i++)
+    t.PitchFineExp[i] = (int) std::round(i * (62237.0 / 255.0));
   t.PortamentoRate.fill(0);
 
   t.LFORate.fill(0);
@@ -1450,8 +1465,16 @@ void ControlRom::_init_jv_lookup_tables(void)
   t.TVFResonance.fill(0);
   t.TVFEnvScale.fill(0);
 
-  t.EnvSegmentStep.fill(1);                     // never 0: these are divisors
-  t.EnvSegmentCurve.fill(1);
+  // Envelope segment shape and the TVA's exponential change table, all read off
+  // the SC-55 and reproduced rather than invented.
+  {
+    const uint8_t step[12]  = { 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 255 };
+    const uint8_t curve[9]  = { 10, 10, 9, 9, 8, 8, 8, 7, 7 };
+    for (int i = 0; i < 12; i++) t.EnvSegmentStep[i]  = step[i];
+    for (int i = 0; i <  9; i++) t.EnvSegmentCurve[i] = curve[i];
+  }
+  for (int i = 0; i < 257; i++)
+    t.TVAEnvExpChange[i] = (int) std::min(65535.0, std::round(std::pow(2.0, i / 16.0)));
 }
 
 }
