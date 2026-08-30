@@ -1367,8 +1367,13 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           ip.TVAEnvT4 = 0x7f;
           ip.TVAEnvT5 = tb[80] & 0x7f;
 
-          // +81 is Dry Level (SysEx 0x70), confirmed monotonic on peak.
-          ip.volume   = tb[81] & 0x7f;
+          // Level. Two bytes carry it and libEmuSC's partial has one field, so
+          // they combine: +67 is the tone's TVA Level - the strongest single
+          // result of the whole probe sweep, peak monotonic with Spearman +0.975
+          // - and +81 is the Dry Level the manual puts beside the sends. Using
+          // only +81 leaves the render hot, because 94% of tones set it to 127
+          // where only 52% set +67 there.
+          ip.volume   = (uint8_t) (((tb[67] & 0x7f) * (tb[81] & 0x7f)) / 127);
       }
 
       _instruments.push_back(in);
@@ -1525,6 +1530,8 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
   const int P_PATCH = 16, P_CHAN = 21;
 
   _jvChannelPatch.fill(-1);
+  _jvChannelLevel.fill(100);
+  _jvChannelPan.fill(0x40);
   if (!base || (size_t) base + STRIDE > _jvRom.size())
     return -1;
 
@@ -1550,8 +1557,14 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
       continue;
     // Earlier parts win: several parts may share a channel to layer sounds, and
     // libEmuSC has one instrument per part where the JV has eight.
-    if (_jvChannelPatch[chan] < 0)
+    if (_jvChannelPatch[chan] < 0) {
       _jvChannelPatch[chan] = patch;
+      // +17 is the part level and +18 its pan, following +16 in the same order
+      // the manual gives (Patch Number, then Part Level at 0x19, Part Pan at
+      // 0x1A) once the split pair at 16/17 is collapsed to one byte.
+      _jvChannelLevel[chan] = pt[17] & 0x7f;
+      _jvChannelPan[chan]   = pt[18] & 0x7f;
+    }
   }
 
   return 0;

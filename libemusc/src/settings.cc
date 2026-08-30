@@ -489,8 +489,13 @@ void Settings::_initialize_patch_params(enum Mode m)
       if (_ctrlRom.generation() == ControlRom::SynthGen::JV880 ||
           _ctrlRom.generation() == ControlRom::SynthGen::JV1080) {
         int patch = _ctrlRom.jv_channel_patch()[p];
-        if (patch >= 0)
+        if (patch >= 0) {
           _patchParams[(int) PatchParam::ToneNumber + 1 | (partAddr << 8)] = patch;
+          _patchParams[(int) PatchParam::PartLevel      | (partAddr << 8)] =
+            _ctrlRom.jv_channel_level()[p];
+          _patchParams[(int) PatchParam::PartPanpot     | (partAddr << 8)] =
+            _ctrlRom.jv_channel_pan()[p];
+        }
       }
 
     

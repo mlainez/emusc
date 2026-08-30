@@ -261,6 +261,8 @@ public:
   // -1 means no part of the performance listens on that channel.
   inline const std::array<int, 16>& jv_channel_patch(void) { return _jvChannelPatch; }
   inline int jv_drum_channel(void) { return _jvDrumChannel; }
+  inline const std::array<int, 16>& jv_channel_level(void) { return _jvChannelLevel; }
+  inline const std::array<int, 16>& jv_channel_pan(void) { return _jvChannelPan; }
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
   const uint8_t max_polyphony(void);
 
@@ -449,6 +451,8 @@ private:
 
   std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
   std::array<int, 16> _jvChannelPatch;
+  std::array<int, 16> _jvChannelLevel;
+  std::array<int, 16> _jvChannelPan;
   int _jvDrumChannel = 9;
 
   int _read_instruments(std::ifstream &romFile);
