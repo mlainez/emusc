@@ -1389,7 +1389,19 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           // it is assembled from several fields the JV path does not fill, and
           // TVFCFKeyFlwC and TVFCOFVelCur among them are still zero. Finding what
           // the JV puts there needs the code that reads them, not another fit.
-          ip.TVFType      = 0;                    // low pass
+          ip.TVFType      = 2;                    // DISABLED - see below
+          // The filter is off, and this is measured rather than cautious. Left
+          // on with the cutoff byte as the ROM stores it, the patch tracks lose
+          // their entire top: the demo's melody renders 10.8 dB down at 125 Hz
+          // and 63.0 dB down at 2 kHz against the machine. The owner heard it
+          // immediately - "everything is more muffled than the oracle, which is
+          // super crisp and bright" - and the drums, which take a different path
+          // with no filter, were the only track within 1 dB across the band.
+          //
+          // The cutoff byte has a median of 15 across Preset A where the SC-55's
+          // equivalent is 62, so the SC-55 cutoff arithmetic reads it as almost
+          // shut. Scaling it into range is a fudge that was tried and removed;
+          // what is needed is the JV's own cutoff law, not a rescaled byte.
           // The JV's cutoff byte is not on the SC-55's scale: its median across
           // Preset A is 15 where the SC-55's TVFBaseFlt is 62, and feeding it
           // straight in gives a nearly shut filter - 35 dB of level. Mapped
