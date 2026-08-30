@@ -1339,7 +1339,29 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
         ip.velRangeLow  = 0;
         ip.velRangeHigh = 127;
         ip.TVALvlVSens  = 127;
-        ip.TVFType      = 2;             // no filter
+          // The filter. +52 is the cutoff and +53 the resonance, adjacent as the
+          // manual has them (SysEx 0x4A, 0x4B), and +52 is confirmed on the
+          // oracle: driving it 0 to 127 moves that patch's spectral centroid from
+          // 99 Hz to 441 Hz, the largest and cleanest swing of any byte tested.
+          // Without any filter our centroid sat at 745 Hz against the oracle's 282.
+          //
+          // The TVF envelope is held flat: its own bytes are not identified, and a
+          // sweeping filter guessed at would be worse than a static one read.
+          // LEFT OFF, deliberately. Enabling it costs 25 dB: median level over
+          // Preset A 01-08 falls from -8.8 dB to -33 dB against the oracle while
+          // the centroid improves (PR-A 08 goes 689 -> 264 Hz against 299). The
+          // cause is not the cutoff value but the curves underneath it -
+          // TVFResonanceFreq shapes the filter coefficients and is still zero
+          // here, because the JV's own filter tables have not been found. A
+          // filter that is right in colour and 25 dB wrong in level is worse
+          // than none, so this waits for those tables. TASK-147.
+          ip.TVFType      = 2;                    // disabled
+          ip.TVFBaseFlt   = (int8_t) (tb[52] & 0x7f);
+          ip.TVFResonance = (int8_t) (tb[53] & 0x7f);
+          ip.TVFEnvDepth  = 0;
+          ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
+          ip.TVFEnvT1 = 0;
+          ip.TVFEnvT2 = ip.TVFEnvT3 = ip.TVFEnvT4 = ip.TVFEnvT5 = 0x7f;
           // Key follow, at the SC-55's normal setting. pitchKeyFlw indexes a
           // 21-entry table as |pitchKeyFlw - 0x49|, so 0 is both wrong and out
           // of bounds; 0x4a and rootKeyOffset 64 are what SC-55 partials carry.
@@ -1361,6 +1383,31 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           ip.pitchETKeyF14 = ip.pitchETKeyF5 = 0x40;
           ip.pitchETKeyFP14 = ip.pitchETKeyFP5 = 0;
           ip.pitchEnvTVSens = 0x40;
+
+    // Everything else the engine reads as (value - 0x40). The audit in
+    // tools/jv1080/jv-zero-audit.py lists them; leaving any at zero is the
+    // maximum negative setting, which is how the envelope times were lost.
+    ip.pitchEnvL0 = ip.pitchEnvL1 = ip.pitchEnvL2 = 0x40;
+    ip.pitchEnvL3 = ip.pitchEnvL5 = 0x40;
+    ip.pitchEnvVSens = 0x40;
+    ip.TVFCFKeyFlw   = 0x40;
+    ip.TVFCOFVSens   = 0x40;
+    ip.TVABiasLevel  = 0;
+
+          // Everything else the engine reads as (value - 0x40). The audit in
+          // tools/jv1080/jv-zero-audit.py lists them; leaving any at zero is the
+          // maximum negative setting, which is how the envelope times were lost.
+          ip.pitchEnvL0 = ip.pitchEnvL1 = ip.pitchEnvL2 = 0x40;
+          ip.pitchEnvL3 = ip.pitchEnvL5 = 0x40;
+          ip.pitchEnvVSens = 0x40;
+          ip.TVFCFKeyFlw   = 0x40;
+          ip.TVFCOFVSens   = 0x40;
+          // NOT 0x40. TVA::_init_envelope branches on (TVABiasLevel >= 0x40) and
+          // takes the ATTENUATING branch when it does, so centring this one costs
+          // 21 dB - measured, median level over Preset A fell -8.8 -> -30.1 dB.
+          // Its neutral is 0, unlike its neighbours. Zero is not always wrong
+          // either.
+          ip.TVABiasLevel  = 0;
 
 
           // The TVA envelope, from Roland's own parameter address map in the
@@ -1476,7 +1523,7 @@ void ControlRom::_init_jv_lookup_tables(void)
   }
 
   t.TVAPanKeyFollow.fill(0);
-  t.TVABiasLevel.fill(0);
+  t.TVABiasLevel.fill(0);      // the bias CURVE, not a centred value
   t.TVAPanpot.fill(0x40);                       // centre
 
   // Key follow. PitchParamScale scales |key - 60| into the base pitch, so zero
@@ -1506,12 +1553,20 @@ void ControlRom::_init_jv_lookup_tables(void)
   t.LFOTVPDepth.fill(0);
   t.LFOSine.fill(0);
 
-  t.TVFCutoffFreqKF.fill(0);
+  // Filter curves, fitted to the SC-55's own as the level curves were:
+  //   TVFCutoffFreq[i]  = 35 * 1.0592^i, saturating at 32767
+  //                       (its 35, 88, 223, 562, 1415, 3560, 8875, 20887)
+  //   TVFResonance[i]   = 255 * 0.99226^i   (its 255, 225, 199, ... 116)
+  //   TVFCutoffFreqKF[i]= i * 512/20        (its 0, 26, 51, 77, ... 512)
+  for (int i = 0; i < 129; i++)
+    t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
+  for (int i = 0; i < 128; i++)
+    t.TVFResonance[i] = (uint8_t) std::round(255.0 * std::pow(0.99226, i));
+  for (int i = 0; i < 21; i++)
+    t.TVFCutoffFreqKF[i] = (int) std::round(i * (512.0 / 20.0));
   t.TVFCutoffVSens.fill(0);
   t.TVFEnvDepth.fill(0);
-  t.TVFCutoffFreq.fill(0);
   t.TVFResonanceFreq.fill(0);
-  t.TVFResonance.fill(0);
   t.TVFEnvScale.fill(0);
 
   // Envelope segment shape and the TVA's exponential change table, all read off
