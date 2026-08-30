@@ -508,29 +508,38 @@ void Settings::_initialize_patch_params(enum Mode m)
 
       // The JV takes each part's patch, level, pan and tuning from the
       // PERFORMANCE rather than from a program change - its own demo material
-      // sends no program change at all. ToneNumber is the bank and ToneNumber+1
-      // the program, and the JV variation table maps program n to instrument n,
-      // so the patch number goes straight in.
+      // sends no program change at all.
+      //
+      // MAPPED PART TO PART, not channel to patch. Several JV parts may listen on
+      // ONE MIDI channel to layer patches - performance 7 puts patches 1 and 26
+      // both on channel 1 - and a channel-keyed map keeps only the first, so the
+      // melody played one layer of two. libEmuSC's RxChannel is per part, so the
+      // layering maps directly: give libEmuSC part n the JV part n's channel.
       //
       // THIS MUST RUN AFTER the generic per-part defaults above. Placed before
       // them it was silently undone: PitchKeyShift and PartPanpot are both reset
-      // to 0x40 there, which cost an octave on the demo's melody and took a
-      // pitch measurement to find.
+      // to 0x40 there, which cost an octave on the demo's melody.
       if (_ctrlRom.generation() == ControlRom::SynthGen::JV880 ||
           _ctrlRom.generation() == ControlRom::SynthGen::JV1080) {
-        int patch = _ctrlRom.jv_channel_patch()[p];
-        if (patch >= 0) {
-          _patchParams[(int) PatchParam::ToneNumber + 1  | (partAddr << 8)] = patch;
-          _patchParams[(int) PatchParam::PartLevel       | (partAddr << 8)] =
-            _ctrlRom.jv_channel_level()[p];
-          _patchParams[(int) PatchParam::PartPanpot      | (partAddr << 8)] =
-            _ctrlRom.jv_channel_pan()[p];
-          _patchParams[(int) PatchParam::PitchKeyShift   | (partAddr << 8)] =
-            (uint8_t) std::clamp(0x40 + _ctrlRom.jv_channel_key_shift()[p], 0, 127);
-          _patchParams[(int) PatchParam::ReverbSendLevel | (partAddr << 8)] =
-            _ctrlRom.jv_channel_reverb()[p];
-          _patchParams[(int) PatchParam::ChorusSendLevel | (partAddr << 8)] =
-            _ctrlRom.jv_channel_chorus()[p];
+        const auto &jp = _ctrlRom.jv_parts();
+        if (p < (int) jp.size()) {
+          const auto &j = jp[p];
+          _patchParams[(int) PatchParam::RxChannel      | (partAddr << 8)] = j.channel;
+          _patchParams[(int) PatchParam::UseForRhythm   | (partAddr << 8)] = j.rhythm ? 1 : 0;
+          _patchParams[(int) PatchParam::AssignMode     | (partAddr << 8)] = j.rhythm ? 0 : 1;
+          if (!j.rhythm && j.patch >= 0)
+            _patchParams[(int) PatchParam::ToneNumber + 1 | (partAddr << 8)] = j.patch;
+          _patchParams[(int) PatchParam::PartLevel      | (partAddr << 8)] = j.level;
+          _patchParams[(int) PatchParam::PartPanpot     | (partAddr << 8)] = j.pan;
+          _patchParams[(int) PatchParam::PitchKeyShift  | (partAddr << 8)] =
+            (uint8_t) std::clamp(0x40 + j.keyShift, 0, 127);
+          _patchParams[(int) PatchParam::ReverbSendLevel | (partAddr << 8)] = j.reverb;
+          _patchParams[(int) PatchParam::ChorusSendLevel | (partAddr << 8)] = j.chorus;
+        } else {
+          // The JV has eight parts; libEmuSC has sixteen. Silence the rest
+          // rather than leave them listening on channels the performance never
+          // assigned.
+          _patchParams[(int) PatchParam::RxNoteMessage  | (partAddr << 8)] = 0;
         }
       }
     _patchParams[(int) PatchParam::RxBankSelect       | (partAddr << 8)] = 0x01;

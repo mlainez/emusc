@@ -1355,7 +1355,15 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           if (ip.velRangeHigh < ip.velRangeLow) {
             ip.velRangeLow = 0; ip.velRangeHigh = 127;
           }
-        ip.TVALvlVSens  = 127;
+          // NOT 127. tva.cc computes the velocity-driven level as
+          //   127 - ((127 - velocity) * (127 - TVALvlVSens)) / 127
+          // so 127 makes the second term zero and every note plays at full
+          // level whatever the velocity - no dynamics at all, which is what
+          // the owner heard as everything sounding "flat". 0 passes velocity
+          // straight through. The tone's own sensitivity byte is not
+          // identified yet, so full response is the honest default: wrong
+          // dynamics beat none.
+          ip.TVALvlVSens  = 0;
           // The filter. +52 is the cutoff and +53 the resonance, adjacent as the
           // manual has them (SysEx 0x4A, 0x4B), and +52 is confirmed on the
           // oracle: driving it 0 to 127 moves that patch's spectral centroid from
@@ -1385,25 +1393,11 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           // The JV's cutoff byte is not on the SC-55's scale: its median across
           // Preset A is 15 where the SC-55's TVFBaseFlt is 62, and feeding it
           // straight in gives a nearly shut filter - 35 dB of level. Mapped
-          // linearly onto the SC-55's index range. The constants are CALIBRATED
-          // against the oracle. The first calibration was fitted to the first
-          // eight Preset A patches, which are all pianos, and it did not
-          // generalise: across all 64 it gave 16.90 dB where the pianos alone
-          // gave 10.96. Re-swept on a stratified sample - every fourth patch, so
-          // guitars, basses and organs count as much as pianos - 55 and 0.65 give
-          // 14.44 dB against 19.75 dB with no filter at all.
-          //
-          // A linear map is the wrong shape and this is a fit, not a reading: the
-          // JV's own cutoff table is in its ROM and replacing this with it is the
-          // open work.
-          {
-            const char *eo = getenv("EMUSC_JV_COF_OFF");
-            const char *es = getenv("EMUSC_JV_COF_SLOPE");
-            double off = eo ? atof(eo) : 55.0;
-            double slp = es ? atof(es) : 0.65;
-            int idx = (int) std::lround(off + (tb[52] & 0x7f) * slp);
-            ip.TVFBaseFlt = (int8_t) std::clamp(idx, 0, 127);
-          }
+          // Used exactly as the ROM stores it. An earlier version scaled and
+          // offset this to make the filter behave, and that was the wrong
+          // instinct: a table that needs a fudge factor to work is either the
+          // wrong table or is being fed to the wrong arithmetic.
+          ip.TVFBaseFlt   = (int8_t) (tb[52] & 0x7f);
           ip.TVFResonance = (int8_t) (tb[53] & 0x7f);
           ip.TVFEnvDepth  = 0;
           ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
@@ -1652,13 +1646,9 @@ void ControlRom::_init_jv_lookup_tables(void)
   {
     const char *ct = getenv("EMUSC_JV_COF_TABLE");
     uint32_t base = ct ? (uint32_t) strtoul(ct, nullptr, 0) : 0;
-    const char *cs = getenv("EMUSC_JV_COF_SCALE");
-    double cscale = cs ? atof(cs) : 1.0;
     if (base && (size_t) base + 258 <= _jvRom.size()) {
-      for (int i = 0; i < 129; i++) {
-        int v = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
-        t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(v * cscale));
-      }
+      for (int i = 0; i < 129; i++)
+        t.TVFCutoffFreq[i] = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
     } else {
       for (int i = 0; i < 129; i++)
         t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
@@ -1766,6 +1756,16 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
     int patch = pt[P_PATCH];
     int chan  = pt[P_CHAN] & 0x0f;
 
+    // Keep the parts as parts. Several may share one MIDI channel - performance
+    // 7 layers patches 1 and 26 on channel 1 - and a channel-keyed map silently
+    // drops all but the first, which is one patch of two on the demo's melody.
+    _jvParts[t] = { patch, chan, pt[17] & 0x7f, pt[18] & 0x7f,
+                    (int8_t) pt[19], 0, 0, t == PARTS - 1 };
+    if (t != PARTS - 1 && patch < (int) _jvInstSend.size()) {
+      _jvParts[t].reverb = _jvInstSend[patch].first;
+      _jvParts[t].chorus = _jvInstSend[patch].second;
+    }
+
     // Part 8 is the rhythm part, not a patch part: the manual's own signal
     // diagram shows parts 1-7 taking a Patch and part 8 taking a Rhythm set, and
     // its +16 is 0 in every factory performance rather than a patch number. Its
@@ -1856,7 +1856,7 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
     ip.volume         = 0x7f;
     ip.velRangeLow    = 0;
     ip.velRangeHigh   = 127;
-    ip.TVALvlVSens    = 127;
+    ip.TVALvlVSens    = 0;
     ip.TVFType        = 2;
     ip.pitchKeyFlw    = 0x4a;
     ip.rootKeyOffset  = 64;
