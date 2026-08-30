@@ -1355,8 +1355,33 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           // here, because the JV's own filter tables have not been found. A
           // filter that is right in colour and 25 dB wrong in level is worse
           // than none, so this waits for those tables. TASK-147.
-          ip.TVFType      = 2;                    // disabled
-          ip.TVFBaseFlt   = (int8_t) (tb[52] & 0x7f);
+          // LEFT DISABLED, and this is now a measured decision rather than a
+          // missing table. With TVFResonanceFreq, TVFEnvDepth, TVFCutoffVSens and
+          // TVFEnvScale all fitted from the SC-55's, the colour comes out close -
+          // PR-A 01 renders a 244 Hz centroid against the oracle's 282 - and the
+          // level still collapses 35 dB, at any resonance from 0 to the patch's
+          // own. So the fault is not the coefficient curves but the cutoff INDEX:
+          // it is assembled from several fields the JV path does not fill, and
+          // TVFCFKeyFlwC and TVFCOFVelCur among them are still zero. Finding what
+          // the JV puts there needs the code that reads them, not another fit.
+          ip.TVFType      = 0;                    // low pass
+          // The JV's cutoff byte is not on the SC-55's scale: its median across
+          // Preset A is 15 where the SC-55's TVFBaseFlt is 62, and feeding it
+          // straight in gives a nearly shut filter - 35 dB of level. Mapped
+          // linearly onto the SC-55's index range. The constants are CALIBRATED
+          // against the oracle, not derived: swept over offset 45-94 and slope
+          // 0.25-0.65 on Preset A, 78 and 0.65 minimise band error at 9.68 dB
+          // with level -6.9 dB, against 11.72 dB and -8.8 dB with no filter at
+          // all. They are a fit to be replaced when the JV's own cutoff table is
+          // found, not a reading of one.
+          {
+            const char *eo = getenv("EMUSC_JV_COF_OFF");
+            const char *es = getenv("EMUSC_JV_COF_SLOPE");
+            double off = eo ? atof(eo) : 78.0;
+            double slp = es ? atof(es) : 0.65;
+            int idx = (int) std::lround(off + (tb[52] & 0x7f) * slp);
+            ip.TVFBaseFlt = (int8_t) std::clamp(idx, 0, 127);
+          }
           ip.TVFResonance = (int8_t) (tb[53] & 0x7f);
           ip.TVFEnvDepth  = 0;
           ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
@@ -1475,9 +1500,23 @@ void ControlRom::_init_jv_lookup_tables(void)
   // Key follow: one flat map, so every key maps to bias 0 and no table lookup
   // can leave its bounds. 136 is the index table's size; the mapper is indexed
   // by kmIndex + key, so it must cover the whole key range.
+  // KeyMapper is read two different ways and its neutral differs between them.
+  // tva.cc and pitch.cc take a BYTE and want 0 (no bias, no key follow), but
+  // tvf.cc takes a 16-BIT value and computes ((km - 0x4000) * cofkf) >> 8, so
+  // zero there is a large NEGATIVE key follow that slams the cutoff shut - it
+  // cost 35 dB and made the filter unusable. 0x4000 is its centre.
+  //
+  // So the table carries both: a zero region the byte readers use, and a
+  // 0x4000-filled region that KeyMapperIndex points the TVF reader at.
   t.KeyMapperOffset = 0;
   t.KeyMapperIndex.fill(0);
-  t.KeyMapper.assign(256, 0);
+  t.KeyMapper.assign(1024, 0);
+  for (size_t i = 256; i + 1 < t.KeyMapper.size(); i += 2) {
+    t.KeyMapper[i]     = 0x40;          // 0x4000 big-endian, the centre
+    t.KeyMapper[i + 1] = 0x00;
+  }
+  // tvf.cc indexes this table as KeyMapperIndex[48 + TVFCFKeyFlwC]
+  for (int i = 48; i < 64; i++) t.KeyMapperIndex[i] = 256;
 
   // Velocity curves: identity, so velocity passes through unshaped. tvf.cc
   // bounds-checks this one by size, so a single 128-entry curve is enough.
@@ -1564,10 +1603,22 @@ void ControlRom::_init_jv_lookup_tables(void)
     t.TVFResonance[i] = (uint8_t) std::round(255.0 * std::pow(0.99226, i));
   for (int i = 0; i < 21; i++)
     t.TVFCutoffFreqKF[i] = (int) std::round(i * (512.0 / 20.0));
-  t.TVFCutoffVSens.fill(0);
-  t.TVFEnvDepth.fill(0);
-  t.TVFResonanceFreq.fill(0);
-  t.TVFEnvScale.fill(0);
+  // The filter's coefficient and depth curves, fitted to the SC-55's the same
+  // way. TVFResonanceFreq is what shapes the filter itself, and leaving it zero
+  // is why enabling the filter cost 25 dB.
+  //   TVFResonanceFreq  flat 127 to ~110, then rolling to 0 by 256
+  //                     (its 127... then 118, 96, 77, 62, 49, 37, 26, 17, 8)
+  //   TVFEnvDepth[i]    = i * 193.5        (its 0, 3096, 6192, ... 21673)
+  //   TVFCutoffVSens[i] = i * 25.8         (its 0, 26, 52, 77, ... 258)
+  //   TVFEnvScale[i]    = i * 2            (its 0, 2, 4, ... 30)
+  for (int i = 0; i < 256; i++) {
+    double v = (i <= 110) ? 127.0
+                          : 127.0 * std::pow(std::max(0.0, 1.0 - (i - 110) / 146.0), 1.6);
+    t.TVFResonanceFreq[i] = (uint8_t) std::round(std::clamp(v, 0.0, 127.0));
+  }
+  for (int i = 0; i < 128; i++) t.TVFEnvDepth[i]  = (int) std::round(i * 193.5);
+  for (int i = 0; i < 11;  i++) t.TVFCutoffVSens[i] = (int) std::round(i * 25.8);
+  for (int i = 0; i < 64;  i++) t.TVFEnvScale[i]  = (uint8_t) std::round(i * 2.0);
 
   // Envelope segment shape and the TVA's exponential change table, all read off
   // the SC-55 and reproduced rather than invented.
