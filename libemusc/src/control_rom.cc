@@ -1340,7 +1340,13 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
         in.partialsUsed |= 1 << t;
         ip.partialIndex = tb[1];
         ip.panpot       = 0x40;
-        ip.coarsePitch  = 0x40;
+          // Tone coarse tune, +37, in SIGNED semitones. Not applying it left
+          // 209 of the 539 enabled tones an octave high and 29 of them two
+          // octaves high - "Slap !!!" carries -12, which is why the demo's bass
+          // peaked at 220 Hz where the machine peaks at 110. The column reads
+          // as musical intervals and nothing else: -24 on 29 tones, -12 on 209,
+          // 0 on 230, +12 on 34, +24 on 3.
+          ip.coarsePitch  = (int8_t) std::clamp(0x40 + (int)(int8_t) tb[37], 0, 127);
         ip.finePitch    = 0x40;
         ip.volume       = 0x7f;
           // Velocity range, +3 and +4. Sounding every tone regardless of
@@ -1493,6 +1499,21 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
           ip.volume   = (uint8_t) (((tb[67] & 0x7f) * (tb[81] & 0x7f)) / 127);
       }
 
+        // Capture the patch's effect sends alongside the instrument, so a
+        // performance part can route them. This had been lost in a refactor,
+        // leaving _jvInstSend empty - every send test then read false and every
+        // send stayed zero, so reverb and chorus produced nothing at all and
+        // rendering with the sends forced to zero was bit-identical.
+        {
+          uint8_t rv = 0, ch = 0;
+          for (int t = 0; t < TONES; t++) {
+            const uint8_t *tb2 = &_jvRom[off + TONE0 + t * TONE];
+            if (!tb2[0]) continue;
+            rv = std::max(rv, (uint8_t) (tb2[82] & 0x7f));
+            ch = std::max(ch, (uint8_t) (tb2[83] & 0x7f));
+          }
+          _jvInstSend.push_back({rv, ch});
+        }
       _instruments.push_back(in);
     }
   }
@@ -1786,23 +1807,24 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
   if (!base || (size_t) base + STRIDE > _jvRom.size())
     return -1;
 
-  // Which performance the machine powers on with is held in NVRAM, at byte
-  // 0x04 and one-based, and we deliberately do not require an NVRAM file
-  // (P-0374). So it has to be defaulted, and the default is not a guess:
+  // Which performance the machine powers on with is held in NVRAM, which we do
+  // not require (P-0374), so it has to be defaulted - and the default is index 0.
   //
-  //   - the reference's NVRAM holds 0x07 there, which is performance 7, index 6;
-  //   - and index 6 is, independently, the one of the sixteen whose render
-  //     matches the reference. Sweeping all of them on the demo's melody channel
-  //     alone: index 6 gives -1.4 dB and 9.20 dB spectral distance where index 0
-  //     - the obvious assumption, and the one used until now - gives +19.1 dB and
-  //     11.61 dB. On the whole demo, +2.6 dB and 4.86 dB against +17.5 and 7.35.
+  // IDENTIFIED, not assumed. The demo's melody track was rendered on the
+  // reference through each of the 64 Internal patches in turn and compared with
+  // what the reference plays from its own performance: patch 21 "SAW Lead"
+  // matches at 0.9936, the next candidate at 0.9621, and performance 1 is the
+  // one that puts SAW Lead on channel 1 and "Slap !!!" on channel 4 - which is
+  // independently what the same test picks for channel 4.
   //
-  // Index 0 was assumed because it is the first, and the owner's ear caught it
-  // before any measurement did: "it still doesn't feel like the right
-  // instruments, and now the melody is very loud". Index 6 puts BrightGuitar,
-  // Brass Sect., SA Rhodes and Pan Pipe on the parts, which is what a
-  // multi-timbral demo looks like; index 0 puts SAW Lead on every part.
-  int which = 6;
+  // An earlier version defaulted to index 6 on two pieces of bad evidence: an
+  // NVRAM byte that happened to read 7, and a spectral sweep of all sixteen
+  // performances. The sweep was run while every note was 1.65 semitones flat
+  // from a wrong pitch table AND the melody was 19 dB loud with the filter
+  // wrongly enabled, so it was comparing two faults rather than two patches.
+  // Comparing against the reference's OWN renders of each patch is immune to
+  // both, because it never involves our engine at all.
+  int which = 0;
   const char *pe = getenv("EMUSC_JV_PERF");
   if (pe) { int v = atoi(pe); if (v >= 0 && v < 16) which = v; }
   if ((size_t) base + (which + 1) * STRIDE > _jvRom.size()) which = 0;
@@ -1818,7 +1840,17 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
     // drops all but the first, which is one patch of two on the demo's melody.
     _jvParts[t] = { patch, chan, pt[17] & 0x7f, pt[18] & 0x7f,
                     (int8_t) pt[19], 0, 0, t == PARTS - 1 };
-    if (t != PARTS - 1 && patch < (int) _jvInstSend.size()) {
+    // The machine numbers patches I01-I64, C01-C64, A01-A64, B01-B64 across
+    // 0..255 - Card second - while our instrument list is Internal, Preset A,
+    // Preset B across 0..191, because a bare JV-880 has no card. Translate,
+    // rather than letting a Preset B patch index off the end and be dropped:
+    // performance 4's third part asks for 204, which is B13.
+    if (patch >= 192)      patch = 128 + (patch - 192);   // Preset B
+    else if (patch >= 128) patch =  64 + (patch - 128);   // Preset A
+    else if (patch >= 64)  patch = -1;                    // Card: not present
+    _jvParts[t].patch = patch;
+
+    if (t != PARTS - 1 && patch >= 0 && patch < (int) _jvInstSend.size()) {
       _jvParts[t].reverb = _jvInstSend[patch].first;
       _jvParts[t].chorus = _jvInstSend[patch].second;
     }

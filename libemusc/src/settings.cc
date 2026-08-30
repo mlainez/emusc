@@ -1182,6 +1182,8 @@ void Settings::_apply_jv_performance(void)
     }
 
     const auto &j = jp[p];
+
+
     _patchParams[(int) PatchParam::RxChannel       | (partAddr << 8)] = j.channel;
     _patchParams[(int) PatchParam::RxNoteMessage   | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::UseForRhythm    | (partAddr << 8)] = j.rhythm ? 1 : 0;
