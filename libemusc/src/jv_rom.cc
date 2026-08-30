@@ -2,26 +2,28 @@
  *  This file is part of libEmuSC, a Sound Canvas emulator library
  *  Copyright (C) 2026  Marc Lainez
  *
- *  New file, not derived from any existing libEmuSC source. Licensed
- *  under the LGPL as the rest of the library is, so that it links with
- *  it; the copyright is the author's own, not upstream's.
- *
  *  libEmuSC is free software: you can redistribute it and/or modify it
  *  under the terms of the GNU Lesser General Public License as published
- *  by the Free Software Foundation, either version 3 of the License, or (at
- *  your option) any later version.
+ *  by the Free Software Foundation, either version 2.1 of the License, or
+ *  (at your option) any later version.
  *
- *  libEmuSC is distributed in the hope that it will be useful, but WITHOUT
- *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- *  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
- *  License for more details.
+ *  libEmuSC is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU Lesser General Public License
- *  along with libEmuSC. If not, see <https://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with libEmuSC. If not, see <http://www.gnu.org/licenses/>.
  */
+
+// ROM layout and wave decoding for the JV family, recovered by measurement.
+// See docs/jv1080-rom-notes.md and PROVENANCE.md P-0356 to P-0362.
+//
+// Assisted-by: Claude:claude-opus-5
 
 #include "jv_rom.h"
 
+#include <array>
 #include <cctype>
 #include <string>
 #include <cmath>
@@ -156,23 +158,26 @@ bool JVRom::_read_table(uint32_t hint, std::vector<Waveform> &out)
     return false;
 
   for (uint32_t off = base; _name_like(off, 2); off += RECORD_SIZE) {
-    struct Waveform w;
+    Waveform w;
 
     w.name.assign((const char *) &_rom[off], NAME_LEN);
     while (!w.name.empty() && w.name.back() == ' ')   // names are space-padded
       w.name.pop_back();
 
-    for (int i = 0; i < PARAM_LEN; i++)
-      w.param[i] = _rom[off + PARAM_OFF + i];
+    // Note breakpoints, 0x7f-padded. All values across the table fall in
+    // 20..120, i.e. MIDI keys (P-0362 follow-up).
+    for (int i = 0; i < 16; i++)
+      w.breaks[i] = (i < PARAM_LEN) ? _rom[off + PARAM_OFF + i] : 0;
 
     // Big-endian at +28. The offset is not a guess: read there, the field
     // comes out as the run 0,1,2,...,10, which is what a sequential index
     // list should look like. Read one byte earlier - the first thing this
     // parser did - it comes out as 0,0,256,512,768, and those round numbers
     // are what gave the error away.
-    for (int i = 0; i < INDEX_N; i++) {
+    for (int i = 0; i < 16; i++) {
+      if (i >= INDEX_N) { w.samples[i] = 0xFFFF; continue; }
       uint32_t p = off + INDEX_OFF + i * 2;
-      w.index[i] = (uint16_t) ((_rom[p] << 8) | _rom[p + 1]);
+      w.samples[i] = (uint16_t) ((_rom[p] << 8) | _rom[p + 1]);
     }
 
     out.push_back(w);
@@ -249,30 +254,32 @@ bool JVRom::_read_samples(uint32_t hint)
   int miss = 0;
   for (uint32_t off = base; (size_t) off + SAMPLE_STRIDE <= _rom.size();
        off += SAMPLE_STRIDE) {
-    struct Sample smp;
-    // The header sits in the NEXT slot, not this one: a record runs
-    // [start][loop][end][3 flags][6 header], so reading the header at off+3
-    // pairs it with the previous record's addresses. Measured: pairing the
-    // header with entry N+1's addresses gives a median pitch offset of +0.05
-    // semitones across 578 samples, against +3.19 for entry N.
+    Sample smp = {};
+    std::array<uint8_t,6> hdr = {};
+    // The header sits in the NEXT slot: a record runs
+    // [start][loop][end][3 flags][6 header] (P-0362).
     for (int i = 0; i < 6; i++) {
       uint32_t ho = off + SAMPLE_STRIDE + 3 + i;
-      smp.header[i] = (ho < _rom.size()) ? _rom[ho] : 0;
+      hdr[i] = (ho < _rom.size()) ? _rom[ho] : 0;
     }
+    smp.rootKey = hdr[0];
     if (valid(off)) {
-      smp.start = u24(off + 9);
-      smp.loop  = u24(off + 12);
-      smp.end   = u24(off + 15);
+      uint32_t s0 = u24(off + 9), l0 = u24(off + 12), e0 = u24(off + 15);
+      smp.address  = s0;
+      smp.sampleLen = (uint16_t) (e0 - s0);
+      smp.loopLen   = (uint16_t) (e0 - l0);
       miss = 0;
     } else {
-      smp.start = smp.loop = smp.end = 0;      // placeholder, keeps alignment
+      smp.address = 0; smp.sampleLen = 0; smp.loopLen = 0;
       if (++miss > 24) {                        // a long dead stretch ends it
-        _samples.resize(_samples.size() > (size_t) miss - 1
-                        ? _samples.size() - (miss - 1) : 0);
+        size_t keep = _samples.size() > (size_t) miss - 1
+                      ? _samples.size() - (miss - 1) : 0;
+        _samples.resize(keep); _sampleHeaders.resize(keep);
         break;
       }
     }
     _samples.push_back(smp);
+    _sampleHeaders.push_back(hdr);
   }
 
   return !_samples.empty();
@@ -285,8 +292,8 @@ std::vector<int> JVRom::waveform_samples(int waveformIndex) const
   if (waveformIndex < 0 || (size_t) waveformIndex >= _waveforms.size())
     return out;
 
-  for (int i = 0; i < 11; i++) {
-    uint16_t v = _waveforms[waveformIndex].index[i];
+  for (int i = 0; i < JV_ZONES; i++) {
+    uint16_t v = _waveforms[waveformIndex].samples[i];
     if (v == 0xFFFF)                       // the unused marker
       continue;
     if ((size_t) v < _samples.size())
@@ -359,8 +366,8 @@ std::vector<int16_t> JVRom::decode_sample(int sampleIndex, int dcWindow) const
       !have_wave_roms())
     return pcm;
 
-  const struct Sample &s = _samples[sampleIndex];
-  uint32_t count = s.end - s.start;
+  const Sample &s = _samples[sampleIndex];
+  uint32_t count = s.sampleLen;
   if (!count)
     return pcm;
 
@@ -378,7 +385,7 @@ std::vector<int16_t> JVRom::decode_sample(int sampleIndex, int dcWindow) const
   std::vector<double> x(count);
   double acc = 0.0;
   for (uint32_t i = 0; i < count; i++) {
-    uint32_t addr = s.start + i;
+    uint32_t addr = s.address + i;
     size_t rom = addr >> WAVE_ADDR_BITS;
     if (rom >= _waveRoms.size()) break;
 
@@ -427,10 +434,10 @@ std::vector<int16_t> JVRom::render_note(int waveformIndex, int note,
 
   int best = -1, bestDist = 1 << 30;
   for (size_t k = 0; k < idx.size(); k++) {
-    const struct Sample &s = _samples[idx[k]];
-    if (s.end <= s.start)                       // a table gap
+    const Sample &s = _samples[idx[k]];
+    if (!s.sampleLen)                           // a table gap
       continue;
-    int dist = s.header[0] - note;
+    int dist = (int) s.rootKey - note;
     if (dist < 0) dist = -dist;
     if (dist < bestDist) { bestDist = dist; best = idx[k]; }
   }
@@ -441,12 +448,12 @@ std::vector<int16_t> JVRom::render_note(int waveformIndex, int note,
   if (pcm.size() < 2)
     return out;
 
-  const struct Sample &s = _samples[best];
-  double step = std::pow(2.0, (note - (int) s.header[0]) / 12.0) *
+  const Sample &s = _samples[best];
+  double step = std::pow(2.0, (note - (int) s.rootKey) / 12.0) *
                 ((double) WAVE_RATE / (double) outRate);
 
   // Loop bounds, in frames from the sample's start.
-  double loopStart = (double) (s.loop - s.start);
+  double loopStart = (double) (s.sampleLen - s.loopLen);
   double loopEnd   = (double) pcm.size() - 1.0;
   bool   loops     = loopEnd - loopStart > 8.0;
 

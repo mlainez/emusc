@@ -2,54 +2,31 @@
  *  This file is part of libEmuSC, a Sound Canvas emulator library
  *  Copyright (C) 2026  Marc Lainez
  *
- *  New file, not derived from any existing libEmuSC source. Licensed
- *  under the LGPL as the rest of the library is, so that it links with
- *  it; the copyright is the author's own, not upstream's.
- *
  *  libEmuSC is free software: you can redistribute it and/or modify it
  *  under the terms of the GNU Lesser General Public License as published
- *  by the Free Software Foundation, either version 3 of the License, or (at
- *  your option) any later version.
+ *  by the Free Software Foundation, either version 2.1 of the License, or
+ *  (at your option) any later version.
  *
- *  libEmuSC is distributed in the hope that it will be useful, but WITHOUT
- *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- *  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
- *  License for more details.
+ *  libEmuSC is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU Lesser General Public License
- *  along with libEmuSC. If not, see <https://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with libEmuSC. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// Reader for the Roland JV family program ROMs (JV-880, JV-1080).
+// ROM layout and wave decoding for the JV family, recovered by measurement.
+// See docs/jv1080-rom-notes.md and PROVENANCE.md P-0356 to P-0362.
 //
-// SCOPE, AND WHY THIS IS A SEPARATE CLASS FROM ControlRom.
-// These are patch synths, not Sound Canvases: four tones per patch, their own
-// envelope and filter structure, and a patch/performance model that the GS part
-// model does not describe. Whether libEmuSC can host that at all is an open
-// question, so nothing here touches ControlRom or the SC-55 paths. If the
-// answer turns out to be "yes, as a generation", this collapses into that; if
-// "no", it is already separate.
-//
-// THE TWO MACHINES SHARE A LAYOUT, WHICH IS WHY ONE CLASS SERVES BOTH.
-// Both keep a 60-byte waveform record table and an 18-byte sample table with
-// three 24-bit addresses, both encode wave data the same way, and both put a
-// MIDI root key in the same header byte. Only the offsets, the number of wave
-// ROMs, and whether the address bus is permuted differ - so those are a per
-// model table (see Layout) rather than a second class.
-//
-// WHAT IS ESTABLISHED HERE AND WHAT IS NOT.
-// The table offsets, the record stride and the field boundaries below were
-// recovered by measurement from the ROM itself (docs/jv1080-rom-notes.md), and
-// they reproduce: the names come out clean and the record chain is unbroken.
-// The MEANING of two fields is inference from shape and is NOT established -
-// they are named `splitPoints` and `sampleIndex` because that is what their
-// shape suggests, and both are marked INFERRED below. The oracle does not
-// emulate this machine, so no render can currently confirm either reading.
-// Treat them as hypotheses that a later reference will confirm or move.
+// Assisted-by: Claude:claude-opus-5
 
 #ifndef __JV_ROM_H__
 #define __JV_ROM_H__
 
+#include "control_rom.h"
+
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -74,20 +51,12 @@ public:
     bool        permuteAddress;// JV-1080 permutes; JV-880 dumps read straight
   };
 
-  // A 60-byte record: 12-byte name, 15-byte curve, 11 x uint16, 11 x 0xff.
-  struct Waveform {
-    std::string name;               // 12 bytes, space-padded ASCII
-    uint8_t     param[16];          // NOT YET DECODED - see note below
-    uint16_t    index[11];          // INFERRED: sample indices, big-endian
-  };
+  // A JV waveform record is a ControlRom::Partial: a name, note breakpoints,
+  // and indices into the sample table. Same concept as the SC-55, narrower -
+  // 11 zones against 16, and the breakpoints are 0x7f-padded.
+  typedef ControlRom::Partial Waveform;
 
-  // The 16-byte param block is left opaque on purpose. It reads as a run of
-  // ascending values padded with 0x7f and closed by 0x00, and the run length
-  // differs between records - "Ac Piano1 A" carries ten values, "Ac Piano1 B"
-  // nine - which is the shape a variable-length key-split table would have.
-  // But not every record starts the run in the same place, so the field
-  // boundary inside the block is NOT established and naming its parts would be
-  // guessing. It is stored whole until something can confirm the reading.
+  static constexpr int JV_ZONES = 11;
 
   // Detects the machine from the program ROM: its size narrows the candidates
   // and the tables must then actually parse, so a wrong guess fails loudly
@@ -108,17 +77,16 @@ public:
   // and so is one of the few tables that confirms its own extent.
   const std::vector<std::string> &effects(void) const { return _effects; }
 
-  // One entry of the sample table: where a multisample lives in the wave ROMs.
-  // Base 0x075c7a, 18 bytes per entry, 662 valid entries in v1.0 - all found by
-  // measuring the ROM (docs/jv1080-rom-notes.md), not from any description of
-  // the machine. The three addresses always satisfy start <= loop <= end and
-  // fall inside the 8 MB wave space, which is what identifies the record.
-  struct Sample {
-    uint32_t start;                 // 24-bit, big-endian, in the 8 MB space
-    uint32_t loop;                  // loop point, absolute
-    uint32_t end;                   // one past the last byte
-    uint8_t  header[6];             // pitch, rate and mode - NOT YET DECODED
-  };
+  // A JV sample table entry is a ControlRom::Sample. The ROM stores start,
+  // loop and end as absolute 24-bit addresses; they are converted to the
+  // library's address/sampleLen/loopLen form on read. rootKey comes from the
+  // entry header. loopMode, volume and the pitch fields are not present in the
+  // JV record and are left zero.
+  typedef ControlRom::Sample Sample;
+
+  // The remaining five header bytes, kept for the fields not yet identified.
+  const std::vector<std::array<uint8_t,6>> &sample_headers(void) const
+  { return _sampleHeaders; }
 
   const std::vector<Sample> &samples(void) const { return _samples; }
 
@@ -195,6 +163,7 @@ private:
   std::vector<Waveform> _loops;
   std::vector<std::string> _effects;
   std::vector<Sample> _samples;
+  std::vector<std::array<uint8_t,6>> _sampleHeaders;
   std::vector<std::vector<uint8_t>> _waveRoms;
   bool _ok;
   std::string _error;
