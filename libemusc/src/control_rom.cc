@@ -1707,7 +1707,12 @@ void ControlRom::_init_jv_lookup_tables(void)
     { 0x05590, 128, 1, false, "TVALevelIndex"    },
     { 0x3ff49,  21, 1, true,  "EnvTimeKeyFollowSens" },
     { 0x04edf, 130, 1, false, "LFOSine"          },
-    { 0x06b2c,  47, 2, true,  "PitchCoarseExp"   },
+    // PitchCoarseExp is NOT read from ROM. The match at 0x06b2c passes the rise
+    // check - the shape is right - but it starts at 29794 where the SC-55's
+    // starts at 32768, and that table's first entry IS unity: 29794/32768 is
+    // 0.9092, or -1.65 semitones applied to every note on every part. The open
+    // hat measured -1.66 semitones against the reference, which is that number.
+    // A shape check does not catch a wrong base, so the anchor is checked too.
     // Dropped, and why: TVAPanpot (0x3e946), TVFEnvScale (0x3fc79) and
     // TVFCutoffVSens (0x02d15) all failed the rise check - 11, 4 and 4
     // inversions in curves that must be monotonic. They keep the fitted
@@ -1868,7 +1873,26 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
 // makes a drum map readable in the instrument list.
 int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
 {
-  const int STRIDE = 44, KEYS = 61, FIRST_KEY = 36;
+  // The rhythm record's layout, as data rather than as numbers spread through
+  // the code. Each offset is a finding; where it came from is beside it.
+  struct RhythmLayout {
+    int stride, keys, firstKey;
+    int on, wave, playKey, level, pan;
+  };
+  static const RhythmLayout RHY = {
+    44, 61, 36,
+     0,     // +0  on/off, as in a patch tone
+     1,     // +1  waveform - the names settle it: key 36 Bright Kick, 38 90's
+            //     Snare, 42 Closed HAT 1, 46 Open HAT 1
+     3,     // +3  play key. Every drum had been fixed at 60, the Sound Canvas
+            //     convention, and the residual pitch errors predicted this
+            //     column exactly - kick 58 for our +1.82 semitones, crash 62 for
+            //     our -1.99, ride 61 for our -1.01, hats 60 for their 0.00
+    30,     // +30 level. 75..127, median 127
+    31,     // +31 pan. 0..128, median 64 - centred, which is what a pan is. The
+            //     manual lists Level then Pan adjacent (SysEx 0x24, 0x25)
+  };
+  const int STRIDE = RHY.stride, KEYS = RHY.keys, FIRST_KEY = RHY.firstKey;
 
   if (!base || (size_t) base + KEYS * STRIDE > _jvRom.size())
     return -1;
@@ -1883,25 +1907,25 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
     // key instead transposes a kick down until it is muffled noise - which is
     // what it sounded like. Flags 0x10 is note-on only; a drum is one-shot and
     // must ignore note-off, which 0x11 does not.
-    ds.key[k]    = 60;
+    ds.key[k]    = 60;      // overwritten below from the record
     ds.panpot[k] = 0x40;
     ds.flags[k]  = 0x10;
   }
 
   for (int k = 0; k < KEYS; k++) {
     const uint8_t *r = &_jvRom[base + k * STRIDE];
-    if (!r[0] || r[1] >= _partials.size())
+    if (!r[RHY.on] || r[RHY.wave] >= _partials.size())
       continue;
 
     struct Instrument in = {};
-    in.name = _partials[r[1]].name;
+    in.name = _partials[r[RHY.wave]].name;
     in.volume = 0x7f;
     in.partialsUsed = 1;
     for (int t = 0; t < 4; t++)
       in.partials[t].partialIndex = 0xFFFF;
 
     struct InstPartial &ip = in.partials[0];
-    ip.partialIndex   = r[1];
+    ip.partialIndex   = r[RHY.wave];
     ip.panpot         = 0x40;
     ip.coarsePitch    = 0x40;
     ip.finePitch      = 0x40;
@@ -1964,13 +1988,21 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
     //
     // And the values are musically right, which no arbitrary column would be:
     // kick and snare centred at 64, both hats hard left at 0, ride at 118.
-    ds.volume[FIRST_KEY + k] = r[30] & 0x7f;
+    // The pitch each drum plays at, from record byte +3. Every drum was playing
+    // at 60 - the Sound Canvas convention - and the owner heard the kit as
+    // in tune with itself but wrong against the machine. The residual errors
+    // predict this column exactly: with +3 read as the play key, the kick's 58
+    // accounts for our +1.82 semitones, the crash's 62 for our -1.99, the ride's
+    // 61 for our -1.01, and the hats' 60 for their 0.00.
+    ds.key[FIRST_KEY + k]    = r[RHY.playKey] & 0x7f;
+
+    ds.volume[FIRST_KEY + k] = r[RHY.level] & 0x7f;
     // Clamped away from 0. The Sound Canvas reads a drum pan of 0 as RND and
     // randomises the note (tva.cc), but the JV means hard left by it: the
     // reference pans Closed HAT 1 and Open HAT 1 - both of which carry 0 here -
     // 37.2 dB and 26.8 dB to the left, while ours came out dead centre because
     // the random pan averages there. 1 is hard left without tripping RND.
-    ds.panpot[FIRST_KEY + k] = (uint8_t) std::clamp<int>(r[31], 1, 127);
+    ds.panpot[FIRST_KEY + k] = (uint8_t) std::clamp<int>(r[RHY.pan], 1, 127);
 
     ds.preset[FIRST_KEY + k] = (uint16_t) _instruments.size();
     _instruments.push_back(in);
