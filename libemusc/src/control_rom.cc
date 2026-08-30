@@ -1317,7 +1317,14 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
       struct Instrument in = {};
       in.name.assign((const char *) &_jvRom[off], NAME);
       in.name.erase(in.name.find_last_not_of(' ') + 1);
-      in.volume = 0x7f;
+        // Patch Level, common byte +21. Without it a four-tone patch plays all
+        // four at full gain: SAW Lead, which the demo's melody uses, has four
+        // tones enabled at level 127 with no velocity split, and rendered
+        // 19.6 dB louder than the machine on that channel alone. +21 is the only
+        // common byte that FALLS as the tone count rises (correlation -0.300
+        // across 192 patches), which is what a level compensating for layering
+        // has to do. Range 44..127, median 118.
+        in.volume = _jvRom[off + 21] & 0x7f;
       in.partialsUsed = 0;
 
       for (int t = 0; t < TONES; t++) {
@@ -1336,8 +1343,18 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
         ip.coarsePitch  = 0x40;
         ip.finePitch    = 0x40;
         ip.volume       = 0x7f;
-        ip.velRangeLow  = 0;
-        ip.velRangeHigh = 127;
+          // Velocity range, +3 and +4. Sounding every tone regardless of
+          // velocity is why layered patches were too loud and wrong in timbre:
+          // 22% of tones are velocity-limited layers meant to sound only part
+          // of the time, and the Internal bank averages 3.41 tones per patch
+          // against Preset A's 2.44 - which is exactly why Internal measured
+          // 5 dB louder than Preset A. The pair passes the structural test on
+          // all 539 enabled tones: lower is never above upper.
+          ip.velRangeLow  = tb[3] & 0x7f;
+          ip.velRangeHigh = tb[4] & 0x7f;
+          if (ip.velRangeHigh < ip.velRangeLow) {
+            ip.velRangeLow = 0; ip.velRangeHigh = 127;
+          }
         ip.TVALvlVSens  = 127;
           // The filter. +52 is the cutoff and +53 the resonance, adjacent as the
           // manual has them (SysEx 0x4A, 0x4B), and +52 is confirmed on the
@@ -1719,8 +1736,12 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
 
   // Which performance the machine powers on with is held in its NVRAM, which we
   // deliberately do not require (P-0374). Performance 0 is what a factory-state
-  // machine selects, and it is the one the demo material was made against.
-  const uint8_t *p = &_jvRom[base];
+  // machine selects. EMUSC_JV_PERF overrides it for testing that assumption.
+  int which = 0;
+  const char *pe = getenv("EMUSC_JV_PERF");
+  if (pe) { int v = atoi(pe); if (v >= 0 && v < 16) which = v; }
+  if ((size_t) base + (which + 1) * STRIDE > _jvRom.size()) which = 0;
+  const uint8_t *p = &_jvRom[base + which * STRIDE];
 
   for (int t = 0; t < PARTS; t++) {
     const uint8_t *pt = p + COMMON + t * PART;

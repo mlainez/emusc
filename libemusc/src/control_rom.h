@@ -434,10 +434,10 @@ private:
       uint32_t        patchBankA;    // Internal; Preset A and B follow at +0x8000
                                      // each. Program changes select Internal, which is
                                      // the factory bank the machine powers on with
-    uint32_t        rhythm;        // 61 keys from 36, 44 bytes each, right after
-                                   // the Internal patch bank
     uint32_t        performances;  // 16 records of 204 bytes, ending where the
                                    // Internal patch bank begins
+    uint32_t        rhythm;        // 61 keys from 36, 44 bytes each, right after
+                                   // the Internal patch bank
     int             waveRoms;
     enum SynthGen   generation;
   };
