@@ -120,6 +120,13 @@ Pitch::~Pitch()
 
 int Pitch::_get_env_key_follow(int kfpRom, int kfRom)
 {
+  // The JV family has no CPU EPROM lookup tables, so KeyMapper is empty. 0x100
+  // is this function's own neutral result - the value it returns when key
+  // follow is switched off - so returning it here is "no key follow", not a
+  // guess at one.
+  if (_LUT.KeyMapper.empty())
+    return 0x100;
+
   // This feature seems never to be used, but implement it anyways just in case
   int kmIndex = _LUT.KeyMapperIndex[std::min(0x78 + kfpRom, 0x87)] -
                 _LUT.KeyMapperOffset;

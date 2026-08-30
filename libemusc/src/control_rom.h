@@ -304,6 +304,8 @@ private:
   static constexpr uint8_t _maxPolyphonySC55     = 24;
   static constexpr uint8_t _maxPolyphonySC55mkII = 28;
   static constexpr uint8_t _maxPolyphonySC88     = 64;
+  static constexpr uint8_t _maxPolyphonyJV880    = 28;
+  static constexpr uint8_t _maxPolyphonyJV1080   = 64;
 
   // Fade applied to a partial when its voice is given to another note, in dB
   // per millisecond. Measured by taking a sounding voice away and comparing
@@ -431,6 +433,7 @@ private:
   int  _read_jv_partials(std::ifstream &romFile, uint32_t hint);
   int  _read_jv_samples(std::ifstream &romFile, uint32_t hint);
   int  _read_jv_patches(std::ifstream &romFile, uint32_t bankA);
+  void _init_jv_lookup_tables(void);
 
   std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
 

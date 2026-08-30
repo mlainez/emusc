@@ -55,6 +55,12 @@ const std::vector<uint32_t> ControlRom::_banksSC88 =
 ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   : _romPath(romPath)
 {
+  // No drum-set table is guaranteed. _drumSetsLUT is read from ROM only on the
+  // SC-55 path, so on any other generation it would otherwise hold indeterminate
+  // values, and Settings::update_drum_set() would index an empty _drumSets.
+  // 0xff is the table's own "no drum set in this bank" marker.
+  _drumSetsLUT.fill(0xff);
+
   // External EPROM containing control data
   std::ifstream romFile(romPath, std::ios::binary | std::ios::in);
   if (!romFile.is_open())
@@ -80,6 +86,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
         _read_jv_patches(romFile, JV_LAYOUTS[i].patchBankA);
       break;
     }
+      _init_jv_lookup_tables();
     romFile.close();
     return;
   }
@@ -875,6 +882,12 @@ const uint8_t ControlRom::max_polyphony(void)
     case sm_SC88:
     case sm_SC88Pro:
       return _maxPolyphonySC88;
+
+      case sm_JV880:
+        return _maxPolyphonyJV880;
+
+      case sm_JV1080:
+        return _maxPolyphonyJV1080;
     }
 
   throw(std::string("No maximum polyphony defined for this model"));
@@ -1194,8 +1207,11 @@ int ControlRom::_read_jv_partials(std::ifstream &romFile, uint32_t hint)
     p.name.assign((const char *) &_jvRom[off], NAME);
     p.name.erase(p.name.find_last_not_of(' ') + 1);
 
-    for (int i = 0; i < 16; i++)
-      p.breaks[i] = (i < 16) ? _jvRom[off + NAME + i] : 0;
+      // Only ZONES entries are real breakpoints; the SC-55 pads the rest with
+      // 127 and the voice code relies on that, so pad the same way rather than
+      // letting a trailing non-breakpoint byte read as a key range.
+      for (int i = 0; i < 16; i++)
+        p.breaks[i] = (i < ZONES) ? _jvRom[off + NAME + i] : 127;
 
     for (int i = 0; i < 16; i++) {
       if (i >= ZONES) { p.samples[i] = 0xFFFF; continue; }
@@ -1270,6 +1286,10 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
     s.reverse   = _jvRom[o + 12] & 0x04;
     }
     s.rootKey = _jvRom[o + 13];
+      s.volume    = 0x7f;   // no per-sample attenuation: 0 would mean silence
+                             // under the TVA level law, not "neutral"
+      s.pitchInit = 0x0400;  // 0x0400 is the SC-55's neutral pitch offset; the
+      s.pitchSust = 0x0400;  // JV table has no such field, and 0 detunes hard
     _samples.push_back(s);
   }
 
@@ -1318,6 +1338,18 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
         ip.velRangeHigh = 127;
         ip.TVALvlVSens  = 127;
         ip.TVFType      = 2;             // no filter
+
+          // PLACEHOLDER TVA envelope. The tone record's envelope bytes are not
+          // identified yet (TASK-141), and leaving these zero is not neutral:
+          // every phase time would be 0, the envelope would run to its final
+          // level - which is silence - before the first sample, and the note
+          // would never be heard. Full level with long phase times gives a note
+          // that simply holds while the key is down, which is the honest
+          // rendering of "we do not know the envelope yet".
+          ip.TVAEnvL1 = ip.TVAEnvL2 = ip.TVAEnvL3 = ip.TVAEnvL4 = 0x7f;
+          ip.TVAEnvT1 = 0x00;            // reach full level at once
+          ip.TVAEnvT2 = ip.TVAEnvT3 = ip.TVAEnvT4 = 0x7f;
+          ip.TVAEnvT5 = 0x30;            // a short release, so notes end
       }
 
       _instruments.push_back(in);
@@ -1335,5 +1367,91 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
   return _instruments.size();
 }
 
+
+
+
+// The JV family has no CPU EPROM holding the SC-55's ~34 lookup tables, and the
+// voice path reads them unconditionally: two of them are std::vector and are
+// empty here, which is a segfault rather than a wrong note. Give them defined
+// neutral values so the engine runs.
+//
+// NEUTRAL, NOT CORRECT. Every curve below is a placeholder chosen to be
+// transparent - unity gain, no key follow, no bias - so that what comes out is
+// the JV's samples at the JV's pitch with no shaping, which is exactly what the
+// owner heard and described as "no envelope or effects". The real curves are
+// TASK-141's subject. Nothing here should be mistaken for a measurement.
+void ControlRom::_init_jv_lookup_tables(void)
+{
+  struct LookupTables &t = lookupTables;
+
+  // Key follow: one flat map, so every key maps to bias 0 and no table lookup
+  // can leave its bounds. 136 is the index table's size; the mapper is indexed
+  // by kmIndex + key, so it must cover the whole key range.
+  t.KeyMapperOffset = 0;
+  t.KeyMapperIndex.fill(0);
+  t.KeyMapper.assign(256, 0);
+
+  // Velocity curves: identity, so velocity passes through unshaped. tvf.cc
+  // bounds-checks this one by size, so a single 128-entry curve is enough.
+  t.VelocityCurves.resize(128);
+  for (int i = 0; i < 128; i++) t.VelocityCurves[i] = (uint8_t) i;
+
+  // TVA level. levelIndex starts at 0xff - TVALevelIndex[volume], so an
+  // identity-complement here means "volume 127 = no attenuation", and TVALevel
+  // maps an index straight back to a level.
+  // Modelled on the SC-55's own tables, read out of an mk2 ROM and fitted:
+  //   TVALevelIndex[v] = 121 * log10(127/v)   (255,109,73,52,36,25,15,7,0)
+  //   TVALevel[i]      = 255 * 10^(-(255-i) * 0.332/20)   (~0.332 dB per step)
+  // These are the SC-55's curves, not the JV's, and are a placeholder until the
+  // JV's own are found. They are used because the shape matters: an identity
+  // curve renders ~63 dB below where the machine plays.
+  t.TVALevelIndex[0] = 255;
+  for (int i = 1; i < 128; i++) {
+    double a = 121.0 * std::log10(127.0 / (double) i);
+    t.TVALevelIndex[i] = (uint8_t) std::min(255.0, std::max(0.0, std::round(a)));
+  }
+  for (int i = 0; i < 256; i++) {
+    double v = 255.0 * std::pow(10.0, -((255 - i) * 0.332) / 20.0);
+    t.TVALevel[i] = (uint8_t) std::min(255.0, std::max(0.0, std::round(v)));
+  }
+
+  // Envelope phase times, same treatment: roughly a doubling every 16 steps,
+  // fitted to the SC-55's (0, 159, 453, 994, 1990, 3827, 7211, 13448).
+  t.envelopeTime[0] = 0;
+  for (int i = 1; i < 128; i++)
+    t.envelopeTime[i] = (int) std::round(13448.0 * std::pow(2.0, (i - 112) / 16.6));
+
+  t.TVAPanKeyFollow.fill(0);
+  t.TVABiasLevel.fill(0);
+  t.TVAPanpot.fill(0x40);                       // centre
+  t.TVAEnvExpChange.fill(0);
+
+  t.PitchParamScale.fill(0);
+  t.EnvTimeKeyFollowSens.fill(0);
+  t.EnvTimeScale.fill(0);
+  t.PitchEnvVelSens1.fill(0);
+  t.PitchEnvVelSens2.fill(0);
+  t.PitchEnvDepth.fill(0);
+  t.PitchFineExp.fill(0);
+  t.PitchCoarseExp.fill(0);
+  t.PortamentoRate.fill(0);
+
+  t.LFORate.fill(0);
+  t.LFODelayTime.fill(0);
+  t.LFOTVFDepth.fill(0);
+  t.LFOTVPDepth.fill(0);
+  t.LFOSine.fill(0);
+
+  t.TVFCutoffFreqKF.fill(0);
+  t.TVFCutoffVSens.fill(0);
+  t.TVFEnvDepth.fill(0);
+  t.TVFCutoffFreq.fill(0);
+  t.TVFResonanceFreq.fill(0);
+  t.TVFResonance.fill(0);
+  t.TVFEnvScale.fill(0);
+
+  t.EnvSegmentStep.fill(1);                     // never 0: these are divisors
+  t.EnvSegmentCurve.fill(1);
+}
 
 }
