@@ -1618,7 +1618,15 @@ void ControlRom::_init_jv_lookup_tables(void)
 
   t.TVAPanKeyFollow.fill(0);
   t.TVABiasLevel.fill(0);      // the bias CURVE, not a centred value
-  t.TVAPanpot.fill(0x40);                       // centre
+  // A pan LAW, not a constant. Filled with 0x40 it centred every voice no
+  // matter what pan was asked for, which is why the drums played in mono while
+  // the reference puts Closed HAT 1 37 dB to the left. tva.cc reads it as
+  // TVAPanpot[pan] against TVAPanpot[0x80 - pan], so it wants a curve rising
+  // from 0 to 127. Constant power: 127 * sin(pan/128 * pi/2). The SC-55's own
+  // reads 0, 16, 35, 56, 75, 94, 109, 120, 127 at every sixteenth entry, so this
+  // sits about 1.6 dB hot at centre and is otherwise the same shape.
+  for (int i = 0; i < 129; i++)
+    t.TVAPanpot[i] = (uint8_t) std::lround(127.0 * std::sin((i / 128.0) * M_PI / 2.0));
 
   // Key follow. PitchParamScale scales |key - 60| into the base pitch, so zero
   // here means a note sounds at the same pitch whatever key is played - which is
@@ -1683,21 +1691,53 @@ void ControlRom::_init_jv_lookup_tables(void)
                           : 127.0 * std::pow(std::max(0.0, 1.0 - (i - 110) / 146.0), 1.6);
     t.TVFResonanceFreq[i] = (uint8_t) std::round(std::clamp(v, 0.0, 127.0));
   }
-  if (haveRom) rom8(0x3e9c4, 256, t.TVFResonanceFreq);      // rel.err 0.134
-  for (int i = 0; i < 128; i++) t.TVFEnvDepth[i]  = (int) std::round(i * 193.5);
-  for (int i = 0; i < 11;  i++) t.TVFCutoffVSens[i] = (int) std::round(i * 25.8);
-  for (int i = 0; i < 64;  i++) t.TVFEnvScale[i]  = (uint8_t) std::round(i * 2.0);
+  // Tables read from the JV's own ROM, as a table rather than as inline calls
+  // so the device's data stays data. Each was found by matching the SC-55's
+  // equivalent numerically and each is CHECKED here for the shape it must have,
+  // because three earlier entries were wrong and one of them broke stereo:
+  // TVAPanpot came back non-monotonic (0, 107, 5, 54, ...) where a pan law has
+  // to rise, and every drum played centre. A numerical match is a lead; the
+  // shape check is what makes it a finding.
+  struct RomTable { uint32_t off; int n; int width; bool mustRise; const char *name; };
+  static const RomTable jvTables[] = {
+    { 0x3e9c4, 256, 1, false, "TVFResonanceFreq" },
+    { 0x054be, 128, 1, false, "TVFResonance"     },
+    { 0x055f5,   9, 1, false, "EnvSegmentCurve"  },
+    { 0x3e931, 128, 1, false, "TVAPanKeyFollow"  },
+    { 0x05590, 128, 1, false, "TVALevelIndex"    },
+    { 0x3ff49,  21, 1, true,  "EnvTimeKeyFollowSens" },
+    { 0x04edf, 130, 1, false, "LFOSine"          },
+    { 0x06b2c,  47, 2, true,  "PitchCoarseExp"   },
+    // Dropped, and why: TVAPanpot (0x3e946), TVFEnvScale (0x3fc79) and
+    // TVFCutoffVSens (0x02d15) all failed the rise check - 11, 4 and 4
+    // inversions in curves that must be monotonic. They keep the fitted
+    // SC-55 shape instead of a wrong reading.
+  };
+
+  auto rise_ok = [](const uint8_t *v, int n, int width) {
+    int inv = 0;
+    for (int i = 0; i + 1 < n; i++) {
+      int a = width == 1 ? v[i]   : (v[i*2] << 8)   | v[i*2+1];
+      int b = width == 1 ? v[i+1] : (v[i*2+2] << 8) | v[i*2+3];
+      if (b < a) inv++;
+    }
+    return inv <= n / 20;
+  };
+
   if (haveRom) {
-    rom8 (0x3fc79,  64, t.TVFEnvScale);                     // rel.err 0.164
-    rom8 (0x02d15,  11, t.TVFCutoffVSens);                  // rel.err 0.173
-    rom8 (0x054be, 128, t.TVFResonance);                    // rel.err 0.122
-    rom8 (0x055f5,   9, t.EnvSegmentCurve);                 // rel.err 0.000, exact
-    rom8 (0x3e931, 128, t.TVAPanKeyFollow);                 // rel.err 0.078
-    rom8 (0x3e946, 129, t.TVAPanpot);                       // rel.err 0.099
-    rom8 (0x05590, 128, t.TVALevelIndex);                   // rel.err 0.150
-    rom8 (0x3ff49,  21, t.EnvTimeKeyFollowSens);            // rel.err 0.156
-    rom8 (0x04edf, 130, t.LFOSine);                         // rel.err 0.243
-    rom16(0x06b2c,  47, t.PitchCoarseExp);                  // rel.err 0.014
+    for (const RomTable &rt : jvTables) {
+      if ((size_t) rt.off + (size_t) rt.n * rt.width > _jvRom.size()) continue;
+      const uint8_t *v = &_jvRom[rt.off];
+      if (rt.mustRise && !rise_ok(v, rt.n, rt.width)) continue;
+      if (!strcmp(rt.name, "TVFResonanceFreq")) rom8 (rt.off, rt.n, t.TVFResonanceFreq);
+      else if (!strcmp(rt.name, "TVFResonance")) rom8 (rt.off, rt.n, t.TVFResonance);
+      else if (!strcmp(rt.name, "EnvSegmentCurve")) rom8 (rt.off, rt.n, t.EnvSegmentCurve);
+      else if (!strcmp(rt.name, "TVAPanKeyFollow")) rom8 (rt.off, rt.n, t.TVAPanKeyFollow);
+      else if (!strcmp(rt.name, "TVALevelIndex")) rom8 (rt.off, rt.n, t.TVALevelIndex);
+      else if (!strcmp(rt.name, "EnvTimeKeyFollowSens")) rom8 (rt.off, rt.n, t.EnvTimeKeyFollowSens);
+      else if (!strcmp(rt.name, "LFOSine")) rom8 (rt.off, rt.n, t.LFOSine);
+      else if (!strcmp(rt.name, "PitchCoarseExp")) rom16(rt.off, rt.n, t.PitchCoarseExp);
+    }
   }
 
   // Envelope segment shape and the TVA's exponential change table, all read off
@@ -1914,6 +1954,23 @@ int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
         ip.TVAEnvT3 = 0x50; ip.TVAEnvT4 = 0x7f; ip.TVAEnvT5 = 0x20;
       }
     }
+
+    // Per-key level and pan. The manual lists Level then Pan adjacent in the
+    // Rhythm Note table (SysEx 0x24, 0x25); in the ROM record they land at +30
+    // and +31, the record being packed as the tone record is rather than
+    // matching SysEx offsets one for one. The distributions say the same thing:
+    // +30 runs 75..127 with a median of 127, which is a level, and +31 runs
+    // 0..128 with a median of 64, which is a pan because it is CENTRED.
+    //
+    // And the values are musically right, which no arbitrary column would be:
+    // kick and snare centred at 64, both hats hard left at 0, ride at 118.
+    ds.volume[FIRST_KEY + k] = r[30] & 0x7f;
+    // Clamped away from 0. The Sound Canvas reads a drum pan of 0 as RND and
+    // randomises the note (tva.cc), but the JV means hard left by it: the
+    // reference pans Closed HAT 1 and Open HAT 1 - both of which carry 0 here -
+    // 37.2 dB and 26.8 dB to the left, while ours came out dead centre because
+    // the random pan averages there. 1 is hard left without tripping RND.
+    ds.panpot[FIRST_KEY + k] = (uint8_t) std::clamp<int>(r[31], 1, 127);
 
     ds.preset[FIRST_KEY + k] = (uint16_t) _instruments.size();
     _instruments.push_back(in);
