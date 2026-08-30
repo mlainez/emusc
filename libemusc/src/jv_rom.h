@@ -158,6 +158,24 @@ public:
   // the rate.
   std::vector<int16_t> decode_sample(int sampleIndex, int dcWindow = 4096) const;
 
+  // Play one waveform at a MIDI note, for `seconds`, at `outRate`.
+  //
+  // This is a MINIMAL voice and is honest about it: it picks the multisample
+  // whose root key is nearest the note, resamples it linearly, and loops
+  // between loop and end for as long as asked. There is no envelope, no filter,
+  // no LFO and no patch structure - those belong to a synth, and whether
+  // libEmuSC can host this family's synth at all is still open. What this does
+  // give is the first actual SOUND out of these ROMs at a chosen pitch, which
+  // is what a single-note comparison against hardware would need.
+  //
+  // Pitch comes from the entry's root key and a 32 kHz wave rate: the sample is
+  // stepped at 2^((note - root)/12) * WAVE_RATE / outRate per output frame.
+  std::vector<int16_t> render_note(int waveformIndex, int note,
+                                   double seconds = 2.0,
+                                   int outRate = 32000) const;
+
+  static constexpr int WAVE_RATE = 32000;
+
   int wave_roms(void) const { return _layout.waveRoms; }
 
   static constexpr int MAX_WAVE_ROMS = 4;

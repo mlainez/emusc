@@ -405,4 +405,62 @@ std::vector<int16_t> JVRom::decode_sample(int sampleIndex, int dcWindow) const
   return pcm;
 }
 
+
+
+// Pick the multisample whose root key is closest to the note being played. A
+// real JV chooses by key range; root-key proximity is the same choice for a
+// well-formed multisample set and needs no field we have not identified.
+std::vector<int16_t> JVRom::render_note(int waveformIndex, int note,
+                                        double seconds, int outRate) const
+{
+  std::vector<int16_t> out;
+  std::vector<int> idx = waveform_samples(waveformIndex);
+  if (idx.empty() || !have_wave_roms() || outRate <= 0)
+    return out;
+
+  int best = -1, bestDist = 1 << 30;
+  for (size_t k = 0; k < idx.size(); k++) {
+    const struct Sample &s = _samples[idx[k]];
+    if (s.end <= s.start)                       // a table gap
+      continue;
+    int dist = s.header[0] - note;
+    if (dist < 0) dist = -dist;
+    if (dist < bestDist) { bestDist = dist; best = idx[k]; }
+  }
+  if (best < 0)
+    return out;
+
+  std::vector<int16_t> pcm = decode_sample(best);
+  if (pcm.size() < 2)
+    return out;
+
+  const struct Sample &s = _samples[best];
+  double step = std::pow(2.0, (note - (int) s.header[0]) / 12.0) *
+                ((double) WAVE_RATE / (double) outRate);
+
+  // Loop bounds, in frames from the sample's start.
+  double loopStart = (double) (s.loop - s.start);
+  double loopEnd   = (double) pcm.size() - 1.0;
+  bool   loops     = loopEnd - loopStart > 8.0;
+
+  size_t frames = (size_t) (seconds * outRate);
+  out.reserve(frames);
+
+  double pos = 0.0;
+  for (size_t i = 0; i < frames; i++) {
+    if (pos >= loopEnd) {
+      if (!loops) break;                        // one-shot: stop at the end
+      pos = loopStart + std::fmod(pos - loopStart, loopEnd - loopStart);
+    }
+    size_t j = (size_t) pos;
+    double f = pos - (double) j;
+    double a = pcm[j];
+    double b = pcm[j + 1 < pcm.size() ? j + 1 : j];
+    out.push_back((int16_t) (a + (b - a) * f));
+    pos += step;
+  }
+
+  return out;
+}
+
 }
