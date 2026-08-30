@@ -67,15 +67,17 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_model == "SC-88")
     throw(std::string("SC-88 ROM files are not supported yet!"));
 
-  // The JV family: only partials and samples live in ROM. There is no
-  // instrument, variation or drum-set table to read, and no separate CPU ROM
-  // holding lookup tables, so the SC-55 sequence below does not apply.
+  // The JV family: partials, samples and the two preset patch banks live in
+  // ROM. There is no drum-set table and no separate CPU ROM holding the lookup
+  // tables, so the SC-55 sequence below does not apply.
   if (_synthModel == sm_JV880 || _synthModel == sm_JV1080) {
     for (int i = 0; i < JV_LAYOUT_COUNT; i++) {
       if (JV_LAYOUTS[i].model != _synthModel)
         continue;
       _read_jv_partials(romFile, JV_LAYOUTS[i].partialHint);
       _read_jv_samples(romFile, JV_LAYOUTS[i].sampleHint);
+      if (JV_LAYOUTS[i].patchBankA)
+        _read_jv_patches(romFile, JV_LAYOUTS[i].patchBankA);
       break;
     }
     romFile.close();
@@ -295,7 +297,7 @@ int ControlRom::_read_instruments(std::ifstream &romFile)
     i.LFO1Rate     = data[15];
     i.LFO1Delay    = data[16];
     i.LFO1Fade     = data[17];
-    i.partialsUsed = data[18];
+    i.partialsUsed = data[18] & 0x03;  // the SC-55 has two partials
     i.pitchCurve   = data[19];
     i.panKeyFlw    = data[31];
 
@@ -1112,8 +1114,8 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // the JV-880's dumps read straight where the JV-1080's address bus is permuted,
 // which WaveRom handles.
 const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
-  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 4, SynthGen::JV1080 },
-  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 2, SynthGen::JV880  },
+  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 0,        4, SynthGen::JV1080 },
+  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x010ce0, 2, SynthGen::JV880  },
 };
 const int ControlRom::JV_LAYOUT_COUNT =
   (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
@@ -1272,6 +1274,65 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
   }
 
   return _samples.empty() ? -1 : 0;
+}
+
+
+int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
+{
+  // A patch record is 362 bytes: 26 of common data, the 12-byte name among
+  // them, then four 84-byte tones. Byte +0 of a tone switches it on and byte
+  // +1 selects a waveform; the rest is not identified yet (P-0373), so the
+  // fields below carry neutral values rather than guesses.
+  const int STRIDE = 362, NAME = 12, TONE0 = 26, TONE = 84, TONES = 4;
+  const int PER_BANK = 64, BANK_B = 0x8000;
+
+  for (int bank = 0; bank < 2; bank++) {
+    for (int p = 0; p < PER_BANK; p++) {
+      uint32_t off = bankA + bank * BANK_B + p * STRIDE;
+      if ((size_t) off + STRIDE > _jvRom.size())
+        return _instruments.size();
+
+      struct Instrument in = {};
+      in.name.assign((const char *) &_jvRom[off], NAME);
+      in.name.erase(in.name.find_last_not_of(' ') + 1);
+      in.volume = 0x7f;
+      in.partialsUsed = 0;
+
+      for (int t = 0; t < TONES; t++) {
+        const uint8_t *tb = &_jvRom[off + TONE0 + t * TONE];
+        struct InstPartial &ip = in.partials[t];
+
+        ip.partialIndex = 0xFFFF;
+        if (!tb[0])                      // tone switched off
+          continue;
+        if (tb[1] >= _partials.size())   // an expansion waveform we cannot play
+          continue;
+
+        in.partialsUsed |= 1 << t;
+        ip.partialIndex = tb[1];
+        ip.panpot       = 0x40;
+        ip.coarsePitch  = 0x40;
+        ip.finePitch    = 0x40;
+        ip.volume       = 0x7f;
+        ip.velRangeLow  = 0;
+        ip.velRangeHigh = 127;
+        ip.TVALvlVSens  = 127;
+        ip.TVFType      = 2;             // no filter
+      }
+
+      _instruments.push_back(in);
+    }
+  }
+
+  // Programs 0-63 select Preset A and 64-127 Preset B. The JV is not a GM
+  // machine and has no variation table of its own, so this mapping is ours.
+  for (int v = 0; v < 128; v++)
+    for (int i = 0; i < 128; i++)
+      _variations[v][i] = 0xffff;
+  for (int i = 0; i < (int) _instruments.size() && i < 128; i++)
+    _variations[0][i] = i;
+
+  return _instruments.size();
 }
 
 

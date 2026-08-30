@@ -165,7 +165,11 @@ public:
     uint8_t TVAETVSens35;   // TVA Envelope Time Velocity Sensitivity (T3 - T5)
   };
 
-  struct Instrument {       // 204 bytes in total
+  // A Sound Canvas instrument has two partials; a JV patch has four tones,
+  // which map onto the same structure.
+  static const int MAX_PARTIALS = 4;
+
+  struct Instrument {       // 204 bytes on the SC-55
     std::string name;
 
     uint8_t volume;         // Volume attenuation (0x7f - 0)
@@ -173,11 +177,11 @@ public:
     uint8_t LFO1Rate;       // LFO frequency
     uint8_t LFO1Delay;
     uint8_t LFO1Fade;
-    uint8_t partialsUsed;   // Bit 0 & 1 => which of the two partials are in use
+    uint8_t partialsUsed;   // One bit per partial in use (JV patches use 4)
     uint8_t pitchCurve;
     uint8_t panKeyFlw;      // Non-zero selects the TVA pan key follow curve
 
-    struct InstPartial partials[2];
+    struct InstPartial partials[MAX_PARTIALS];
   };
 
   struct DrumSet {          // 1164 bytes
@@ -407,15 +411,16 @@ private:
   uint32_t _native_endian_3bytes_uint32(uint8_t *ptr);
   uint32_t _native_endian_4bytes_uint32(uint8_t *ptr);
 
-  // The JV family keeps no instrument, variation or drum-set tables in ROM -
-  // its patches live in battery-backed RAM - so only these two are read, into
-  // the same _partials and _samples the SC-55 path fills.
+    // The JV family has no drum-set or variation table in ROM, but it does keep
+    // two banks of 64 preset patches there. They are read into the same
+    // _partials, _samples and _instruments the SC-55 path fills.
   struct JVLayout {
     enum SynthModel model;
     const char     *name;
     size_t          romSize;
     uint32_t        partialHint;   // inside the 60-byte waveform record table
     uint32_t        sampleHint;    // inside the 18-byte sample table
+      uint32_t        patchBankA;    // Preset A; Preset B follows at +0x8000
     int             waveRoms;
     enum SynthGen   generation;
   };
@@ -425,6 +430,7 @@ private:
   bool _identify_jv(std::ifstream &romFile);
   int  _read_jv_partials(std::ifstream &romFile, uint32_t hint);
   int  _read_jv_samples(std::ifstream &romFile, uint32_t hint);
+  int  _read_jv_patches(std::ifstream &romFile, uint32_t bankA);
 
   std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
 

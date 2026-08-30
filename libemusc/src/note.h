@@ -98,7 +98,7 @@ private:
 
   WaveGenerator *_LFO1;
 
-  struct Partial *_partial[2];
+  struct Partial *_partial[ControlRom::MAX_PARTIALS];
 
   Settings *_settings;
   int8_t _partId;

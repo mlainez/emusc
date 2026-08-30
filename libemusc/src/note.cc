@@ -65,7 +65,8 @@ int Note::partial_count(ControlRom &ctrlRom, Settings *settings,
   if (instrumentIndex == 0xffff)       // Undefined instrument / drum: silent
     return 0;
 
-  return std::bitset<2>(ctrlRom.instrument(instrumentIndex).partialsUsed).count();
+  return std::bitset<ControlRom::MAX_PARTIALS>
+    (ctrlRom.instrument(instrumentIndex).partialsUsed).count();
 }
 
 
@@ -81,7 +82,8 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
     _settings(settings),
     _partId(partId)
 {
-  _partial[0] = _partial[1] = NULL;
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+    _partial[p] = NULL;
 
   // Every drum instrument carries its own effect depths in the drum set, and
   // the part's send is scaled by them. Measured on the SC-55mkII (emusc-match
@@ -127,8 +129,9 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   // this note will glide from (PROVENANCE.md P-0278).
   Pitch::begin_note(partId);
 
-  std::bitset<2> partialBits(ctrlRom.instrument(instrumentIndex).partialsUsed);
-  for (int p = 0; p < 2; p++) {
+  std::bitset<ControlRom::MAX_PARTIALS>
+    partialBits(ctrlRom.instrument(instrumentIndex).partialsUsed);
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++) {
     if (!partialBits.test(p))
       continue;
     const ControlRom::InstPartial &instPartial =
@@ -150,8 +153,8 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
 
 Note::~Note()
 {
-  delete _partial[0];
-  delete _partial[1];
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+    delete _partial[p];
 
   delete _LFO1;
 }
@@ -165,11 +168,9 @@ void Note::stop(void)
   } else {
     _releasing = true;
 
-    if (_partial[0])
-      _partial[0]->stop();
-
-    if (_partial[1])
-      _partial[1]->stop();
+    for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+      if (_partial[p])
+        _partial[p]->stop();
   }
 }
 
@@ -182,11 +183,9 @@ void Note::stop(uint8_t key)
 
     _releasing = true;
 
-    if (_partial[0])
-      _partial[0]->stop();
-
-    if (_partial[1])
-      _partial[1]->stop();
+    for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+      if (_partial[p])
+        _partial[p]->stop();
   }
 }
 
@@ -195,11 +194,9 @@ void Note::damp(float dBPerMillisecond)
 {
   _damped = true;
 
-  if (_partial[0])
-    _partial[0]->damp(dBPerMillisecond);
-
-  if (_partial[1])
-    _partial[1]->damp(dBPerMillisecond);
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+    if (_partial[p])
+      _partial[p]->damp(dBPerMillisecond);
 }
 
 
@@ -215,8 +212,8 @@ void Note::sustain(bool state)
 void Note::update(void)
 {
   if (_LFO1) _LFO1->update();
-  if (_partial[0]) _partial[0]->update();
-  if (_partial[1]) _partial[1]->update();
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+    if (_partial[p]) _partial[p]->update();
 }
 
 
@@ -224,14 +221,13 @@ bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			  std::array<float, 256> &reverbSend,
 			  std::array<float, 256> &chorusSend)
 {
-  bool finished[2] = {0, 0};
+  bool finished[ControlRom::MAX_PARTIALS] = {0};
 
   // The partials write their send into this note's own block, so the drum
   // instrument's depths can be applied before it joins the part's send.
   std::array<float, 256> noteSend = {};
 
-  // Iterate both partials
-  for (int p = 0; p < 2; p ++) {
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++) {
     if  (_partial[p] == NULL)
       finished[p] = 1;
     else
@@ -243,20 +239,20 @@ bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     chorusSend[i] += noteSend[i] * _chorusDepth;
   }
 
-  if (finished[0] == true && finished[1] == true)
-    return 1;
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++)
+    if (finished[p] == false)
+      return 0;
 
-  return 0;
+  return 1;
 }
 
 
 int Note::get_num_partials()
 {
   int numPartials = 0;
-  if (_partial[0])
-    numPartials ++;
-  if (_partial[1])
-    numPartials ++;
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++)
+    if (_partial[p])
+      numPartials ++;
 
   return numPartials;
 }
