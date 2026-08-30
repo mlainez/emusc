@@ -1734,10 +1734,23 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
   if (!base || (size_t) base + STRIDE > _jvRom.size())
     return -1;
 
-  // Which performance the machine powers on with is held in its NVRAM, which we
-  // deliberately do not require (P-0374). Performance 0 is what a factory-state
-  // machine selects. EMUSC_JV_PERF overrides it for testing that assumption.
-  int which = 0;
+  // Which performance the machine powers on with is held in NVRAM, at byte
+  // 0x04 and one-based, and we deliberately do not require an NVRAM file
+  // (P-0374). So it has to be defaulted, and the default is not a guess:
+  //
+  //   - the reference's NVRAM holds 0x07 there, which is performance 7, index 6;
+  //   - and index 6 is, independently, the one of the sixteen whose render
+  //     matches the reference. Sweeping all of them on the demo's melody channel
+  //     alone: index 6 gives -1.4 dB and 9.20 dB spectral distance where index 0
+  //     - the obvious assumption, and the one used until now - gives +19.1 dB and
+  //     11.61 dB. On the whole demo, +2.6 dB and 4.86 dB against +17.5 and 7.35.
+  //
+  // Index 0 was assumed because it is the first, and the owner's ear caught it
+  // before any measurement did: "it still doesn't feel like the right
+  // instruments, and now the melody is very loud". Index 6 puts BrightGuitar,
+  // Brass Sect., SA Rhodes and Pan Pipe on the parts, which is what a
+  // multi-timbral demo looks like; index 0 puts SAW Lead on every part.
+  int which = 6;
   const char *pe = getenv("EMUSC_JV_PERF");
   if (pe) { int v = atoi(pe); if (v >= 0 && v < 16) which = v; }
   if ((size_t) base + (which + 1) * STRIDE > _jvRom.size()) which = 0;
