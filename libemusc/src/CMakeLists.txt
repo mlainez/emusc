@@ -8,6 +8,8 @@ add_library(emusc
   control_rom.cc
   devices/jv880.cc
   devices/jv1080.cc
+  devices/sc55.cc
+  devices/sc55mkii.cc
   control_rom.h
   envelope.cc
   envelope.h

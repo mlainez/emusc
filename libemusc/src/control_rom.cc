@@ -46,13 +46,6 @@
 namespace EmuSC {
 
 
-const std::vector<uint32_t> ControlRom::_banksSC55 =
-  { 0x10000, 0x1BD00, 0x1DEC0, 0x20000, 0x2BD00, 0x2DEC0, 0x30000, 0x38000 };
-
-// Only a placeholder, SC-88 layout is currently unkown
-const std::vector<uint32_t> ControlRom::_banksSC88 =
-  { 0x10000, 0x1BD00, 0x1DEC0, 0x20000, 0x2BD00, 0x2DEC0, 0x30000, 0x38000 };
-
 ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   : _romPath(romPath)
 {
@@ -70,6 +63,8 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_identify_model(romFile))
     throw(std::string("Unknown control ROM file!"));
 
+  _profile = _profile_for(_synthModel);
+
   // Temporarily block SC-88 ROMs since we don't know how to read them yet
   if (_model == "SC-88")
     throw(std::string("SC-88 ROM files are not supported yet!"));
@@ -80,7 +75,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_synthModel == sm_JV880 || _synthModel == sm_JV1080) {
     _read_device_waveforms();
     _read_device_samples();
-    if (_profile->has_patches()) {
+    if (_profile->records->has_patches()) {
       _read_device_patches();
       _read_device_performances();
       _read_device_rhythm();
@@ -256,22 +251,14 @@ int ControlRom::_identify_model(std::ifstream &romFile)
 
 const std::vector<uint32_t> &ControlRom::_banks(void)
 {
-  switch(_synthModel)
-    {
-    case sm_SC55:
-    case sm_SCC1:
-    case sm_SC55mkII:
-      return _banksSC55;
+  if (_profile && _profile->soundCanvas)
+    return *_profile->soundCanvas->banks;
 
-    case sm_SC88:                       // No work has been done here yet
-      return _banksSC88;
-    }
-
-  throw(std::string("No ROM banks defined for this model"));
+  static const std::vector<uint32_t> none;
+  return none;
 }
 
 
-// Note: instrument partials (instPartial) contains 90 unused bytes! ADSR?
 int ControlRom::_read_instruments(std::ifstream &romFile)
 {
   // ROM is split in 8 banks
@@ -587,22 +574,12 @@ int ControlRom::_read_drum_sets(std::ifstream &romFile)
 
 int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
 {
-  int numVCurves = 10;
-  const struct _ProgMemoryMapLUT *PROGmmLUT;
-  switch(_synthModel)
-    {
-    case SynthModel::sm_SC55:
-      PROGmmLUT = &SC55_1_21_Prog_LUT;
-      numVCurves = 10;
-      break;
-    case SynthModel::sm_SC55mkII:
-      PROGmmLUT = &SC55mkII_1_01_Prog_LUT;
-      numVCurves = 12;
-      break;
-    default:
-      std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
-      exit(0);
-    }
+  if (!_profile || !_profile->soundCanvas || !_profile->soundCanvas->program) {
+    std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
+    exit(0);
+  }
+  const ProgramRomMap *PROGmmLUT = _profile->soundCanvas->program;
+  const int numVCurves = _profile->soundCanvas->velocityCurves;
 
   lookupTables.VelocityCurves.resize(128 * numVCurves);
   romFile.seekg(PROGmmLUT->VelocityCurves);
@@ -634,19 +611,11 @@ int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
 
 int ControlRom::_read_lookup_tables_cpurom(std::ifstream &romFile)
 {
-  const struct _CPUMemoryMapLUT *CPUmmLUT;
-  switch(_synthModel)
-    {
-    case SynthModel::sm_SC55:
-      CPUmmLUT = &SC55_1_21_CPU_LUT;
-      break;
-    case SynthModel::sm_SC55mkII:
-      CPUmmLUT = &SC55mkII_1_01_CPU_LUT;
-      break;
-    default:
-      std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
-      exit(0);
-    }
+  if (!_profile || !_profile->soundCanvas || !_profile->soundCanvas->cpu) {
+    std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
+    exit(0);
+  }
+  const CpuRomMap *CPUmmLUT = _profile->soundCanvas->cpu;
 
   // 8-bit values
   romFile.seekg(CPUmmLUT->EnvTimeKeyFollowSens);
@@ -869,45 +838,13 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 
 const uint8_t ControlRom::max_polyphony(void)
 {
-  switch (_synthModel)
-    {
-    case sm_SC55:
-    case sm_SCC1:
-      return _maxPolyphonySC55;
-
-    case sm_SC55mkII:
-      return _maxPolyphonySC55mkII;
-
-    case sm_SC88:
-    case sm_SC88Pro:
-      return _maxPolyphonySC88;
-
-      case sm_JV880:
-        return _maxPolyphonyJV880;
-
-      case sm_JV1080:
-        return _maxPolyphonyJV1080;
-    }
-
-  throw(std::string("No maximum polyphony defined for this model"));
+  return _profile ? _profile->maxPolyphony : 0;
 }
 
 
 const float ControlRom::voice_damp_rate(void)
 {
-  switch (_synthModel)
-    {
-    case sm_SC55:
-    case sm_SCC1:
-      return _voiceDampRateSC55;
-
-    case sm_SC55mkII:
-    case sm_SC88:
-    case sm_SC88Pro:
-      return _voiceDampRateSC55mkII;
-    }
-
-  return _voiceDampRateSC55mkII;
+  return _profile ? _profile->voiceDampRate : 0.0f;
 }
 
 
@@ -923,17 +860,12 @@ int ControlRom::dump_demo_songs(std::string path)
   }
 
   // MIDI files are placed at different places in the ROM depending on model
-  int romIndex;
+  const SoundCanvasLayout *sc = _profile ? _profile->soundCanvas : nullptr;
+  int romIndex = sc ? (int) sc->demoSongOffset : 0;
   int romSize;
-  if (_synthModel == sm_SC55) {
-    romIndex = 0;
+  if (sc && !sc->demoSongRunsToRomEnd) {
     romSize = _banks()[0];
-  } else if (_synthModel == sm_SC55mkII) {
-    romIndex = 0x03fff0;
-    romFile.seekg(0, std::ios::end);
-    romSize = romFile.tellg();
-  } else {          // Unkown structures for SC-88, just read entire ROM
-    romIndex = 0;
+  } else {
     romFile.seekg(0, std::ios::end);
     romSize = romFile.tellg();
   }
@@ -1080,11 +1012,8 @@ std::vector<std::vector<std::string>> ControlRom::get_samples_list(void)
 
 bool ControlRom::intro_anim_available(void)
 {
-  // TODO: Use SHA256 and proper ROM list to identify ROMs with intro animations
-  if (_synthModel == sm_SC55mkII)
-    return true;
-
-  return false;
+  return _profile && _profile->soundCanvas &&
+         _profile->soundCanvas->introAnimOffset != 0;
 }
 
 
@@ -1093,19 +1022,13 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
   int romIndex;
   int length;
 
-  if (_synthModel == sm_SC55mkII) {
-    if (animIndex == 0)
-      romIndex = 0x70000;               // SC-55mkII
-    else if (animIndex == 1)
-      romIndex = 0x71280;               // SC-155mkII
-    else
-      return std::vector<uint8_t> {};
-
-    length = 0x1280;
-
-  } else {
+  const SoundCanvasLayout *sc = _profile ? _profile->soundCanvas : nullptr;
+  if (!sc || !sc->introAnimOffset || animIndex < 0 ||
+      animIndex >= sc->introAnimCount)
     return std::vector<uint8_t> {};
-  }
+
+  length   = sc->introAnimLength;
+  romIndex = sc->introAnimOffset + animIndex * length;
 
   std::ifstream romFile(_romPath, std::ios::binary | std::ios::in);
   if (!romFile.is_open()) {
@@ -1125,6 +1048,21 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // They share every structure with each other and differ only in these numbers;
 // the JV-880's dumps read straight where the JV-1080's address bus is permuted,
 // which WaveRom handles.
+// The only place in the engine that names a device. Everything else asks the
+// profile.
+const DeviceProfile *ControlRom::_profile_for(enum SynthModel model)
+{
+  switch (model) {
+  case sm_SC55:
+  case sm_SCC1:      return &SC55_PROFILE;
+  case sm_SC55mkII:  return &SC55MKII_PROFILE;
+  case sm_JV880:     return &JV880_PROFILE;
+  case sm_JV1080:    return &JV1080_PROFILE;
+  default:           return nullptr;
+  }
+}
+
+
 const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
   { sm_JV1080, "JV-1080", 1024 * 1024, 4, SynthGen::JV1080, &JV1080_PROFILE },
   { sm_JV880,  "JV-880",   256 * 1024, 2, SynthGen::JV880,  &JV880_PROFILE  },
@@ -1163,8 +1101,8 @@ bool ControlRom::_identify_device(std::ifstream &romFile)
       // require a run, not a single record: isolated printable triples occur
       int run = 0;
       for (int k = 0; k < 8; k++)
-        run += namelike(L.profile->waveform.offset +
-                        k * L.profile->waveform.stride) ? 1 : 0;
+        run += namelike(L.profile->records->waveform.offset +
+                        k * L.profile->records->waveform.stride) ? 1 : 0;
       if (run < 8)
         continue;
       _profile         = L.profile;
@@ -1187,7 +1125,7 @@ bool ControlRom::_identify_device(std::ifstream &romFile)
 // table, 0xFFFF marking an unused zone.
 int ControlRom::_read_device_waveforms(void)
 {
-  const WaveformTableLayout &W = _profile->waveform;
+  const WaveformTableLayout &W = _profile->records->waveform;
   const int STRIDE = W.stride, NAME = W.nameLength, ZONES = W.zones;
   auto namelike = [this, NAME](uint32_t o) -> bool {
     if ((size_t) o + NAME > _deviceRom.size()) return false;
@@ -1234,7 +1172,7 @@ int ControlRom::_read_device_waveforms(void)
 // partials index this table positionally.
 int ControlRom::_read_device_samples(void)
 {
-  const SampleTableLayout &S = _profile->sample;
+  const SampleTableLayout &S = _profile->records->sample;
   // The sample table sits immediately after the waveform records. Each entry is
   // 18 bytes (P-0371):
   //
@@ -1336,7 +1274,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
 
 int ControlRom::_read_device_patches(void)
 {
-  const PatchLayout &P = _profile->patch;
+  const PatchLayout &P = _profile->records->patch;
   const ToneFieldMap &F = P.tone;
 
   for (int bank = 0; bank < P.banks; bank++) {
@@ -1702,7 +1640,7 @@ void ControlRom::_init_device_lookup_tables(void)
 // DistanceCall. See docs/service-notes/jv880-owner.md.
 int ControlRom::_read_device_performances(void)
 {
-  const PerformanceLayout   &V = _profile->performance;
+  const PerformanceLayout   &V = _profile->records->performance;
   const PerformancePartMap  &M = V.part;
 
   _channelPatch.fill(-1);
@@ -1805,7 +1743,7 @@ int ControlRom::_read_device_performances(void)
 // makes a drum map readable in the instrument list.
 int ControlRom::_read_device_rhythm(void)
 {
-  const RhythmLayout &R = _profile->rhythm;
+  const RhythmLayout &R = _profile->records->rhythm;
 
   if (!R.offset || (size_t) R.offset + R.keys * R.stride > _deviceRom.size())
     return -1;

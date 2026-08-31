@@ -15,13 +15,21 @@ namespace EmuSC
 
 // The JV-1080's waveform and sample tables are located; its patch, performance
 // and rhythm banks are not mapped yet, so it plays waveforms and nothing more.
-const DeviceProfile JV1080_PROFILE = {
+static const RecordRomLayout JV1080_RECORDS = {
   { 0x071008, 60, 12, 11 },
   { 0x075c7a, 18 },
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {} },
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {} },
-  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+};
 
+
+const DeviceProfile JV1080_PROFILE = {
+  "JV-1080",
+  64,          // max polyphony
+  8.4f,        // not measured; the SC-55mkII figure
+  &JV1080_RECORDS,
+  nullptr,
   nullptr, 0
 };
 

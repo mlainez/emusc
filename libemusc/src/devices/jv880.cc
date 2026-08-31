@@ -39,7 +39,7 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   { RomLookup::LFOSine,              0x04edf, 130, 1, false }
 };
 
-const DeviceProfile JV880_PROFILE = {
+static const RecordRomLayout JV880_RECORDS = {
 
   // Waveform record table. 129 records of 60 bytes from the very start of the
   // ROM: a 12-byte name, then 11 key zones.
@@ -167,7 +167,20 @@ const DeviceProfile JV880_PROFILE = {
     // (key 36 Bright Kick 0 - a dry kick - key 38 snare 120), chorus mostly 0.
     // A constant in any of them would have proved nothing.
     42, 43
-  },
+  }
+};
+
+
+const DeviceProfile JV880_PROFILE = {
+  "JV-880",
+
+  28,          // max polyphony
+
+  // Not measured on the JV; it uses the SC-55mkII figure until it is.
+  8.4f,
+
+  &JV880_RECORDS,
+  nullptr,     // not a Sound Canvas layout
 
   JV880_LOOKUP_TABLES,
   (int) (sizeof(JV880_LOOKUP_TABLES) / sizeof(JV880_LOOKUP_TABLES[0]))
