@@ -616,13 +616,7 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
 
     // Velocity, through the tone's own curve out of the bank of seven, applied
     // multiplicatively. Sensitivity 0 means no velocity effect at all.
-    // Velocity is READ from the tone (+72 sensitivity, +71 curve selector) but
-    // NOT APPLIED yet: applying it as below costs more than it gains - Slap goes
-    // from +0.4 dB to -5.7, SA Rhodes from +0.8 to -7.8, and SAW Lead falls
-    // silent - so the curve's magnitude or its combination point is still wrong.
-    // The static law without it puts two instruments inside 0.5 dB where the
-    // Sound Canvas chain put none, so it lands and this waits.
-    const int sens = 0;
+    const int sens = (int8_t) _instPartial.TVALvlVSens;
     if (sens != 0) {
       const int curve = (_instPartial.TVALvlVelCur & 7) * 128;
       const int v     = cVelocity & 0x7f;
