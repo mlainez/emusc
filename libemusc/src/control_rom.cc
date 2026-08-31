@@ -1572,6 +1572,20 @@ void ControlRom::_init_device_lookup_tables(void)
                           : 127.0 * std::pow(std::max(0.0, 1.0 - (i - 110) / 146.0), 1.6);
     t.TVFResonanceFreq[i] = (uint8_t) std::round(std::clamp(v, 0.0, 127.0));
   }
+
+    // The three curves above were described in that comment and never assigned,
+    // so they stayed zero. tvf.cc takes _envDepth from TVFEnvDepth and scale
+    // from TVFEnvScale and multiplies them, so two zeroed tables left the whole
+    // TVF envelope inert: rendering one instrument with TVFEnvDepth forced to 0
+    // and then to 127 gave byte-identical audio. Every attempt at the filter was
+    // therefore a static filter parked at the tone's base cutoff, which is why
+    // low-cutoff patches went dark where the machine keeps them bright.
+    for (size_t i = 0; i < t.TVFEnvDepth.size(); i++)
+      t.TVFEnvDepth[i] = (int) std::lround(i * 193.5);
+    for (size_t i = 0; i < t.TVFCutoffVSens.size(); i++)
+      t.TVFCutoffVSens[i] = (int) std::lround(i * 25.8);
+    for (size_t i = 0; i < t.TVFEnvScale.size(); i++)
+      t.TVFEnvScale[i] = (uint8_t) std::min<int>(255, (int) (i * 2));
   // Tables read from the JV's own ROM, as a table rather than as inline calls
   // so the device's data stays data. Each was found by matching the SC-55's
   // equivalent numerically and each is CHECKED here for the shape it must have,
