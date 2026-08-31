@@ -107,6 +107,7 @@ private:
 
   int _get_bias_level(int km, int biasPoint);
   float _dryGain = 1.0f;   // JV Dry Level; unity on devices without one
+  bool _partLevelInDynamics = true;  // false when the level law owns it
 
   int _get_velocity_from_vcurve(uint8_t velocity);
   int _get_level_velocity(int cVelocity);

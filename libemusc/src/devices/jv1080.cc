@@ -34,7 +34,7 @@ const DeviceProfile JV1080_PROFILE = {
   nullptr,
   nullptr, 0,
 
-  { 8, 7, 24, 5, 127, 10, 127, 1000, 0 }
+  { 8, 7, 24, 5, 127, 10, 127, 1000, 0, 0 }
 };
 
 }

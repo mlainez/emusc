@@ -107,6 +107,16 @@ struct PerformanceLayout
   // returns into the reverb rather than the mix.
   int      chorusType, chorusLevel, chorusRate, chorusDepth, chorusFeedback;
   PerformancePartMap part;
+
+  // The reverb TYPE records. reverbTypeTable is a table of big-endian pointers,
+  // one per type; the byte at reverbReturnCoeff inside the record it points at
+  // scales the return level, which the firmware forms as
+  //     return = ((2 * level + 1) * coeff) >> 8        (P-0382, P-0387)
+  // over a full scale of 255. Without it the return runs at the level byte
+  // alone, which is about 24 dB hot at maximum: the machine's own coefficient
+  // is 28..31 of 255 for its first six types. Zero disables the lookup.
+  uint32_t reverbTypeTable;
+  int      reverbTypeCount, reverbReturnCoeff;
 };
 
 // A rhythm set: one record per key.
@@ -285,7 +295,14 @@ struct LevelLaw
   // what 0 means here. The engine's tick is 256 samples of its 32 kHz clock, 8 ms
   // - the same service period the JV's firmware uses, measured independently.
   int envelopeTimeUsPerUnit; // microseconds per table entry, or 0 if already ticks
-  int envelopeInstantTicks;  // a segment this short or shorter snaps instantly
+  int envelopeInstantTicks;  // segment this short snaps instantly
+
+  // Whether the generic dynamic-level path may apply the part level. A device
+  // whose own level law already multiplies the part level in (the JV reads
+  // T[(partLevel x patchLevel) >> 7]) must say 0 here, or the attenuation is
+  // applied twice and the part-level curve comes out about twice as steep in
+  // decibels. 1 = the Sound Canvas behaviour, part level applied here.
+  int partLevelInDynamics;
 };
 
 

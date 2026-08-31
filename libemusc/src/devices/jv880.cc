@@ -233,7 +233,14 @@ static const RecordRomLayout JV880_RECORDS = {
       // comes from the patch tone send, or for the rhythm part from the rhythm
       // note's own send.
       21, 0x0f, 6, 5
-    }
+    },
+
+    // The reverb type records. Eight big-endian pointers at file 0x4800, spaced
+    // exactly 0x3c apart - which is what identifies them as the 60-byte records
+    // P-0382 describes. Byte 0x38 of the record scales the return: 31, 29, 31,
+    // 28, 28, 28, 0 and 61 across the eight types, so the machine's return at
+    // maximum level is 11.8% of full scale, not full scale (P-0387).
+    0x004800, 8, 0x38
   },
 
   {
@@ -303,7 +310,13 @@ const DeviceProfile JV880_PROFILE = {
     // time byte of 0 - snaps instantly. Every tone in the instruments the owner
     // heard as having too soft an attack carries T1 = 0.
     1000,   // envelopeTimeUsPerUnit
-    0       // envelopeInstantTicks
+    0,      // envelopeInstantTicks
+
+    // The law above already multiplies the part level in, so the generic
+    // dynamic-level path must not apply it a second time. It was: the
+    // part-level curve came out about twice as steep in decibels as the
+    // machine's, which is most of why every instrument measured too quiet.
+    0       // partLevelInDynamics
   }
 };
 

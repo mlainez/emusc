@@ -264,9 +264,18 @@ void TVA::_update_dynamic_level()
 {
   _prevDynLevel = _dynLevel;
 
-  // 1: Read expression, Part level and System level
+  // 1: Read expression, Part level and System level.
+  //
+  // A device whose own level law already folds the part level in says so in its
+  // profile, and it is held at full scale here. Applying it in both places
+  // attenuates twice: measured against the reference on a part-level sweep, the
+  // JV's curve ran -36.5 dB at CC7 47 where the machine runs -18.5 and the law
+  // predicts -19.6 (P-0386).
+  const int partLevel = _partLevelInDynamics
+    ? _settings->get_param(PatchParam::PartLevel, _partId) : 0x7f;
+
   _dynLevel = _settings->get_param(PatchParam::Expression, _partId) *
-    _settings->get_param(PatchParam::PartLevel, _partId) *
+    partLevel *
     _settings->get_param(SystemParam::Volume);
   _dynLevel = (((4 * _dynLevel) >> 8) & 0xffff);
 
@@ -605,8 +614,10 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                          int instrumentIndex, uint8_t cVelocityLvl,
                          uint8_t cVelocity)
 {
-  if (ctrlRom.profile())
+  if (ctrlRom.profile()) {
     _instantTicks = ctrlRom.profile()->level.envelopeInstantTicks;
+    _partLevelInDynamics = ctrlRom.profile()->level.partLevelInDynamics != 0;
+  }
 
   // Dry Level, 7 bits widened to 8 the way the firmware widens a gain byte.
   // 0x7f gives exactly 1.0f, so a device without a dry attenuator is bit-exact.
