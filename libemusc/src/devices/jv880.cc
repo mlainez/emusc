@@ -64,6 +64,21 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // been reading 0x04c58 for this, which is the LFO RATE table - nothing in the
   // firmware indexes it for an envelope - and whose entry 0 of 128 became a
   // ~400 ms attack where the machine plays none.
+  // The envelope segment times: rom2 0x5160, 128 entries rising 0 to 30000, in
+  // MILLISECONDS, entry 0 meaning the segment is skipped outright (P-0383).
+  // 0x04c58, which this port read before, is the LFO RATE table - the lane
+  // found its only four readers and all four are the same LFO phase
+  // accumulator.
+  //
+  // Used RAW, because this engine's envelope-time unit is already the
+  // millisecond. tva.cc sets _phaseStepSize = (8 << 16) / D and runs
+  // _phasePosition from 0 to 0xffff, so a segment takes D/8 control updates,
+  // and a control update is 8 ms (256 samples at the internal 32 kHz) - so the
+  // segment lasts exactly D milliseconds. The Sound Canvas's own table says the
+  // same thing: its index 0 is 125 and its index 127 is 25148, which are 125 ms
+  // and 25 s. Converting these milliseconds into "ticks" by dividing by 8 made
+  // every note decay eight times too fast, which the owner heard immediately as
+  // notes far shorter than the machine's.
   { RomLookup::EnvelopeTime,         0x05160, 128, 2, Monotonic::Rising },
 
   // The level law's own curve (P-0381), found in the firmware rather than fitted.
@@ -235,12 +250,15 @@ static const RecordRomLayout JV880_RECORDS = {
       21, 0x0f, 6, 5
     },
 
-    // The reverb type records. Eight big-endian pointers at file 0x4800, spaced
-    // exactly 0x3c apart - which is what identifies them as the 60-byte records
-    // P-0382 describes. Byte 0x38 of the record scales the return: 31, 29, 31,
-    // 28, 28, 28, 0 and 61 across the eight types, so the machine's return at
-    // maximum level is 11.8% of full scale, not full scale (P-0387).
-    0x004800, 8, 0x38
+    // The reverb type records are at file 0x4800: eight big-endian pointers
+    // spaced exactly 0x3c, the 60-byte records of P-0382, whose byte 0x38
+    // scales the return (31, 29, 31, 28, 28, 28, 0, 61). Applying it is correct
+    // for the JV's own reverb unit and made this port measurably WORSE, because
+    // the reverb algorithm here is the Sound Canvas's and its internal gain is
+    // not this unit's: the return went from 13.3 dB hot to 12.7 dB quiet, and
+    // the instrument timbre error roughly doubled (Slap 10.7 -> 24.9 dB). Left
+    // unapplied until the JV reverb's own response is measured (P-0387).
+    0, 0, 0
   },
 
   {
@@ -309,7 +327,7 @@ const DeviceProfile JV880_PROFILE = {
     // The JV's envelope times are milliseconds, and only a table entry of 0 - a
     // time byte of 0 - snaps instantly. Every tone in the instruments the owner
     // heard as having too soft an attack carries T1 = 0.
-    1000,   // envelopeTimeUsPerUnit
+    0,      // envelopeTimeUsPerUnit: 0 = the table is already in engine units
     0,      // envelopeInstantTicks
 
     // The law above already multiplies the part level in, so the generic
