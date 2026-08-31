@@ -274,7 +274,12 @@ void TVF::_init_envelope(void)
 
 int TVF::_get_velocity_from_vcurve(uint8_t velocity)
 {
-  unsigned int address = _instPartial.TVFCOFVelCur * 128 + velocity;
+  // See the note in TVA::_get_velocity_from_vcurve: a single-curve bank means
+  // the device does its own velocity shaping and the selector is not an index.
+  const size_t curveCount = _LUT.VelocityCurves.size() / 128;
+  const unsigned int curve = (curveCount > 1) ? _instPartial.TVFCOFVelCur : 0;
+
+  unsigned int address = curve * 128 + velocity;
   if (address > _LUT.VelocityCurves.size()) {
     std::cerr << "libEmuSC internal error: Illegal velocity curve used"
               << std::endl;

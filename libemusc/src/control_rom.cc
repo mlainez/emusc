@@ -348,6 +348,7 @@ int ControlRom::_read_instruments(std::ifstream &romFile)
       i.partials[p].TVFCOFVSens   = data[61];
       i.partials[p].TVFETVSens12  = data[62];
       i.partials[p].TVFETVSens35  = data[63];
+      i.partials[p].dryLevel      = 0x7f;   // no dry attenuator on this device
       i.partials[p].TVALvlVelCur  = data[64];
       i.partials[p].velRangeLow   = data[65];
       i.partials[p].TVALvlVSens   = data[66];
@@ -1256,6 +1257,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.coarsePitch     = 0x40;
   ip.finePitch       = 0x40;
   ip.volume          = 0x7f;
+  ip.dryLevel        = 0x7f;
   ip.velRangeLow     = 0;
   ip.velRangeHigh    = 127;
   ip.TVALvlVSens     = 0;
@@ -1345,8 +1347,13 @@ int ControlRom::_read_device_patches(void)
         // The tone level, and the TVA envelope: three time/level pairs and a
         // release. L4 holds L3 because the JV envelope has one stage fewer than
         // the Sound Canvas one.
-        ip.volume   = (uint8_t) (((tb[F.level] & 0x7f) *
-                                  (tb[F.levelScale] & 0x7f)) / 127);
+        // The tone level alone. ROM +81 is the Dry Level (P-0378), and the
+        // firmware applies it at the chip's dry output register 0xf012, in
+        // parallel with the send register 0xf014 -- so folding it into the
+        // tone level here attenuated the sends with it and silenced the five
+        // tones that are send-only at dry level 0 (P-0382 findings 2 and 8).
+        ip.volume   = (uint8_t) (tb[F.level] & 0x7f);
+        ip.dryLevel = (uint8_t) (tb[F.dryLevel] & 0x7f);
         ip.TVAEnvT1 = tb[F.envTime1]  & 0x7f;
         ip.TVAEnvL1 = tb[F.envLevel1] & 0x7f;
         ip.TVAEnvT2 = tb[F.envTime2]  & 0x7f;

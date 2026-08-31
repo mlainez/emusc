@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/
+includedir=${prefix}/
+
+Name: libemusc
+Description: 
+URL: https://github.com/skjelten/emusc
+Version: 0.7.0
+Libs: -L${libdir} -lemusc
+Cflags: -I${includedir}

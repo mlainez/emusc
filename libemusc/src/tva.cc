@@ -128,11 +128,16 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
   // chorus likewise, while the dry signal pans normally. Taking the send from
   // the panned signal instead makes it vary with pan position by 1.5 dB and
   // lose 4.6 dB at centre, since the pan table's centre gain is 75/127.
+  // The dry attenuator sits on the direct output register only. The sends are
+  // taken from the amplified sample before it, which is why sendBuf is written
+  // from `sample` and not from the attenuated dry pair (P-0382 findings 2/8).
+  const float dry = _dryGain;
+
   for (int i = 0; i < 256; i++) {
     float sample = dryBus[0][i] * _slewDynGain[i] * _slewEnvGain[i];
     sendBuf[i] = sample;
-    dryBus[0][i] = sample * panR;
-    dryBus[1][i] = sample * panL;
+    dryBus[0][i] = sample * dry * panR;
+    dryBus[1][i] = sample * dry * panL;
   }
 }
 
@@ -560,7 +565,16 @@ int TVA::_get_bias_level(int km, int biasPoint)
 
 int TVA::_get_velocity_from_vcurve(uint8_t velocity)
 {
-  unsigned int address = _instPartial.TVALvlVelCur * 128 + velocity;
+  // How many curves the bank actually holds decides whether the tone's curve
+  // selector means anything here. A device that carries a single identity
+  // curve is telling us velocity is not pre-shaped -- it applies its own curve
+  // further down, inside the level law -- so the selector must not index off
+  // the end of a table that has nowhere to go. Reading the count from the
+  // table keeps this decision in the device's data, not in the engine.
+  const size_t curveCount = _LUT.VelocityCurves.size() / 128;
+  const unsigned int curve = (curveCount > 1) ? _instPartial.TVALvlVelCur : 0;
+
+  unsigned int address = curve * 128 + velocity;
   if (address > _LUT.VelocityCurves.size()) {
     std::cerr << "libEmuSC internal error: Illegal velocity curve used"
               << std::endl;
@@ -594,6 +608,13 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   if (ctrlRom.profile())
     _instantTicks = ctrlRom.profile()->level.envelopeInstantTicks;
 
+  // Dry Level, 7 bits widened to 8 the way the firmware widens a gain byte.
+  // 0x7f gives exactly 1.0f, so a device without a dry attenuator is bit-exact.
+  {
+    const int d = _instPartial.dryLevel & 0x7f;
+    _dryGain = (2 * d + (d >= 64 ? 1 : 0)) / 255.0f;
+  }
+
   // The JV family computes level multiplicatively in the linear domain and
   // converts once through its own curve, where the Sound Canvas accumulates
   // attenuations in a log index domain and subtracts them (P-0381):
@@ -622,7 +643,9 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     // multiplicatively. A sensitivity of 0 means no velocity effect at all.
     const int sens = (int8_t) _instPartial.TVALvlVSens;
     if (sens != 0) {
-      const int curve = (_instPartial.TVALvlVelCur & 7) * 128;
+      const int banked = (int) (_LUT.JVVelCurves.size() / 128);
+      const int curve = std::min((int) _instPartial.TVALvlVelCur,
+                                 banked - 1) * 128;
       const int v     = cVelocity & 0x7f;
       int w = 0;
       if (sens > 0) {

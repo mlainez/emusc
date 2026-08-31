@@ -145,6 +145,11 @@ public:
                             // a plain gate, with no rescaling of the
                             // velocities below it (same measurements).
     int8_t volume;          // Volume attenuation (0x7f - 0)
+    uint8_t dryLevel;       // JV Dry Level: attenuates the DIRECT tap only.
+                            // The effect sends sit in parallel with the dry
+                            // pair downstream of the chip's TVA, so they do
+                            // not see this (P-0382 finding 2/8). 0x7f = unity,
+                            // which is what every non-JV device stores.
     uint8_t TVABiasPoint;   // TVA Bias Point, 0=V shape, 1=key>85, 2=flat curve
     uint8_t TVABiasLevel;
     uint8_t TVALFO1Depth;

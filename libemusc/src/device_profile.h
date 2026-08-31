@@ -51,7 +51,7 @@ struct ToneFieldMap
   int pitchKeyFollow;                   // low nibble indexes the percent table
   int pan;                              // 0..127 = L64..63R, 128 = random
   int filterCutoff, filterResonance;
-  int level, levelScale;                // multiplied to give the tone's level
+  int level, dryLevel;                // multiplied to give the tone's level
   int envTime1, envLevel1;
   int envTime2, envLevel2;
   int envTime3, envLevel3;

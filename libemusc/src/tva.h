@@ -106,6 +106,8 @@ private:
   void _update_lfo_depth(int lfo);
 
   int _get_bias_level(int km, int biasPoint);
+  float _dryGain = 1.0f;   // JV Dry Level; unity on devices without one
+
   int _get_velocity_from_vcurve(uint8_t velocity);
   int _get_level_velocity(int cVelocity);
   uint8_t _lvlVSensEff;   // partial 0: its own byte 66; partial 1: the SUM of
