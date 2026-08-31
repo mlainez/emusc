@@ -17,7 +17,7 @@ namespace EmuSC
 // and rhythm banks are not mapped yet, so it plays waveforms and nothing more.
 static const RecordRomLayout JV1080_RECORDS = {
   { 0x071008, 60, 12, 11 },
-  { 0x075c7a, 18 },
+  { 0x075c7a, 18, 0 },
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {} },
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {} },
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }

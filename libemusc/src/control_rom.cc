@@ -1223,7 +1223,7 @@ int ControlRom::_read_device_samples(void)
     s.reverse   = _deviceRom[o + 12] & 0x04;
     }
     s.rootKey = _deviceRom[o + 13];
-      s.volume    = 0x7f;   // no per-sample attenuation: 0 would mean silence
+      s.volume    = _deviceRom[o + S.volume] & 0x7f;
                              // under the TVA level law, not "neutral"
       s.pitchInit = 0x0400;  // 0x0400 is the SC-55's neutral pitch offset; the
       s.pitchSust = 0x0400;  // JV table has no such field, and 0 detunes hard

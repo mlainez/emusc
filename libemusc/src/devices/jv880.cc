@@ -52,8 +52,12 @@ static const RecordRomLayout JV880_RECORDS = {
   // ROM: a 12-byte name, then 11 key zones.
   { 0x000004, 60, 12, 11 },
 
-  // Sample table. 577 records of 18 bytes.
-  { 0x001e40, 18 },
+  // Sample table. 577 records of 18 bytes. +0 is the per-sample attenuation,
+  // the field the Sound Canvas describes as "Volume attenuation (0x7f - 0)":
+  // range 90..127 across the 577 records, median 127, topping out at exactly
+  // 0x7f and never above it, in 21 distinct steps. It had been pinned at 0x7f -
+  // no attenuation at all - as a placeholder.
+  { 0x001e40, 18, 0 },
 
   {
     // Patches. Internal at 0x08ce0, then Preset A and Preset B at +0x8000 each,

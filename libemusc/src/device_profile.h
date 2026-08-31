@@ -37,6 +37,7 @@ struct SampleTableLayout
 {
   uint32_t offset;
   int      stride;
+  int      volume;                      // per-sample attenuation
 };
 
 // Byte offsets within one tone record.
