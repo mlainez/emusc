@@ -143,6 +143,25 @@ static const RecordRomLayout JV880_RECORDS = {
       // +24 on 3.
       37,
 
+      // +38 fine tune, signed like the coarse tune. Non-zero on a great many
+      // tones - THE STRINGS carries -3, -3, +1, +6 across its four - and holding
+      // it at neutral is why the owner hears multi-tone patches as having "a
+      // sound component that is out of tune".
+      38,
+
+      // +40 low nibble indexes the manual's key-follow percentages
+      // (-100..+200 in sixteen steps, the list verified verbatim in the ROM at
+      // 0x057be). +100% on 507 of the 539 enabled tones, which is what the
+      // hardcoded 0x4a approximated - but Jazz Organ 3's third tone is +10%, a
+      // near-fixed-pitch component that we were making track the keyboard.
+      40,
+
+      // +68 pan. The map gives "0 - 128 (L64 - 63R, RND)", so 128 is RANDOM, not
+      // an out-of-range 127. THE STRINGS' four tones read 128, 0, 128, 127 - two
+      // random, one hard left, one hard right - which is the stereo movement the
+      // owner hears on the machine and not in ours.
+      68,
+
       // Filter cutoff +52 and resonance +53, adjacent as the manual has them
       // (SysEx 0x4A, 0x4B). +52 is confirmed on the reference: driving it 0 to
       // 127 moves that patch's spectral centroid from 99 Hz to 441 Hz, the

@@ -47,6 +47,9 @@ struct ToneFieldMap
   int waveform;
   int velocityLow, velocityHigh;
   int coarseTune;                       // signed semitones
+  int fineTune;                         // signed, a few cents either way
+  int pitchKeyFollow;                   // low nibble indexes the percent table
+  int pan;                              // 0..127 = L64..63R, 128 = random
   int filterCutoff, filterResonance;
   int level, levelScale;                // multiplied to give the tone's level
   int envTime1, envLevel1;

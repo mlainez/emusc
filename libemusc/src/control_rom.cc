@@ -1312,6 +1312,27 @@ int ControlRom::_read_device_patches(void)
         ip.partialIndex = tb[F.waveform];
         ip.coarsePitch  =
           (int8_t) std::clamp(0x40 + (int) (int8_t) tb[F.coarseTune], 0, 127);
+        ip.finePitch    =
+          (uint8_t) std::clamp(0x40 + (int) (int8_t) tb[F.fineTune], 0, 127);
+
+        // The two machines agree on what random pan is and spell it differently:
+        // the JV writes 128, the Sound Canvas writes 0 and randomises in tva.cc.
+        // A JV 0 is hard left, so it moves to 1 rather than becoming random.
+        {
+          const int pv = tb[F.pan];
+          ip.panpot = (uint8_t) (pv >= 128 ? 0 : std::max(1, pv));
+        }
+
+        // Key follow: the engine's units put 100% at 0x4a and neutral at 0x40, so
+        // one unit is ten percent. LEAD, not a finding - the mapping is inferred
+        // from that single anchor, and only 32 of 539 tones differ from +100%, so
+        // it is weakly exercised by the factory data.
+        {
+          static const int KF_PCT[16] =
+            { -100, -70, -50, -30, -10, 0, 10, 20, 30, 40, 50, 70, 100, 120, 150, 200 };
+          const int pct = KF_PCT[tb[F.pitchKeyFollow] & 0x0f];
+          ip.pitchKeyFlw = (uint8_t) std::clamp(0x40 + pct / 10, 0, 127);
+        }
 
         ip.velRangeLow  = tb[F.velocityLow]  & 0x7f;
         ip.velRangeHigh = tb[F.velocityHigh] & 0x7f;
