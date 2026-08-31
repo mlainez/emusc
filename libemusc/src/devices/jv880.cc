@@ -178,7 +178,16 @@ static const RecordRomLayout JV880_RECORDS = {
     // sixteen performances: +12's low three bits are always 0..7 (a type), +13
     // runs 92..127 and +14 74..127 (a level and a time), +15 0..68 (a feedback).
     // That is the manual's order for Performance Common, ROM offset = SysEx - 1.
-    12, 13, 14, 15, 17, 18,
+    12, 13, 14, 15,
+
+    // The chorus block, from the firmware (P-0382). This port had been reading
+    // +17 as the chorus LEVEL; +17 is the RATE. Chorus type shares byte +12 with
+    // the reverb type, in bits 3-5 - across the sixteen factory performances
+    // those bits never exceed 2, matching the manual's Chorus Type 0-2 - and the
+    // level is +16, whose bit 7 is the Chorus Output switch. That bit is set at
+    // level 100 as well as 127 in the factory data, so it is an independent flag
+    // and not a side effect of a full level.
+    12, 16, 17, 18, 19,
 
     {
       // +16 patch number, then Part Level at +17 and Part Pan at +18, following

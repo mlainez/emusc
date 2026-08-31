@@ -98,7 +98,11 @@ struct PerformanceLayout
   int      stride, commonSize, partStride, parts;
   int      bootIndex;                   // the performance the device powers on in
   int      reverbType, reverbLevel, reverbTime, reverbFeedback;
-  int      chorusLevel, chorusDepth;
+
+  // The chorus block. chorusType shares its byte with reverbType (bits 3-5),
+  // and chorusLevel's bit 7 is the Chorus Output switch: set means the chorus
+  // returns into the reverb rather than the mix.
+  int      chorusType, chorusLevel, chorusRate, chorusDepth, chorusFeedback;
   PerformancePartMap part;
 };
 

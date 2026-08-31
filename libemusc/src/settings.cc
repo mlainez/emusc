@@ -1176,8 +1176,14 @@ void Settings::_apply_device_performance(void)
   _patchParams[(int) PatchParam::ReverbLevel]         = fx.reverbLevel;
   _patchParams[(int) PatchParam::ReverbTime]          = fx.reverbTime;
   _patchParams[(int) PatchParam::ReverbDelayFeedback] = fx.reverbFeedback;
+  _patchParams[(int) PatchParam::ChorusMacro]         = fx.chorusType;
   _patchParams[(int) PatchParam::ChorusLevel]         = fx.chorusLevel;
+  _patchParams[(int) PatchParam::ChorusRate]          = fx.chorusRate;
   _patchParams[(int) PatchParam::ChorusDepth]         = fx.chorusDepth;
+  _patchParams[(int) PatchParam::ChorusFeedback]      = fx.chorusFeedback;
+  // Chorus Output: the JV's switch is on or off, so it maps to a full send or
+  // none rather than a level.
+  _patchParams[(int) PatchParam::ChorusSendToReverb]  = fx.chorusToReverb ? 0x7f : 0;
 
   const auto &jp = _ctrlRom.device_parts();
   for (int p = 0; p < 16; p++) {

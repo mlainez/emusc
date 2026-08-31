@@ -283,7 +283,8 @@ public:
   // table gives Reverb Type at SysEx 0x0D, Level 0x0E, Time 0x0F, Feedback
   // 0x10, then the chorus; in the ROM record they sit one lower, from +12.
   struct DeviceEffects { int reverbType, reverbLevel, reverbTime, reverbFeedback,
-                     chorusLevel, chorusDepth; };
+                     chorusType, chorusLevel, chorusRate, chorusDepth,
+                     chorusFeedback, chorusToReverb; };
   inline const DeviceEffects& device_effects(void) { return _deviceEffects; }
   inline const std::array<DevicePart, 8>& device_parts(void) { return _deviceParts; }
   inline const std::array<int, 16>& device_channel_reverb(void) { return _channelReverb; }

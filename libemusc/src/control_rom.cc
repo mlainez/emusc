@@ -1710,8 +1710,12 @@ int ControlRom::_read_device_performances(void)
   _deviceEffects.reverbLevel    = p[V.reverbLevel] & 0x7f;
   _deviceEffects.reverbTime     = p[V.reverbTime] & 0x7f;
   _deviceEffects.reverbFeedback = p[V.reverbFeedback] & 0x7f;
+  _deviceEffects.chorusType     = (p[V.chorusType] >> 3) & 0x07;
   _deviceEffects.chorusLevel    = p[V.chorusLevel] & 0x7f;
+  _deviceEffects.chorusToReverb = (p[V.chorusLevel] >> 7) & 0x01;
+  _deviceEffects.chorusRate     = p[V.chorusRate] & 0x7f;
   _deviceEffects.chorusDepth    = p[V.chorusDepth] & 0x7f;
+  _deviceEffects.chorusFeedback = p[V.chorusFeedback] & 0x7f;
 
   for (int t = 0; t < V.parts; t++) {
     const uint8_t *pt = p + V.commonSize + t * V.partStride;
