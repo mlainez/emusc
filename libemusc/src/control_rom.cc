@@ -1380,11 +1380,28 @@ int ControlRom::_read_device_patches(void)
     }
   }
 
+  // The engine resolves a program change as _variations[bank][program], so this
+  // table IS the device's MIDI patch map and it has to answer the same program
+  // change the machine answers. It had been filled as a flat identity over
+  // 0..127, which put Preset A where the machine has the Card bank, left Preset B
+  // unreachable altogether, and made bank select 81 - which the machine honours -
+  // render silence.
   for (int v = 0; v < 128; v++)
     for (int i = 0; i < 128; i++)
       _variations[v][i] = 0xffff;
-  for (int i = 0; i < (int) _instruments.size() && i < 128; i++)
-    _variations[0][i] = i;
+
+  const int per = P.perBank;
+  for (int b = 0; b < P.banks; b++) {
+    // Bank 0 of the ROM answers a bare program change; the rest sit behind the
+    // preset bank select, two ROM banks to its 128 programs.
+    const int cc0  = (b == 0) ? P.midiBankFirst : P.midiBankPresets;
+    const int base = (b == 0) ? 0 : (b - 1) * per;
+    for (int i = 0; i < per; i++) {
+      const int inst = b * per + i;
+      if (inst < (int) _instruments.size() && base + i < 128)
+        _variations[cc0][base + i] = (uint16_t) inst;
+    }
+  }
 
   return _instruments.size();
 }

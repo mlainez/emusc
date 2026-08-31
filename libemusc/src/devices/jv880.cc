@@ -79,7 +79,23 @@ static const RecordRomLayout JV880_RECORDS = {
     // Patches. Internal at 0x08ce0, then Preset A and Preset B at +0x8000 each,
     // 64 patches of 362 bytes per bank: a 12-byte name, a 26-byte common block,
     // then four 84-byte tones.
-    0x008ce0, 0x8000, 3, 64, 362, 12,
+    0x008ce0, 0x8000, 3, 64,
+
+    // Program change alone reaches Internal 01-64; the presets are behind bank
+    // select CC0 = 81. Measured on the reference through its public MIDI input:
+    // with no bank select, PC 0 and PC 63 give distinct patches while PC 64 and
+    // PC 127 give byte-identical output - the Card bank is absent, so everything
+    // above Internal collapses to one fallback. With CC0 = 81, PC 0, 63, 64 and
+    // 127 are all four distinct, so that bank spans 128 patches: Preset A in
+    // 0-63 and Preset B in 64-127. CC0 values 0, 1, 2, 3 and 80 all behave as no
+    // bank select at all.
+    //
+    // Identity confirmed rather than assumed: CC0 = 81 with PC 0 renders at
+    // rms 1636.5 against our own Preset A 01 at 1620.3, a tenth of a decibel
+    // apart. The 1284-cent centroid difference is the disabled filter.
+    0, 81,
+
+    362, 12,
 
     // Patch Level, common byte +21. Without it a four-tone patch plays all four
     // at full gain: SAW Lead, which the demo's melody uses, has four tones

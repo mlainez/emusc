@@ -57,11 +57,21 @@ struct ToneFieldMap
 };
 
 // A bank of patches, and the tone records inside each patch.
+// Positional initialisers: the field order here IS the initialiser order in
+// devices/*.cc. Inserting a field without moving the values with it silently
+// shifts every later member - it once turned `stride` into 0 and made every
+// patch read from the same offset.
 struct PatchLayout
 {
   uint32_t bankOffset;                  // first bank; the rest follow at
   uint32_t bankStride;                  // +bankStride each
   int      banks, perBank;
+
+  // Which MIDI bank select (CC0) reaches the preset banks, and which bank index
+  // the first ROM bank answers to. A program change alone reaches the first
+  // bank only; the machine puts the rest behind a bank select.
+  int      midiBankFirst;               // CC0 value for bank 0 of the ROM
+  int      midiBankPresets;             // CC0 value that reaches the presets
   int      stride, nameLength;
   int      level;                       // patch-common byte
   int      firstTone, toneStride, tones;
