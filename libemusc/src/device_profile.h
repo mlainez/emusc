@@ -267,6 +267,28 @@ struct RomSignature
 };
 
 
+// The arithmetic of a device's level law. The engine does the algebra; these say
+// what the device's firmware shifts and scales by, so no device constant sits in
+// engine code. The JV's values come from its disassembly (P-0381).
+struct LevelLaw
+{
+  int toneIndexShift;        // (toneLevel x sampleLevel) >> this, to index the curve
+  int dynamicsShift;         // (partLevel x patchLevel) >> this
+  int staticShift;           // (gain x dynamics) >> this, to an 8-bit static level
+  int velocityShift;         // (sensitivity x (pivot - velocity)) >> this
+  int velocityPivot;         // full-scale velocity, the point of no attenuation
+  int keyFollowUnitsPerPct;  // engine key-follow units per ten percent
+  int envelopeFullScale;     // envelope level that means "no attenuation"
+
+  // What the device's envelope time table holds. The JV's is in MILLISECONDS
+  // (P-0383); the Sound Canvas's is already in engine control ticks, which is
+  // what 0 means here. The engine's tick is 256 samples of its 32 kHz clock, 8 ms
+  // - the same service period the JV's firmware uses, measured independently.
+  int envelopeTimeUsPerUnit; // microseconds per table entry, or 0 if already ticks
+  int envelopeInstantTicks;  // a segment this short or shorter snaps instantly
+};
+
+
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
@@ -292,6 +314,8 @@ struct DeviceProfile
 
   const RomLookupTable *lookupTables;
   int                   lookupTableCount;
+
+  LevelLaw level;
 };
 
 extern const RomSignature SC55_SIGNATURE;

@@ -59,7 +59,12 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109 against
   // the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
-  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, Monotonic::Rising },
+  // The envelope segment times, in MILLISECONDS, 0 to 30000 over 128 entries
+  // with entry 0 meaning "skip this segment instantly" (P-0383). This port had
+  // been reading 0x04c58 for this, which is the LFO RATE table - nothing in the
+  // firmware indexes it for an envelope - and whose entry 0 of 128 became a
+  // ~400 ms attack where the machine plays none.
+  { RomLookup::EnvelopeTime,         0x05160, 128, 2, Monotonic::Rising },
 
   // The level law's own curve (P-0381), found in the firmware rather than fitted.
   // 128 big-endian words rising 0 to 65535, with its own precomputed slope table
@@ -278,7 +283,28 @@ const DeviceProfile JV880_PROFILE = {
   nullptr,     // not a Sound Canvas layout
 
   JV880_LOOKUP_TABLES,
-  (int) (sizeof(JV880_LOOKUP_TABLES) / sizeof(JV880_LOOKUP_TABLES[0]))
+  (int) (sizeof(JV880_LOOKUP_TABLES) / sizeof(JV880_LOOKUP_TABLES[0])),
+
+  // The level law's arithmetic, from the firmware (P-0381). The index is a
+  // 15-bit product taken down to the curve's 7-bit index; part and patch level
+  // combine as a 7-bit product; the two curve lookups multiply and the high byte
+  // survives to the chip. keyFollowUnitsPerPct is a LEAD - it comes from one
+  // anchor, the engine's 0x4a meaning +100%.
+  {
+    8,      // toneIndexShift
+    7,      // dynamicsShift
+    24,     // staticShift
+    5,      // velocityShift
+    127,    // velocityPivot
+    10,     // keyFollowUnitsPerPct
+    127,    // envelopeFullScale
+
+    // The JV's envelope times are milliseconds, and only a table entry of 0 - a
+    // time byte of 0 - snaps instantly. Every tone in the instruments the owner
+    // heard as having too soft an attack carries T1 = 0.
+    1000,   // envelopeTimeUsPerUnit
+    0       // envelopeInstantTicks
+  }
 };
 
 }

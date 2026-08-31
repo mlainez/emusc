@@ -49,6 +49,12 @@ public:
   void note_off();
 
 private:
+  // A segment this short or shorter snaps instantly. Still the Sound Canvas's
+  // value because the JV filter path is not enabled; it takes the device
+  // profile's envelopeInstantTicks when it is.
+  int _instantTicks = 8;
+
+
   uint32_t _sampleRate;
 
   WaveGenerator *_LFO1;

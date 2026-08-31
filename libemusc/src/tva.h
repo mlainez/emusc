@@ -52,6 +52,10 @@ public:
   void note_off();
 
 private:
+  // From the device profile: a segment this short or shorter snaps instantly.
+  int _instantTicks = 8;
+
+
   bool _initRunComplete;
   bool _firstBlock;                          // First control block of the note
 

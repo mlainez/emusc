@@ -390,7 +390,10 @@ private:
   int  _read_device_performances(void);
   int  _read_device_rhythm(void);
 
-  const DeviceProfile *_profile = nullptr;   // set when the device is identified
+  const DeviceProfile *_profile = nullptr;
+public:
+  const DeviceProfile *profile(void) const { return _profile; }
+private:   // set when the device is identified
   std::vector<uint8_t> _deviceRom;       // whole JV control ROM, for table walking
   std::array<int, 16> _channelPatch;
   std::array<int, 16> _channelLevel;

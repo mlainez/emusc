@@ -419,7 +419,7 @@ void TVA::_iterate_phase(void)
     _phasePosition = 0xffff;
     return;
 
-  } else if (_phaseDuration <= 8) {
+  } else if (_phaseDuration <= _instantTicks) {
     _envLevel = (_phaseEndValue << 8);
     // phaseAccumulator is the level here, not yet the change: the common
     // "phaseAccumulator -= prevIntEnvValue" below turns it into one, as it
@@ -591,6 +591,9 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                          int instrumentIndex, uint8_t cVelocityLvl,
                          uint8_t cVelocity)
 {
+  if (ctrlRom.profile())
+    _instantTicks = ctrlRom.profile()->level.envelopeInstantTicks;
+
   // The JV family computes level multiplicatively in the linear domain and
   // converts once through its own curve, where the Sound Canvas accumulates
   // attenuations in a log index domain and subtracts them (P-0381):
@@ -605,49 +608,47 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   // were a level law.
   if (_settings->generation() == ControlRom::SynthGen::JV880 ||
       _settings->generation() == ControlRom::SynthGen::JV1080) {
-    const auto &T = _LUT.JVLevel;
+    const auto &T  = _LUT.JVLevel;
+    const LevelLaw &L = ctrlRom.profile()->level;
 
     // Sample level is byte 0 of the sample record, 7 bits widened to 8 the way
     // the firmware widens it.
     const int sv    = ctrlRom.sample(sampleIndex).volume & 0x7f;
     const int smpl8 = 2 * sv + (sv >= 64 ? 1 : 0);
 
-    int index = (_instPartial.volume & 0x7f) * smpl8;          // 15-bit
+    int index = (_instPartial.volume & 0x7f) * smpl8;
 
-    // Velocity, through the tone's own curve out of the bank of seven, applied
-    // multiplicatively. Sensitivity 0 means no velocity effect at all.
+    // Velocity, through the tone's own curve out of the bank, applied
+    // multiplicatively. A sensitivity of 0 means no velocity effect at all.
     const int sens = (int8_t) _instPartial.TVALvlVSens;
     if (sens != 0) {
       const int curve = (_instPartial.TVALvlVelCur & 7) * 128;
       const int v     = cVelocity & 0x7f;
-      // The firmware's two branches, and their out-of-range behaviour matters:
-      // an index past the end of a 128-entry curve is not the same as its last
-      // entry. Clamping it to 127 - where every curve reads 0 - turned a negative
-      // sensitivity into near-total attenuation and silenced every instrument.
       int w = 0;
       if (sens > 0) {
-        const int idx = 127 - ((sens * (127 - v)) >> 5);
+        const int idx = L.velocityPivot - ((sens * (L.velocityPivot - v)) >> L.velocityShift);
         w = (idx < 0) ? 0xffff : (_LUT.JVVelCurves[curve + idx] << 8);
       } else {
-        const int idx = (-sens * v) >> 5;
+        const int idx = (-sens * v) >> L.velocityShift;
         w = (idx > 127) ? 0 : ((255 - _LUT.JVVelCurves[curve + idx]) << 8);
       }
       index -= (int) (((int64_t) index * w) >> 16);
     }
 
-    const int gain = T[std::clamp(index >> 8, 0, 127)];
+    const int gain = T[std::clamp(index >> L.toneIndexShift, 0, 127)];
 
-    // Part level times patch level, through the same curve, multiplied in.
     const int part  = _settings->get_param(PatchParam::PartLevel, _partId) & 0x7f;
     const int patch = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
-    const int dyn   = T[std::clamp((part * patch) >> 7, 0, 127)];
+    const int dyn   = T[std::clamp((part * patch) >> L.dynamicsShift, 0, 127)];
 
-    const int stat8 = std::clamp((int) (((int64_t) gain * dyn) >> 24), 0, 255);
+    const int stat8 = std::clamp((int) (((int64_t) gain * dyn) >> L.staticShift), 0, 255);
 
     // The envelope scales that statically-computed level rather than sharing an
-    // index with it.
-    auto env = [stat8](uint8_t L) -> int {
-      return std::clamp((stat8 * (L & 0x7f)) / 127, 0, 255);
+    // index with it, because on the hardware they are two chip registers the tone
+    // generator multiplies.
+    const int full = L.envelopeFullScale;
+    auto env = [stat8, full](uint8_t lv) -> int {
+      return std::clamp((stat8 * (lv & 0x7f)) / full, 0, 255);
     };
     _phaseValueInit[0] = 0;
     _phaseValueInit[1] = env(_instPartial.TVAEnvL1);

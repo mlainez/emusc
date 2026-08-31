@@ -81,7 +81,13 @@ const DeviceProfile SC55MKII_PROFILE = {
   nullptr,      // not a record-addressed ROM
   &SC55MKII_LAYOUT,
 
-  nullptr, 0
+  nullptr, 0,
+
+  // The Sound Canvas accumulates attenuations in a log index domain and does not
+  // use this law; left zero so a misuse is obvious rather than plausible. Its
+  // envelope table is already in engine ticks, and segments of 8 ticks or fewer
+  // snap - the behaviour tva.cc has always had for this generation.
+  { 0, 0, 0, 0, 0, 0, 0, 0, 8 }
 };
 
 }

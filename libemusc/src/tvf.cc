@@ -440,7 +440,7 @@ void TVF::_iterate_phase(void)
     _phaseRemainder = 0;
     segmentCurveIndex = 8;
 
-  } else if (_phaseDuration <= 8) {               // Very short phase duration
+  } else if (_phaseDuration <= _instantTicks) {               // Very short phase duration
     _phasePosition = 0xffff;
     segmentCurveIndex = _phaseDuration;
     _ipLevelInit = _currentLevelInit & 0xffff;

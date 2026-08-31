@@ -1283,6 +1283,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
 int ControlRom::_read_device_patches(void)
 {
   const PatchLayout &P = _profile->records->patch;
+  const LevelLaw    &P_LAW = _profile->level;
   const ToneFieldMap &F = P.tone;
 
   for (int bank = 0; bank < P.banks; bank++) {
@@ -1331,7 +1332,8 @@ int ControlRom::_read_device_patches(void)
           static const int KF_PCT[16] =
             { -100, -70, -50, -30, -10, 0, 10, 20, 30, 40, 50, 70, 100, 120, 150, 200 };
           const int pct = KF_PCT[tb[F.pitchKeyFollow] & 0x0f];
-          ip.pitchKeyFlw = (uint8_t) std::clamp(0x40 + pct / 10, 0, 127);
+          ip.pitchKeyFlw = (uint8_t)
+            std::clamp(0x40 + pct / P_LAW.keyFollowUnitsPerPct, 0, 127);
         }
 
         ip.velRangeLow  = tb[F.velocityLow]  & 0x7f;
@@ -1527,11 +1529,18 @@ void ControlRom::_init_device_lookup_tables(void)
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109
   // against the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
+  // Milliseconds per engine control tick: 256 samples of the internal 32 kHz
+  // clock. The JV's firmware services its envelopes on the same 8 ms period.
+  const int TICK_US = 256 * 1000000 / 32000;
+
   const RomLookupTable *envTime = _find_lookup(RomLookup::EnvelopeTime);
   if (envTime && _deviceRom.size() >= envTime->offset + envTime->entries * 2) {
-    for (int i = 0; i < envTime->entries && i < 128; i++)
-      t.envelopeTime[i] = (int) ((_deviceRom[envTime->offset + i * 2] << 8) |
-                                  _deviceRom[envTime->offset + i * 2 + 1]);
+    const int usPer = _profile->level.envelopeTimeUsPerUnit;
+    for (int i = 0; i < envTime->entries && i < 128; i++) {
+      const int raw = (int) ((_deviceRom[envTime->offset + i * 2] << 8) |
+                              _deviceRom[envTime->offset + i * 2 + 1]);
+      t.envelopeTime[i] = usPer ? (raw * usPer) / TICK_US : raw;
+    }
   } else {
     t.envelopeTime[0] = 0;
     for (int i = 1; i < 128; i++)
