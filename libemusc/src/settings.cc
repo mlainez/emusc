@@ -45,7 +45,7 @@ Settings::Settings(ControlRom &ctrlRom)
   _initialize_system_params();
   _initialize_patch_params();
   _initialize_drumSet_params();
-  _apply_jv_performance();
+  _apply_device_performance();
 
   // TODO: Find a proper way to handle calculated controller values
   for (int i = 0; i < 16; i ++)
@@ -801,7 +801,7 @@ void Settings::reset(void)
   _initialize_system_params();
   _initialize_patch_params();
   _initialize_drumSet_params();
-  _apply_jv_performance();
+  _apply_device_performance();
 }
 
 
@@ -1164,14 +1164,14 @@ void Settings::clear_part_callback(void)
 // per-part defaults resetting PitchKeyShift, which cost an octave on the demo's
 // melody, and again by the drum-set pass rewriting part 10's tone number, pan
 // and reverb send. Running last is the only placement that survives both.
-void Settings::_apply_jv_performance(void)
+void Settings::_apply_device_performance(void)
 {
   if (_ctrlRom.generation() != ControlRom::SynthGen::JV880 &&
       _ctrlRom.generation() != ControlRom::SynthGen::JV1080)
     return;
 
   // The performance's effect settings, applied before the parts.
-  const auto &fx = _ctrlRom.jv_effects();
+  const auto &fx = _ctrlRom.device_effects();
   _patchParams[(int) PatchParam::ReverbCharacter]     = fx.reverbType;
   _patchParams[(int) PatchParam::ReverbLevel]         = fx.reverbLevel;
   _patchParams[(int) PatchParam::ReverbTime]          = fx.reverbTime;
@@ -1179,7 +1179,7 @@ void Settings::_apply_jv_performance(void)
   _patchParams[(int) PatchParam::ChorusLevel]         = fx.chorusLevel;
   _patchParams[(int) PatchParam::ChorusDepth]         = fx.chorusDepth;
 
-  const auto &jp = _ctrlRom.jv_parts();
+  const auto &jp = _ctrlRom.device_parts();
   for (int p = 0; p < 16; p++) {
     uint8_t partAddr = _convert_to_roland_part_id_LUT[p];
 

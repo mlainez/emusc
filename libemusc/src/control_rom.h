@@ -26,6 +26,8 @@
 
 #include <stdint.h>
 
+#include "device_profile.h"
+
 #include <array>
 #include <fstream>
 #include <string>
@@ -259,27 +261,27 @@ public:
 
   // JV only: which patch each MIDI channel plays, taken from the performance.
   // -1 means no part of the performance listens on that channel.
-  inline const std::array<int, 16>& jv_channel_patch(void) { return _jvChannelPatch; }
-  inline int jv_drum_channel(void) { return _jvDrumChannel; }
+  inline const std::array<int, 16>& device_channel_patch(void) { return _channelPatch; }
+  inline int device_drum_channel(void) { return _deviceDrumChannel; }
 
-  inline const std::array<int, 16>& jv_channel_level(void) { return _jvChannelLevel; }
-  inline const std::array<int, 16>& jv_channel_pan(void) { return _jvChannelPan; }
-  inline const std::array<int, 16>& jv_channel_key_shift(void) { return _jvChannelKeyShift; }
+  inline const std::array<int, 16>& device_channel_level(void) { return _channelLevel; }
+  inline const std::array<int, 16>& device_channel_pan(void) { return _channelPan; }
+  inline const std::array<int, 16>& device_channel_key_shift(void) { return _channelKeyShift; }
 
   // The JV's eight performance parts, as parts rather than as a channel map.
   // Two parts may share a MIDI channel to layer two patches, which a
   // channel-keyed map cannot express and the machine's own demo relies on.
-  struct JVPart { int patch, channel, level, pan, keyShift, reverb, chorus; bool rhythm; };
+  struct DevicePart { int patch, channel, level, pan, keyShift, reverb, chorus; bool rhythm; };
 
   // The performance's own effect settings. The manual's Performance Common
   // table gives Reverb Type at SysEx 0x0D, Level 0x0E, Time 0x0F, Feedback
   // 0x10, then the chorus; in the ROM record they sit one lower, from +12.
-  struct JVEffects { int reverbType, reverbLevel, reverbTime, reverbFeedback,
+  struct DeviceEffects { int reverbType, reverbLevel, reverbTime, reverbFeedback,
                      chorusLevel, chorusDepth; };
-  inline const JVEffects& jv_effects(void) { return _jvEffects; }
-  inline const std::array<JVPart, 8>& jv_parts(void) { return _jvParts; }
-  inline const std::array<int, 16>& jv_channel_reverb(void) { return _jvChannelReverb; }
-  inline const std::array<int, 16>& jv_channel_chorus(void) { return _jvChannelChorus; }
+  inline const DeviceEffects& device_effects(void) { return _deviceEffects; }
+  inline const std::array<DevicePart, 8>& device_parts(void) { return _deviceParts; }
+  inline const std::array<int, 16>& device_channel_reverb(void) { return _channelReverb; }
+  inline const std::array<int, 16>& device_channel_chorus(void) { return _channelChorus; }
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
   const uint8_t max_polyphony(void);
 
@@ -439,44 +441,41 @@ private:
     // The JV family has no drum-set or variation table in ROM, but it does keep
     // two banks of 64 preset patches there. They are read into the same
     // _partials, _samples and _instruments the SC-55 path fills.
-  struct JVLayout {
-    enum SynthModel model;
-    const char     *name;
-    size_t          romSize;
-    uint32_t        partialHint;   // inside the 60-byte waveform record table
-    uint32_t        sampleHint;    // inside the 18-byte sample table
-      uint32_t        patchBankA;    // Internal; Preset A and B follow at +0x8000
-                                     // each. Program changes select Internal, which is
-                                     // the factory bank the machine powers on with
-    uint32_t        performances;  // 16 records of 204 bytes, ending where the
-                                   // Internal patch bank begins
-    uint32_t        rhythm;        // 61 keys from 36, 44 bytes each, right after
-                                   // the Internal patch bank
-    int             waveRoms;
-    enum SynthGen   generation;
+  // Which device a ROM is, and where to find its records. The layout identifies
+  // the device; the profile carries every offset and stride the readers need, so
+  // adding a device is a data change and not a code change.
+  struct DeviceEntry {
+    enum SynthModel      model;
+    const char          *name;
+    size_t               romSize;
+    int                  waveRoms;
+    enum SynthGen        generation;
+    const DeviceProfile *profile;
   };
-  static const JVLayout JV_LAYOUTS[];
-  static const int      JV_LAYOUT_COUNT;
+  static const DeviceEntry DEVICES[];
+  static const int      DEVICE_COUNT;
 
-  bool _identify_jv(std::ifstream &romFile);
-  int  _read_jv_partials(std::ifstream &romFile, uint32_t hint);
-  int  _read_jv_samples(std::ifstream &romFile, uint32_t hint);
-  int  _read_jv_patches(std::ifstream &romFile, uint32_t bankA);
-  void _init_jv_lookup_tables(void);
-  int  _read_jv_performances(std::ifstream &romFile, uint32_t base);
-  int  _read_jv_rhythm(std::ifstream &romFile, uint32_t base);
+  bool _identify_device(std::ifstream &romFile);
+  void _init_neutral_partial(struct InstPartial &ip);
+  int  _read_device_waveforms(void);
+  int  _read_device_samples(void);
+  int  _read_device_patches(void);
+  void _init_device_lookup_tables(void);
+  int  _read_device_performances(void);
+  int  _read_device_rhythm(void);
 
-  std::vector<uint8_t> _jvRom;       // whole JV control ROM, for table walking
-  std::array<int, 16> _jvChannelPatch;
-  std::array<int, 16> _jvChannelLevel;
-  std::array<int, 16> _jvChannelPan;
-  std::array<int, 16> _jvChannelKeyShift;
-  std::array<JVPart, 8> _jvParts;
-  JVEffects _jvEffects = { 4, 0x40, 0x40, 0, 0x40, 0x13 };
-  std::vector<std::pair<uint8_t,uint8_t>> _jvInstSend;  // reverb, chorus per instrument
-  std::array<int, 16> _jvChannelReverb;
-  std::array<int, 16> _jvChannelChorus;
-  int _jvDrumChannel = 9;
+  const DeviceProfile *_profile = nullptr;   // set when the device is identified
+  std::vector<uint8_t> _deviceRom;       // whole JV control ROM, for table walking
+  std::array<int, 16> _channelPatch;
+  std::array<int, 16> _channelLevel;
+  std::array<int, 16> _channelPan;
+  std::array<int, 16> _channelKeyShift;
+  std::array<DevicePart, 8> _deviceParts;
+  DeviceEffects _deviceEffects = { 4, 0x40, 0x40, 0, 0x40, 0x13 };
+  std::vector<std::pair<uint8_t,uint8_t>> _instrumentSend;  // reverb, chorus per instrument
+  std::array<int, 16> _channelReverb;
+  std::array<int, 16> _channelChorus;
+  int _deviceDrumChannel = 9;
 
   int _read_instruments(std::ifstream &romFile);
   int _read_partials(std::ifstream &romFile);

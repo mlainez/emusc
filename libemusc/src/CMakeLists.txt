@@ -6,6 +6,8 @@ add_library(emusc
   chorus.cc
   chorus.h
   control_rom.cc
+  devices/jv880.cc
+  devices/jv1080.cc
   control_rom.h
   envelope.cc
   envelope.h

@@ -31,6 +31,7 @@
 // For more information, see [ https://github.com/Kitrinx/SC55_Soundfont ]
 
 
+#include <cstdlib>
 #include "control_rom.h"
 
 #include <algorithm>
@@ -77,18 +78,14 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   // ROM. There is no drum-set table and no separate CPU ROM holding the lookup
   // tables, so the SC-55 sequence below does not apply.
   if (_synthModel == sm_JV880 || _synthModel == sm_JV1080) {
-    for (int i = 0; i < JV_LAYOUT_COUNT; i++) {
-      if (JV_LAYOUTS[i].model != _synthModel)
-        continue;
-      _read_jv_partials(romFile, JV_LAYOUTS[i].partialHint);
-      _read_jv_samples(romFile, JV_LAYOUTS[i].sampleHint);
-      if (JV_LAYOUTS[i].patchBankA)
-        _read_jv_patches(romFile, JV_LAYOUTS[i].patchBankA);
-        _read_jv_performances(romFile, JV_LAYOUTS[i].performances);
-        _read_jv_rhythm(romFile, JV_LAYOUTS[i].rhythm);
-      break;
+    _read_device_waveforms();
+    _read_device_samples();
+    if (_profile->has_patches()) {
+      _read_device_patches();
+      _read_device_performances();
+      _read_device_rhythm();
     }
-      _init_jv_lookup_tables();
+    _init_device_lookup_tables();
     romFile.close();
     return;
   }
@@ -247,7 +244,7 @@ int ControlRom::_identify_model(std::ifstream &romFile)
   }
 
   // No GS banner: the JV family identifies itself by its table structure.
-  if (_model.empty() && _identify_jv(romFile))
+  if (_model.empty() && _identify_device(romFile))
     return 0;
 
   if (_model.empty())        // No valid ROM file found    TODO: SC88 ??
@@ -1128,30 +1125,30 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 // They share every structure with each other and differ only in these numbers;
 // the JV-880's dumps read straight where the JV-1080's address bus is permuted,
 // which WaveRom handles.
-const ControlRom::JVLayout ControlRom::JV_LAYOUTS[] = {
-  { sm_JV1080, "JV-1080", 1024 * 1024, 0x71008, 0x075c7a, 0,        0, 0, 4, SynthGen::JV1080 },
-  { sm_JV880,  "JV-880",   256 * 1024, 0x000004, 0x001e40, 0x008ce0, 0x008020, 0x00e760, 2, SynthGen::JV880  },
+const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
+  { sm_JV1080, "JV-1080", 1024 * 1024, 4, SynthGen::JV1080, &JV1080_PROFILE },
+  { sm_JV880,  "JV-880",   256 * 1024, 2, SynthGen::JV880,  &JV880_PROFILE  },
 };
-const int ControlRom::JV_LAYOUT_COUNT =
-  (int) (sizeof(JV_LAYOUTS) / sizeof(JV_LAYOUTS[0]));
+const int ControlRom::DEVICE_COUNT =
+  (int) (sizeof(DEVICES) / sizeof(DEVICES[0]));
 
 
 // The JV control ROMs carry no GS banner, so the machine is identified by its
 // tables: a run of 60-byte records whose first field is a printable name. Size
 // narrows the candidates; the table must then actually parse.
-bool ControlRom::_identify_jv(std::ifstream &romFile)
+bool ControlRom::_identify_device(std::ifstream &romFile)
 {
   romFile.seekg(0, std::ios::end);
   size_t size = (size_t) romFile.tellg();
   romFile.seekg(0);
-  _jvRom.resize(size);
-  romFile.read((char *) &_jvRom[0], size);
+  _deviceRom.resize(size);
+  romFile.read((char *) &_deviceRom[0], size);
 
   auto namelike = [this](uint32_t o) -> bool {
-    if ((size_t) o + 12 > _jvRom.size()) return false;
+    if ((size_t) o + 12 > _deviceRom.size()) return false;
     int alnum = 0;
     for (int i = 0; i < 12; i++) {
-      uint8_t ch = _jvRom[o + i];
+      uint8_t ch = _deviceRom[o + i];
       if (ch < 0x20 || ch > 0x7e) return false;
       if (isalnum(ch)) alnum++;
     }
@@ -1159,16 +1156,18 @@ bool ControlRom::_identify_jv(std::ifstream &romFile)
   };
 
   for (int pass = 0; pass < 2; pass++) {
-    for (int i = 0; i < JV_LAYOUT_COUNT; i++) {
-      const JVLayout &L = JV_LAYOUTS[i];
+    for (int i = 0; i < DEVICE_COUNT; i++) {
+      const DeviceEntry &L = DEVICES[i];
       if ((size == L.romSize) != (pass == 0))
         continue;
       // require a run, not a single record: isolated printable triples occur
       int run = 0;
       for (int k = 0; k < 8; k++)
-        run += namelike(L.partialHint + k * 60) ? 1 : 0;
+        run += namelike(L.profile->waveform.offset +
+                        k * L.profile->waveform.stride) ? 1 : 0;
       if (run < 8)
         continue;
+      _profile         = L.profile;
       _synthModel      = L.model;
       _synthGeneration = L.generation;
       _model.assign(L.name);
@@ -1178,7 +1177,7 @@ bool ControlRom::_identify_jv(std::ifstream &romFile)
     }
   }
 
-  _jvRom.clear();
+  _deviceRom.clear();
   return false;
 }
 
@@ -1186,39 +1185,40 @@ bool ControlRom::_identify_jv(std::ifstream &romFile)
 // A 60-byte waveform record is a Partial: a name, note breakpoints (0x7f
 // padded, all values 20..120, i.e. MIDI keys) and indices into the sample
 // table, 0xFFFF marking an unused zone.
-int ControlRom::_read_jv_partials(std::ifstream &romFile, uint32_t hint)
+int ControlRom::_read_device_waveforms(void)
 {
-  const int STRIDE = 60, NAME = 12, ZONES = 11;
-  auto namelike = [this](uint32_t o) -> bool {
-    if ((size_t) o + NAME > _jvRom.size()) return false;
+  const WaveformTableLayout &W = _profile->waveform;
+  const int STRIDE = W.stride, NAME = W.nameLength, ZONES = W.zones;
+  auto namelike = [this, NAME](uint32_t o) -> bool {
+    if ((size_t) o + NAME > _deviceRom.size()) return false;
     int alnum = 0;
     for (int i = 0; i < NAME; i++) {
-      uint8_t ch = _jvRom[o + i];
+      uint8_t ch = _deviceRom[o + i];
       if (ch < 0x20 || ch > 0x7e) return false;
       if (isalnum(ch)) alnum++;
     }
     return alnum >= 2;
   };
 
-  uint32_t base = hint;
+  uint32_t base = W.offset;
   while (base >= (uint32_t) STRIDE && namelike(base - STRIDE))
     base -= STRIDE;
 
   for (uint32_t off = base; namelike(off); off += STRIDE) {
     struct Partial p;
-    p.name.assign((const char *) &_jvRom[off], NAME);
+    p.name.assign((const char *) &_deviceRom[off], NAME);
     p.name.erase(p.name.find_last_not_of(' ') + 1);
 
       // Only ZONES entries are real breakpoints; the SC-55 pads the rest with
       // 127 and the voice code relies on that, so pad the same way rather than
       // letting a trailing non-breakpoint byte read as a key range.
       for (int i = 0; i < 16; i++)
-        p.breaks[i] = (i < ZONES) ? _jvRom[off + NAME + i] : 127;
+        p.breaks[i] = (i < ZONES) ? _deviceRom[off + NAME + i] : 127;
 
     for (int i = 0; i < 16; i++) {
       if (i >= ZONES) { p.samples[i] = 0xFFFF; continue; }
       uint32_t q = off + NAME + 16 + i * 2;
-      p.samples[i] = (uint16_t) ((_jvRom[q] << 8) | _jvRom[q + 1]);
+      p.samples[i] = (uint16_t) ((_deviceRom[q] << 8) | _deviceRom[q + 1]);
     }
 
     _partials.push_back(p);
@@ -1232,8 +1232,9 @@ int ControlRom::_read_jv_partials(std::ifstream &romFile, uint32_t hint)
 // absolute 24-bit addresses; the header - which holds the root key - sits in
 // the NEXT slot (P-0362). Every slot is kept, valid or not, because the
 // partials index this table positionally.
-int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
+int ControlRom::_read_device_samples(void)
 {
+  const SampleTableLayout &S = _profile->sample;
   // The sample table sits immediately after the waveform records. Each entry is
   // 18 bytes (P-0371):
   //
@@ -1252,8 +1253,8 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
   // plausible addresses that were wrong. Deriving the count is what catches
   // that: a correct table yields exactly as many entries as are referenced.
   int waveRoms = 2;
-  for (int i = 0; i < JV_LAYOUT_COUNT; i++)
-    if (JV_LAYOUTS[i].model == _synthModel) waveRoms = JV_LAYOUTS[i].waveRoms;
+  for (int i = 0; i < DEVICE_COUNT; i++)
+    if (DEVICES[i].model == _synthModel) waveRoms = DEVICES[i].waveRoms;
   const uint32_t WAVE_SPACE = (uint32_t) waveRoms * 2 * 1024 * 1024;
 
   size_t needed = 0;
@@ -1265,13 +1266,13 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
     return -1;
 
   auto u24 = [this](uint32_t o) -> uint32_t {
-    if ((size_t) o + 3 > _jvRom.size()) return 0;
-    return ((uint32_t) _jvRom[o] << 16) | ((uint32_t) _jvRom[o+1] << 8) | _jvRom[o+2];
+    if ((size_t) o + 3 > _deviceRom.size()) return 0;
+    return ((uint32_t) _deviceRom[o] << 16) | ((uint32_t) _deviceRom[o+1] << 8) | _deviceRom[o+2];
   };
 
   for (size_t i = 0; i < needed; i++) {
-    uint32_t o = hint + (uint32_t) i * 18;
-    if ((size_t) o + 18 > _jvRom.size())
+    uint32_t o = S.offset + (uint32_t) i * S.stride;
+    if ((size_t) o + 18 > _deviceRom.size())
       break;
 
     struct Sample s = {};
@@ -1284,10 +1285,10 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
     // "REV ..." pair in the waveform list shares one address and length and
     // differs only in this bit (P-0372). The low two bits carry the SC-55's
     // own loop semantics, so they are passed through unchanged.
-    s.loopMode  = _jvRom[o + 12] & 0x03;
-    s.reverse   = _jvRom[o + 12] & 0x04;
+    s.loopMode  = _deviceRom[o + 12] & 0x03;
+    s.reverse   = _deviceRom[o + 12] & 0x04;
     }
-    s.rootKey = _jvRom[o + 13];
+    s.rootKey = _deviceRom[o + 13];
       s.volume    = 0x7f;   // no per-sample attenuation: 0 would mean silence
                              // under the TVA level law, not "neutral"
       s.pitchInit = 0x0400;  // 0x0400 is the SC-55's neutral pitch offset; the
@@ -1299,227 +1300,140 @@ int ControlRom::_read_jv_samples(std::ifstream &romFile, uint32_t hint)
 }
 
 
-int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
+// Neutral values for the modulation the device path does not read yet. Zero is
+// not neutral for any of these: the key-follow and sensitivity fields are read
+// as (value - 0x40), so 0x40 is what "no effect" looks like, and a TVABiasLevel
+// of 0x40 or more would select the attenuating branch.
+void ControlRom::_init_neutral_partial(struct InstPartial &ip)
 {
-  // A patch record is 362 bytes: 26 of common data, the 12-byte name among
-  // them, then four 84-byte tones. Byte +0 of a tone switches it on and byte
-  // +1 selects a waveform; the rest is not identified yet (P-0373), so the
-  // fields below carry neutral values rather than guesses.
-  const int STRIDE = 362, NAME = 12, TONE0 = 26, TONE = 84, TONES = 4;
-  const int PER_BANK = 64, BANK_STRIDE = 0x8000;
+  ip.panpot          = 0x40;
+  ip.coarsePitch     = 0x40;
+  ip.finePitch       = 0x40;
+  ip.volume          = 0x7f;
+  ip.velRangeLow     = 0;
+  ip.velRangeHigh    = 127;
+  ip.TVALvlVSens     = 0;
+  ip.TVFType         = 2;                  // 2 = disabled
+  ip.pitchKeyFlw     = 0x4a;
+  ip.rootKeyOffset   = 64;
+  ip.TVAETKeyF14     = ip.TVAETKeyF5    = 0x40;
+  ip.TVAETVSens12    = ip.TVAETVSens35  = 0x40;
+  ip.TVAETKeyFP14    = ip.TVAETKeyFP5   = 0;
+  ip.TVFETKeyF14     = ip.TVFETKeyF5    = 0x40;
+  ip.TVFETVSens12    = ip.TVFETVSens35  = 0x40;
+  ip.TVFETKeyFP14    = ip.TVFETKeyFP5   = 0;
+  ip.pitchETKeyF14   = ip.pitchETKeyF5  = 0x40;
+  ip.pitchETKeyFP14  = ip.pitchETKeyFP5 = 0;
+  ip.pitchEnvTVSens  = 0x40;
+  ip.pitchEnvL0 = ip.pitchEnvL1 = ip.pitchEnvL2 = 0x40;
+  ip.pitchEnvL3 = ip.pitchEnvL5 = 0x40;
+  ip.pitchEnvVSens   = 0x40;
+  ip.TVFCFKeyFlw     = 0x40;
+  ip.TVFCOFVSens     = 0x40;
+  ip.TVABiasLevel    = 0;
+}
 
-  for (int bank = 0; bank < 3; bank++) {
-    for (int p = 0; p < PER_BANK; p++) {
-      uint32_t off = bankA + bank * BANK_STRIDE + p * STRIDE;
-      if ((size_t) off + STRIDE > _jvRom.size())
+
+int ControlRom::_read_device_patches(void)
+{
+  const PatchLayout &P = _profile->patch;
+  const ToneFieldMap &F = P.tone;
+
+  for (int bank = 0; bank < P.banks; bank++) {
+    for (int n = 0; n < P.perBank; n++) {
+      uint32_t off = P.bankOffset + bank * P.bankStride + n * P.stride;
+      if ((size_t) off + P.stride > _deviceRom.size())
         return _instruments.size();
 
       struct Instrument in = {};
-      in.name.assign((const char *) &_jvRom[off], NAME);
+      in.name.assign((const char *) &_deviceRom[off], P.nameLength);
       in.name.erase(in.name.find_last_not_of(' ') + 1);
-        // Patch Level, common byte +21. Without it a four-tone patch plays all
-        // four at full gain: SAW Lead, which the demo's melody uses, has four
-        // tones enabled at level 127 with no velocity split, and rendered
-        // 19.6 dB louder than the machine on that channel alone. +21 is the only
-        // common byte that FALLS as the tone count rises (correlation -0.300
-        // across 192 patches), which is what a level compensating for layering
-        // has to do. Range 44..127, median 118.
-        in.volume = _jvRom[off + 21] & 0x7f;
+      in.volume = _deviceRom[off + P.level] & 0x7f;
       in.partialsUsed = 0;
 
-      for (int t = 0; t < TONES; t++) {
-        const uint8_t *tb = &_jvRom[off + TONE0 + t * TONE];
+      for (int t = 0; t < P.tones; t++) {
+        const uint8_t *tb = &_deviceRom[off + P.firstTone + t * P.toneStride];
         struct InstPartial &ip = in.partials[t];
 
         ip.partialIndex = 0xFFFF;
-        if (!tb[0])                      // tone switched off
+        if (!tb[F.enabled])                      // tone switched off
           continue;
-        if (tb[1] >= _partials.size())   // an expansion waveform we cannot play
+        if (tb[F.waveform] >= _partials.size())  // an expansion wave we cannot play
           continue;
 
         in.partialsUsed |= 1 << t;
-        ip.partialIndex = tb[1];
-        ip.panpot       = 0x40;
-          // Tone coarse tune, +37, in SIGNED semitones. Not applying it left
-          // 209 of the 539 enabled tones an octave high and 29 of them two
-          // octaves high - "Slap !!!" carries -12, which is why the demo's bass
-          // peaked at 220 Hz where the machine peaks at 110. The column reads
-          // as musical intervals and nothing else: -24 on 29 tones, -12 on 209,
-          // 0 on 230, +12 on 34, +24 on 3.
-          ip.coarsePitch  = (int8_t) std::clamp(0x40 + (int)(int8_t) tb[37], 0, 127);
-        ip.finePitch    = 0x40;
-        ip.volume       = 0x7f;
-          // Velocity range, +3 and +4. Sounding every tone regardless of
-          // velocity is why layered patches were too loud and wrong in timbre:
-          // 22% of tones are velocity-limited layers meant to sound only part
-          // of the time, and the Internal bank averages 3.41 tones per patch
-          // against Preset A's 2.44 - which is exactly why Internal measured
-          // 5 dB louder than Preset A. The pair passes the structural test on
-          // all 539 enabled tones: lower is never above upper.
-          ip.velRangeLow  = tb[3] & 0x7f;
-          ip.velRangeHigh = tb[4] & 0x7f;
-          if (ip.velRangeHigh < ip.velRangeLow) {
-            ip.velRangeLow = 0; ip.velRangeHigh = 127;
-          }
-          // NOT 127. tva.cc computes the velocity-driven level as
-          //   127 - ((127 - velocity) * (127 - TVALvlVSens)) / 127
-          // so 127 makes the second term zero and every note plays at full
-          // level whatever the velocity - no dynamics at all, which is what
-          // the owner heard as everything sounding "flat". 0 passes velocity
-          // straight through. The tone's own sensitivity byte is not
-          // identified yet, so full response is the honest default: wrong
-          // dynamics beat none.
-          ip.TVALvlVSens  = 0;
-          // The filter. +52 is the cutoff and +53 the resonance, adjacent as the
-          // manual has them (SysEx 0x4A, 0x4B), and +52 is confirmed on the
-          // oracle: driving it 0 to 127 moves that patch's spectral centroid from
-          // 99 Hz to 441 Hz, the largest and cleanest swing of any byte tested.
-          // Without any filter our centroid sat at 745 Hz against the oracle's 282.
-          //
-          // The TVF envelope is held flat: its own bytes are not identified, and a
-          // sweeping filter guessed at would be worse than a static one read.
-          // LEFT OFF, deliberately. Enabling it costs 25 dB: median level over
-          // Preset A 01-08 falls from -8.8 dB to -33 dB against the oracle while
-          // the centroid improves (PR-A 08 goes 689 -> 264 Hz against 299). The
-          // cause is not the cutoff value but the curves underneath it -
-          // TVFResonanceFreq shapes the filter coefficients and is still zero
-          // here, because the JV's own filter tables have not been found. A
-          // filter that is right in colour and 25 dB wrong in level is worse
-          // than none, so this waits for those tables. TASK-147.
-          // LEFT DISABLED, and this is now a measured decision rather than a
-          // missing table. With TVFResonanceFreq, TVFEnvDepth, TVFCutoffVSens and
-          // TVFEnvScale all fitted from the SC-55's, the colour comes out close -
-          // PR-A 01 renders a 244 Hz centroid against the oracle's 282 - and the
-          // level still collapses 35 dB, at any resonance from 0 to the patch's
-          // own. So the fault is not the coefficient curves but the cutoff INDEX:
-          // it is assembled from several fields the JV path does not fill, and
-          // TVFCFKeyFlwC and TVFCOFVelCur among them are still zero. Finding what
-          // the JV puts there needs the code that reads them, not another fit.
-          ip.TVFType      = 2;                    // DISABLED - see below
-          // The filter is off, and this is measured rather than cautious. Left
-          // on with the cutoff byte as the ROM stores it, the patch tracks lose
-          // their entire top: the demo's melody renders 10.8 dB down at 125 Hz
-          // and 63.0 dB down at 2 kHz against the machine. The owner heard it
-          // immediately - "everything is more muffled than the oracle, which is
-          // super crisp and bright" - and the drums, which take a different path
-          // with no filter, were the only track within 1 dB across the band.
-          //
-          // The cutoff byte has a median of 15 across Preset A where the SC-55's
-          // equivalent is 62, so the SC-55 cutoff arithmetic reads it as almost
-          // shut. Scaling it into range is a fudge that was tried and removed;
-          // what is needed is the JV's own cutoff law, not a rescaled byte.
-          // The JV's cutoff byte is not on the SC-55's scale: its median across
-          // Preset A is 15 where the SC-55's TVFBaseFlt is 62, and feeding it
-          // straight in gives a nearly shut filter - 35 dB of level. Mapped
-          // Used exactly as the ROM stores it. An earlier version scaled and
-          // offset this to make the filter behave, and that was the wrong
-          // instinct: a table that needs a fudge factor to work is either the
-          // wrong table or is being fed to the wrong arithmetic.
-          ip.TVFBaseFlt   = (int8_t) (tb[52] & 0x7f);
-          ip.TVFResonance = (int8_t) (tb[53] & 0x7f);
-          ip.TVFEnvDepth  = 0;
-          ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
-          ip.TVFEnvT1 = 0;
-          ip.TVFEnvT2 = ip.TVFEnvT3 = ip.TVFEnvT4 = ip.TVFEnvT5 = 0x7f;
-          // Key follow, at the SC-55's normal setting. pitchKeyFlw indexes a
-          // 21-entry table as |pitchKeyFlw - 0x49|, so 0 is both wrong and out
-          // of bounds; 0x4a and rootKeyOffset 64 are what SC-55 partials carry.
-          ip.pitchKeyFlw    = 0x4a;
-          ip.rootKeyOffset  = 64;
+        _init_neutral_partial(ip);
+        ip.partialIndex = tb[F.waveform];
+        ip.coarsePitch  =
+          (int8_t) std::clamp(0x40 + (int) (int8_t) tb[F.coarseTune], 0, 127);
 
-          // Every "key follow" and "velocity sensitivity" field is read as
-          // (value - 0x40), so leaving them zero is not neutral - it is the
-          // maximum NEGATIVE adjustment, and it crushed every envelope time to
-          // nothing. A.Piano 1 fell to a tenth of its peak in 16 ms where the
-          // machine takes 896 ms, which is why every Preset A patch measured
-          // 20 dB quiet. 0x40 is the centre these are measured from.
-          ip.TVAETKeyF14 = ip.TVAETKeyF5  = 0x40;
-          ip.TVAETVSens12 = ip.TVAETVSens35 = 0x40;
-          ip.TVAETKeyFP14 = ip.TVAETKeyFP5 = 0;
-          ip.TVFETKeyF14 = ip.TVFETKeyF5  = 0x40;
-          ip.TVFETVSens12 = ip.TVFETVSens35 = 0x40;
-          ip.TVFETKeyFP14 = ip.TVFETKeyFP5 = 0;
-          ip.pitchETKeyF14 = ip.pitchETKeyF5 = 0x40;
-          ip.pitchETKeyFP14 = ip.pitchETKeyFP5 = 0;
-          ip.pitchEnvTVSens = 0x40;
+        ip.velRangeLow  = tb[F.velocityLow]  & 0x7f;
+        ip.velRangeHigh = tb[F.velocityHigh] & 0x7f;
+        if (ip.velRangeHigh < ip.velRangeLow) {
+          ip.velRangeLow = 0; ip.velRangeHigh = 127;
+        }
 
-    // Everything else the engine reads as (value - 0x40). The audit in
-    // tools/jv1080/jv-zero-audit.py lists them; leaving any at zero is the
-    // maximum negative setting, which is how the envelope times were lost.
-    ip.pitchEnvL0 = ip.pitchEnvL1 = ip.pitchEnvL2 = 0x40;
-    ip.pitchEnvL3 = ip.pitchEnvL5 = 0x40;
-    ip.pitchEnvVSens = 0x40;
-    ip.TVFCFKeyFlw   = 0x40;
-    ip.TVFCOFVSens   = 0x40;
-    ip.TVABiasLevel  = 0;
+        // The tone level, and the TVA envelope: three time/level pairs and a
+        // release. L4 holds L3 because the JV envelope has one stage fewer than
+        // the Sound Canvas one.
+        ip.volume   = (uint8_t) (((tb[F.level] & 0x7f) *
+                                  (tb[F.levelScale] & 0x7f)) / 127);
+        ip.TVAEnvT1 = tb[F.envTime1]  & 0x7f;
+        ip.TVAEnvL1 = tb[F.envLevel1] & 0x7f;
+        ip.TVAEnvT2 = tb[F.envTime2]  & 0x7f;
+        ip.TVAEnvL2 = tb[F.envLevel2] & 0x7f;
+        ip.TVAEnvT3 = tb[F.envTime3]  & 0x7f;
+        ip.TVAEnvL3 = tb[F.envLevel3] & 0x7f;
+        ip.TVAEnvL4 = ip.TVAEnvL3;
+        ip.TVAEnvT4 = 0x7f;
+        ip.TVAEnvT5 = tb[F.envRelease] & 0x7f;
 
-          // Everything else the engine reads as (value - 0x40). The audit in
-          // tools/jv1080/jv-zero-audit.py lists them; leaving any at zero is the
-          // maximum negative setting, which is how the envelope times were lost.
-          ip.pitchEnvL0 = ip.pitchEnvL1 = ip.pitchEnvL2 = 0x40;
-          ip.pitchEnvL3 = ip.pitchEnvL5 = 0x40;
-          ip.pitchEnvVSens = 0x40;
-          ip.TVFCFKeyFlw   = 0x40;
-          ip.TVFCOFVSens   = 0x40;
-          // NOT 0x40. TVA::_init_envelope branches on (TVABiasLevel >= 0x40) and
-          // takes the ATTENUATING branch when it does, so centring this one costs
-          // 21 dB - measured, median level over Preset A fell -8.8 -> -30.1 dB.
-          // Its neutral is 0, unlike its neighbours. Zero is not always wrong
-          // either.
-          ip.TVABiasLevel  = 0;
+        // NOT 127. tva.cc computes the velocity-driven level as
+        //   127 - ((127 - velocity) * (127 - TVALvlVSens)) / 127
+        // so 127 makes the second term zero and every note plays at full level
+        // whatever the velocity - no dynamics at all, which the owner heard as
+        // everything sounding "flat". 0 passes velocity straight through. The
+        // tone's own sensitivity byte is not identified yet, so full response is
+        // the honest default: wrong dynamics beat none. (Set by
+        // _init_neutral_partial; spelled out here because 127 looks correct.)
 
+        // The filter is read but LEFT DISABLED, and that is a measured decision
+        // rather than a missing table. With TVFResonanceFreq, TVFEnvDepth,
+        // TVFCutoffVSens and TVFEnvScale all fitted from the SC-55's, the colour
+        // comes out close - Preset A 01 renders a 244 Hz centroid against the
+        // reference's 282 - and the level still collapses 35 dB, at any resonance
+        // from 0 to the patch's own. So the fault is not the coefficient curves
+        // but the cutoff INDEX: it is assembled from several fields the JV path
+        // does not fill, TVFCFKeyFlwC and TVFCOFVelCur among them. Finding what
+        // the JV puts there needs the code that reads them, not another fit.
+        // A filter right in colour and 35 dB wrong in level is worse than none.
+        // TASK-147.
+        ip.TVFType      = 2;                     // 2 = disabled
+        ip.TVFBaseFlt   = (int8_t) (tb[F.filterCutoff]    & 0x7f);
+        ip.TVFResonance = (int8_t) (tb[F.filterResonance] & 0x7f);
+        ip.TVFEnvDepth  = 0;
+        ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
+        ip.TVFEnvT1 = 0;
+        ip.TVFEnvT2 = ip.TVFEnvT3 = ip.TVFEnvT4 = ip.TVFEnvT5 = 0x7f;
 
-          // The TVA envelope, from Roland's own parameter address map in the
-          // JV-880 owner's manual (docs/service-notes/jv880-owner.md): seven
-          // INTERLEAVED bytes, T1 L1 T2 L2 T3 L3 T4, with no L4 - T4 is the
-          // release to silence. Confirmed against the oracle by rewriting each
-          // byte and rendering: +74 collapses the peak to 0.035 while stretching
-          // the attack 6.3x (a long attack time), +78 moves attack monotonically,
-          // +80 nearly triples the release, and +81 raises the peak.
-          ip.TVAEnvT1 = tb[74] & 0x7f;
-          ip.TVAEnvL1 = tb[75] & 0x7f;
-          ip.TVAEnvT2 = tb[76] & 0x7f;
-          ip.TVAEnvL2 = tb[77] & 0x7f;
-          ip.TVAEnvT3 = tb[78] & 0x7f;
-          ip.TVAEnvL3 = tb[79] & 0x7f;
-
-          // libEmuSC has one phase more than the JV: L1-L4 with T1-T5, where T5
-          // is the release. The JV sustains at L3 and releases over T4, so hold
-          // the fourth phase at L3 and give the release the JV's T4.
-          ip.TVAEnvL4 = ip.TVAEnvL3;
-          ip.TVAEnvT4 = 0x7f;
-          ip.TVAEnvT5 = tb[80] & 0x7f;
-
-          // Level. Two bytes carry it and libEmuSC's partial has one field, so
-          // they combine: +67 is the tone's TVA Level - the strongest single
-          // result of the whole probe sweep, peak monotonic with Spearman +0.975
-          // - and +81 is the Dry Level the manual puts beside the sends. Using
-          // only +81 leaves the render hot, because 94% of tones set it to 127
-          // where only 52% set +67 there.
-          ip.volume   = (uint8_t) (((tb[67] & 0x7f) * (tb[81] & 0x7f)) / 127);
       }
 
-        // Capture the patch's effect sends alongside the instrument, so a
-        // performance part can route them. This had been lost in a refactor,
-        // leaving _jvInstSend empty - every send test then read false and every
-        // send stayed zero, so reverb and chorus produced nothing at all and
-        // rendering with the sends forced to zero was bit-identical.
-        {
-          uint8_t rv = 0, ch = 0;
-          for (int t = 0; t < TONES; t++) {
-            const uint8_t *tb2 = &_jvRom[off + TONE0 + t * TONE];
-            if (!tb2[0]) continue;
-            rv = std::max(rv, (uint8_t) (tb2[82] & 0x7f));
-            ch = std::max(ch, (uint8_t) (tb2[83] & 0x7f));
-          }
-          _jvInstSend.push_back({rv, ch});
-        }
+      // libEmuSC sends per part, the JV per tone. The loudest enabled tone
+      // decides, so a patch with one wet tone is not made dry by its dry ones.
+      uint8_t reverb = 0, chorus = 0;
+      for (int t = 0; t < P.tones; t++) {
+        const uint8_t *tb = &_deviceRom[off + P.firstTone + t * P.toneStride];
+        if (!tb[F.enabled])
+          continue;
+        reverb = std::max(reverb, (uint8_t) (tb[F.reverbSend] & 0x7f));
+        chorus = std::max(chorus, (uint8_t) (tb[F.chorusSend] & 0x7f));
+      }
+      _instrumentSend.push_back({reverb, chorus});
+
       _instruments.push_back(in);
     }
   }
 
-  // Programs 0-63 select Preset A and 64-127 Preset B. The JV is not a GM
-  // machine and has no variation table of its own, so this mapping is ours.
   for (int v = 0; v < 128; v++)
     for (int i = 0; i < 128; i++)
       _variations[v][i] = 0xffff;
@@ -1542,7 +1456,7 @@ int ControlRom::_read_jv_patches(std::ifstream &romFile, uint32_t bankA)
 // the JV's samples at the JV's pitch with no shaping, which is exactly what the
 // owner heard and described as "no envelope or effects". The real curves are
 // TASK-141's subject. Nothing here should be mistaken for a measurement.
-void ControlRom::_init_jv_lookup_tables(void)
+void ControlRom::_init_device_lookup_tables(void)
 {
   struct LookupTables &t = lookupTables;
 
@@ -1560,17 +1474,17 @@ void ControlRom::_init_jv_lookup_tables(void)
   // match is strong evidence and not proof. tools/romdis/catalog.py lists what
   // else in the ROM has the same shape.
   auto rom8 = [this](uint32_t base, int n, auto &dst) {
-    if ((size_t) base + n > _jvRom.size()) return false;
-    for (int i = 0; i < n; i++) dst[i] = _jvRom[base + i];
+    if ((size_t) base + n > _deviceRom.size()) return false;
+    for (int i = 0; i < n; i++) dst[i] = _deviceRom[base + i];
     return true;
   };
   auto rom16 = [this](uint32_t base, int n, auto &dst) {
-    if ((size_t) base + 2*n > _jvRom.size()) return false;
+    if ((size_t) base + 2*n > _deviceRom.size()) return false;
     for (int i = 0; i < n; i++)
-      dst[i] = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
+      dst[i] = (_deviceRom[base + i*2] << 8) | _deviceRom[base + i*2 + 1];
     return true;
   };
-  bool haveRom = _jvRom.size() > 0x40000 - 1;
+  bool haveRom = _deviceRom.size() > 0x40000 - 1;
 
 
   // Key follow: one flat map, so every key maps to bias 0 and no table lookup
@@ -1627,10 +1541,10 @@ void ControlRom::_init_jv_lookup_tables(void)
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109
   // against the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
   const uint32_t ENV_TIME_TABLE = 0x04c58;
-  if (_jvRom.size() >= ENV_TIME_TABLE + 256) {
+  if (_deviceRom.size() >= ENV_TIME_TABLE + 256) {
     for (int i = 0; i < 128; i++)
-      t.envelopeTime[i] = (int) ((_jvRom[ENV_TIME_TABLE + i * 2] << 8) |
-                                  _jvRom[ENV_TIME_TABLE + i * 2 + 1]);
+      t.envelopeTime[i] = (int) ((_deviceRom[ENV_TIME_TABLE + i * 2] << 8) |
+                                  _deviceRom[ENV_TIME_TABLE + i * 2 + 1]);
   } else {
     t.envelopeTime[0] = 0;
     for (int i = 1; i < 128; i++)
@@ -1687,9 +1601,9 @@ void ControlRom::_init_jv_lookup_tables(void)
   {
     const char *ct = getenv("EMUSC_JV_COF_TABLE");
     uint32_t base = ct ? (uint32_t) strtoul(ct, nullptr, 0) : 0;
-    if (base && (size_t) base + 258 <= _jvRom.size()) {
+    if (base && (size_t) base + 258 <= _deviceRom.size()) {
       for (int i = 0; i < 129; i++)
-        t.TVFCutoffFreq[i] = (_jvRom[base + i*2] << 8) | _jvRom[base + i*2 + 1];
+        t.TVFCutoffFreq[i] = (_deviceRom[base + i*2] << 8) | _deviceRom[base + i*2 + 1];
     } else {
       for (int i = 0; i < 129; i++)
         t.TVFCutoffFreq[i] = (int) std::min(32767.0, std::round(35.0 * std::pow(1.0592, i)));
@@ -1719,26 +1633,6 @@ void ControlRom::_init_jv_lookup_tables(void)
   // TVAPanpot came back non-monotonic (0, 107, 5, 54, ...) where a pan law has
   // to rise, and every drum played centre. A numerical match is a lead; the
   // shape check is what makes it a finding.
-  struct RomTable { uint32_t off; int n; int width; bool mustRise; const char *name; };
-  static const RomTable jvTables[] = {
-    { 0x3e9c4, 256, 1, false, "TVFResonanceFreq" },
-    { 0x054be, 128, 1, false, "TVFResonance"     },
-    { 0x055f5,   9, 1, false, "EnvSegmentCurve"  },
-    { 0x3e931, 128, 1, false, "TVAPanKeyFollow"  },
-    { 0x05590, 128, 1, false, "TVALevelIndex"    },
-    { 0x3ff49,  21, 1, true,  "EnvTimeKeyFollowSens" },
-    { 0x04edf, 130, 1, false, "LFOSine"          },
-    // PitchCoarseExp is NOT read from ROM. The match at 0x06b2c passes the rise
-    // check - the shape is right - but it starts at 29794 where the SC-55's
-    // starts at 32768, and that table's first entry IS unity: 29794/32768 is
-    // 0.9092, or -1.65 semitones applied to every note on every part. The open
-    // hat measured -1.66 semitones against the reference, which is that number.
-    // A shape check does not catch a wrong base, so the anchor is checked too.
-    // Dropped, and why: TVAPanpot (0x3e946), TVFEnvScale (0x3fc79) and
-    // TVFCutoffVSens (0x02d15) all failed the rise check - 11, 4 and 4
-    // inversions in curves that must be monotonic. They keep the fitted
-    // SC-55 shape instead of a wrong reading.
-  };
 
   auto rise_ok = [](const uint8_t *v, int n, int width) {
     int inv = 0;
@@ -1751,18 +1645,31 @@ void ControlRom::_init_jv_lookup_tables(void)
   };
 
   if (haveRom) {
-    for (const RomTable &rt : jvTables) {
-      if ((size_t) rt.off + (size_t) rt.n * rt.width > _jvRom.size()) continue;
-      const uint8_t *v = &_jvRom[rt.off];
-      if (rt.mustRise && !rise_ok(v, rt.n, rt.width)) continue;
-      if (!strcmp(rt.name, "TVFResonanceFreq")) rom8 (rt.off, rt.n, t.TVFResonanceFreq);
-      else if (!strcmp(rt.name, "TVFResonance")) rom8 (rt.off, rt.n, t.TVFResonance);
-      else if (!strcmp(rt.name, "EnvSegmentCurve")) rom8 (rt.off, rt.n, t.EnvSegmentCurve);
-      else if (!strcmp(rt.name, "TVAPanKeyFollow")) rom8 (rt.off, rt.n, t.TVAPanKeyFollow);
-      else if (!strcmp(rt.name, "TVALevelIndex")) rom8 (rt.off, rt.n, t.TVALevelIndex);
-      else if (!strcmp(rt.name, "EnvTimeKeyFollowSens")) rom8 (rt.off, rt.n, t.EnvTimeKeyFollowSens);
-      else if (!strcmp(rt.name, "LFOSine")) rom8 (rt.off, rt.n, t.LFOSine);
-      else if (!strcmp(rt.name, "PitchCoarseExp")) rom16(rt.off, rt.n, t.PitchCoarseExp);
+    for (int i = 0; i < _profile->lookupTableCount; i++) {
+      const RomLookupTable &rt = _profile->lookupTables[i];
+      if ((size_t) rt.offset + (size_t) rt.entries * rt.width > _deviceRom.size())
+        continue;
+      if (rt.mustRise && !rise_ok(&_deviceRom[rt.offset], rt.entries, rt.width))
+        continue;
+
+      switch (rt.id) {
+      case RomLookup::TVFResonanceFreq:
+        rom8(rt.offset, rt.entries, t.TVFResonanceFreq);     break;
+      case RomLookup::TVFResonance:
+        rom8(rt.offset, rt.entries, t.TVFResonance);         break;
+      case RomLookup::EnvSegmentCurve:
+        rom8(rt.offset, rt.entries, t.EnvSegmentCurve);      break;
+      case RomLookup::TVAPanKeyFollow:
+        rom8(rt.offset, rt.entries, t.TVAPanKeyFollow);      break;
+      case RomLookup::TVALevelIndex:
+        rom8(rt.offset, rt.entries, t.TVALevelIndex);        break;
+      case RomLookup::EnvTimeKeyFollowSens:
+        rom8(rt.offset, rt.entries, t.EnvTimeKeyFollowSens); break;
+      case RomLookup::LFOSine:
+        rom8(rt.offset, rt.entries, t.LFOSine);              break;
+      case RomLookup::PitchCoarseExp:
+        rom16(rt.offset, rt.entries, t.PitchCoarseExp);      break;
+      }
     }
   }
 
@@ -1793,111 +1700,88 @@ void ControlRom::_init_jv_lookup_tables(void)
 // patch 21, which is "SAW Lead"; performance 1, "Encounter X", carries JV
 // Heaven, Analog Pad 2, Arctic Winds, WhistlinAtom, X/Y/Z, Ice Hall and
 // DistanceCall. See docs/service-notes/jv880-owner.md.
-int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
+int ControlRom::_read_device_performances(void)
 {
-  const int STRIDE = 204, COMMON = 28, PART = 22, PARTS = 8;
-  const int P_PATCH = 16, P_CHAN = 21;
+  const PerformanceLayout   &V = _profile->performance;
+  const PerformancePartMap  &M = V.part;
 
-  _jvChannelPatch.fill(-1);
-  _jvChannelLevel.fill(100);
-  _jvChannelReverb.fill(0);
-  _jvChannelChorus.fill(0);
-  _jvChannelPan.fill(0x40);
-  _jvChannelKeyShift.fill(0);
-  if (!base || (size_t) base + STRIDE > _jvRom.size())
+  _channelPatch.fill(-1);
+  _channelLevel.fill(100);
+  _channelReverb.fill(0);
+  _channelChorus.fill(0);
+  _channelPan.fill(0x40);
+  _channelKeyShift.fill(0);
+
+  if (!V.offset || (size_t) V.offset + (V.bootIndex + 1) * V.stride > _deviceRom.size())
     return -1;
 
-  // Which performance the machine powers on with is held in NVRAM, which we do
-  // not require (P-0374), so it has to be defaulted - and the default is index 0.
-  //
-  // IDENTIFIED, not assumed. The demo's melody track was rendered on the
-  // reference through each of the 64 Internal patches in turn and compared with
-  // what the reference plays from its own performance: patch 21 "SAW Lead"
-  // matches at 0.9936, the next candidate at 0.9621, and performance 1 is the
-  // one that puts SAW Lead on channel 1 and "Slap !!!" on channel 4 - which is
-  // independently what the same test picks for channel 4.
-  //
-  // An earlier version defaulted to index 6 on two pieces of bad evidence: an
-  // NVRAM byte that happened to read 7, and a spectral sweep of all sixteen
-  // performances. The sweep was run while every note was 1.65 semitones flat
-  // from a wrong pitch table AND the melody was 19 dB loud with the filter
-  // wrongly enabled, so it was comparing two faults rather than two patches.
-  // Comparing against the reference's OWN renders of each patch is immune to
-  // both, because it never involves our engine at all.
-  int which = 0;
-  const char *pe = getenv("EMUSC_JV_PERF");
-  if (pe) { int v = atoi(pe); if (v >= 0 && v < 16) which = v; }
-  if ((size_t) base + (which + 1) * STRIDE > _jvRom.size()) which = 0;
-  const uint8_t *p = &_jvRom[base + which * STRIDE];
+  const uint8_t *p = &_deviceRom[V.offset + V.bootIndex * V.stride];
 
-  // The performance's effect settings, from its common block. Read straight
-  // from the ROM rather than left at libEmuSC's Sound Canvas defaults, which is
-  // why the reverb sat about 40 dB below the machine's: performance 1 asks for
-  // level 99 and time 81 where the default is 64 and 64.
-  //
-  // The columns identify themselves across the sixteen performances: +12's low
-  // three bits are always 0..7 (a type), +13 runs 92..127 and +14 74..127 (a
-  // level and a time), +15 0..68 (a feedback). That is the manual's order for
-  // Performance Common, ROM offset = SysEx offset - 1.
-  _jvEffects.reverbType     = p[12] & 0x07;
-  _jvEffects.reverbLevel    = p[13] & 0x7f;
-  _jvEffects.reverbTime     = p[14] & 0x7f;
-  _jvEffects.reverbFeedback = p[15] & 0x7f;
-  _jvEffects.chorusLevel    = p[17] & 0x7f;
-  _jvEffects.chorusDepth    = p[18] & 0x7f;
+  _deviceEffects.reverbType     = p[V.reverbType] & 0x07;
+  _deviceEffects.reverbLevel    = p[V.reverbLevel] & 0x7f;
+  _deviceEffects.reverbTime     = p[V.reverbTime] & 0x7f;
+  _deviceEffects.reverbFeedback = p[V.reverbFeedback] & 0x7f;
+  _deviceEffects.chorusLevel    = p[V.chorusLevel] & 0x7f;
+  _deviceEffects.chorusDepth    = p[V.chorusDepth] & 0x7f;
 
-  for (int t = 0; t < PARTS; t++) {
-    const uint8_t *pt = p + COMMON + t * PART;
-    int patch = pt[P_PATCH];
-    int chan  = pt[P_CHAN] & 0x0f;
+  for (int t = 0; t < V.parts; t++) {
+    const uint8_t *pt = p + V.commonSize + t * V.partStride;
 
-    // Keep the parts as parts. Several may share one MIDI channel - performance
-    // 7 layers patches 1 and 26 on channel 1 - and a channel-keyed map silently
-    // drops all but the first, which is one patch of two on the demo's melody.
-    _jvParts[t] = { patch, chan, pt[17] & 0x7f, pt[18] & 0x7f,
-                    (int8_t) pt[19], 0, 0, t == PARTS - 1 };
+    // Part 8 is the rhythm part, not a patch part: the manual's signal diagram
+    // shows parts 1-7 taking a Patch and part 8 taking a Rhythm set, and its
+    // patch byte is 0 in every factory performance rather than a patch number.
+    const bool rhythm = (t == V.parts - 1);
+
+    const int  chan   = pt[M.channel] & M.channelMask;
+    const bool revSw  = (pt[M.channel] >> M.reverbSwitchBit) & 1;
+    const bool choSw  = (pt[M.channel] >> M.chorusSwitchBit) & 1;
+
     // The machine numbers patches I01-I64, C01-C64, A01-A64, B01-B64 across
     // 0..255 - Card second - while our instrument list is Internal, Preset A,
     // Preset B across 0..191, because a bare JV-880 has no card. Translate,
     // rather than letting a Preset B patch index off the end and be dropped:
     // performance 4's third part asks for 204, which is B13.
+    int patch = pt[M.patch];
     if (patch >= 192)      patch = 128 + (patch - 192);   // Preset B
     else if (patch >= 128) patch =  64 + (patch - 128);   // Preset A
     else if (patch >= 64)  patch = -1;                    // Card: not present
-    _jvParts[t].patch = patch;
 
-    if (t != PARTS - 1 && patch >= 0 && patch < (int) _jvInstSend.size()) {
-      _jvParts[t].reverb = _jvInstSend[patch].first;
-      _jvParts[t].chorus = _jvInstSend[patch].second;
-    }
+    // Keep the parts as parts. Several may share one MIDI channel - performance
+    // 7 layers patches 1 and 26 on channel 1 - and a channel-keyed map silently
+    // drops all but the first, which is one patch of two on the demo's melody.
+    _deviceParts[t] = { patch, chan,
+                    pt[M.level] & 0x7f, pt[M.pan] & 0x7f,
+                    (int8_t) pt[M.coarseTune], 0, 0, rhythm };
 
-    // Part 8 is the rhythm part, not a patch part: the manual's own signal
-    // diagram shows parts 1-7 taking a Patch and part 8 taking a Rhythm set, and
-    // its +16 is 0 in every factory performance rather than a patch number. Its
-    // channel is the drum channel - 0xE9, channel 9, in all sixteen.
-    if (t == PARTS - 1) {
-      _jvDrumChannel = chan;
+    if (rhythm) {
+      _deviceDrumChannel = chan;
+      // The rhythm part has no patch to take a send from, so the switch alone
+      // decides and the rhythm note's own send sets the depth per instrument.
+      // Left at 0 it multiplied out every per-note depth downstream and the kit
+      // rendered with no tail at all.
+      _deviceParts[t].reverb = revSw ? 127 : 0;
+      _deviceParts[t].chorus = choSw ? 127 : 0;
       continue;
     }
+
+    if (patch >= 0 && patch < (int) _instrumentSend.size()) {
+      _deviceParts[t].reverb = revSw ? _instrumentSend[patch].first  : 0;
+      _deviceParts[t].chorus = choSw ? _instrumentSend[patch].second : 0;
+    }
+
     if (patch >= (int) _instruments.size())
       continue;
+
     // Earlier parts win: several parts may share a channel to layer sounds, and
     // libEmuSC has one instrument per part where the JV has eight.
-    if (_jvChannelPatch[chan] < 0) {
-      _jvChannelPatch[chan] = patch;
-      // +17 is the part level and +18 its pan, following +16 in the same order
-      // the manual gives (Patch Number, then Part Level at 0x19, Part Pan at
-      // 0x1A) once the split pair at 16/17 is collapsed to one byte.
-      _jvChannelLevel[chan] = pt[17] & 0x7f;
-      _jvChannelPan[chan]   = pt[18] & 0x7f;
-      // +19 is the part's coarse tune, in SIGNED semitones. Leaving it out put
-      // the demo's melody exactly one octave high - the owner heard it as the
-      // wrong musical key. Its values across the sixteen performances are all
-      // intervals a musician would choose: -12, +12, -7, -8, -2, +20, +24, -29.
-      _jvChannelKeyShift[chan] = (int8_t) pt[19];
-      if (patch < (int) _jvInstSend.size()) {
-        _jvChannelReverb[chan] = _jvInstSend[patch].first;
-        _jvChannelChorus[chan] = _jvInstSend[patch].second;
+    if (_channelPatch[chan] < 0) {
+      _channelPatch[chan]    = patch;
+      _channelLevel[chan]    = pt[M.level] & 0x7f;
+      _channelPan[chan]      = pt[M.pan] & 0x7f;
+      _channelKeyShift[chan] = (int8_t) pt[M.coarseTune];
+      if (patch < (int) _instrumentSend.size()) {
+        _channelReverb[chan] = _instrumentSend[patch].first;
+        _channelChorus[chan] = _instrumentSend[patch].second;
       }
     }
   }
@@ -1919,145 +1803,69 @@ int ControlRom::_read_jv_performances(std::ifstream &romFile, uint32_t base)
 // libEmuSC's drum path wants an INSTRUMENT per key, so each rhythm note becomes
 // one, appended after the patches. Their names come from the waveform, which
 // makes a drum map readable in the instrument list.
-int ControlRom::_read_jv_rhythm(std::ifstream &romFile, uint32_t base)
+int ControlRom::_read_device_rhythm(void)
 {
-  // The rhythm record's layout, as data rather than as numbers spread through
-  // the code. Each offset is a finding; where it came from is beside it.
-  struct RhythmLayout {
-    int stride, keys, firstKey;
-    int on, wave, playKey, level, pan;
-  };
-  static const RhythmLayout RHY = {
-    44, 61, 36,
-     0,     // +0  on/off, as in a patch tone
-     1,     // +1  waveform - the names settle it: key 36 Bright Kick, 38 90's
-            //     Snare, 42 Closed HAT 1, 46 Open HAT 1
-     3,     // +3  play key. Every drum had been fixed at 60, the Sound Canvas
-            //     convention, and the residual pitch errors predicted this
-            //     column exactly - kick 58 for our +1.82 semitones, crash 62 for
-            //     our -1.99, ride 61 for our -1.01, hats 60 for their 0.00
-    30,     // +30 level. 75..127, median 127
-    31,     // +31 pan. 0..128, median 64 - centred, which is what a pan is. The
-            //     manual lists Level then Pan adjacent (SysEx 0x24, 0x25)
-  };
-  const int STRIDE = RHY.stride, KEYS = RHY.keys, FIRST_KEY = RHY.firstKey;
+  const RhythmLayout &R = _profile->rhythm;
 
-  if (!base || (size_t) base + KEYS * STRIDE > _jvRom.size())
+  if (!R.offset || (size_t) R.offset + R.keys * R.stride > _deviceRom.size())
     return -1;
 
   struct DrumSet ds = {};
-  ds.name = "JV Rhythm";
+  ds.name = "Rhythm";
+
   for (int k = 0; k < 128; k++) {
     ds.preset[k] = 0xffff;
     ds.volume[k] = 0x7f;
-    // Every drum plays at its own natural pitch, not at the key struck: the
-    // SC-55's own drum sets put 60 in every entry of this table, and using the
-    // key instead transposes a kick down until it is muffled noise - which is
-    // what it sounded like. Flags 0x10 is note-on only; a drum is one-shot and
-    // must ignore note-off, which 0x11 does not.
-    ds.key[k]    = 60;      // overwritten below from the record
+    ds.key[k]    = 60;
     ds.panpot[k] = 0x40;
     ds.flags[k]  = 0x10;
   }
 
-  for (int k = 0; k < KEYS; k++) {
-    const uint8_t *r = &_jvRom[base + k * STRIDE];
-    if (!r[RHY.on] || r[RHY.wave] >= _partials.size())
+  for (int k = 0; k < R.keys; k++) {
+    const uint8_t *r = &_deviceRom[R.offset + k * R.stride];
+    if (!r[R.enabled] || r[R.waveform] >= _partials.size())
       continue;
 
     struct Instrument in = {};
-    in.name = _partials[r[RHY.wave]].name;
-    in.volume = 0x7f;
+    in.name         = _partials[r[R.waveform]].name;
+    in.volume       = 0x7f;
     in.partialsUsed = 1;
     for (int t = 0; t < 4; t++)
       in.partials[t].partialIndex = 0xFFFF;
 
     struct InstPartial &ip = in.partials[0];
-    ip.partialIndex   = r[RHY.wave];
-    ip.panpot         = 0x40;
-    ip.coarsePitch    = 0x40;
-    ip.finePitch      = 0x40;
-    ip.volume         = 0x7f;
-    ip.velRangeLow    = 0;
-    ip.velRangeHigh   = 127;
-    ip.TVALvlVSens    = 0;
-    ip.TVFType        = 2;
-    ip.pitchKeyFlw    = 0x4a;
-    ip.rootKeyOffset  = 64;
+    _init_neutral_partial(ip);
+    ip.partialIndex = r[R.waveform];
 
-    // Every "key follow" and "velocity sensitivity" field is read as
-    // (value - 0x40), so leaving them zero is not neutral - it is the
-    // maximum NEGATIVE adjustment, and it crushed every envelope time to
-    // nothing. A.Piano 1 fell to a tenth of its peak in 16 ms where the
-    // machine takes 896 ms, which is why every Preset A patch measured
-    // 20 dB quiet. 0x40 is the centre these are measured from.
-    ip.TVAETKeyF14 = ip.TVAETKeyF5  = 0x40;
-    ip.TVAETVSens12 = ip.TVAETVSens35 = 0x40;
-    ip.TVAETKeyFP14 = ip.TVAETKeyFP5 = 0;
-    ip.TVFETKeyF14 = ip.TVFETKeyF5  = 0x40;
-    ip.TVFETVSens12 = ip.TVFETVSens35 = 0x40;
-    ip.TVFETKeyFP14 = ip.TVFETKeyFP5 = 0;
-    ip.pitchETKeyF14 = ip.pitchETKeyF5 = 0x40;
-    ip.pitchETKeyFP14 = ip.pitchETKeyFP5 = 0;
-    ip.pitchEnvTVSens = 0x40;
+    // A percussive shape: instant attack, decay to silence. The rhythm record's
+    // own envelope bytes are not identified yet, so this is a default and not a
+    // reading - which is why the kit's attack is still slower than the machine's.
+    ip.TVAEnvT1 = 0x00; ip.TVAEnvL1 = 0x7f;
+    ip.TVAEnvT2 = 0x40; ip.TVAEnvL2 = 0x60;
+    ip.TVAEnvT3 = 0x50; ip.TVAEnvL3 = 0x00;
+    ip.TVAEnvT4 = 0x7f; ip.TVAEnvL4 = 0x00;
+    ip.TVAEnvT5 = 0x20;
 
+    const int key = R.firstKey + k;
+    ds.key[key]    = r[R.playKey] & 0x7f;
+    ds.volume[key] = r[R.level] & 0x7f;
 
-    // A drum is one shot: reach full level at once and hold, and let the sample
-    // end the note. The rhythm record's own envelope bytes are not identified -
-    // its 44 bytes are not the patch tone's 84, so the +74..+80 map does not
-    // carry over.
-    // A drum must DECAY - held flat it rings for ever, which is what the owner
-    // heard as "cymbals never seem to be released". EMUSC_JV_RHY_ENV names the
-    // record offset of the seven interleaved envelope bytes to try.
-    {
-      const char *re = getenv("EMUSC_JV_RHY_ENV");
-      int eo = re ? atoi(re) : -1;
-      if (eo >= 0 && eo + 7 <= STRIDE) {
-        ip.TVAEnvT1 = r[eo+0] & 0x7f; ip.TVAEnvL1 = r[eo+1] & 0x7f;
-        ip.TVAEnvT2 = r[eo+2] & 0x7f; ip.TVAEnvL2 = r[eo+3] & 0x7f;
-        ip.TVAEnvT3 = r[eo+4] & 0x7f; ip.TVAEnvL3 = r[eo+5] & 0x7f;
-        ip.TVAEnvL4 = ip.TVAEnvL3;
-        ip.TVAEnvT4 = 0x7f;
-        ip.TVAEnvT5 = r[eo+6] & 0x7f;
-      } else {
-        ip.TVAEnvL1 = 0x7f; ip.TVAEnvL2 = 0x60;
-        ip.TVAEnvL3 = ip.TVAEnvL4 = 0x00;   // decay to silence
-        ip.TVAEnvT1 = 0x00; ip.TVAEnvT2 = 0x40;
-        ip.TVAEnvT3 = 0x50; ip.TVAEnvT4 = 0x7f; ip.TVAEnvT5 = 0x20;
-      }
-    }
-
-    // Per-key level and pan. The manual lists Level then Pan adjacent in the
-    // Rhythm Note table (SysEx 0x24, 0x25); in the ROM record they land at +30
-    // and +31, the record being packed as the tone record is rather than
-    // matching SysEx offsets one for one. The distributions say the same thing:
-    // +30 runs 75..127 with a median of 127, which is a level, and +31 runs
-    // 0..128 with a median of 64, which is a pan because it is CENTRED.
-    //
-    // And the values are musically right, which no arbitrary column would be:
-    // kick and snare centred at 64, both hats hard left at 0, ride at 118.
-    // The pitch each drum plays at, from record byte +3. Every drum was playing
-    // at 60 - the Sound Canvas convention - and the owner heard the kit as
-    // in tune with itself but wrong against the machine. The residual errors
-    // predict this column exactly: with +3 read as the play key, the kick's 58
-    // accounts for our +1.82 semitones, the crash's 62 for our -1.99, the ride's
-    // 61 for our -1.01, and the hats' 60 for their 0.00.
-    ds.key[FIRST_KEY + k]    = r[RHY.playKey] & 0x7f;
-
-    ds.volume[FIRST_KEY + k] = r[RHY.level] & 0x7f;
     // Clamped away from 0. The Sound Canvas reads a drum pan of 0 as RND and
     // randomises the note (tva.cc), but the JV means hard left by it: the
     // reference pans Closed HAT 1 and Open HAT 1 - both of which carry 0 here -
     // 37.2 dB and 26.8 dB to the left, while ours came out dead centre because
     // the random pan averages there. 1 is hard left without tripping RND.
-    ds.panpot[FIRST_KEY + k] = (uint8_t) std::clamp<int>(r[RHY.pan], 1, 127);
+    ds.panpot[key] = (uint8_t) std::clamp<int>(r[R.pan], 1, 127);
 
-    ds.preset[FIRST_KEY + k] = (uint16_t) _instruments.size();
+    ds.reverb[key] = r[R.reverbSend] & 0x7f;
+    ds.chorus[key] = r[R.chorusSend] & 0x7f;
+
+    ds.preset[key] = (uint16_t) _instruments.size();
     _instruments.push_back(in);
   }
 
   _drumSets.push_back(ds);
-  _drumSetsLUT.fill(0);               // one rhythm set, reachable from every bank
+  _drumSetsLUT.fill(0);              // one rhythm set, reachable from every bank
 
   return 0;
 }
