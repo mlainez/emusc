@@ -37,14 +37,31 @@ static const SoundCanvasLayout SC55_LAYOUT = {
   &SC55_CPU_MAP,
   10,           // velocity curves
 
+  0x03c028,     // drum sets run to here, in 1164-byte blocks
+  1164,
+
+  0x30000,      // the key mapper offset is relative to this bank
+
   0,            // the demo songs start at the head of the ROM
   false,        // and end where the first instrument bank begins
 
   0, 0, 0       // no intro animation
 };
 
+// "Ver" then a version and a date, in ASCII, in the same block.
+const RomSignature SC55_SIGNATURE = {
+  "SC-55", 0xf380, 29, "Ver", 3, RomVersionStyle::Inline, 0
+};
+
+// The SCC-1 is an SC-55 on an ISA card: same banks, same tables, same limits.
+const RomSignature SCC1_SIGNATURE = {
+  "SCC-1", 0x3d155, 29, "VER", 3, RomVersionStyle::Inline, 0
+};
+
 const DeviceProfile SC55_PROFILE = {
   "SC-55",
+
+  0, 2,        // identified by signature, not by size
 
   24,           // max polyphony
 

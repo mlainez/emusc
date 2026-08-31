@@ -36,7 +36,14 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   { RomLookup::TVAPanKeyFollow,      0x3e931, 128, 1, false },
   { RomLookup::TVALevelIndex,        0x05590, 128, 1, false },
   { RomLookup::EnvTimeKeyFollowSens, 0x3ff49,  21, 1, true  },
-  { RomLookup::LFOSine,              0x04edf, 130, 1, false }
+  { RomLookup::LFOSine,              0x04edf, 130, 1, false },
+
+  // Envelope phase times: 128 big-endian 16-bit entries, 128 rising to 16127 on
+  // a constant ratio of 1.0384 - a doubling every ~18 steps. The same shape and
+  // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
+  // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109 against
+  // the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
+  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, false }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -173,6 +180,8 @@ static const RecordRomLayout JV880_RECORDS = {
 
 const DeviceProfile JV880_PROFILE = {
   "JV-880",
+
+  256 * 1024, 2,
 
   28,          // max polyphony
 

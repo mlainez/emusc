@@ -327,7 +327,16 @@ private:
   enum SynthGen _synthGeneration;
 
   // The only engine-side mapping from a device to its data.
+  struct KnownDevice {
+    const RomSignature *signature;
+    enum SynthModel     model;
+    enum SynthGen       generation;
+  };
+  static const KnownDevice KNOWN_DEVICES[];
+  static const int         KNOWN_DEVICE_COUNT;
+
   static const DeviceProfile *_profile_for(enum SynthModel model);
+  const RomLookupTable *_find_lookup(RomLookup id);
 
   int _read_lookup_tables_progrom(std::ifstream &romFile);
   int _read_lookup_tables_cpurom(std::ifstream &romFile);
@@ -359,9 +368,6 @@ private:
   // adding a device is a data change and not a code change.
   struct DeviceEntry {
     enum SynthModel      model;
-    const char          *name;
-    size_t               romSize;
-    int                  waveRoms;
     enum SynthGen        generation;
     const DeviceProfile *profile;
   };

@@ -26,6 +26,8 @@ static const RecordRomLayout JV1080_RECORDS = {
 
 const DeviceProfile JV1080_PROFILE = {
   "JV-1080",
+
+  1024 * 1024, 4,
   64,          // max polyphony
   8.4f,        // not measured; the SC-55mkII figure
   &JV1080_RECORDS,

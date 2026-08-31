@@ -41,6 +41,11 @@ static const SoundCanvasLayout SC55MKII_LAYOUT = {
   &SC55MKII_CPU_MAP,
   12,           // velocity curves
 
+  0x03c028,     // drum sets run to here, in 1164-byte blocks
+  1164,
+
+  0x30000,      // the key mapper offset is relative to this bank
+
   0x03fff0,     // the demo songs sit late in the ROM
   true,         // and run to its end
 
@@ -51,8 +56,22 @@ static const SoundCanvasLayout SC55MKII_LAYOUT = {
   2
 };
 
+// A GS banner, with the version and a BCD date held elsewhere.
+const RomSignature SC55MKII_SIGNATURE = {
+  "SC-55mkII", 0x3d148, 32, "GS-28 VER=2.00  SC              ", 32,
+  RomVersionStyle::SeparateBcd, 0xfff0
+};
+
+// The SCB-55 is the same machine on a card, and carries no version we can read.
+const RomSignature SCB55_SIGNATURE = {
+  "SCB-55 (SC-55mkII)", 0x3d148, 32, "GS-28 VER=2.00  LCGS-3 module   ", 32,
+  RomVersionStyle::Unknown, 0
+};
+
 const DeviceProfile SC55MKII_PROFILE = {
   "SC-55mkII",
+
+  0, 2,        // identified by signature, not by size
 
   28,           // max polyphony
 

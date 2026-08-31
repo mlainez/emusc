@@ -65,9 +65,11 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
 
   _profile = _profile_for(_synthModel);
 
-  // Temporarily block SC-88 ROMs since we don't know how to read them yet
-  if (_model == "SC-88")
-    throw(std::string("SC-88 ROM files are not supported yet!"));
+  // A ROM we can name but have no profile for is recognised, not supported: say
+  // so rather than reading it with another device's offsets.
+  if (!_profile)
+    throw(std::string("ROM identified as ") + _model +
+          std::string(", which is not supported yet!"));
 
   // The JV family: partials, samples and the two preset patch banks live in
   // ROM. There is no drum-set table and no separate CPU ROM holding the lookup
@@ -170,82 +172,73 @@ uint32_t ControlRom::_native_endian_4bytes_uint32(uint8_t *ptr)
 }
 
 
+// The engine's one list of devices: a signature to recognise the ROM by, and the
+// model it names. Adding a device is a device file plus a row here.
+const ControlRom::KnownDevice ControlRom::KNOWN_DEVICES[] = {
+  { &SC55_SIGNATURE,     sm_SC55,     SynthGen::SC55    },
+  { &SC55MKII_SIGNATURE, sm_SC55mkII, SynthGen::SC55mk2 },
+  { &SCB55_SIGNATURE,    sm_SC55mkII, SynthGen::SC55mk2 },
+  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    },
+  { &SC88_SIGNATURE,     sm_SC88,     SynthGen::SC88    }
+};
+const int ControlRom::KNOWN_DEVICE_COUNT =
+  (int) (sizeof(KNOWN_DEVICES) / sizeof(KNOWN_DEVICES[0]));
+
+
 int ControlRom::_identify_model(std::ifstream &romFile)
 {
-  char data[32];
+  char data[64];
 
-  // Search for SC-55 control ROM files
-  romFile.seekg(0xf380);
-  romFile.read(data, 29);
-  if (!strncmp(data, "Ver", 3)) {
-    _version.assign(&data[3], 4);
-    _date.assign(&data[24], 5);
-    _model.assign("SC-55");
-    _synthModel = sm_SC55;
-    _synthGeneration = SynthGen::SC55;
+  for (int i = 0; i < KNOWN_DEVICE_COUNT; i++) {
+    const RomSignature &sig = *KNOWN_DEVICES[i].signature;
+    if (sig.readLength > (int) sizeof(data))
+      continue;
+
+    // A short ROM leaves the stream in a fail state, which would silently
+    // sink every signature tested after it.
+    romFile.clear();
+    romFile.seekg(sig.offset);
+    romFile.read(data, sig.readLength);
+    if (romFile.gcount() < sig.readLength ||
+        strncmp(data, sig.match, sig.matchLength))
+      continue;
+
+    _model.assign(sig.modelName);
+    _synthModel      = KNOWN_DEVICES[i].model;
+    _synthGeneration = KNOWN_DEVICES[i].generation;
+
+    switch (sig.versionStyle) {
+    case RomVersionStyle::Inline:
+      _version.assign(&data[3], 4);
+      _date.assign(&data[24], 5);
+      break;
+
+    case RomVersionStyle::SeparateBcd: {
+      romFile.seekg(sig.versionOffset);
+      romFile.read(data, 10);
+      _version.assign(data, 4);
+      std::stringstream ss;
+      ss << "19" << std::hex << (int) (uint8_t) data[7] << "-"
+         << (int) (uint8_t) data[8] << "-" << (int) (uint8_t) data[9];
+      _date.assign(ss.str());
+      break;
+    }
+
+    case RomVersionStyle::Unknown:
+      _version.assign("?");
+      _date.assign("?");
+      break;
+    }
 
     return 0;
-  }
-
-  // Search for SC-55mkII control ROM files
-  romFile.seekg(0x3d148);
-  romFile.read(data, 32);
-  if (!strncmp(&data[0], "GS-28 VER=2.00  SC              ", 32)) {
-    romFile.seekg(0xfff0);
-    romFile.read(data, 10);
-    _version.assign(data, 4);
-    int year = (uint8_t) data[7];
-    int month = (uint8_t) data[8];
-    int day = (uint8_t) data[9];
-    std::stringstream ss;
-    ss << "19" << std::hex << year << "-" << month << "-" << day;
-    _date.assign(ss.str());
-    _model.assign("SC-55mkII");
-    _synthModel = sm_SC55mkII;
-    _synthGeneration = SynthGen::SC55mk2;
-
-    return 0;
-    
-  } else if (!strncmp(&data[0], "GS-28 VER=2.00  LCGS-3 module   ", 32)) {
-    _version.assign("?");
-    _date.assign("?");
-    _model.assign("SCB-55 (SC-55mkII)");
-    _synthModel = sm_SC55mkII;
-    _synthGeneration = SynthGen::SC55mk2;
-
-    return 0;
-  }
-
-  // Search for SCC-1 control ROM files
-  romFile.seekg(0x3D155);
-  romFile.read(data, 29);
-  if (!strncmp(data, "VER", 3)) {
-    _version.assign(&data[3], 4);
-    _date.assign(&data[24], 5);
-    _model.assign("SCC-1");
-    _synthModel = sm_SCC1;
-    _synthGeneration = SynthGen::SC55;
-  }
-
-  // Search for SC-88 control ROM files
-  romFile.seekg(0x7fc0);
-  romFile.read(data, 24);
-  if (!strncmp(&data[0], "GS-64 VER=3.00  SC-88   ", 24)) {
-    _version.assign("?");
-    _date.assign("?");
-    _model.assign("SC-88");
-    _synthModel = sm_SC88;
-    _synthGeneration = SynthGen::SC88;
   }
 
   // No GS banner: the JV family identifies itself by its table structure.
-  if (_model.empty() && _identify_device(romFile))
+  romFile.clear();
+  if (_identify_device(romFile))
     return 0;
 
-  if (_model.empty())        // No valid ROM file found    TODO: SC88 ??
-    return -1;
-
-  return 0;
+  return -1;
 }
 
 
@@ -534,7 +527,8 @@ int ControlRom::_read_drum_sets(std::ifstream &romFile)
 
   // After the map array there are 14 drum set definitions in 1164 byte blocks 
   char data[128];
-  for (x = banks[7] + 128; x < 0x03c028; x += 1164) {
+  const SoundCanvasLayout *sc = _profile->soundCanvas;
+  for (x = banks[7] + 128; x < (int) sc->drumSetTableEnd; x += sc->drumSetStride) {
     struct DrumSet d;
 
     // First array is 16 bit instrument reference
@@ -595,7 +589,8 @@ int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
 
   romFile.seekg(PROGmmLUT->KeyMapper);
   romFile.read(reinterpret_cast<char*> (lookupTables.KeyMapper.data()), kmSize);
-  lookupTables.KeyMapperOffset = PROGmmLUT->KeyMapper - 0x30000;
+  lookupTables.KeyMapperOffset =
+    PROGmmLUT->KeyMapper - _profile->soundCanvas->keyMapperBase;
 
   if (PROGmmLUT->TVAPanKeyFollow) {
     romFile.seekg(PROGmmLUT->TVAPanKeyFollow);
@@ -1064,8 +1059,8 @@ const DeviceProfile *ControlRom::_profile_for(enum SynthModel model)
 
 
 const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
-  { sm_JV1080, "JV-1080", 1024 * 1024, 4, SynthGen::JV1080, &JV1080_PROFILE },
-  { sm_JV880,  "JV-880",   256 * 1024, 2, SynthGen::JV880,  &JV880_PROFILE  },
+  { sm_JV1080, SynthGen::JV1080, &JV1080_PROFILE },
+  { sm_JV880,  SynthGen::JV880,  &JV880_PROFILE  },
 };
 const int ControlRom::DEVICE_COUNT =
   (int) (sizeof(DEVICES) / sizeof(DEVICES[0]));
@@ -1096,7 +1091,7 @@ bool ControlRom::_identify_device(std::ifstream &romFile)
   for (int pass = 0; pass < 2; pass++) {
     for (int i = 0; i < DEVICE_COUNT; i++) {
       const DeviceEntry &L = DEVICES[i];
-      if ((size == L.romSize) != (pass == 0))
+      if ((size == L.profile->romSize) != (pass == 0))
         continue;
       // require a run, not a single record: isolated printable triples occur
       int run = 0;
@@ -1108,7 +1103,7 @@ bool ControlRom::_identify_device(std::ifstream &romFile)
       _profile         = L.profile;
       _synthModel      = L.model;
       _synthGeneration = L.generation;
-      _model.assign(L.name);
+      _model.assign(L.profile->name);
       _version.assign("?");
       _date.assign("?");
       return true;
@@ -1192,7 +1187,8 @@ int ControlRom::_read_device_samples(void)
   // that: a correct table yields exactly as many entries as are referenced.
   int waveRoms = 2;
   for (int i = 0; i < DEVICE_COUNT; i++)
-    if (DEVICES[i].model == _synthModel) waveRoms = DEVICES[i].waveRoms;
+    if (DEVICES[i].model == _synthModel)
+      waveRoms = DEVICES[i].profile->waveRomBanks;
   const uint32_t WAVE_SPACE = (uint32_t) waveRoms * 2 * 1024 * 1024;
 
   size_t needed = 0;
@@ -1242,6 +1238,18 @@ int ControlRom::_read_device_samples(void)
 // not neutral for any of these: the key-follow and sensitivity fields are read
 // as (value - 0x40), so 0x40 is what "no effect" looks like, and a TVABiasLevel
 // of 0x40 or more would select the attenuating branch.
+// The table a device lists for one engine curve, or null if it lists none.
+const RomLookupTable *ControlRom::_find_lookup(RomLookup id)
+{
+  if (!_profile)
+    return nullptr;
+  for (int i = 0; i < _profile->lookupTableCount; i++)
+    if (_profile->lookupTables[i].id == id)
+      return &_profile->lookupTables[i];
+  return nullptr;
+}
+
+
 void ControlRom::_init_neutral_partial(struct InstPartial &ip)
 {
   ip.panpot          = 0x40;
@@ -1478,11 +1486,11 @@ void ControlRom::_init_device_lookup_tables(void)
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109
   // against the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
-  const uint32_t ENV_TIME_TABLE = 0x04c58;
-  if (_deviceRom.size() >= ENV_TIME_TABLE + 256) {
-    for (int i = 0; i < 128; i++)
-      t.envelopeTime[i] = (int) ((_deviceRom[ENV_TIME_TABLE + i * 2] << 8) |
-                                  _deviceRom[ENV_TIME_TABLE + i * 2 + 1]);
+  const RomLookupTable *envTime = _find_lookup(RomLookup::EnvelopeTime);
+  if (envTime && _deviceRom.size() >= envTime->offset + envTime->entries * 2) {
+    for (int i = 0; i < envTime->entries && i < 128; i++)
+      t.envelopeTime[i] = (int) ((_deviceRom[envTime->offset + i * 2] << 8) |
+                                  _deviceRom[envTime->offset + i * 2 + 1]);
   } else {
     t.envelopeTime[0] = 0;
     for (int i = 1; i < 128; i++)
@@ -1607,6 +1615,8 @@ void ControlRom::_init_device_lookup_tables(void)
         rom8(rt.offset, rt.entries, t.LFOSine);              break;
       case RomLookup::PitchCoarseExp:
         rom16(rt.offset, rt.entries, t.PitchCoarseExp);      break;
+      case RomLookup::EnvelopeTime:
+        break;                       // read separately, into a fixed-size array
       }
     }
   }

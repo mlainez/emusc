@@ -111,7 +111,8 @@ enum class RomLookup
   TVALevelIndex,
   EnvTimeKeyFollowSens,
   LFOSine,
-  PitchCoarseExp
+  PitchCoarseExp,
+  EnvelopeTime
 };
 
 struct RomLookupTable
@@ -198,6 +199,14 @@ struct SoundCanvasLayout
   const CpuRomMap             *cpu;
   int      velocityCurves;
 
+  // Drum sets follow the drum map array in equal blocks, ending here.
+  uint32_t drumSetTableEnd;
+  int      drumSetStride;
+
+  // The key mapper is stored at a ROM address; the engine wants it relative to
+  // the bank this base names.
+  uint32_t keyMapperBase;
+
   uint32_t demoSongOffset;              // bundled demo songs
   bool     demoSongRunsToRomEnd;        // otherwise it ends at the first bank
 
@@ -207,12 +216,37 @@ struct SoundCanvasLayout
 };
 
 
+// How a ROM announces itself, and where its version string lives.
+enum class RomVersionStyle
+{
+  Unknown,        // the ROM does not carry one we can read
+  Inline,         // version and date sit inside the signature block itself
+  SeparateBcd     // version elsewhere, followed by a BCD year/month/day
+};
+
+struct RomSignature
+{
+  const char     *modelName;
+  uint32_t        offset;
+  int             readLength;
+  const char     *match;
+  int             matchLength;
+  RomVersionStyle versionStyle;
+  uint32_t        versionOffset;        // SeparateBcd only
+};
+
+
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
 struct DeviceProfile
 {
   const char *name;
+
+  // Size of the control ROM image, and how many 2 MB wave ROM banks the device
+  // addresses. Used to tell one device of a family from another.
+  size_t romSize;
+  int    waveRomBanks;
 
   uint8_t maxPolyphony;
 
@@ -228,6 +262,12 @@ struct DeviceProfile
   const RomLookupTable *lookupTables;
   int                   lookupTableCount;
 };
+
+extern const RomSignature SC55_SIGNATURE;
+extern const RomSignature SCC1_SIGNATURE;
+extern const RomSignature SC55MKII_SIGNATURE;
+extern const RomSignature SCB55_SIGNATURE;
+extern const RomSignature SC88_SIGNATURE;
 
 extern const DeviceProfile JV880_PROFILE;
 extern const DeviceProfile JV1080_PROFILE;
