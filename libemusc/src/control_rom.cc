@@ -1594,22 +1594,25 @@ void ControlRom::_init_device_lookup_tables(void)
   // to rise, and every drum played centre. A numerical match is a lead; the
   // shape check is what makes it a finding.
 
-  auto rise_ok = [](const uint8_t *v, int n, int width) {
-    int inv = 0;
-    for (int i = 0; i + 1 < n; i++) {
-      int a = width == 1 ? v[i]   : (v[i*2] << 8)   | v[i*2+1];
-      int b = width == 1 ? v[i+1] : (v[i*2+2] << 8) | v[i*2+3];
-      if (b < a) inv++;
-    }
-    return inv <= n / 20;
-  };
+  auto shape_ok = [](const uint8_t *v, int n, int width, Monotonic want) -> bool {
+      int inversions = 0;
+      int prev = width == 2 ? ((v[0] << 8) | v[1]) : v[0];
+      for (int k = 1; k < n; k++) {
+        int cur = width == 2 ? ((v[k * 2] << 8) | v[k * 2 + 1]) : v[k];
+        if (want == Monotonic::Rising  && cur < prev) inversions++;
+        if (want == Monotonic::Falling && cur > prev) inversions++;
+        prev = cur;
+      }
+      return inversions == 0;
+    };
 
   if (haveRom) {
     for (int i = 0; i < _profile->lookupTableCount; i++) {
       const RomLookupTable &rt = _profile->lookupTables[i];
       if ((size_t) rt.offset + (size_t) rt.entries * rt.width > _deviceRom.size())
         continue;
-      if (rt.mustRise && !rise_ok(&_deviceRom[rt.offset], rt.entries, rt.width))
+      if (rt.shape != Monotonic::Unchecked &&
+          !shape_ok(&_deviceRom[rt.offset], rt.entries, rt.width, rt.shape))
         continue;
 
       switch (rt.id) {

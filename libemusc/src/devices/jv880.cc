@@ -30,20 +30,36 @@ namespace EmuSC
 // curves that must be monotonic. They keep their fitted SC-55 shape instead of a
 // wrong reading.
 static const RomLookupTable JV880_LOOKUP_TABLES[] = {
-  { RomLookup::TVFResonanceFreq,     0x3e9c4, 256, 1, false },
-  { RomLookup::TVFResonance,         0x054be, 128, 1, false },
-  { RomLookup::EnvSegmentCurve,      0x055f5,   9, 1, false },
-  { RomLookup::TVAPanKeyFollow,      0x3e931, 128, 1, false },
-  { RomLookup::TVALevelIndex,        0x05590, 128, 1, false },
-  { RomLookup::EnvTimeKeyFollowSens, 0x3ff49,  21, 1, true  },
-  { RomLookup::LFOSine,              0x04edf, 130, 1, false },
+  // 0x3e9c4 is the wrong data and the check now says so. The SC-55's own
+  // TVFResonanceFreq, in its CPU ROM at 0x7714, is flat 127 across the first
+  // ninety entries and then strictly falling to 0 - 115 falls, 0 rises. This
+  // window has 102 rises and 2 falls: the opposite shape, and a curve that rises
+  // where the reference falls boosts where it should attenuate. Marked Falling so
+  // the reading is REJECTED and the fitted SC-55 curve stands instead, which is
+  // a guess but a guess of the right shape. The JV's own table is not identified:
+  // the best strictly non-increasing 256-byte candidate is 0x05290 at deviation
+  // 0.1782, not good enough to claim.
+  { RomLookup::TVFResonanceFreq,     0x3e9c4, 256, 1, Monotonic::Falling },
+  // Was 0x054be, which is 46 bytes INSIDE the table that starts at 0x05490 -
+  // entered with the shape check off. The region maps cleanly by its own
+  // boundaries, every table starting at 255 and ending at 0: 128-byte tables at
+  // 0x05490, 0x05510 and 0x05590. 0x05510 is the one whose shape matches the
+  // SC-55's TVFResonance - strictly falling, 0 rises and 123 falls against its
+  // 0 and 115, deviation 0.0810 once normalised - and it is the right length for
+  // a resonance of 0..127.
+  { RomLookup::TVFResonance,         0x05510, 128, 1, Monotonic::Falling },
+  { RomLookup::EnvSegmentCurve,      0x055f5,   9, 1, Monotonic::Unchecked },
+  { RomLookup::TVAPanKeyFollow,      0x3e931, 128, 1, Monotonic::Unchecked },
+  { RomLookup::TVALevelIndex,        0x05590, 128, 1, Monotonic::Falling },
+  { RomLookup::EnvTimeKeyFollowSens, 0x3ff49,  21, 1, Monotonic::Rising },
+  { RomLookup::LFOSine,              0x04edf, 130, 1, Monotonic::Unchecked },
 
   // Envelope phase times: 128 big-endian 16-bit entries, 128 rising to 16127 on
   // a constant ratio of 1.0384 - a doubling every ~18 steps. The same shape and
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109 against
   // the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
-  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, false }
+  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, Monotonic::Rising }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -102,6 +118,7 @@ static const RecordRomLayout JV880_RECORDS = {
       // 127 moves that patch's spectral centroid from 99 Hz to 441 Hz, the
       // largest and cleanest swing of any byte tested.
       52, 53,
+
 
       // The tone's level, +67 scaled by +81.
       67, 81,

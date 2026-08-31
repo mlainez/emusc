@@ -116,13 +116,22 @@ enum class RomLookup
   EnvelopeTime
 };
 
+// Which way a curve must go for the reading to be trusted. Four JV tables have
+// been caught by this check and two of them were entered with it switched off.
+enum class Monotonic
+{
+  Unchecked,
+  Rising,
+  Falling
+};
+
 struct RomLookupTable
 {
   RomLookup id;
   uint32_t  offset;
   int       entries;
   int       width;                      // bytes per entry, 1 or 2
-  bool      mustRise;                   // check monotonic before trusting it
+  Monotonic shape;
 };
 
 
