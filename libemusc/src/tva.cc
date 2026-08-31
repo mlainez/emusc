@@ -591,6 +591,86 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                          int instrumentIndex, uint8_t cVelocityLvl,
                          uint8_t cVelocity)
 {
+  // The JV family computes level multiplicatively in the linear domain and
+  // converts once through its own curve, where the Sound Canvas accumulates
+  // attenuations in a log index domain and subtracts them (P-0381):
+  //
+  //   final = T[(toneLevel x sampleLevel8 x velScale) >> 8]
+  //         x T[(partLevel x patchLevel) >> 7]
+  //
+  // and the envelope is a separate multiplier, because on the hardware the static
+  // level and the envelope are two chip registers the tone generator multiplies.
+  // Sharing the Sound Canvas chain here is why not one JV instrument was inside
+  // 0.5 dB of the machine on level: it subtracts a velocity curve as though it
+  // were a level law.
+  if (_settings->generation() == ControlRom::SynthGen::JV880 ||
+      _settings->generation() == ControlRom::SynthGen::JV1080) {
+    const auto &T = _LUT.JVLevel;
+
+    // Sample level is byte 0 of the sample record, 7 bits widened to 8 the way
+    // the firmware widens it.
+    const int sv    = ctrlRom.sample(sampleIndex).volume & 0x7f;
+    const int smpl8 = 2 * sv + (sv >= 64 ? 1 : 0);
+
+    int index = (_instPartial.volume & 0x7f) * smpl8;          // 15-bit
+
+    // Velocity, through the tone's own curve out of the bank of seven, applied
+    // multiplicatively. Sensitivity 0 means no velocity effect at all.
+    // Velocity is READ from the tone (+72 sensitivity, +71 curve selector) but
+    // NOT APPLIED yet: applying it as below costs more than it gains - Slap goes
+    // from +0.4 dB to -5.7, SA Rhodes from +0.8 to -7.8, and SAW Lead falls
+    // silent - so the curve's magnitude or its combination point is still wrong.
+    // The static law without it puts two instruments inside 0.5 dB where the
+    // Sound Canvas chain put none, so it lands and this waits.
+    const int sens = 0;
+    if (sens != 0) {
+      const int curve = (_instPartial.TVALvlVelCur & 7) * 128;
+      const int v     = cVelocity & 0x7f;
+      // The firmware's two branches, and their out-of-range behaviour matters:
+      // an index past the end of a 128-entry curve is not the same as its last
+      // entry. Clamping it to 127 - where every curve reads 0 - turned a negative
+      // sensitivity into near-total attenuation and silenced every instrument.
+      int w = 0;
+      if (sens > 0) {
+        const int idx = 127 - ((sens * (127 - v)) >> 5);
+        w = (idx < 0) ? 0xffff : (_LUT.JVVelCurves[curve + idx] << 8);
+      } else {
+        const int idx = (-sens * v) >> 5;
+        w = (idx > 127) ? 0 : ((255 - _LUT.JVVelCurves[curve + idx]) << 8);
+      }
+      index -= (int) (((int64_t) index * w) >> 16);
+    }
+
+    const int gain = T[std::clamp(index >> 8, 0, 127)];
+
+    // Part level times patch level, through the same curve, multiplied in.
+    const int part  = _settings->get_param(PatchParam::PartLevel, _partId) & 0x7f;
+    const int patch = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
+    const int dyn   = T[std::clamp((part * patch) >> 7, 0, 127)];
+
+    const int stat8 = std::clamp((int) (((int64_t) gain * dyn) >> 24), 0, 255);
+
+    // The envelope scales that statically-computed level rather than sharing an
+    // index with it.
+    auto env = [stat8](uint8_t L) -> int {
+      return std::clamp((stat8 * (L & 0x7f)) / 127, 0, 255);
+    };
+    _phaseValueInit[0] = 0;
+    _phaseValueInit[1] = env(_instPartial.TVAEnvL1);
+    _phaseValueInit[2] = env(_instPartial.TVAEnvL2);
+    _phaseValueInit[3] = env(_instPartial.TVAEnvL3);
+    _phaseValueInit[4] = env(_instPartial.TVAEnvL4);
+    _phaseValueInit[5] = 0;
+
+    _phaseDurationInit[0] = 0;
+    _phaseDurationInit[1] = _instPartial.TVAEnvT1 & 0x7F;
+    _phaseDurationInit[2] = _instPartial.TVAEnvT2 & 0x7F;
+    _phaseDurationInit[3] = _instPartial.TVAEnvT3 & 0x7F;
+    _phaseDurationInit[4] = _instPartial.TVAEnvT4 & 0x7F;
+    _phaseDurationInit[5] = _instPartial.TVAEnvT5 & 0x7F;
+    return;
+  }
+
   // First step is to calculate correct initial phase levels
   int levelIndex = std::max(0xff - _LUT.TVALevelIndex[_instPartial.volume], 1);
   int kmIndex = _LUT.KeyMapperIndex[0 + _instPartial.TVABiasPoint] -

@@ -1340,8 +1340,11 @@ int ControlRom::_read_device_patches(void)
         // whatever the velocity - no dynamics at all, which the owner heard as
         // everything sounding "flat". 0 passes velocity straight through. The
         // tone's own sensitivity byte is not identified yet, so full response is
-        // the honest default: wrong dynamics beat none. (Set by
-        // _init_neutral_partial; spelled out here because 127 looks correct.)
+        // Velocity, now read rather than assumed: the tone's own sensitivity at
+        // +72 (signed) and its curve selector at +71. The firmware applies the
+        // curve multiplicatively and skips it entirely at sensitivity 0.
+        ip.TVALvlVSens  = tb[F.tvaVelLevelSens];
+        ip.TVALvlVelCur = tb[F.tvaVelCurve] & 0x07;
 
         // The filter is read but LEFT DISABLED, and that is a measured decision
         // rather than a missing table. With TVFResonanceFreq, TVFEnvDepth,
@@ -1649,6 +1652,10 @@ void ControlRom::_init_device_lookup_tables(void)
         rom8(rt.offset, rt.entries, t.LFOSine);              break;
       case RomLookup::PitchCoarseExp:
         rom16(rt.offset, rt.entries, t.PitchCoarseExp);      break;
+      case RomLookup::JVLevel:
+        rom16(rt.offset, rt.entries, t.JVLevel);             break;
+      case RomLookup::JVVelCurves:
+        rom8(rt.offset, rt.entries, t.JVVelCurves);          break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }

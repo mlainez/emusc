@@ -54,6 +54,8 @@ struct ToneFieldMap
   int envTime3, envLevel3;
   int envRelease;
   int reverbSend, chorusSend;
+  int tvaVelCurve;                      // +71 bits 0-2: which of the seven curves
+  int tvaVelLevelSens;                  // +72 signed -63..+63; 0 = no velocity effect
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -123,7 +125,9 @@ enum class RomLookup
   EnvTimeKeyFollowSens,
   LFOSine,
   PitchCoarseExp,
-  EnvelopeTime
+  EnvelopeTime,
+  JVLevel,
+  JVVelCurves
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have

@@ -236,6 +236,12 @@ public:
     std::array<uint8_t, 129> TVAPanpot;
     std::array<uint8_t, 128> TVALevelIndex;
     std::array<uint8_t, 256> TVALevel;
+
+    // The JV's own level law (P-0381). T maps a 15-bit level index to a linear
+    // 16-bit gain and is NOT exponential, so it cannot be fitted; the velocity
+    // curves are a bank of seven, selected per tone.
+    std::array<int, 128>      JVLevel;
+    std::array<uint8_t, 896>  JVVelCurves;
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };

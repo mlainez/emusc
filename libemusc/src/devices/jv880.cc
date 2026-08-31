@@ -59,7 +59,21 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:
   // sampled every 16 it reads 128, 235, 433, 796, 1464, 2693, 4953, 9109 against
   // the SC-55's 0, 159, 453, 994, 1990, 3827, 7211, 13448.
-  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, Monotonic::Rising }
+  { RomLookup::EnvelopeTime,         0x04c58, 128, 2, Monotonic::Rising },
+
+  // The level law's own curve (P-0381), found in the firmware rather than fitted.
+  // 128 big-endian words rising 0 to 65535, with its own precomputed slope table
+  // beside it at 0x6360 - 127 of 127 entries within one of the exact deltas,
+  // which is what identifies it. Not exponential: 0.22 dB per step at the top,
+  // over 0.5 dB below index 16, 45.6 dB span. Every attempt to fit a constant
+  // dB-per-step for this failed because there is not one.
+  { RomLookup::JVLevel,              0x06260, 128, 2, Monotonic::Rising },
+
+  // Seven velocity curves of 128 bytes at 0x5390 + c * 0x80, each falling 255 to
+  // 0, selected per tone by record byte +55 & 7 for the TVF and +71 & 7 for the
+  // TVA - the descriptor table's own velocity-curve fields. Curve 4 is 0x05590,
+  // which this port had been reading as a general level index table.
+  { RomLookup::JVVelCurves,          0x05390, 896, 1, Monotonic::Unchecked }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -143,7 +157,14 @@ static const RecordRomLayout JV880_RECORDS = {
       74, 75, 76, 77, 78, 79, 80,
 
       // Effect sends, +82 and +83.
-      82, 83
+      82, 83,
+
+      // +71 bits 0-2 select which of the seven velocity curves this tone uses,
+      // and +72 is its sensitivity, signed -63..+63 (P-0381). A sensitivity of 0
+      // means the firmware skips the velocity helper entirely - no velocity
+      // effect - which is why reinterpreting the old hardcoded 0 as -64 silenced
+      // every instrument.
+      71, 72
     }
   },
 
