@@ -696,6 +696,24 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     _phaseDurationInit[3] = _instPartial.TVAEnvT3 & 0x7F;
     _phaseDurationInit[4] = _instPartial.TVAEnvT4 & 0x7F;
     _phaseDurationInit[5] = _instPartial.TVAEnvT5 & 0x7F;
+
+    // LINEAR, every segment. This branch used to return without writing
+    // _phaseShape at all, so _iterate_phase() selected each segment's shape
+    // from UNINITIALISED memory: whether a segment ramped linearly or
+    // exponentially depended on what the heap happened to hold, which made the
+    // render depend on the allocator. It is measurable - adding three bytes of
+    // padding to InstPartial, with no behavioural change whatever, alters the
+    // JV render from the first note off onwards - and it is the reason a JV
+    // byte-identity check could not be relied on.
+    //
+    // Zero, not a guess: the JV's envelope stepper subtracts a fixed decrement
+    // from a 16-bit counter and interpolates level = target + (remaining *
+    // (start - target) >> 16). remaining falls linearly in time, so the level
+    // is a linear ramp between the two segment levels. There is no
+    // remaining-distance-times-rate term anywhere in that path, which is what
+    // an exponential approach would need (P-0391).
+    for (int i = 0; i < 6; i++)
+      _phaseShape[i] = 0;
     return;
   }
 
