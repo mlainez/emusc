@@ -75,7 +75,7 @@ WaveRom::WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom)
   _sampleSets.reserve(ctrlRom.numSampleSets());
 
   for (int i = 0; i < ctrlRom.numSampleSets(); i ++)
-    _read_samples(romData, ctrlRom.sample(i), ctrlRom.generation());
+    _read_samples(romData, ctrlRom.sample(i), ctrlRom.device()->wave);
 
   _version = std::string(&romData[0x1c], 4);
   _date = std::string(&romData[0x30], 10);
@@ -125,11 +125,10 @@ int8_t WaveRom::_unscramble_data(int8_t byte,
 
 
 uint32_t WaveRom::_find_samples_rom_address(uint32_t address,
-                                           enum ControlRom::SynthGen synthGen)
+                                           const WaveAddressing &wave)
 {
-  // The JV addresses a flat space across its wave ROMs: no bank encoding.
-  if (synthGen == ControlRom::SynthGen::JV880 ||
-      synthGen == ControlRom::SynthGen::JV1080)
+  // The JV family addresses a flat space across its wave ROMs: no bank encoding.
+  if (wave.flat)
     return address;
 
   uint32_t bank = 0;
@@ -142,7 +141,7 @@ uint32_t WaveRom::_find_samples_rom_address(uint32_t address,
       bank = 0x100000;
       break;
     case 2:
-      bank = (synthGen == ControlRom::SynthGen::SC55mk2) ? 0x200000 : 0x100000;
+      bank = wave.bank2Offset;
       break;
     case 4:
       bank = 0x200000;
@@ -158,7 +157,7 @@ uint32_t WaveRom::_find_samples_rom_address(uint32_t address,
 
 int WaveRom::_read_samples(std::vector<char> &romData,
                            struct ControlRom::Sample &ctrlSample,
-                           enum ControlRom::SynthGen synthGen)
+                           const WaveAddressing &wave)
 {
   struct Samples s;
   float sample = 0;
@@ -169,7 +168,7 @@ int WaveRom::_read_samples(std::vector<char> &romData,
   const bool pingPong = (ctrlSample.loopMode == 1);
 
   const uint32_t romAddress =
-    _find_samples_rom_address(ctrlSample.address, synthGen);
+    _find_samples_rom_address(ctrlSample.address, wave);
 
   s.samplesF.reserve(sampleLen + 1 + (pingPong ? span + 1 : 0));
 

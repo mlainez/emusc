@@ -34,7 +34,27 @@ const DeviceProfile JV1080_PROFILE = {
   nullptr,
   nullptr, 0,
 
-  { 8, 7, 24, 5, 127, 10, 127, 1000, 0, 0 }
+  { 8, 7, 24, 5, 127, 10, 127, 1000, 0, 0 },
+
+  LevelLawKind::JVCurveProduct,
+
+  {
+    // UNMEASURED, and unlike the JV-880 this device does not even share the
+    // Sound Canvas reverb DSP: its XP chip runs an uploaded DSP program. These
+    // are placeholders that keep the engine running, not this machine's law.
+    1.829f, -11.9f, 187,
+
+    // Return level, pre-LPF pair and delay taps. Shared across the family
+    // because the reverb DSP is: see ReverbLaw. levelDivisor is not the
+    // firmware's return law and ReverbLaw says why it still stands here.
+    64.0f,
+    8, 0x3f, 4,
+    0x16, 112
+  },
+
+  { true,  0x3f, 0x7f },
+
+  { true, 0 }
 };
 
 }

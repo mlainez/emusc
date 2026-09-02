@@ -335,7 +335,30 @@ const DeviceProfile JV880_PROFILE = {
     // part-level curve came out about twice as steep in decibels as the
     // machine's, which is most of why every instrument measured too quiet.
     0       // partLevelInDynamics
-  }
+  },
+
+  LevelLawKind::JVCurveProduct,
+
+  {
+    // UNMEASURED for this device: these are the SC-55mkII's numbers, which is
+    // what the engine applied to the JV before they moved here. The reverb DSP
+    // is shared with the Sound Canvas family, so the line's SHAPE is right and
+    // only its two constants are open - they need this machine's own T60
+    // against reverb time, the way P-0304 did the other two.
+    1.829f, -11.9f, 187,
+
+    // Return level, pre-LPF pair and delay taps. Shared across the family
+    // because the reverb DSP is: see ReverbLaw. levelDivisor is not the
+    // firmware's return law and ReverbLaw says why it still stands here.
+    64.0f,
+    8, 0x3f, 4,
+    0x16, 112
+  },
+
+  { true,  0x3f, 0x7f },
+
+  // A flat address space across the four wave ROMs; no bank bits.
+  { true, 0 }
 };
 
 }

@@ -52,10 +52,10 @@ private:
                             enum ControlRom::SynthGen synthGen);
 
   uint32_t _find_samples_rom_address(uint32_t address,
-                                     enum ControlRom::SynthGen synthGen);
+                                     const WaveAddressing &wave);
   int _read_samples(std::vector<char> &rom,
                     struct ControlRom::Sample &ctrlSample,
-                    enum ControlRom::SynthGen synthGen);
+                    const WaveAddressing &wave);
 
   WaveRom();
 

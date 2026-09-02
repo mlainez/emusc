@@ -77,7 +77,27 @@ const DeviceProfile SC55_PROFILE = {
   // not use this law; left zero so a misuse is obvious rather than plausible.
   // Its envelope table is already in engine ticks, and segments of 8 ticks or
   // fewer snap - the behaviour tva.cc has always had for this generation.
-  { 0, 0, 0, 0, 0, 0, 0, 0, 8, 1 }
+  { 0, 0, 0, 0, 0, 0, 0, 0, 8, 1 },
+
+  LevelLawKind::SoundCanvasLogIndex,
+
+  {
+    // The mk1's reverb decays about 1.09x slower than the mkII's at the same
+    // reverb time, so it needs its own line (P-0304, TASK-077).
+    1.860f, -8.8f, 190,
+
+    // Return level, pre-LPF pair and delay taps. Shared across the family
+    // because the reverb DSP is: see ReverbLaw. levelDivisor is not the
+    // firmware's return law and ReverbLaw says why it still stands here.
+    64.0f,
+    8, 0x3f, 4,
+    0x16, 112
+  },
+
+  { false, 0x10, 0x50 },
+
+  // Bank id 2 lands in the second megabyte on this generation.
+  { false, 0x100000 }
 };
 
 }

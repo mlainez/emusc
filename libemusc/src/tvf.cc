@@ -332,19 +332,15 @@ void TVF::_init_freq_and_res(void)
   envLevelMax = std::max(envLevelMax, _L4Init);
   envLevelMax = std::max(envLevelMax, _L5Init);
 
-  // On the mkII generation a positive TVF Cutoff Frequency raises the
-  // partial's base cutoff, one cutoff step per parameter step, and the
-  // resonance the cutoff admits is read at the raised position.  On the SC-55
-  // generation a positive value does nothing at all: the cutoff stays at the
-  // partial's own base.  Measured on Warm Pad, C4, over the whole parameter
-  // range (PROVENANCE.md P-0133): the mkII's fitted cutoff runs +2 -> +2.1,
-  // +8 -> +8.2, +16 -> +15.7, +32 -> +30.3, +40 -> +39.6 cutoff steps and
-  // then saturates at the top of the cutoff table, while the SC-55 stays
-  // within 0.1 of its base for every value from +2 to +63.
+  // Whether a positive TVF Cutoff Frequency raises the partial's base cutoff is
+  // per-device: see TvfCutoffLaw. The fit behind it is P-0133 - the mkII's
+  // cutoff runs +2 -> +2.1, +8 -> +8.2, +16 -> +15.7, +32 -> +30.3, +40 -> +39.6
+  // cutoff steps and then saturates, while the mk1 stays within 0.1 of its base
+  // for every value from +2 to +63.
+  const TvfCutoffLaw &law = _settings->device()->tvfCutoff;
   int tm3 = _settings->get_param(PatchParam::TVFCutoffFreq, _partId) - 0x40;
-  bool cofOffsetRaises =
-    _settings->generation() != ControlRom::SynthGen::SC55;
-  tm3 = std::clamp(tm3, -0x32, cofOffsetRaises ? 0x3f : 0x10);
+  bool cofOffsetRaises = law.offsetRaises;
+  tm3 = std::clamp(tm3, -0x32, law.offsetMax);
   int bptm3 = (tm3 < 0 || cofOffsetRaises) ? _instPartial.TVFBaseFlt + tm3
                                            : _instPartial.TVFBaseFlt;
   // _iterate_phase() clamps the same sum to 0x7f before it uses it
@@ -510,10 +506,10 @@ void TVF::_iterate_phase(void)
 
   // See _init_freq_and_res(): only the mkII generation lets the parameter
   // raise the cutoff above the partial's own base (PROVENANCE.md P-0133)
+  const TvfCutoffLaw &law = _settings->device()->tvfCutoff;
   int tmCF = _settings->get_param(PatchParam::TVFCutoffFreq, _partId);
-  bool cofOffsetRaises =
-    _settings->generation() != ControlRom::SynthGen::SC55;
-  tmCF = std::clamp(tmCF, 0xe, cofOffsetRaises ? 0x7f : 0x50);
+  bool cofOffsetRaises = law.offsetRaises;
+  tmCF = std::clamp(tmCF, 0xe, law.paramMax);
   int accCoFreq = std::clamp(_instPartial.TVFBaseFlt + (tmCF - 0x40), 0,
                              cofOffsetRaises ? 0x7f
                                              : (int) _instPartial.TVFBaseFlt);

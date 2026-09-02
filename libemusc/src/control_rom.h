@@ -398,6 +398,12 @@ private:
   const DeviceProfile *_profile = nullptr;
 public:
   const DeviceProfile *profile(void) const { return _profile; }
+
+  // The loaded device's profile, never null. A ROM whose layout is not mapped
+  // falls back to the Sound Canvas defaults, so the synthesis engine needs no
+  // device branch of its own.
+  const DeviceProfile *device(void) const
+  { return _profile ? _profile : &SOUND_CANVAS_DEFAULT_PROFILE; }
 private:   // set when the device is identified
   std::vector<uint8_t> _deviceRom;       // whole JV control ROM, for table walking
   std::array<int, 16> _channelPatch;

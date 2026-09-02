@@ -306,6 +306,91 @@ struct LevelLaw
 };
 
 
+// Which arithmetic a device's level chain uses. The families differ in kind, not
+// in constants: the Sound Canvas accumulates attenuations in a log index domain
+// and subtracts them, while the JV forms a product of two curve lookups and
+// keeps the envelope as a separate multiplier (PROVENANCE.md P-0381).
+enum class LevelLawKind
+{
+  SoundCanvasLogIndex,
+  JVCurveProduct
+};
+
+
+// How a sample address in a waveform record maps onto the wave ROM images.
+struct WaveAddressing
+{
+  bool     flat;          // one flat space, no bank bits: the JV family
+  uint32_t bank2Offset;   // where bank id 2 lands; the mkII differs from the mk1
+};
+
+
+// The reverb unit's device-specific numbers.
+//
+// The network in reverb.cc is SHARED, and that is a hardware fact rather than a
+// convenience. The SC-55 mk1, the SC-55mkII and the JV-880 all drive the same
+// reverb DSP: Roland's JV-880 service notes state that its TC6116AF is the mk1's
+// TC24SC201AF PCM engine packaged together with the mk1's HG62E11B23FS I/O gate
+// array, and the SC-55mkII's parts list carries that same Roland part number
+// (15239229). So one sibling differs from another only in the numbers below,
+// never in the topology.
+struct ReverbLaw
+{
+  // Reverb time -> loop gain, a rounded straight line saturating at timeCap.
+  // Inverted from our own measured T60(gLoop) curve against each machine's own
+  // T60; the mk1 decays about 1.09x slower than the mkII at the same reverb
+  // time, so one line cannot fit both (P-0296, P-0300, P-0303, P-0304).
+  float timeSlope, timeOffset;
+  int   timeCap;
+
+  // Return level: gain = level / levelDivisor.
+  //
+  // This is NOT the firmware's law for either family, and knowingly so. The mk1
+  // writes the return as (level << 8) into a 16-bit register; the JV-880 forms
+  // ((2 * level + 1) * coeff) >> 8 out of 255, with coeff from the reverb TYPE
+  // record - some 24 dB below this divisor at full level. Applying the JV's own
+  // law moved its return from 13.3 dB hot to 12.7 dB quiet (P-0387), and those
+  // two figures bracket the truth: the residual is this network's internal gain,
+  // not the return law. Since the DSP is shared, correcting it means building the
+  // network from the traced tap set both devices upload - not a fudge factor.
+  float levelDivisor;
+
+  // Pre-LPF: a complementary one-pole pair whose halves sum to pairSum, stepped
+  // by stepPerLevel and capped at maxLevel.
+  int preLpfStep, preLpfPairSum, preLpfMaxLevel;
+
+  // Delay and panning-delay taps: tap = base + perTime * reverbTime. Panning
+  // delay puts its left tap at half the spacing.
+  int delayTapBase, delayTapPerTime;
+};
+
+
+// How a part's TVF Cutoff Frequency parameter reaches the partial's cutoff.
+struct TvfCutoffLaw
+{
+  // Whether a POSITIVE parameter value raises the partial's base cutoff. On the
+  // mkII generation it does, one cutoff step per parameter step, and the
+  // resonance the cutoff admits is read at the raised position. On the mk1 a
+  // positive value does nothing at all. Measured on Warm Pad, C4, over the whole
+  // parameter range (PROVENANCE.md P-0133).
+  bool offsetRaises;
+
+  // The two ceilings this parameter is clamped to: on (parameter - 0x40) where
+  // the partial's base cutoff is offset, and on the parameter itself where the
+  // phase iterator recomputes it.
+  //
+  // The mk1 restricts this parameter where later devices do not. Its ceiling is
+  // 0x50 against the mkII's 0x7f - and that restriction is the mk1's own, not
+  // the family's: the SCC-1 generation's firmware allows 0x72, both in the ROM
+  // byte and in its manual's own parameter chart. libEmuSC currently answers an
+  // SCC-1 ROM with this profile, so it inherits the mk1's narrower ceiling; that
+  // is a KNOWN DIVERGENCE, not a measurement, and correcting it needs an SCC-1
+  // reference render rather than a change made on paper.
+  int offsetMax;
+  int paramMax;
+};
+
+
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
@@ -333,6 +418,11 @@ struct DeviceProfile
   int                   lookupTableCount;
 
   LevelLaw level;
+
+  LevelLawKind   levelLawKind;
+  ReverbLaw      reverb;
+  TvfCutoffLaw   tvfCutoff;
+  WaveAddressing wave;
 };
 
 extern const RomSignature SC55_SIGNATURE;
@@ -340,6 +430,12 @@ extern const RomSignature SCC1_SIGNATURE;
 extern const RomSignature SC55MKII_SIGNATURE;
 extern const RomSignature SCB55_SIGNATURE;
 extern const RomSignature SC88_SIGNATURE;
+
+// The Sound Canvas family's shared behaviour, for a generation whose ROM layout
+// has not been mapped yet and so has no profile of its own. It carries only what
+// the synthesis engine reads - never a ROM offset - and its values are exactly
+// what the engine used to hold in its own else branches.
+extern const DeviceProfile SOUND_CANVAS_DEFAULT_PROFILE;
 
 extern const DeviceProfile JV880_PROFILE;
 extern const DeviceProfile JV1080_PROFILE;

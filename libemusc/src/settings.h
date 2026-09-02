@@ -138,6 +138,11 @@ public:
   inline enum ControlRom::SynthGen generation(void)
   { return _ctrlRom.generation(); }
 
+  // The loaded device's profile, never null. Everything that differs between
+  // devices is read from here rather than branched on by generation.
+  inline const DeviceProfile *device(void)
+  { return _ctrlRom.device(); }
+
   int get_acc_control_param(enum ControllerParam cp, int part)
   { part = std::clamp(part, 0, 15);
     return _accControlParams[part][static_cast<int>(cp)]; }

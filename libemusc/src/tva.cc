@@ -638,10 +638,9 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   // Sharing the Sound Canvas chain here is why not one JV instrument was inside
   // 0.5 dB of the machine on level: it subtracts a velocity curve as though it
   // were a level law.
-  if (_settings->generation() == ControlRom::SynthGen::JV880 ||
-      _settings->generation() == ControlRom::SynthGen::JV1080) {
+  if (_settings->device()->levelLawKind == LevelLawKind::JVCurveProduct) {
     const auto &T  = _LUT.JVLevel;
-    const LevelLaw &L = ctrlRom.profile()->level;
+    const LevelLaw &L = _settings->device()->level;
 
     // Sample level is byte 0 of the sample record, 7 bits widened to 8 the way
     // the firmware widens it.
