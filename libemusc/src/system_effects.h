@@ -34,7 +34,9 @@ namespace EmuSC {
 class SystemEffects
 {
 public:
-  SystemEffects(Settings *settings);
+  // The control ROM comes in because the chorus reads its type records from the
+  // device's own ROM (PROVENANCE.md P-0394); nothing else here needs it.
+  SystemEffects(Settings *settings, ControlRom &ctrlRom);
   ~SystemEffects();
 
   // Both effects take a single input sample per frame, and the parts feed

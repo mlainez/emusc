@@ -1627,6 +1627,11 @@ void ControlRom::_init_device_lookup_tables(void)
     t.PitchFineExp[i] = (int) std::round(i * (62237.0 / 255.0));
   t.PortamentoRate.fill(0);
 
+  // The chorus type records, if this device has them: filled from the ROM in the
+  // lookup-table pass below, and left zero otherwise so the chorus can tell that
+  // it has no records to sweep between.
+  t.JVChorusRecords.fill(0);
+
   t.LFORate.fill(0);
   t.LFODelayTime.fill(0);
   t.LFOTVFDepth.fill(0);
@@ -1749,6 +1754,8 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.JVTvfBase);           break;
       case RomLookup::JVTvfCutoffKF:
         rom16s(rt.offset, rt.entries, t.JVTvfCutoffKF);      break;
+      case RomLookup::JVChorusRecords:
+        rom16(rt.offset, rt.entries, t.JVChorusRecords);     break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }

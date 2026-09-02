@@ -30,6 +30,17 @@
 // implementation is based on the reverse-engineering work done by nukeykt as
 // part of the Nuked-SC55 project (https://github.com/nukeykt/Nuked-SC55).
 
+// The JV family drives the same chip from a different program, and it is a
+// different mechanism rather than different constants: its firmware hands the
+// chip a start address, an end address, a position and a read-rate increment out
+// of a three-entry table in its own control ROM, and the chorus is that read
+// pointer sweeping between the two addresses - there is no LFO, no delay
+// parameter and no reverb-send level, and the MIX/REVERB return is a hard
+// switch. All of that is in _update_jv(), read from the JV's firmware and its
+// ROM records (PROVENANCE.md P-0394); the sweep automaton itself is shared and
+// unchanged. Which mechanism a device uses is a field of its profile,
+// ChorusLawKind, exactly as its level, reverb and filter laws are.
+
 
 #ifndef __CHORUS_H__
 #define __CHORUS_H__
@@ -45,7 +56,7 @@ namespace EmuSC {
 class Chorus
 {
  public:
-  Chorus(Settings *settings);
+  Chorus(Settings *settings, const struct ControlRom::LookupTables &LUT);
 
   void process_sample(float input, float output[2], float *reverbSend);
   void update(void);   // call at control rate (every 256 samples)
@@ -53,7 +64,22 @@ class Chorus
  private:
   Chorus();
 
+  // The two mechanisms this unit is driven by. process_sample is SHARED - it is
+  // the chip's own sweep, interpolation and return matrix, and the two families
+  // put the same chip behind their chorus - so a device differs only in what
+  // these two write into the geometry and the eight return gains.
+  void _update_sound_canvas(void);
+  void _update_jv(void);
+
   Settings *_settings;
+  const struct ControlRom::LookupTables &_LUT;
+
+  // Set once, from the device profile: the JV sweeps a read pointer between two
+  // addresses out of a per-type ROM record instead of modulating a delay length
+  // from an LFO (PROVENANCE.md P-0394).
+  bool _jv;
+  const struct ChorusJvLaw *_jvLaw;
+  int _jvType;                // the record currently loaded, -1 if none
 
   static constexpr int rBufferSize = 16384;
   static constexpr int rBufferMask = rBufferSize - 1;

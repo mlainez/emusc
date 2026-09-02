@@ -134,7 +134,29 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // Rising it would be REJECTED and left as zeros - a silent no-key-follow.
   // The check it passes instead is the strongest available: it IS the manual's
   // published list, entry for entry.
-  { RomLookup::JVTvfCutoffKF,        0x057be,  16, 2, Monotonic::Unchecked }
+  { RomLookup::JVTvfCutoffKF,        0x057be,  16, 2, Monotonic::Unchecked },
+
+  // The chorus type records (P-0394). Three records of five big-endian words,
+  // contiguous from 0x49EE, which is also how the firmware reaches them: the
+  // effect pointer table at 0x4800 has ELEVEN entries - eight 60-byte reverb
+  // records and these three 10-byte ones - and the chorus driver indexes it as
+  // @(0x4810, type*2), i.e. entries 8, 9 and 10 (ROM2 0x73AA-0x73B5).
+  //
+  //   CHORUS1  3d00 1828 3f40 3ff8 0084   window span 184 samples = 5.75 ms
+  //   CHORUS2  3d00 2818 3d0e 3ff4 004c               742          23.2 ms
+  //   CHORUS3  3d00 003f 3d08 3fce 03b1               710          22.2 ms
+  //
+  // w2 and w3 are the sweep window's start and end as WORD offsets into the
+  // 16384-word effect PSRAM, w4 the sweep-rate base, and w0 - identical in all
+  // three, so not a per-type control - the input write pointer. The addresses
+  // sit at the TOP of the PSRAM, 0x3D08-0x3FF8, where the reverb uses the
+  // bottom. Byte-identical in ROM2 v1.0.0 and v1.0.1.
+  //
+  // Monotonic::Unchecked, and not from laziness: these are five heterogeneous
+  // fields per record, not a curve, so a shape check would mean nothing. What
+  // stands in for it is that the three records agree with the driver's own use
+  // of them - w3 > w2 in all three, both inside the PSRAM, w0 below both.
+  { RomLookup::JVChorusRecords,      0x049ee,  15, 2, Monotonic::Unchecked }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -475,6 +497,20 @@ const DeviceProfile JV880_PROFILE = {
     // engine's control period is 256 samples of its internal 32 kHz clock -
     // the same 8 ms. So two.
     2
+  },
+
+  ChorusLawKind::JVSweptPointer,
+
+  // The chorus driver's own constants (P-0394), all immediates in ROM2
+  // 0x738C-0x74E3. See ChorusJvLaw for what each one multiplies.
+  {
+    3,          // three type records
+    0xe1,       // f = Depth * 225 + 4096, doubled and taken as a 16-bit fraction
+    0x1000,
+    0xf1,       // g = 1 - (2 * Rate * 241) / 65536
+    1,          // wet gain = ((level & 0x7f) >> 1) / 64, so at most 63/64
+    2,          // feedback  = (feedback >> 2) / 64,      so at most 31/64
+    64.0f       // 64 = unity for every byte coefficient this chip takes
   }
 };
 

@@ -69,7 +69,7 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
     std::cout << "libEmuSC: MT-32 sound map initialized" << std::endl;
   }
 
-  _systemEffects = new SystemEffects(_settings);
+  _systemEffects = new SystemEffects(_settings, _ctrlRom);
   _resampler = new Resampler();
 }
 

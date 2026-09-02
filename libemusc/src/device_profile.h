@@ -175,7 +175,12 @@ enum class RomLookup
   JVTvfLimitHard,
   JVTvfDampHard,
   JVTvfBase,
-  JVTvfCutoffKF
+  JVTvfCutoffKF,
+
+  // The JV's chorus type records: three records of five big-endian words, laid
+  // end to end, holding the effect-PSRAM addresses its chorus sweeps between
+  // and the sweep-rate base (P-0394).
+  JVChorusRecords
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have
@@ -396,6 +401,53 @@ struct ReverbLaw
 };
 
 
+// Which mechanism a device's chorus is. As with the level and filter laws the
+// two families differ in KIND, not in constants: the Sound Canvas modulates a
+// delay LENGTH from an LFO whose rate comes from a rate law, while the JV sweeps
+// a READ POINTER between two effect-PSRAM addresses taken from a per-type record
+// and lets the sweep speed set the period (PROVENANCE.md P-0394).
+//
+// Driving the JV's bytes through the Sound Canvas law is what the owner heard as
+// "ça saccade": it modulated at 15.9 Hz where the machine modulates at 2 Hz, and
+// its span reached 39.7 ms against CHORUS1's real 5.75 ms (P-0392).
+enum class ChorusLawKind
+{
+  SoundCanvasLfo,
+  JVSweptPointer
+};
+
+
+// The constants of the JV's chorus driver, so the engine holds the arithmetic
+// and the device holds its numbers. Every one is an instruction's immediate in
+// ROM2 0x745B-0x74E3 or 0x738C-0x73A4 (P-0394); the per-type records themselves
+// come from the ROM through RomLookup::JVChorusRecords.
+//
+// The driver hands the chip a start address, an end address, a position and a
+// read-rate increment on pseudo-voice slot 0x1F:
+//
+//   span    = w3 - w2
+//   window  = 2 * hi16(f * (span - hi16(2 * Rate * rateScale * span)))
+//   incr    = 2 * hi16(f * w4)          with f = Depth * depthScale + depthOffset
+//
+// so f(Depth) = 2 * (Depth * 225 + 4096) / 65536 scales BOTH the window and the
+// increment while g(Rate) = 1 - 2 * Rate * 241 / 65536 shrinks the window alone.
+// The modulation period is window / increment, so f cancels and the period
+// depends only on Rate; the excursion IS the window and depends only on Depth.
+// That exact decoupling is what identifies the mechanism - no coincidence
+// produces it - and it is why Rate must reach g() and Depth f(): see the
+// performance field map in devices/jv880.cc.
+struct ChorusJvLaw
+{
+  int   types;              // type records in the table, five words each
+  int   depthScale;         // f = Depth * this + depthOffset
+  int   depthOffset;
+  int   rateScale;          // g = 1 - (2 * Rate * this) / 65536
+  int   levelShift;         // wet gain = ((level & 0x7f) >> this) / coeffUnity
+  int   feedbackShift;      // feedback  = (feedback >> this) / coeffUnity
+  float coeffUnity;         // the byte coefficient that means 1.0
+};
+
+
 // How a part's TVF Cutoff Frequency parameter reaches the partial's cutoff.
 struct TvfCutoffLaw
 {
@@ -489,6 +541,12 @@ struct DeviceProfile
   // SoundCanvasIndex and the JV law zeroed and unread.
   TvfLawKind     tvfLawKind;
   TvfJvLaw       tvfJv;
+
+  // The same reasoning for the chorus: an omitted initialiser leaves the kind at
+  // SoundCanvasLfo, which is the behaviour every Sound Canvas profile had before
+  // this field existed.
+  ChorusLawKind  chorusLawKind;
+  ChorusJvLaw    chorusJv;
 };
 
 extern const RomSignature SC55_SIGNATURE;

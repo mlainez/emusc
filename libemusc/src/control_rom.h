@@ -270,6 +270,12 @@ public:
     std::array<int, 128> JVTvfDampHard;
     std::array<int, 128> JVTvfBase;
     std::array<int,  16> JVTvfCutoffKF;   // signed, cents per semitone
+
+    // The JV's three chorus type records (P-0394): five big-endian words each,
+    // laid end to end - w0 the input write pointer, w1 unassigned, w2 and w3 the
+    // sweep window's start and end in effect-PSRAM words, w4 the sweep-rate
+    // base. Zero when the device has no such records.
+    std::array<int,  15> JVChorusRecords;
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };

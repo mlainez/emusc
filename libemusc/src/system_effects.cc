@@ -33,12 +33,12 @@
 namespace EmuSC {
 
 
-SystemEffects::SystemEffects(Settings *settings)
+SystemEffects::SystemEffects(Settings *settings, ControlRom &ctrlRom)
   : _settings(settings),
     _chorus(NULL),
     _reverb(NULL)
 {
-  _chorus = new Chorus(settings);
+  _chorus = new Chorus(settings, ctrlRom.lookupTables);
   _reverb = new Reverb(settings);
 
   update();
