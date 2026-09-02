@@ -290,14 +290,25 @@ static const RecordRomLayout JV880_RECORDS = {
     // That is the manual's order for Performance Common, ROM offset = SysEx - 1.
     12, 13, 14, 15,
 
-    // The chorus block, from the firmware (P-0382). This port had been reading
-    // +17 as the chorus LEVEL; +17 is the RATE. Chorus type shares byte +12 with
-    // the reverb type, in bits 3-5 - across the sixteen factory performances
-    // those bits never exceed 2, matching the manual's Chorus Type 0-2 - and the
-    // level is +16, whose bit 7 is the Chorus Output switch. That bit is set at
-    // level 100 as well as 127 in the factory data, so it is an independent flag
-    // and not a side effect of a full level.
-    12, 16, 17, 18, 19,
+    // The chorus block, from the firmware (P-0382, P-0394). Chorus type shares
+    // byte +12 with the reverb type, in bits 3-5 - across the sixteen factory
+    // performances those bits never exceed 2, matching the manual's Chorus Type
+    // 0-2 - and the level is +16, whose bit 7 is the Chorus Output switch. That
+    // bit is set at level 100 as well as 127 in the factory data, so it is an
+    // independent flag and not a side effect of a full level.
+    //
+    // RATE IS +18 AND DEPTH IS +17, the other way round from what this port read
+    // (P-0394). Settled by the driver rather than by a name: it loads the four
+    // bytes as r2 = (+16 << 8) | +17 and r3 = (+18 << 8) | +19 (ROM2
+    // 0x7357-0x7364), keeps +17 in @0x844E and +18 in @0x844F (0x73D1, 0x73D5),
+    // and then @0x844E is what scales BOTH the sweep window and the read-rate
+    // increment by 0xE1 (0x7468, 0x74C9) while @0x844F only shrinks the window
+    // by 0xF1 (0x745B). Scaling both is the depth role; shrinking the window
+    // alone is the rate role - see ChorusJvLaw. The manual's own Chorus Depth /
+    // Chorus Rate order agrees. The boot performance carries 127 and 45 in those
+    // two bytes, and the mechanism gives 10.9 Hz at a 0.13 ms excursion the
+    // wrong way round against 1.03 Hz at 3.81 ms the right way round.
+    12, 16, 18, 17, 19,
 
     {
       // +16 patch number, then Part Level at +17 and Part Pan at +18, following
