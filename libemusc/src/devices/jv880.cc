@@ -93,7 +93,48 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // 0, selected per tone by record byte +55 & 7 for the TVF and +71 & 7 for the
   // TVA - the descriptor table's own velocity-curve fields. Curve 4 is 0x05590,
   // which this port had been reading as a general level index table.
-  { RomLookup::JVVelCurves,          0x05390, 896, 1, Monotonic::Unchecked }
+  { RomLookup::JVVelCurves,          0x05390, 896, 1, Monotonic::Unchecked },
+
+  // The time-variant filter's own tables (P-0390). These are not fitted from
+  // the SC-55's and not matched numerically against them: the firmware's cutoff
+  // routine reads each one at the offset given here, and each reproduces a
+  // closed form exactly, which is a far stronger check than a shape test.
+  //
+  //   ExpCoarse   256 * 2^(256 * signed(i) / 1200)        256/256 exact
+  //   ExpFine     65536 * (2^(i/1200) - 1)                256/256 exact
+  //   DampSoft    floor(16384 * 2^(-r/64))                128/128 exact
+  //   DampHard    floor(16384 * 2^(-r/32)) = DampSoft[2r]  128/128 exact
+  //   LimitHard   = LimitSoft[2r] for every r < 64        no exceptions
+  //   Base        0x100 * (cutoff + 1) below 32, then a curve with no closed
+  //               form, reaching 0xFFFF at 127. The values are the datum.
+  //   CutoffKF    the manual's published key-follow list, verbatim, as CENTS
+  //               PER SEMITONE: -100 -70 -50 -30 -10 0 +10 +20 +30 +40 +50
+  //               +70 +100 +120 +150 +200
+  //
+  // The two LIMIT/DAMP pairs also satisfy F^2 + F*Q1 = 2 across all 256 rows,
+  // to within 2.4e-4, with F = LIMIT/2^15 and Q1 = DAMP/2^14 - the pole angle
+  // held at exactly fs/4. That identity is what pins the two register scales,
+  // and it is why the words can be handed to svf.h as coefficients rather than
+  // converted to indices.
+  //
+  // Monotonic::Unchecked on all eight, deliberately: the shape check exists for
+  // a table found by numerical similarity, and none of these was. ExpCoarse is
+  // not monotonic in its index at all - the index is SIGNED, so entry 128 is
+  // -128 coarse units and the table falls at the wrap.
+  { RomLookup::JVTvfExpCoarse,       0x05c60, 256, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfExpFine,         0x05e60, 256, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfLimitSoft,       0x0668a, 128, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfDampSoft,        0x0678a, 128, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfLimitHard,       0x0688a, 128, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfDampHard,        0x0698a, 128, 2, Monotonic::Unchecked },
+  { RomLookup::JVTvfBase,            0x06a8a, 128, 2, Monotonic::Unchecked },
+  // Unchecked, and this one is a trap worth naming: the values are SIGNED and
+  // the shape check compares them unsigned, so -100 reads as 65436 and the
+  // table looks like it rises to entry 4 and then collapses to 0. Marked
+  // Rising it would be REJECTED and left as zeros - a silent no-key-follow.
+  // The check it passes instead is the strongest available: it IS the manual's
+  // published list, entry for entry.
+  { RomLookup::JVTvfCutoffKF,        0x057be,  16, 2, Monotonic::Unchecked }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -203,7 +244,37 @@ static const RecordRomLayout JV880_RECORDS = {
       // means the firmware skips the velocity helper entirely - no velocity
       // effect - which is why reinterpreting the old hardcoded 0 as -64 silenced
       // every instrument.
-      71, 72
+      71, 72,
+
+      // The filter's remaining fields (P-0390). Filter Mode is +55 bits 3-4 and
+      // the census over the 539 enabled factory tones is what confirms the mask:
+      // OFF 77 (14.3 %), LPF 445 (82.6 %), HPF 17 (3.2 %), and NOT ONE tone
+      // above 2. A wrong mask puts values there, so the census is the falsifier
+      // rather than a summary.
+      //
+      // +53 carries resonance in bits 0-6 and the SOFT/HARD mode in bit 7 -
+      // HARD on 58 of the 539, and HARD is exactly "twice the resonance index":
+      // LIMIT_HARD[r] == LIMIT_SOFT[2r] for every r below 64, with no
+      // exceptions, so Q doubles every 64 steps instead of every 128.
+      //
+      // +54 bits 0-3 index the key-follow table, which holds the manual's own
+      // percentages read as CENTS PER SEMITONE: +100 is the ROM value 100, i.e.
+      // literally 1:1 tracking from note 60. 354 of 539 tones sit at 0.
+      //
+      // +58 is the envelope depth, SIGNED: -40..+63 across the factory set,
+      // non-zero on 402 of 539 - so a port that leaves it at 0, as this one
+      // did, has a static filter on three quarters of the machine's tones.
+      //
+      // +59 begins four INTERLEAVED time/level pairs, T1 L1 T2 L2 T3 L3 T4 L4.
+      // The first three are the attack and decay segments and L3 is the sustain
+      // level; T4/L4 are the release. Interleaved is not the order the Sound
+      // Canvas uses and reading it as times-then-levels would swap the two.
+      //
+      // +32 and +35 are the two LFO -> TVF depths, signed. They are read and
+      // applied, but this port's JV LFO rate table is still a placeholder of
+      // zeros, so the modulator does not move yet and the term contributes
+      // nothing.
+      55, 53, 54, 55, 56, 58, 59, 32, 35
     }
   },
 
@@ -358,7 +429,42 @@ const DeviceProfile JV880_PROFILE = {
   { true,  0x3f, 0x7f },
 
   // A flat address space across the four wave ROMs; no bank bits.
-  { true, 0 }
+  { true, 0 },
+
+  TvfLawKind::JVCentsRatio,
+
+  // The filter chain's constants, all from the firmware (P-0390).
+  {
+    // 0x9994 scales the envelope depth. It is not an arbitrary gain: depth +63
+    // at envelope level 127 gives 0x7f00 * 19351 >> 16 = 9600 cents, exactly
+    // eight octaves, and the exponential table saturates just above that. The
+    // constant and the table's clip point were chosen together.
+    0x9994,
+
+    // 0x99 scales an LFO depth byte into the same cents domain.
+    0x99,
+
+    // At resonance 0 the chip is driven from a separate rule rather than from
+    // the LIMIT/DAMP tables: the cutoff word is capped at 0x8000 and the
+    // damping falls from 0x4A48 by an eighth of the word, never below 0x4000.
+    // Its boundary agrees with the tables exactly - LIMIT_SOFT[0] is 0x8000 and
+    // DAMP_SOFT[0] is 0x4000 - which is an independent check that the rule and
+    // the tables are one law.
+    0x8000, 0x4a48, 0x4000,
+
+    // Resonance is slew-limited to 16 of 127 per filter envelope tick, so a
+    // full sweep takes 8 ticks: 128 ms, and audibly a glide.
+    16,
+
+    // The two register scales the F^2 + F*Q1 = 2 identity pins.
+    0x8000, 0x4000,
+
+    // The filter envelope steps every SECOND service period. The firmware
+    // services it on alternate wakes of a 8 ms task, i.e. every 16 ms, and this
+    // engine's control period is 256 samples of its internal 32 kHz clock -
+    // the same 8 ms. So two.
+    2
+  }
 };
 
 }

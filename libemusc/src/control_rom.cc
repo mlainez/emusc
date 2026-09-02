@@ -1376,24 +1376,54 @@ int ControlRom::_read_device_patches(void)
         ip.TVALvlVSens  = tb[F.tvaVelLevelSens];
         ip.TVALvlVelCur = tb[F.tvaVelCurve] & 0x07;
 
-        // The filter is read but LEFT DISABLED, and that is a measured decision
-        // rather than a missing table. With TVFResonanceFreq, TVFEnvDepth,
-        // TVFCutoffVSens and TVFEnvScale all fitted from the SC-55's, the colour
-        // comes out close - Preset A 01 renders a 244 Hz centroid against the
-        // reference's 282 - and the level still collapses 35 dB, at any resonance
-        // from 0 to the patch's own. So the fault is not the coefficient curves
-        // but the cutoff INDEX: it is assembled from several fields the JV path
-        // does not fill, TVFCFKeyFlwC and TVFCOFVelCur among them. Finding what
-        // the JV puts there needs the code that reads them, not another fit.
-        // A filter right in colour and 35 dB wrong in level is worse than none.
-        // TASK-147.
-        ip.TVFType      = 2;                     // 2 = disabled
+        // The filter. It was read but left DISABLED until now, because the
+        // cutoff is assembled from fields this path did not fill and a filter
+        // right in colour and 35 dB wrong in level is worse than none. All of
+        // them are now read (P-0390).
+        //
+        // Filter Mode is two bits of +55. The engine's own spelling puts
+        // low-pass first, so the device's 0/1/2 = OFF/LPF/HPF is translated
+        // here rather than in the engine. Mode OFF must reach the engine as
+        // "disabled": on the hardware nothing is written to the filter at all
+        // for such a tone, and 14.3 % of the factory tones depend on it.
+        {
+          const int mode = (tb[F.filterMode] >> 3) & 0x03;
+          ip.TVFType = (mode == 1) ? 0 : (mode == 2) ? 1 : 2;
+        }
         ip.TVFBaseFlt   = (int8_t) (tb[F.filterCutoff]    & 0x7f);
         ip.TVFResonance = (int8_t) (tb[F.filterResonance] & 0x7f);
-        ip.TVFEnvDepth  = 0;
-        ip.TVFEnvL1 = ip.TVFEnvL2 = ip.TVFEnvL3 = ip.TVFEnvL4 = ip.TVFEnvL5 = 0x7f;
-        ip.TVFEnvT1 = 0;
-        ip.TVFEnvT2 = ip.TVFEnvT3 = ip.TVFEnvT4 = ip.TVFEnvT5 = 0x7f;
+        ip.TVFResoMode  = (uint8_t) (tb[F.resoMode] >> 7);
+        ip.TVFCOFKeyFlwIdx = (uint8_t) (tb[F.cutoffKeyFollow] & 0x0f);
+        ip.TVFCOFVelCur = (uint8_t) (tb[F.tvfVelCurve] & 0x07);
+        ip.TVFEnvVelSens = (int8_t) tb[F.tvfVelLevelSens];
+
+        // Signed, and stored raw: the engine's JV chain reads it back as an
+        // int8_t. The Sound Canvas chain uses this field as an index into a
+        // depth table instead, which is why the two must never share a path.
+        ip.TVFEnvDepth  = tb[F.tvfEnvDepth];
+
+        // Four INTERLEAVED time/level pairs from +59: T1 L1 T2 L2 T3 L3 T4 L4.
+        // The engine's envelope has one segment more than the JV's filter
+        // envelope, so the JV's three attack/decay segments map onto the first
+        // three and its release onto the engine's release. L4 carries the
+        // release LEVEL, which for the filter is a real target and not zero -
+        // unlike the TVA's, which always releases to silence.
+        ip.TVFEnvT1 = tb[F.tvfEnv + 0] & 0x7f;
+        ip.TVFEnvL1 = tb[F.tvfEnv + 1] & 0x7f;
+        ip.TVFEnvT2 = tb[F.tvfEnv + 2] & 0x7f;
+        ip.TVFEnvL2 = tb[F.tvfEnv + 3] & 0x7f;
+        ip.TVFEnvT3 = tb[F.tvfEnv + 4] & 0x7f;
+        ip.TVFEnvL3 = tb[F.tvfEnv + 5] & 0x7f;
+        ip.TVFEnvT5 = tb[F.tvfEnv + 6] & 0x7f;
+        ip.TVFEnvL5 = tb[F.tvfEnv + 7] & 0x7f;
+
+        // The engine's fourth segment is not the JV's, so it is made a no-op:
+        // same level as the third, and a duration the sustain never reaches.
+        ip.TVFEnvL4 = ip.TVFEnvL3;
+        ip.TVFEnvT4 = 0x7f;
+
+        ip.TVFLFO1Depth = tb[F.lfo1TvfDepth];
+        ip.TVFLFO2Depth = tb[F.lfo2TvfDepth];
 
       }
 
@@ -1478,6 +1508,16 @@ void ControlRom::_init_device_lookup_tables(void)
     if ((size_t) base + 2*n > _deviceRom.size()) return false;
     for (int i = 0; i < n; i++)
       dst[i] = (_deviceRom[base + i*2] << 8) | _deviceRom[base + i*2 + 1];
+    return true;
+  };
+  // Two's complement, for a table that holds negative numbers: the cutoff key
+  // follow list runs from -100 cents per semitone and would otherwise read as
+  // 65436 (P-0390).
+  auto rom16s = [this](uint32_t base, int n, auto &dst) {
+    if ((size_t) base + 2*n > _deviceRom.size()) return false;
+    for (int i = 0; i < n; i++)
+      dst[i] = (int16_t) ((_deviceRom[base + i*2] << 8) |
+                           _deviceRom[base + i*2 + 1]);
     return true;
   };
   bool haveRom = _deviceRom.size() > 0x40000 - 1;
@@ -1693,6 +1733,22 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.JVLevel);             break;
       case RomLookup::JVVelCurves:
         rom8(rt.offset, rt.entries, t.JVVelCurves);          break;
+      case RomLookup::JVTvfExpCoarse:
+        rom16(rt.offset, rt.entries, t.JVTvfExpCoarse);      break;
+      case RomLookup::JVTvfExpFine:
+        rom16(rt.offset, rt.entries, t.JVTvfExpFine);        break;
+      case RomLookup::JVTvfLimitSoft:
+        rom16(rt.offset, rt.entries, t.JVTvfLimitSoft);      break;
+      case RomLookup::JVTvfDampSoft:
+        rom16(rt.offset, rt.entries, t.JVTvfDampSoft);       break;
+      case RomLookup::JVTvfLimitHard:
+        rom16(rt.offset, rt.entries, t.JVTvfLimitHard);      break;
+      case RomLookup::JVTvfDampHard:
+        rom16(rt.offset, rt.entries, t.JVTvfDampHard);       break;
+      case RomLookup::JVTvfBase:
+        rom16(rt.offset, rt.entries, t.JVTvfBase);           break;
+      case RomLookup::JVTvfCutoffKF:
+        rom16s(rt.offset, rt.entries, t.JVTvfCutoffKF);      break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }

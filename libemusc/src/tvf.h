@@ -23,6 +23,7 @@
 
 #include "svf.h"
 #include "control_rom.h"
+#include "device_profile.h"
 #include "envelope.h"
 #include "settings.h"
 #include "wave_generator.h"
@@ -49,9 +50,9 @@ public:
   void note_off();
 
 private:
-  // A segment this short or shorter snaps instantly. Still the Sound Canvas's
-  // value because the JV filter path is not enabled; it takes the device
-  // profile's envelopeInstantTicks when it is.
+  // A segment this short or shorter snaps instantly. The Sound Canvas's value;
+  // the JV's filter chain does not use it - it takes its segment durations from
+  // the device's own millisecond table and a duration of 0 there IS the skip.
   int _instantTicks = 8;
 
 
@@ -110,6 +111,38 @@ private:
 
   Settings *_settings;
   int8_t _partId;
+
+  // ---- The JV family's chain (PROVENANCE.md P-0390) ----------------------
+  //
+  // A different arithmetic, not the same one with different constants: this one
+  // accumulates every modulation in CENTS, exponentiates the total and
+  // multiplies the tone's base coefficient by it, then hands the two 16-bit
+  // words the firmware computes straight to the filter. TvfLawKind picks between
+  // the two chains the way LevelLawKind picks between the two level laws.
+  bool _jv;
+  const TvfJvLaw *_jvLaw;
+
+  int _jvTickCount;        // control periods since the last envelope tick
+  int _jvDecrement;        // envelope accumulator step for the current segment
+  int _jvEnvLevel;         // envelope output, 0 .. 0x7f00
+  int _jvEnvDepth;         // TVF-ENV Depth, scaled and signed
+  int _jvVelAtten;         // velocity attenuation of the envelope level
+  int _jvKeyFollow;        // key follow offset in cents
+  int _jvLfo1Depth;        // LFO -> TVF depths, scaled and signed
+  int _jvLfo2Depth;
+  int _jvCutoff;           // the tone's base cutoff, 0..127
+  int _jvResTarget;        // the resonance the tone asks for
+  int _jvRes;              // the resonance after the per-tick slew
+  int _jvWord;             // cutoff coefficient word, and the one before it,
+  int _jvWordPrev;         // between which the coefficient moves
+  float _jvQ1;             // damping, already in the filter's own units
+  int _jvRampPos;          // samples into the move between the two words
+
+  void _jv_init(uint8_t velocity);
+  void _jv_iterate(void);
+  void _jv_next_phase(void);
+  void _jv_apply_sample_set(std::array<float, 256> &dryBus);
+  int  _jv_velocity_attenuation(int curve, int sens, int velocity);
 
   TVF();
 

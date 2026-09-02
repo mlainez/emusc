@@ -59,6 +59,23 @@ struct ToneFieldMap
   int reverbSend, chorusSend;
   int tvaVelCurve;                      // +71 bits 0-2: which of the seven curves
   int tvaVelLevelSens;                  // +72 signed -63..+63; 0 = no velocity effect
+
+  // The time-variant filter's own fields. The JV's cutoff chain reads eleven of
+  // them and reading only two - cutoff and resonance - is why the filter had to
+  // be left disabled (P-0390).
+  //
+  // filterMode and tvfVelCurve share ONE byte: bits 3-4 are the mode
+  // (0 OFF, 1 LPF, 2 HPF after the shift) and bits 0-2 select the envelope's
+  // velocity curve. So do resonance and its SOFT/HARD mode bit, which is why
+  // resoMode names the same offset as filterResonance.
+  int filterMode;                       // bits 3-4
+  int resoMode;                         // bit 7 of the resonance byte
+  int cutoffKeyFollow;                  // bits 0-3 index the cents-per-semitone table
+  int tvfVelCurve;                      // bits 0-2 of the filterMode byte
+  int tvfVelLevelSens;                  // signed; with the curve, an attenuation
+  int tvfEnvDepth;                      // signed -63..+63
+  int tvfEnv;                           // first of four interleaved time/level pairs
+  int lfo1TvfDepth, lfo2TvfDepth;       // signed
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -144,7 +161,21 @@ enum class RomLookup
   PitchCoarseExp,
   EnvelopeTime,
   JVLevel,
-  JVVelCurves
+  JVVelCurves,
+
+  // The JV's time-variant filter tables, all in its control ROM (P-0390). The
+  // two exponential tables turn the cents accumulator into a frequency ratio;
+  // TVFBase is the coefficient that ratio multiplies; the LIMIT/DAMP pairs are
+  // the per-resonance clamp and damping, one pair per resonance mode; and
+  // TVFCutoffKF is the manual's own key-follow list in cents per semitone.
+  JVTvfExpCoarse,
+  JVTvfExpFine,
+  JVTvfLimitSoft,
+  JVTvfDampSoft,
+  JVTvfLimitHard,
+  JVTvfDampHard,
+  JVTvfBase,
+  JVTvfCutoffKF
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have
@@ -391,6 +422,35 @@ struct TvfCutoffLaw
 };
 
 
+// Which arithmetic a device's filter chain uses. As with the level law the two
+// families differ in kind, not in constants: the Sound Canvas assembles a cutoff
+// INDEX and looks the coefficient up, while the JV accumulates modulation in
+// CENTS, exponentiates it and multiplies the base coefficient by the result
+// (PROVENANCE.md P-0390). An earlier attempt to drive the JV's fields through
+// the Sound Canvas chain came out close in colour and 35 dB wrong in level.
+enum class TvfLawKind
+{
+  SoundCanvasIndex,
+  JVCentsRatio
+};
+
+
+// The constants of the JV's filter chain, so the engine holds the arithmetic and
+// the device holds its numbers. Every one is read from the firmware (P-0390).
+struct TvfJvLaw
+{
+  int envDepthScale;      // TVF-ENV Depth: sign(d) * ((|2d| << 8) * this >> 16)
+  int lfoDepthScale;      // LFO -> TVF depth: int8 * this
+  int zeroResLimit;       // at resonance 0 the cutoff word is capped here
+  int zeroResDampBase;    // and the damping is this minus (word >> 3),
+  int zeroResDampFloor;   // never below this
+  int resSlewPerTick;     // resonance moves at most this far per envelope tick
+  int cutoffUnity;        // cutoff word that means F1 = 1.0
+  int dampUnity;          // damping word that means Q1 = 1.0
+  int envTickPeriods;     // engine control periods per filter envelope tick
+};
+
+
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
@@ -423,6 +483,12 @@ struct DeviceProfile
   ReverbLaw      reverb;
   TvfCutoffLaw   tvfCutoff;
   WaveAddressing wave;
+
+  // Last, so that a device profile written before these existed still compiles
+  // and still means what it meant: an omitted initialiser leaves the kind at
+  // SoundCanvasIndex and the JV law zeroed and unread.
+  TvfLawKind     tvfLawKind;
+  TvfJvLaw       tvfJv;
 };
 
 extern const RomSignature SC55_SIGNATURE;

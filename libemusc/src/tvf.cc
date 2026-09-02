@@ -73,7 +73,24 @@ TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
     _coFreq{},
     _key(key),
     _settings(settings),
-    _partId(partId)
+    _partId(partId),
+    _jv(false),
+    _jvLaw(nullptr),
+    _jvTickCount(0),
+    _jvDecrement(0),
+    _jvEnvLevel(0),
+    _jvEnvDepth(0),
+    _jvVelAtten(0),
+    _jvKeyFollow(0),
+    _jvLfo1Depth(0),
+    _jvLfo2Depth(0),
+    _jvCutoff(0),
+    _jvResTarget(0),
+    _jvRes(0),
+    _jvWord(0),
+    _jvWordPrev(0),
+    _jvQ1(1.0f),
+    _jvRampPos(0)
 {
   if (instPartial.TVFType == 0)
     _svf = new SVF(SVF::Mode::LowPass);
@@ -84,6 +101,13 @@ TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
 
   if (_svf == nullptr)                       // TVF disabled
     return;
+
+  if (_settings->device()->tvfLawKind == TvfLawKind::JVCentsRatio) {
+    _jv = true;
+    _jvLaw = &_settings->device()->tvfJv;
+    _jv_init(velocity);
+    return;
+  }
 
   _velocity = _get_velocity_from_vcurve(velocity);
 
@@ -116,6 +140,11 @@ void TVF::apply_sample_set(std::array<float, 256> &dryBus)
   // Skip filter calculation if filter is disabled for this partial 
   if (_svf == nullptr)
     return;
+
+  if (_jv) {
+    _jv_apply_sample_set(dryBus);
+    return;
+  }
 
   _smooth_cutoff();
 
@@ -178,6 +207,19 @@ void TVF::update(void)
 {
   if (_svf == nullptr)                       // TVF disabled
     return;
+
+  // The JV's filter envelope steps on every SECOND control period, because its
+  // firmware services this envelope on alternate wakes of an 8 ms task and this
+  // engine's control period is that same 8 ms. Between ticks the coefficient
+  // keeps moving: _jv_apply_sample_set() walks it across the whole tick.
+  if (_jv) {
+    if (++_jvTickCount >= _jvLaw->envTickPeriods) {
+      _jvTickCount = 0;
+      _jvRampPos = 0;
+      _jv_iterate();
+    }
+    return;
+  }
 
   // Update LFO depth parameters based on fade-in status
   if (!_lfo1FadeComplete)
@@ -628,6 +670,28 @@ void TVF::_iterate_phase(void)
 
 void TVF::_init_new_phase(enum Phase newPhase)
 {
+  // The JV's chain runs its own phases from _jv_next_phase(); the only phase
+  // change that reaches it from outside is the note off.
+  if (_jv) {
+    if (newPhase != Phase::Release)
+      return;
+
+    // The release starts from wherever the envelope has got to and walks to the
+    // release LEVEL, which for the filter envelope is a target like any other -
+    // unlike the TVA's, which always releases to silence.
+    _phaseStartValue = _jvEnvLevel >> 8;
+    _phaseEndValue   = _phaseLevel[static_cast<int>(Phase::Release)];
+    _phaseDuration   = _LUT.envelopeTime[
+                         std::clamp(_phaseTime[static_cast<int>(Phase::Release)],
+                                    0, 127)];
+    _jvDecrement = (_phaseDuration > 0) ? std::clamp((1 << 20) / _phaseDuration,
+                                                    1, 0xffff)
+                                        : 0x10000;
+    _phasePosition = 0;
+    _phase = Phase::Release;
+    return;
+  }
+
   if (newPhase == Phase::Terminated) {
     std::cerr << "libEmuSC: Internal error, envelope in illegal state"
 	      << std::endl;
@@ -728,6 +792,279 @@ void TVF::_init_new_phase(enum Phase newPhase)
   }
 
   _phase = newPhase;
+}
+
+
+
+// ---------------------------------------------------------------------------
+// The JV family's filter chain (PROVENANCE.md P-0390)
+//
+// Every step below is the firmware's, in the firmware's units. Read the tone's
+// fields, then once per envelope tick:
+//
+//   env    = envelope level << 8, less its velocity attenuation
+//   x      = (env * envDepth) >> 16, in CENTS, plus key follow and both LFOs
+//   E      = 256 * 2^(x/1200), from a coarse table and a fine one
+//   word   = (E * BASE[cutoff]) >> 8, saturating
+//   word   = min(word, LIMIT[resonance]), damp = DAMP[resonance]
+//
+// and hand F1 = word/0x8000 and Q1 = damp/0x4000 to the state-variable filter.
+// x being in cents is what makes the whole modulation stack a frequency RATIO
+// and BASE[cutoff] the coefficient it multiplies; the Sound Canvas chain above
+// instead builds a cutoff INDEX, which is why the two cannot share code.
+// ---------------------------------------------------------------------------
+
+// The envelope level's velocity attenuation, out of the tone's velocity curve
+// and its signed sensitivity. An ATTENUATION: the curves fall from 255 at
+// velocity 0 to 0 at velocity 127, so a positive sensitivity means quiet notes
+// get less filter envelope.
+//
+// The two |sens| < 32 arms and the negative high-sensitivity arm are the
+// firmware's, read from it. The POSITIVE high-sensitivity arm is the one
+// reading here that is not: it is the mirror that makes the two positive arms
+// continuous where the two negative arms are continuous. expand3(31) = 255
+// against 1 << 8 = 256, so at the 31/32 boundary the high arm has to reproduce
+// the low arm and then go on by scaling the curve's INDEX rather than its
+// amplitude - which is exactly what the negative high arm does. The saturation
+// mirrors too: past the end of the table the negative arm saturates to 0xffff,
+// full attenuation, so the positive one saturates to none.
+int TVF::_jv_velocity_attenuation(int curve, int sens, int velocity)
+{
+  if (sens == 0)                             // the firmware skips the helper
+    return 0;
+
+  const int banked = (int) (_LUT.JVVelCurves.size() / 128);
+  const int base = std::min(curve, banked - 1) * 128;
+  const int vel = std::clamp(velocity, 0, 127);
+
+  // 0..31 -> 0..255, by doubling three times and carrying the top bit each time
+  auto expand3 = [](int v) {
+    for (int threshold : { 0x10, 0x20, 0x40 })
+      v = 2 * v + (v >= threshold ? 1 : 0);
+    return v;
+  };
+
+  if (sens >= 32) {
+    const int t = (sens * vel) >> 5;
+    return (t >= 0x80) ? 0 : (_LUT.JVVelCurves[base + t] << 8);
+  }
+  if (sens > 0)
+    return expand3(sens) * _LUT.JVVelCurves[base + vel];
+  if (sens > -32)
+    return expand3(-sens) * (255 - _LUT.JVVelCurves[base + vel]);
+
+  const int t = ((-sens) * vel) >> 5;
+  return (t >= 0x80) ? 0xffff : ((255 - _LUT.JVVelCurves[base + t]) << 8);
+}
+
+
+void TVF::_jv_init(uint8_t velocity)
+{
+  // If the device's own filter tables did not load, the filter is left DISABLED
+  // rather than run on zeros: a zero base coefficient is a filter closed to
+  // silence, which is a far worse answer than no filter. Entry 127 of the base
+  // table is 0xffff in every ROM that has one, so it doubles as the check.
+  if (_LUT.JVTvfBase[127] == 0) {
+    delete _svf;
+    _svf = nullptr;
+    return;
+  }
+
+  // TVF-ENV Depth, signed. The scale is the firmware's and it is not arbitrary:
+  // depth +63 at envelope level 127 comes out at exactly 9600 cents, eight
+  // octaves, which is where the exponential table saturates.
+  {
+    const int d = (int8_t) _instPartial.TVFEnvDepth;
+    const int m = ((std::abs(2 * d) << 8) * _jvLaw->envDepthScale) >> 16;
+    _jvEnvDepth = (d < 0) ? -m : m;
+  }
+
+  _jvVelAtten = _jv_velocity_attenuation(_instPartial.TVFCOFVelCur,
+                                         _instPartial.TVFEnvVelSens, velocity);
+
+  // Key follow, in cents per semitone from note 60. The table IS the manual's
+  // published percentage list: +100 % is the value 100, i.e. 1:1 tracking.
+  _jvKeyFollow = ((int) _key - 60) *
+                 _LUT.JVTvfCutoffKF[_instPartial.TVFCOFKeyFlwIdx & 0x0f];
+
+  _jvLfo1Depth = (int8_t) _instPartial.TVFLFO1Depth * _jvLaw->lfoDepthScale;
+  _jvLfo2Depth = (int8_t) _instPartial.TVFLFO2Depth * _jvLaw->lfoDepthScale;
+
+  _jvCutoff = std::clamp((int) _instPartial.TVFBaseFlt, 0, 127);
+  _jvResTarget = std::clamp((int) _instPartial.TVFResonance, 0, 127);
+
+  // No glide at note on. The per-voice resonance slew state is RAM whose value
+  // when a note starts is not established, so it starts AT the target: the
+  // alternative, starting from zero, would invent an eight-tick sweep on every
+  // note. A resonance change during the note still slews.
+  _jvRes = _jvResTarget;
+
+  // The envelope: three time/level segments and a release, all levels 0..127.
+  // Level 0 is where a note on starts, which is the firmware's own segment 0
+  // start value.
+  _phaseLevel[0] = 0;
+  _phaseLevel[1] = _instPartial.TVFEnvL1;
+  _phaseLevel[2] = _instPartial.TVFEnvL2;
+  _phaseLevel[3] = _instPartial.TVFEnvL3;
+  _phaseLevel[4] = _instPartial.TVFEnvL3;    // not the JV's; never entered
+  _phaseLevel[5] = _instPartial.TVFEnvL5;
+
+  _phaseTime[0] = 0;
+  _phaseTime[1] = _instPartial.TVFEnvT1 & 0x7f;
+  _phaseTime[2] = _instPartial.TVFEnvT2 & 0x7f;
+  _phaseTime[3] = _instPartial.TVFEnvT3 & 0x7f;
+  _phaseTime[4] = 0;
+  _phaseTime[5] = _instPartial.TVFEnvT5 & 0x7f;
+
+  _phase = Phase::Init;
+  _jv_next_phase();                          // -> Attack1
+  _jv_iterate();                             // the coefficient the note starts on
+  _jvWordPrev = _jvWord;                     // and so nothing to ramp from
+}
+
+
+// Enter the next segment of the JV's filter envelope. Its envelope has one
+// segment fewer than this engine's, so Decay1 goes straight to Sustain rather
+// than through Decay2.
+void TVF::_jv_next_phase(void)
+{
+  Phase next;
+  switch (_phase) {
+  case Phase::Init:    next = Phase::Attack1; break;
+  case Phase::Attack1: next = Phase::Attack2; break;
+  case Phase::Attack2: next = Phase::Decay1;  break;
+  case Phase::Decay1:  next = Phase::Sustain; break;
+  case Phase::Release: next = Phase::Terminated; break;
+  default:             next = Phase::Sustain; break;
+  }
+
+  if (next == Phase::Sustain || next == Phase::Terminated) {
+    // Sustain holds L3 and the terminated release holds L4, both of which are
+    // already this segment's target.
+    _phase = next;
+    _phasePosition = 0;
+    _jvDecrement = 0;
+    return;
+  }
+
+  _phaseStartValue = _phaseLevel[static_cast<int>(_phase)];
+  _phaseEndValue   = _phaseLevel[static_cast<int>(next)];
+  _phaseDuration   = _LUT.envelopeTime[
+                       std::clamp(_phaseTime[static_cast<int>(next)], 0, 127)];
+
+  // The firmware's own rate arithmetic: a 16-bit accumulator stepped by
+  // 2^20 / duration_ms once per 16 ms tick, so a segment lasts its duration in
+  // milliseconds. A duration of 0 - which is what a time byte of 0 gives - is
+  // the skip: the accumulator runs out on the first tick and the segment is
+  // left again in the same tick, at its end level.
+  _jvDecrement = (_phaseDuration > 0) ? std::clamp((1 << 20) / _phaseDuration,
+                                                  1, 0xffff)
+                                      : 0x10000;
+  _phasePosition = 0;
+  _phase = next;
+}
+
+
+void TVF::_jv_iterate(void)
+{
+  // Step the envelope. The decrement happens before the level is taken, and a
+  // segment that runs out is left at its end level rather than interpolated -
+  // both as the firmware does it. The guard bounds the walk through segments
+  // whose duration is zero.
+  if (_phase != Phase::Sustain && _phase != Phase::Terminated) {
+    _phasePosition += _jvDecrement;
+
+    for (int guard = 0; guard < 8 && _phasePosition >= 0xffff; guard++) {
+      _jv_next_phase();
+      if (_phase == Phase::Sustain || _phase == Phase::Terminated)
+        break;
+      if (_jvDecrement >= 0x10000)           // a zero-length segment: skip it
+        _phasePosition = 0xffff;
+    }
+  }
+
+  if (_phase == Phase::Sustain || _phase == Phase::Terminated) {
+    _jvEnvLevel = _phaseEndValue << 8;
+  } else {
+    const int from = _phaseStartValue << 8;
+    const int to   = _phaseEndValue << 8;
+    _jvEnvLevel = from + (int) (((int64_t) (to - from) * _phasePosition) >> 16);
+  }
+  _envelopeOut = _jvEnvLevel >> 8;
+
+  int env = _jvEnvLevel;
+  env -= (int) (((int64_t) env * _jvVelAtten) >> 16);
+
+  // Cents from here on: envelope depth, key follow and the two LFOs all land in
+  // one signed 16-bit accumulator.
+  int x = (int) (((int64_t) env * _jvEnvDepth) >> 16);
+  x += _jvKeyFollow;
+  x += ((int) _LFO1->value() * _jvLfo1Depth) >> 16;
+  x += ((int) _LFO2->value() * _jvLfo2Depth) >> 16;
+  x = (int16_t) x;
+
+  const int coarse = _LUT.JVTvfExpCoarse[(x >> 8) & 0xff];
+  const int E = coarse + ((coarse * _LUT.JVTvfExpFine[x & 0xff]) >> 16);
+
+  int word = (E * _LUT.JVTvfBase[_jvCutoff]) >> 8;
+  if (word > 0xffff)                         // the product's high word carried
+    word = 0xffff;
+
+  // Resonance moves at most one slew step per tick, and decides both the cutoff
+  // ceiling and the damping. Resonance 0 is not a table row but a rule of its
+  // own, whose boundary agrees with the tables exactly.
+  if (_jvRes != _jvResTarget)
+    _jvRes += std::clamp(_jvResTarget - _jvRes,
+                         -_jvLaw->resSlewPerTick, _jvLaw->resSlewPerTick);
+
+  int damp;
+  if (_jvRes == 0) {
+    word = std::min(word, _jvLaw->zeroResLimit);
+    damp = std::max(_jvLaw->zeroResDampBase - (word >> 3),
+                    _jvLaw->zeroResDampFloor);
+  } else {
+    const bool hard = _instPartial.TVFResoMode != 0;
+    word = std::min(word, hard ? _LUT.JVTvfLimitHard[_jvRes]
+                               : _LUT.JVTvfLimitSoft[_jvRes]);
+    damp = hard ? _LUT.JVTvfDampHard[_jvRes] : _LUT.JVTvfDampSoft[_jvRes];
+  }
+
+  _jvWordPrev = _jvWord;
+  _jvWord = word;
+  _jvQ1 = (float) damp / (float) _jvLaw->dampUnity;
+
+  if (0)
+    std::cout << "JV TVF: env=" << std::dec << (_jvEnvLevel >> 8)
+              << " x=" << x << " word=0x" << std::hex << word
+              << " damp=0x" << damp << std::dec << " res=" << _jvRes
+              << std::endl;
+}
+
+
+// The coefficient moves across the tick rather than stepping at its boundary.
+// On the hardware the CPU writes the target's high byte together with a slew
+// rate and the chip walks the coefficient there itself; the reconstruction of
+// that rate byte is not established, so the move is taken as linear across the
+// tick, landing exactly on the target. That is the same simplification
+// _smooth_cutoff() and TVA::_smooth() already make, and for the same reason:
+// the settled value is what the reference measures at, and the shape inside one
+// tick is finer than the measurement resolves.
+void TVF::_jv_apply_sample_set(std::array<float, 256> &dryBus)
+{
+  const float unity = (float) _jvLaw->cutoffUnity;
+  const float from = _jvWordPrev / unity;
+  const float to   = _jvWord / unity;
+  const float span = (float) (256 * _jvLaw->envTickPeriods);
+
+  for (int i = 0; i < 256; i++) {
+    float t = (_jvRampPos + i + 1) / span;
+    if (t > 1.0f)
+      t = 1.0f;
+    _svf->set_coefficients(from + (to - from) * t, _jvQ1);
+    dryBus[i] = _svf->process_sample(dryBus[i]);
+  }
+
+  _jvRampPos += 256;
 }
 
 }

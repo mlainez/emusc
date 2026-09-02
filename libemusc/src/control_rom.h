@@ -133,6 +133,17 @@ public:
     uint8_t TVFETVSens12;   // TVF Envelope Time Velocity Sensitivity (T1 - T2)
     uint8_t TVFETVSens35;   // TVF Envelope Time Velocity Sensitivity (T3 - T5)
 
+    // Three fields the Sound Canvas ones above cannot carry, because the JV
+    // spells the same parameters differently (P-0390): its cutoff key follow is
+    // an INDEX into a cents-per-semitone table rather than a byte biased at
+    // 0x40, its resonance byte carries a SOFT/HARD mode bit, and its envelope
+    // velocity sensitivity is a plain signed byte where the Sound Canvas's is
+    // biased. Given their own names so that neither chain can read the other's
+    // neutral value as data.
+    uint8_t TVFCOFKeyFlwIdx;   // index into LookupTables::JVTvfCutoffKF
+    uint8_t TVFResoMode;       // 0 = SOFT, 1 = HARD
+    int8_t  TVFEnvVelSens;     // signed -63..+63; 0 = no velocity effect
+
     uint8_t TVALvlVelCur;
     uint8_t velRangeLow;    // Lowest velocity at which this partial sounds.
                             // Below it the partial is silent; at or above it
@@ -247,6 +258,18 @@ public:
     // curves are a bank of seven, selected per tone.
     std::array<int, 128>      JVLevel;
     std::array<uint8_t, 896>  JVVelCurves;
+
+    // The JV's time-variant filter tables (P-0390). Read from its own control
+    // ROM, each reproducing a closed form exactly - see devices/jv880.cc.
+    // JVTvfExpCoarse is indexed by a SIGNED byte: entry 128 is -128.
+    std::array<int, 256> JVTvfExpCoarse;
+    std::array<int, 256> JVTvfExpFine;
+    std::array<int, 128> JVTvfLimitSoft;
+    std::array<int, 128> JVTvfDampSoft;
+    std::array<int, 128> JVTvfLimitHard;
+    std::array<int, 128> JVTvfDampHard;
+    std::array<int, 128> JVTvfBase;
+    std::array<int,  16> JVTvfCutoffKF;   // signed, cents per semitone
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };
