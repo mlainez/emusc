@@ -585,7 +585,25 @@ const DeviceProfile JV880_PROFILE = {
     // (P-0397). It is left at the Sound Canvas value rather than zeroed so the
     // fallback path stays meaningful if the law is ever switched back.
     0x16, 112,
-    ReverbDelayTapLaw::JVRecordScale
+    ReverbDelayTapLaw::JVRecordScale,
+
+    // THE NETWORK. This device does not run the Sound Canvas reverb program:
+    // its TC6116AF reverb is one mono recirculating delay line read by nine
+    // independent stereo tap pairs, and every number in it - the taps, their Q6
+    // gains, the input gain, the loop tap, the pre-LPF pair - is in this
+    // device's own ROM2 records, read through
+    // ControlRom::LookupTables::JVReverbRecord (P-0399).
+    //
+    // So under JVMultiTapLine the three ReverbLaw constants above that belong
+    // to the Sound Canvas program are DEAD on this device: timeSlope/timeOffset/
+    // timeCap (the loop gain comes from the record and the Time law below), the
+    // pre-LPF triple (the record carries a fixed pair per type; the JV has no
+    // Pre-LPF parameter at all) and delayTapBase (the record's own word +0x1A
+    // plus one). They are left at their values rather than zeroed so the
+    // Sound Canvas path stays meaningful if the network is ever switched back,
+    // exactly as delayTapPerTime already is.
+    ReverbNetworkKind::JVMultiTapLine,
+    ReverbFeedbackLaw::JVFirmwareRegister
   },
 
   { true,  0x3f, 0x7f },

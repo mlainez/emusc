@@ -44,9 +44,20 @@ Reverb::Reverb(Settings *settings, const struct ControlRom::LookupTables &LUT)
     _silenceRemaining(0),
     _preLPF(-1),
     _reverbTime(-1),
-    _delayFeedback(-1)
+    _delayFeedback(-1),
+    _jvNetwork(settings->device()->reverb.network ==
+               ReverbNetworkKind::JVMultiTapLine)
 {
   _rBuffer.fill(0.0f);
+
+  for (int k = 0; k < _jvTaps; k++) {
+    _jvTapL[k] = _jvTapR[k] = 0;
+    _jvGain[k] = 0.0f;
+    _jvActive[k] = false;
+  }
+  _jvInGain = 0.0f;
+  _jvLoopTap = _jvPreDelay = _jvTapBase = 0;
+  _jvTimeScale = 0;
 }
 
 
@@ -113,6 +124,12 @@ void Reverb::process_sample(float input, float output[2])
       update();                        // reverb time and level for the new one
     }
     output[0] = output[1] = 0;
+    return;
+  }
+
+  // The JV-880 runs a different NETWORK, not this program with other numbers.
+  if (_jvNetwork) {
+    _process_sample_jv(input, output);
     return;
   }
 
@@ -198,6 +215,18 @@ void Reverb::process_sample(float input, float output[2])
 
   _sweepIndex = (_sweepIndex - 1) & rBufferMask;
 
+  const float fade = _fade_step();
+
+  output[0] = wetL * _outGain * fade;
+  output[1] = wetR * _outGain * fade;
+}
+
+
+// One step of the character-change fade-out, shared by both networks. Extracted
+// unchanged from process_sample when the JV network was added; the arithmetic
+// and its order are the same, which the Sound Canvas corpus check verifies.
+float Reverb::_fade_step(void)
+{
   float fade = 1.0f;
   if (_fadeRemaining > 0) {
     fade = (float) _fadeRemaining / (float) _fadeOutSamples;
@@ -208,15 +237,138 @@ void Reverb::process_sample(float input, float output[2])
       _preLpfState = 0.0f;
     }
   }
+  return fade;
+}
+
+
+// THE JV-880's REVERB NETWORK - one mono recirculating delay line, nine stereo
+// tap pairs, the loop closed from a tenth tap (scdb devices/jv880/08_effects/
+// reverb.md "THE NETWORK", P-0399):
+//
+//   send -> [pre-LPF w21] -> x (w22 hi)/64 -> (+) -> line ---------------.
+//                                             ^                          |
+//                                             '------ x g_fb ----- tap w20
+//
+//   L = SUM(k=1..9) c_k * line[w(2k)]      R = SUM(k=1..9) c_k * line[w(2k+1)]
+//
+// and then the return gain, which _set_level already forms from the type's own
+// coefficient. Every number is the selected type's ROM record.
+//
+// Three things this is NOT, each of which the recovered network rules out: a
+// comb bank, an allpass diffuser, and a nested tank. The +-g byte pairs that
+// look like allpass coefficients are two consecutive TAP gains of equal
+// magnitude and opposite polarity, and the polarity alternates from pair to
+// pair in every record - that is what decorrelates the reflections here.
+//
+// Two things it does not settle, neither papered over:
+//
+//  * TAP PAIR P2's GAIN IS UNKNOWN. Word 23's high byte is 0x00 in all sixteen
+//    records across both devices, so P2 = (w4, w5) is muted in every shipped
+//    preset and no ROM read can ever evidence a value for it. It is treated as
+//    muted here because that is what the data says, not because a value was
+//    chosen. Only a register-level write on hardware can settle it.
+//  * The record's pre-delay, word 1 (300/323/695/926/917/917 samples for the
+//    six reverbs, 1 for both delay types, ordered room < stage < hall), has no
+//    place in the recovered signal flow: it carries no gain byte and the nine
+//    tap delays are absolute, measured to the sample on the two delay types.
+//    It is read and kept in _jvPreDelay so it is visible rather than dropped,
+//    and it is NOT inserted into the path - inventing a position for it would
+//    move every tap by 9.4 to 29 ms on a guess.
+void Reverb::_process_sample_jv(float input, float output[2])
+{
+  // The pre-LPF, y[n] = (lo*x[n] + hi*y[n-1]) / 64. The pair sums to exactly 64
+  // in all eight records, so its DC gain is exactly 1 and it only shapes.
+  _preLpfState = _preLpfA * _preLpfState + _preLpfB * input;
+
+  // The loop tap is read BEFORE the write, so the recirculation is exactly w20
+  // samples - the one claim about this network confirmed by direct measurement
+  // (envelope self-similarity r = +0.82..0.87 at lag w20, and the two halves of
+  // one w20 window anti-correlated at -0.69..-0.92, which is what refuted a
+  // w20/2 sub-period).
+  const float fb = _rBuffer[(_jvLoopTap + _sweepIndex) & rBufferMask];
+  _rBuffer[_sweepIndex] = _preLpfState * _jvInGain + _gLoop * fb;
+
+  float wetL = 0.0f, wetR = 0.0f;
+  for (int k = 0; k < _jvTaps; k++) {
+    if (!_jvActive[k])                  // a zero gain byte is a MUTED pair
+      continue;
+    wetL += _jvGain[k] * _rBuffer[(_jvTapL[k] + _sweepIndex) & rBufferMask];
+    wetR += _jvGain[k] * _rBuffer[(_jvTapR[k] + _sweepIndex) & rBufferMask];
+  }
+
+  _sweepIndex = (_sweepIndex - 1) & rBufferMask;
+
+  const float fade = _fade_step();
 
   output[0] = wetL * _outGain * fade;
   output[1] = wetR * _outGain * fade;
 }
 
 
+// Load one type's whole network out of its ROM record. The word -> field map is
+// scdb's, and the coefficient byte order is what the two DELAY records prove:
+// the only nonzero tap byte in them is the LAST one, on the pair the delay arm
+// drives, and word 22's high byte is the input gain because PAN-DLY's wet is
+// exactly 2.000x DELAY's with +16 against +8 there and everything else equal.
+void Reverb::_set_jv_character(int character)
+{
+  constexpr int nw = ControlRom::LookupTables::JVReverbRecordWords;
+
+  std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
+  _dampA = _dampB = 0.0f;
+  _preLpfState = 0.0f;
+
+  if (character < 0 || character > 7 ||
+      (size_t) (nw * (character + 1)) > _LUT.JVReverbRecord.size())
+    return;
+
+  const int *rec = _LUT.JVReverbRecord.data() + nw * character;
+  if (rec[20] == 0)                     // no record read: leave the line silent
+    return;
+
+  _jvPreDelay  = (uint16_t) rec[1];
+  _jvLoopTap   = (uint16_t) rec[20];
+  _jvTapBase   = (uint16_t) (rec[13] + 1);   // word +0x1A plus one
+  _jvInGain    = sByte((uint16_t) rec[22], true);
+  _jvTimeScale = rec[27] >> 8;               // record[+0x36]
+
+  // The pre-LPF pair, high byte the pole and low byte the input gain. Which is
+  // which comes from the SC-55 mk1, which drives the same chip register from its
+  // GS Reverb Pre-LPF parameter: "off" is 0x003F there, so the LOW byte is the
+  // input. The JV has no such parameter and bakes a pair per type.
+  _preLpfA = (rec[21] >> 8)   / 64.0f;
+  _preLpfB = (rec[21] & 0xff) / 64.0f;
+
+  // The nine tap-pair gains, in stream order from word 22's LOW byte: w22 lo,
+  // then each of words 23-26 high byte before low. Shifted and reversed byte
+  // orders were both tried by scdb and both are refuted by a delay record.
+  static constexpr struct { int word; bool hi; } gainByte[_jvTaps] = {
+    { 22, false }, { 23, true }, { 23, false }, { 24, true }, { 24, false },
+    { 25, true  }, { 25, false }, { 26, true }, { 26, false }
+  };
+
+  for (int k = 0; k < _jvTaps; k++) {
+    _jvTapL[k] = (uint16_t) rec[2 * (k + 1)];
+    _jvTapR[k] = (uint16_t) rec[2 * (k + 1) + 1];
+    const int raw = gainByte[k].hi ? (rec[gainByte[k].word] >> 8)
+                                   : (rec[gainByte[k].word] & 0xff);
+    // k == 1 is P2, whose byte is 0x00 in every record on both devices. It is
+    // muted for the same reason every other zero byte is, and its true role is
+    // UNKNOWN rather than zero - see the note on _process_sample_jv.
+    _jvActive[k] = (raw != 0);
+    _jvGain[k]   = sByte((uint16_t) rec[gainByte[k].word], gainByte[k].hi);
+  }
+}
+
+
 void Reverb::_set_character(int character)
 {
   _character = character;
+
+  if (_jvNetwork) {
+    _set_jv_character(character);
+    return;
+  }
 
   // TODO: Firmware fades out before starting with the new character.
   //       We simply reset the ring buffer and switch character instantly, but
@@ -249,6 +401,44 @@ void Reverb::_set_reverb_time(int reverbTime)
   const ReverbLaw &law = _settings->device()->reverb;
 
   int rt = std::clamp(reverbTime, 0, 127);
+
+  // The JV-880's own network takes its loop gain and its delay taps from the
+  // selected type's record, so neither the Sound Canvas line nor this program's
+  // register layout is involved (P-0399).
+  if (_jvNetwork) {
+    // The firmware's expansion of a 0-127 parameter to 0-255: 2v below 64 and
+    // 2v + 1 from 64 up, the carry of a byte-wide shift rather than rounding.
+    const int ex = 2 * rt + (rt >= 64 ? 1 : 0);
+
+    if (_character >= 0 && _character <= 5) {
+      _gLoop = _jv_loop_gain(ex);
+
+    } else if (_character == 6 || _character == 7) {
+      // The delay arm, ROM2 0x7283/0x72A0: two tap addresses A and B out of the
+      // record's own scale words, written into the FIVE tap pairs the arm
+      // drives, with the loop tap at B. Only P9's gain is nonzero (+64), so
+      // only P9 is heard - which is why the firmware can write the same pair of
+      // addresses into four places without consequence.
+      //
+      //   A -> w6, w10, w14, w18        i.e. the LEFT tap of P3, P5, P7, P9
+      //   B -> w7, w11, w15, w19, w20   the RIGHT tap of those, and the loop
+      //   B, B+1 -> w16, w17            P8, which the JV parks here and mutes
+      const int E = 2 * rt + (rt >= 64 ? 1 : 0);
+      const int M = (E << 8) | (E >= 128 ? 0xff : 0);
+      const int sA = _LUT.JVReverbTapScale[2 * _character];
+      const int sB = _LUT.JVReverbTapScale[2 * _character + 1];
+      const uint16_t A = (uint16_t) (_jvTapBase + ((M * sA) >> 16));
+      const uint16_t B = (uint16_t) (_jvTapBase + ((M * sB) >> 16));
+
+      _jvTapL[2] = _jvTapL[4] = _jvTapL[6] = _jvTapL[8] = A;
+      _jvTapR[2] = _jvTapR[4] = _jvTapR[6] = _jvTapR[8] = B;
+      _jvTapL[7] = B;
+      _jvTapR[7] = (uint16_t) (B + 1);
+      _jvLoopTap = B;
+    }
+    return;
+  }
+
   if (_character >= 0 && _character <= 5) {
     // Reverb time is a rounded straight line into the loop gain, saturating.
     // What this used to index was a table, but the table is such a line, and
@@ -309,9 +499,55 @@ void Reverb::_set_reverb_time(int reverbTime)
 }
 
 
+// Reverb Time -> the recirculation gain on the JV's loop tap, for the six
+// reverb types. Two candidate laws, and they contradict each other; which one
+// runs is a field of the device profile so both can be measured.
+//
+// JVFirmwareRegister is the firmware's arithmetic, confirmed instruction by
+// instruction at ROM2 0x71C3-0x71DC: an unsigned mulxu.b of the expanded Time
+// byte by record[+0x36], written to slot 0x1E F010's high byte, and the >>8 is
+// not even a shift - it falls out of overwriting the product's low byte with
+// the constant 0xB0. The byte over 256 is then the loop gain.
+//
+// JVLoopLengthFit is scdb's empirical replacement, from a 28-cell measurement
+// of the per-pass loss on the reference:
+//
+//     20*log10(g) = 20*log10(w20) + 40*log10(expand(Time)) - 184.6
+//
+// The register law is falsified by CONTRADICTION rather than by residual size -
+// ROM1 at Time 127 and STAGE2 at Time 81 compute the identical byte 73 and
+// measure 2.7 dB apart, so no function of that byte alone can fit both - and
+// the fit's held-out error is 0.30 to 3.15 dB over the six types. But it is a
+// `FIT`: it has no mechanism, and it drops a byte the firmware demonstrably
+// multiplies into the register. Tagged as such in ReverbFeedbackLaw, and the
+// measured comparison is in the journal rather than assumed here.
+float Reverb::_jv_loop_gain(int expandedTime) const
+{
+  const ReverbLaw &law = _settings->device()->reverb;
+
+  if (law.feedbackLaw == ReverbFeedbackLaw::JVLoopLengthFit) {
+    if (expandedTime <= 0 || _jvLoopTap == 0)
+      return 0.0f;
+    const float dB = 20.0f * log10f((float) _jvLoopTap) +
+                     40.0f * log10f((float) expandedTime) - 184.6f;
+    return std::min(powf(10.0f, dB / 20.0f), 0.99f);
+  }
+
+  return (float) ((expandedTime * _jvTimeScale) >> 8) / 256.0f;
+}
+
+
 void Reverb::_set_pre_lpf(int preLPF)
 {
   _preLPF = preLPF;
+
+  // The JV-880 has NO Pre-LPF parameter - the manual's reverb page lists Type,
+  // Level, Time and Feedback and nothing else - and its network's pre-LPF is a
+  // fixed pair per type, baked into the record and loaded with it. Letting a
+  // GS parameter this device does not have reach the filter would overwrite
+  // that pair with a Sound Canvas value on the first update().
+  if (_jvNetwork)
+    return;
 
   const ReverbLaw &law = _settings->device()->reverb;
 
@@ -327,8 +563,45 @@ void Reverb::_set_delay_feedback(int delayFeedback)
 {
   _delayFeedback = delayFeedback;
 
-  if (_character == 6 || _character == 7)
-    _gLoop = fbToTarget(delayFeedback) / 128.0f;
+  if (_character != 6 && _character != 7)
+    return;
+
+  // The JV writes Delay Feedback into the loop tap's gain register on slot 0x1E
+  // F010 (ROM2 0x72C5-0x72D1) - the same register the reverb arm drives from
+  // Reverb Time, which is what identifies that register as the recirculation
+  // gain and why the manual says Feedback works only on the two delay types.
+  //
+  // MEASURED, not assumed, and it is the tightest law in this device. Because
+  // the delay arm reaches F010 from Delay Feedback ALONE - no Reverb Time, no
+  // record[+0x36] - it is the only place where that register can be varied on
+  // its own, so it is the only clean test of what the chip does with it. A
+  // 150 ms note through a single-tap line at Delay Time 81 puts one echo every
+  // 312.5 ms, each g times the last, so the ratio of successive echo PEAKS is
+  // the per-pass gain with no fitting at all. Nine feedback values on both
+  // delay types, on the reference:
+  //
+  //     fb        16     32     48     64     80     96    112    127
+  //     g       .1098  .2336  .3627  .4875  .6117  .7345  .8590  .9840
+  //     g*128   14.05  29.90  46.42  62.40  78.29  94.02 109.95 125.95
+  //
+  // so g = (fb - 2) / 128, residual RMS 0.046 dB and max 0.08 dB over a 19 dB
+  // span - and the reading g = fb/256 that the topology assumed is out by a
+  // clean factor of two, 5.67 dB, at every point.
+  //
+  // WHICH factor of two this is cannot be told apart from audio: either the
+  // register field is Q7 (128 = 1.0), or it is Q8 as everything else assumed
+  // and the byte written is 2*(Feedback - 2) rather than Feedback. The reverb
+  // arm settles it in favour of the second: ROOM2's own byte reaches 141 at
+  // Reverb Time 127, and 141/128 > 1 would make ROOM2 self-oscillate, which it
+  // demonstrably does not. So F010 is Q8 on both arms and the delay arm's byte
+  // is doubled somewhere between the DT1 and the write - handed to scdb, since
+  // the disassembly there has (feedback << 8) | 0xB0 with no doubling in it.
+  if (_jvNetwork) {
+    _gLoop = std::max(std::clamp(delayFeedback, 0, 127) - 2, 0) / 128.0f;
+    return;
+  }
+
+  _gLoop = fbToTarget(delayFeedback) / 128.0f;
 }
 
 

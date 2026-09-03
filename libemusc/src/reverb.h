@@ -27,6 +27,15 @@
 // behavior. This implementation is based on the reverse-engineering work done
 // by nukeykt as part of the Nuked-SC55 project
 // (https://github.com/nukeykt/Nuked-SC55).
+//
+// The JV-880 runs a DIFFERENT network on the same chip and takes a separate
+// path, selected by ReverbNetworkKind::JVMultiTapLine: one mono recirculating
+// delay line read by nine independent stereo tap pairs, with the loop closed
+// from a tenth tap. It shares none of the register program above - no comb
+// bank, no allpass diffuser, no tank - and every number in it is read from
+// that device's own ROM2 type records rather than measured (P-0399). Its
+// provenance is the JV-880's firmware and Roland's own service notes, not the
+// project named above.
 
 
 #ifndef __REVERB_H__
@@ -129,6 +138,21 @@ private:
   static constexpr const _CharacterRegs *_charRegs[6] =
     { &_crRoom1, &_crRoom2, &_crRoom3, &_crHall1, &_crHall2, &_crPlate };
 
+  // THE JV-880's NETWORK - one mono recirculating delay line, nine stereo tap
+  // pairs, the loop closed from a tenth tap. Every field is loaded from the
+  // selected type's own ROM record (ControlRom::LookupTables::JVReverbRecord,
+  // P-0399); nothing here is a constant of this program. Selected by
+  // ReverbNetworkKind::JVMultiTapLine and untouched on every other device.
+  static constexpr int _jvTaps = 9;
+  uint16_t _jvTapL[_jvTaps], _jvTapR[_jvTaps];
+  float    _jvGain[_jvTaps];        // signed Q6, 64 = 1.0
+  bool     _jvActive[_jvTaps];      // gain == 0 is a MUTED pair, not a quiet one
+  float    _jvInGain;               // record word 22's high byte, signed Q6
+  uint16_t _jvLoopTap;              // record word 20: the loop period
+  uint16_t _jvPreDelay;             // record word 1, read and reported
+  uint16_t _jvTapBase;              // record word 13 + 1: the delay arm's base
+  int      _jvTimeScale;            // record[+0x36]
+
   float _preLpfState;
   float _preLpfA, _preLpfB;
   float _dampA, _dampB;          // 1-pole damping states (per branch)
@@ -150,11 +174,19 @@ private:
   int _reverbTime;
   int _delayFeedback;
 
+  // Which network this device runs, read once from the profile. A per-sample
+  // dispatch, so it is not looked up per sample.
+  const bool _jvNetwork;
+
   void _set_character(int character);
+  void _set_jv_character(int character);
+  void _process_sample_jv(float input, float output[2]);
   void _set_reverb_time(int reverbTime);
   void _set_pre_lpf(int preLPF);
   void _set_delay_feedback(int delayFeedback);
   void _set_level(int level);
+  float _fade_step(void);
+  float _jv_loop_gain(int expandedTime) const;
 
   static inline int fbToTarget(int f)
   { return std::min(2 * std::clamp(f, 0, 127) + 2, 191); }

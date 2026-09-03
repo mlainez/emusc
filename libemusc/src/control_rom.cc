@@ -1649,6 +1649,7 @@ void ControlRom::_init_device_lookup_tables(void)
   // reverb.cc that this device has no per-type return coefficient to apply.
   t.JVReverbReturnCoeff.fill(0);
   t.JVReverbTapScale.fill(0);
+  t.JVReverbRecord.fill(0);
 
   t.LFORate.fill(0);
   t.LFODelayTime.fill(0);
@@ -1803,6 +1804,20 @@ void ControlRom::_init_device_lookup_tables(void)
         if ((size_t) rec + V.reverbReturnCoeff >= _deviceRom.size())
           break;
         t.JVReverbReturnCoeff[type] = _deviceRom[rec + V.reverbReturnCoeff];
+
+        // ...and the whole record, words 0..27, which is the reverb NETWORK
+        // itself: the nine stereo tap pairs, their Q6 gains, the input gain,
+        // the loop tap, the pre-LPF pair and the Time scale (P-0399). The
+        // network in reverb.cc is driven from these words on a device whose
+        // ReverbNetworkKind is JVMultiTapLine; nothing is embedded there.
+        {
+          const int nw = LookupTables::JVReverbRecordWords;
+          if ((size_t) rec + 2 * nw <= _deviceRom.size()) {
+            for (int w = 0; w < nw; w++)
+              t.JVReverbRecord[nw * type + w] =
+                ((int) _deviceRom[rec + 2 * w] << 8) | _deviceRom[rec + 2 * w + 1];
+          }
+        }
 
         // ...and, out of the same record, the two delay-time scale words the
         // delay arm multiplies the Time parameter by (P-0397). Read for every

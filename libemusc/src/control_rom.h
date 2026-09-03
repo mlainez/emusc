@@ -313,6 +313,32 @@ public:
     // tap is about 61 samples longer than the same arithmetic without it, and
     // the reference's echo jumps by exactly that at exactly that point.
     std::array<int,  16> JVReverbTapScale;
+
+    // The JV-880's eight reverb type records in full: words 0..27 of each,
+    // big-endian, laid end to end, so entry 28*type + w is word w of type
+    // `type`'s record (P-0399). Words 0..27 and no further: the two DELAY
+    // records are spaced 0x38 = 56 bytes, so word 28 of type 6 is already the
+    // first word of type 7's record.
+    //
+    // The fields, from scdb 08_effects/reverb.md "THE NETWORK":
+    //
+    //     w0        0 or 1 in every record; no gain byte belongs to it
+    //     w1        the pre-delay in samples, 300..926 for the six reverbs
+    //     w2..w19   NINE STEREO TAPS as pairs (w2k -> LEFT, w2k+1 -> RIGHT),
+    //               absolute delays in samples at the effect line's 32 kHz
+    //     w20       the recirculation tap: the loop period
+    //     w21       the pre-LPF pair (pole, input), summing to exactly 64
+    //     w22 hi    the reverb's INPUT gain, signed Q6
+    //     w22 lo    the gain of tap pair P1, signed Q6, 64 = 1.0
+    //     w23..w26  the gains of P2..P9, high byte then low
+    //     w27 hi    record[+0x36], the Reverb Time scale
+    //
+    // Read here rather than in reverb.cc so the ROM stays in the ROM reader,
+    // the same way JVReverbReturnCoeff and JVReverbTapScale are. Zero when the
+    // device has no such records.
+    static constexpr int JVReverbRecordWords = 28;
+    std::array<int, 8 * JVReverbRecordWords> JVReverbRecord;
+
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };

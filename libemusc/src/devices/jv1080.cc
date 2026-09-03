@@ -52,7 +52,11 @@ const DeviceProfile JV1080_PROFILE = {
     ReverbReturnLaw::LevelOverDivisor,
     8, 0x3f, 4,
     0x16, 112,
-    ReverbDelayTapLaw::LinearPerTime
+    ReverbDelayTapLaw::LinearPerTime,
+
+    // The Sound Canvas program and its own Time -> loop-gain line, unchanged.
+    ReverbNetworkKind::SoundCanvasProgram,
+    ReverbFeedbackLaw::SoundCanvasTimeLine
   },
 
   { true,  0x3f, 0x7f },
