@@ -41,6 +41,7 @@
 
 
 #include "tvf.h"
+#include "jv_velocity.h"
 
 #include <algorithm>
 #include <cmath>
@@ -822,50 +823,6 @@ void TVF::_init_new_phase(enum Phase newPhase)
 // instead builds a cutoff INDEX, which is why the two cannot share code.
 // ---------------------------------------------------------------------------
 
-// The envelope level's velocity attenuation, out of the tone's velocity curve
-// and its signed sensitivity. An ATTENUATION: the curves fall from 255 at
-// velocity 0 to 0 at velocity 127, so a positive sensitivity means quiet notes
-// get less filter envelope.
-//
-// The two |sens| < 32 arms and the negative high-sensitivity arm are the
-// firmware's, read from it. The POSITIVE high-sensitivity arm is the one
-// reading here that is not: it is the mirror that makes the two positive arms
-// continuous where the two negative arms are continuous. expand3(31) = 255
-// against 1 << 8 = 256, so at the 31/32 boundary the high arm has to reproduce
-// the low arm and then go on by scaling the curve's INDEX rather than its
-// amplitude - which is exactly what the negative high arm does. The saturation
-// mirrors too: past the end of the table the negative arm saturates to 0xffff,
-// full attenuation, so the positive one saturates to none.
-int TVF::_jv_velocity_attenuation(int curve, int sens, int velocity)
-{
-  if (sens == 0)                             // the firmware skips the helper
-    return 0;
-
-  const int banked = (int) (_LUT.JVVelCurves.size() / 128);
-  const int base = std::min(curve, banked - 1) * 128;
-  const int vel = std::clamp(velocity, 0, 127);
-
-  // 0..31 -> 0..255, by doubling three times and carrying the top bit each time
-  auto expand3 = [](int v) {
-    for (int threshold : { 0x10, 0x20, 0x40 })
-      v = 2 * v + (v >= threshold ? 1 : 0);
-    return v;
-  };
-
-  if (sens >= 32) {
-    const int t = (sens * vel) >> 5;
-    return (t >= 0x80) ? 0 : (_LUT.JVVelCurves[base + t] << 8);
-  }
-  if (sens > 0)
-    return expand3(sens) * _LUT.JVVelCurves[base + vel];
-  if (sens > -32)
-    return expand3(-sens) * (255 - _LUT.JVVelCurves[base + vel]);
-
-  const int t = ((-sens) * vel) >> 5;
-  return (t >= 0x80) ? 0xffff : ((255 - _LUT.JVVelCurves[base + t]) << 8);
-}
-
-
 void TVF::_jv_init(uint8_t velocity)
 {
   // If the device's own filter tables did not load, the filter is left DISABLED
@@ -887,8 +844,11 @@ void TVF::_jv_init(uint8_t velocity)
     _jvEnvDepth = (d < 0) ? -m : m;
   }
 
-  _jvVelAtten = _jv_velocity_attenuation(_instPartial.TVFCOFVelCur,
-                                         _instPartial.TVFEnvVelSens, velocity);
+  // ROM1 0x489d: the shared velocity helper with this tone's TVF curve and
+  // TVF-ENV velocity sensitivity (jv_velocity.h).
+  _jvVelAtten = jv_velocity_attenuation(_LUT.JVVelCurves,
+                                        _instPartial.TVFCOFVelCur,
+                                        _instPartial.TVFEnvVelSens, velocity);
 
   // Key follow, in cents per semitone from note 60. The table IS the manual's
   // published percentage list: +100 % is the value 100, i.e. 1:1 tracking.

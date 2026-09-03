@@ -602,8 +602,6 @@ const DeviceProfile JV880_PROFILE = {
     8,      // toneIndexShift
     7,      // dynamicsShift
     24,     // staticShift
-    5,      // velocityShift
-    127,    // velocityPivot
     10,     // keyFollowUnitsPerPct
     // envelopeFullScale: 0, meaning "not this device". The envelope's level does
     // not scale the static level linearly here - it goes through ROM2 0x6060 and

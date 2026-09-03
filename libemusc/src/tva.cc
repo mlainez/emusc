@@ -18,6 +18,7 @@
 
 
 #include "tva.h"
+#include "jv_velocity.h"
 
 #include <algorithm>
 #include <cmath>
@@ -769,21 +770,21 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     int index = (_instPartial.volume & 0x7f) * smpl8;
 
     // Velocity, through the tone's own curve out of the bank, applied
-    // multiplicatively. A sensitivity of 0 means no velocity effect at all.
+    // multiplicatively: ROM1 0x48b6 calls the shared velocity helper with the
+    // TVA curve (tone +0x47 & 7) and TVA velocity sensitivity (+0x48) and
+    // stores the factor per voice; the level routine at ROM1 0x4451-0x445b then
+    // takes `index -= (index * w) >> 16` (jv_velocity.h; scdb D-35). A
+    // sensitivity of 0 means no velocity effect at all.
+    //
+    // This used to apply the helper's `sens >= 32` arm to every positive
+    // sensitivity. That is right for SAW Lead (+35) and 1.8 dB too quiet for
+    // Glass Pad's Fine Wine layer (+13, curve 2), whose curve 2 -> 1 shift the
+    // reference measures at +2.50 dB and the arm below gives as +2.51.
     const int sens = (int8_t) _instPartial.TVALvlVSens;
     if (sens != 0) {
-      const int banked = (int) (_LUT.JVVelCurves.size() / 128);
-      const int curve = std::min((int) _instPartial.TVALvlVelCur,
-                                 banked - 1) * 128;
-      const int v     = cVelocity & 0x7f;
-      int w = 0;
-      if (sens > 0) {
-        const int idx = L.velocityPivot - ((sens * (L.velocityPivot - v)) >> L.velocityShift);
-        w = (idx < 0) ? 0xffff : (_LUT.JVVelCurves[curve + idx] << 8);
-      } else {
-        const int idx = (-sens * v) >> L.velocityShift;
-        w = (idx > 127) ? 0 : ((255 - _LUT.JVVelCurves[curve + idx]) << 8);
-      }
+      const int w = jv_velocity_attenuation(_LUT.JVVelCurves,
+                                            _instPartial.TVALvlVelCur, sens,
+                                            cVelocity & 0x7f);
       index -= (int) (((int64_t) index * w) >> 16);
     }
 

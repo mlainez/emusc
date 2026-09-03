@@ -142,7 +142,6 @@ private:
   void _jv_iterate(void);
   void _jv_next_phase(void);
   void _jv_apply_sample_set(std::array<float, 256> &dryBus);
-  int  _jv_velocity_attenuation(int curve, int sens, int velocity);
 
   TVF();
 

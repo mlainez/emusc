@@ -77,7 +77,7 @@ const DeviceProfile SC55_PROFILE = {
   // not use this law; left zero so a misuse is obvious rather than plausible.
   // Its envelope table is already in engine ticks, and segments of 8 ticks or
   // fewer snap - the behaviour tva.cc has always had for this generation.
-  { 0, 0, 0, 0, 0, 0, 0, 0, 8, 1 },
+  { 0, 0, 0, 0, 0, 0, 8, 1 },
 
   LevelLawKind::SoundCanvasLogIndex,
 

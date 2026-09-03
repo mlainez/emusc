@@ -37,7 +37,7 @@ const DeviceProfile SOUND_CANVAS_DEFAULT_PROFILE = {
 
   nullptr, 0,
 
-  { 0, 0, 0, 0, 0, 0, 0, 0, 8, 1 },
+  { 0, 0, 0, 0, 0, 0, 8, 1 },
 
   LevelLawKind::SoundCanvasLogIndex,
 

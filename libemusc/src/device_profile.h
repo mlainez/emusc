@@ -424,8 +424,6 @@ struct LevelLaw
   int toneIndexShift;        // (toneLevel x sampleLevel) >> this, to index the curve
   int dynamicsShift;         // (partLevel x patchLevel) >> this
   int staticShift;           // (gain x dynamics) >> this, to an 8-bit static level
-  int velocityShift;         // (sensitivity x (pivot - velocity)) >> this
-  int velocityPivot;         // full-scale velocity, the point of no attenuation
   int keyFollowUnitsPerPct;  // engine key-follow units per ten percent
   // WITHDRAWN and no longer consumed. It encoded the assumption that the
   // envelope scales the static level linearly, "no attenuation" at 127. It does
