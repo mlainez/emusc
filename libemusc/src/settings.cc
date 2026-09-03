@@ -483,6 +483,13 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::RxSoft          | (partAddr << 8)] = 1;
 
     
+    // Mono/Poly defaults to POLY (SC-55 owner's manual p.39). It was the one
+    // part parameter this routine never wrote, so Part::add_note's mono-mode
+    // test read whatever the heap held where Settings was allocated: a render
+    // could change from adding a byte to an unrelated struct, and the JV demo
+    // did (scdb devices/jv880 D-27, 2026-09-03).
+    _patchParams[(int) PatchParam::PolyMode        | (partAddr << 8)] = 1;
+
     // MIDI channel 10 defaults to rhythm mode 1 (Drum1) in GS mode
     if (_patchParams[(int) PatchParam::RxChannel  | (partAddr << 8)] == 9) {
       _patchParams[(int) PatchParam::AssignMode   | (partAddr << 8)] = 0;
