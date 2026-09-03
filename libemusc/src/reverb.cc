@@ -274,6 +274,58 @@ float Reverb::_fade_step(void)
 //    It is read and kept in _jvPreDelay so it is visible rather than dropped,
 //    and it is NOT inserted into the path - inventing a position for it would
 //    move every tap by 9.4 to 29 ms on a guess.
+// FIDELITY OF THIS NETWORK -- read before trusting it, and before extending it.
+//
+// The firmware is the ground truth here, and by that standard this network is
+// NOT firmware-exact. It is firmware-derived in its data and its structure, and
+// measured or missing in three places. Stated plainly so nobody mistakes a
+// measurement for a fact (evidence classes and their precedence: scdb Agent.md,
+// "Evidence precedence").
+//
+// FIRMWARE-DERIVED, and safe to rely on:
+//   - Every number in the eight type records: pre-delay, the nine stereo tap
+//     delays, their signed Q6 gains, the feedback tap, the pre-LPF pair and the
+//     input gain. Read from the device's own ROM through the 0x4800 pointer
+//     walk and verified cell by cell against the recovered record map.
+//   - That the taps are absolute delays in samples, even word LEFT and odd
+//     RIGHT, and that the effect line runs at exactly 32000 Hz.
+//   - The return level law, the delay tap law and the Delay-Feedback gating,
+//     each traced to the instruction that computes it.
+//
+// MEASURED THROUGH THE REFERENCE EMULATOR, not stated by the firmware:
+//   - The recirculating multi-tap topology itself. The firmware uploads tap
+//     values; it does not say what the chip does with them. The structure comes
+//     from measured echo times and levels plus a cross-device register split.
+//   - g_fb = (Delay Feedback - 2) / 128, i.e. F010 is Q8. Residual RMS 0.046 dB
+//     over nine feedback values on both delay types, and the remaining factor
+//     of two settled by stability rather than by fitting. The firmware writes
+//     the register; what the chip makes of it had to be measured.
+//
+// MISSING OR UNKNOWN -- the reasons this is not a finished model:
+//   - IN-LOOP HF DAMPING IS ABSENT. The reference loses roughly 5 to 9 dB per
+//     pass above 3 kHz that this network does not, so the tail is about 3 dB
+//     bright in a full mix and up to 20 dB bright in the last second, where the
+//     mix IS the tail. The pre-LPF is refuted as the source three ways: the loss
+//     accumulates per pass, it is roughly type-independent across an 8x range of
+//     pre-LPF pole, and swapping the pair's halves kills the delay types
+//     outright. The responsible field is NOT IDENTIFIED. Candidates are the
+//     record's unassigned bytes. A one-pole at a ~ 0.7 matches the residual and
+//     is deliberately NOT implemented: it is outside this chip family's own
+//     damping poles (0.125-0.48) and a filter fitted to a residual is not
+//     evidence about a device.
+//   - Tap pair P2's gain is UNKNOWN and the pair is muted. Word 23's high byte
+//     is zero in all sixteen records across two devices, so ROM data can never
+//     evidence it.
+//   - The pre-delay in word 1 is read and NOT inserted; the nine tap delays are
+//     absolute and measured to the sample without it.
+//   - The input gain's unity reconciles the six reverbs but leaves the two delay
+//     types 11 to 14 dB quiet, constant across level. One of the two readings is
+//     wrong and it is not known which.
+//
+// So: keep the ROM data, distrust the tail's spectrum, and do not tune any
+// constant here to close a residual. When the damping field is found, it belongs
+// in the loop and the residual above should collapse.
+
 void Reverb::_process_sample_jv(float input, float output[2])
 {
   // The pre-LPF, y[n] = (lo*x[n] + hi*y[n-1]) / 64. The pair sums to exactly 64
