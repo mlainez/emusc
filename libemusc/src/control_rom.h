@@ -212,6 +212,11 @@ public:
     uint8_t pitchCurve;
     uint8_t panKeyFlw;      // Non-zero selects the TVA pan key follow curve
 
+    // Analog Feel, patch common +0x14, 0-127. Drives a slow per-voice pitch
+    // drift; 0 disables it entirely. Non-zero on 119 of the JV's 192 factory
+    // patches, 12 on patch 21 `SAW Lead`. D-25 / L-26.
+    uint8_t analogFeel = 0;
+
     struct InstPartial partials[MAX_PARTIALS];
   };
 

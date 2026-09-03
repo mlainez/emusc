@@ -28,6 +28,12 @@
 
 #include <algorithm>
 #include <cmath>
+
+// One monotonic counter across all voices, incremented per Pitch instance. It
+// is the ONLY state behind the Analog Feel seed: nothing here reads the clock,
+// so a render stays reproducible while each voice still gets its own drift.
+// See pitch.h for why the drift is seeded per voice rather than shared.
+static unsigned int _afSeedCounter = 0;
 #include <iostream>
 #include <string.h>
 
@@ -63,6 +69,12 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
     _LUT(ctrlRom.lookupTables),
     _LFO1(LFO1),
     _LFO2(LFO2),
+    _afDepth(2 * (int) ctrlRom.instrument(instrumentIndex).analogFeel),
+    _afDrift(0), _afFrom(0), _afTo(0), _afStep(0), _afN1(0), _afN2(0),
+    // Seeded per voice from a monotonic counter so that every voice and every
+    // note gets its own sequence while the render stays reproducible - the
+    // counter is the only state, and nothing seeds it from the clock.
+    _afRng(0x2545F491u + 0x9E3779B9u * ++_afSeedCounter),
     _lfo1FadeComplete(false),
     _lfo2FadeComplete(false),
     _sampleIndex(0xffff),
@@ -211,6 +223,45 @@ int Pitch::_get_env_phase_rate(int etRom, int phase)
 void Pitch::note_off()
 {
   set_phase(Phase::Release);
+}
+
+
+// The drift, in tenths of a cent, which is the unit _targetPitch works in.
+// Structure follows the firmware's: filtered noise resampled into linear ramps.
+// Called once per 8 ms control period, so the device's 16 ms task is every
+// second call and its ~128 ms segment is eight of them.
+int Pitch::_af_drift_cents10(void)
+{
+  if (!_afDepth)                        // Analog Feel 0: exactly no effect
+    return 0;
+
+  if (++_afStep >= 16) {                // 16 * 8 ms = 128 ms, one segment
+    _afStep = 0;
+    _afFrom = _afTo;
+    // xorshift, then two poles of averaging - the firmware filters its noise
+    // twice before sampling it, which is what keeps the drift slow rather than
+    // steppy. Range is kept inside +/-127 so `t = drift >> 1` matches the
+    // firmware's signed byte.
+    _afRng ^= _afRng << 13; _afRng ^= _afRng >> 17; _afRng ^= _afRng << 5;
+    int white = (int) (_afRng % 255) - 127;
+    _afN1 += (white - _afN1) >> 1;
+    _afN2 += (_afN1  - _afN2) >> 1;
+    _afTo = std::clamp(_afN2, -127, 127);
+    // A x3 rescale was tried here on the theory that two poles of averaging
+    // left the drift short of the signed-byte range, with a prediction of
+    // roughly double the modulation. Measured: 13.35 -> 12.46 dB, i.e. no
+    // change, so the drift was never range-limited and the clamp merely
+    // saturated. Reverted. The depth arithmetic already reaches the law's
+    // documented peak: |t| <= 63 with _afDepth = 24 at AF = 12 gives
+    // (63 * 24) >> 8 = 5 cents exactly.
+  }
+
+  // Linear ramp between segment endpoints, as the firmware's sampler does.
+  _afDrift = _afFrom + ((_afTo - _afFrom) * _afStep) / 16;
+
+  const int t = _afDrift >> 1;                       // -64..+63
+  const int mag = ((std::abs(t) * _afDepth) >> 8);   // _afDepth is already 2*AF
+  return (t < 0 ? -mag : mag) * 10;                  // cents -> tenths
 }
 
 
@@ -618,6 +669,10 @@ void Pitch::_iterate_phase(void)
 
   int masterTune = _settings->get_param_32nib(SystemParam::Tune) - 0x400;
   _targetPitch = std::max(_targetPitch + masterTune, 0);
+
+  // Analog Feel's per-voice drift, in the same tenths-of-a-cent unit as the
+  // master tune just applied. Zero unless the patch asks for it.
+  _targetPitch = std::max(_targetPitch + _af_drift_cents10(), 0);
 
   // RPN 2, coarse tune, and RPN 1, fine tune. libEmuSC stored both and read
   // back neither, so a part detuned by up to three semitones played in tune -

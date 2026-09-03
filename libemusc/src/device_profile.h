@@ -119,6 +119,11 @@ struct PatchLayout
   int      level;                       // patch-common byte
   int      firstTone, toneStride, tones;
   ToneFieldMap tone;
+
+  // Patch-common byte holding Analog Feel, the manual's "1/f fluctuation".
+  // Appended last so a profile written before it existed still compiles, and
+  // zero means the device has no such parameter.
+  int      analogFeel;
 };
 
 // Byte offsets within one performance part record.

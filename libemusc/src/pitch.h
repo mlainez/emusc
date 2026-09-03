@@ -69,6 +69,59 @@ private:
   WaveGenerator *_LFO1;
   WaveGenerator *_LFO2;
 
+  // Analog Feel, the manual's "1/f fluctuation": a slow per-voice pitch drift.
+
+  // The firmware keeps one signed byte per voice slot in @0x8572, stepped by
+
+  // task 13 every 16 ms at ROM1 0x0F12-0x0F9D as two-pole filtered noise
+
+  // sampled into a linear ramp of about 128 ms per segment, and never resets
+
+  // it at note-on. The pitch consumer is ROM1 0x40E3 with
+
+  //   t = drift >> 1        (-64..+63)
+
+  //   dCents = sign(t) * ((|t| * 2*AF) >> 8)
+
+  // giving +/-5 cents at this device's commonest non-zero setting, AF = 12,
+
+  // and +/-62 cents at AF = 127. There is a level consumer too (0x445D) but
+
+  // its worst case over the whole parameter space is 0.12 dB, so it is left
+
+  // out as numerically negligible - Analog Feel is audibly a PITCH mechanism,
+
+  // and reaches level only by decohering a stack. D-25, L-26.
+
+  //
+
+  // DEVIATION, stated because it is real: the device's entropy is a sound-chip
+
+  // register read, so its drift SEQUENCE is not computable from the ROM and no
+
+  // port can match it sample-for-sample - only its magnitude, bandwidth and
+
+  // per-voice independence. This generator is therefore seeded per voice from
+
+  // a monotonic counter rather than shared and never-reset. That reproduces
+
+  // the within-note wander and the fact that two identical notes differ; it
+
+  // does not reproduce continuity of one slot's drift across notes.
+
+  int  _afDepth;                        // 2 * Analog Feel, 0 disables
+
+  int  _afDrift, _afFrom, _afTo;        // current, ramp start, ramp target
+
+  int  _afStep;                         // 8 ms ticks since the segment began
+
+  int  _afN1, _afN2;                    // two-pole noise state
+
+  uint32_t _afRng;
+
+  int  _af_drift_cents10(void);
+
+
   bool _lfo1FadeComplete;
   bool _lfo2FadeComplete;
   int _lfo1Depth;

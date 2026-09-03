@@ -1316,6 +1316,8 @@ int ControlRom::_read_device_patches(void)
       in.name.assign((const char *) &_deviceRom[off], P.nameLength);
       in.name.erase(in.name.find_last_not_of(' ') + 1);
       in.volume = _deviceRom[off + P.level] & 0x7f;
+      in.analogFeel = P.analogFeel
+        ? (_deviceRom[off + P.analogFeel] & 0x7f) : 0;
       in.partialsUsed = 0;
 
       for (int t = 0; t < P.tones; t++) {

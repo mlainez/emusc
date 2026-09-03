@@ -358,7 +358,13 @@ static const RecordRomLayout JV880_RECORDS = {
 
       // +69 TVA Delay Time; bit 7 set is KEY-OFF (the nibble-pair value 128).
       0x45
-    }
+    },
+
+    // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named
+    // by its neighbours: +0x14, +0x15 and +0x16 are three adjacent 0-127 bytes
+    // and the manual lists Analog Feel, Patch Level, Patch Pan in that order.
+    // Non-zero on 119 of the 192 factory patches. L-26 / D-25.
+    0x14
   },
 
   {
