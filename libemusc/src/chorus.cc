@@ -99,7 +99,7 @@ void Chorus::_update_jv(void)
   int type = std::clamp((int) _settings->get_param(PatchParam::ChorusMacro),
                         0, law.types - 1);
   const int *rec = &_LUT.JVChorusRecords[type * 5];
-  const int w0 = rec[0], w2 = rec[2], w3 = rec[3], w4 = rec[4];
+  const int w0 = rec[0], w1 = rec[1], w2 = rec[2], w3 = rec[3], w4 = rec[4];
 
   int rate  = std::clamp((int) _settings->get_param(PatchParam::ChorusRate), 0, 127);
   int depth = std::clamp((int) _settings->get_param(PatchParam::ChorusDepth), 0, 127);
@@ -140,11 +140,33 @@ void Chorus::_update_jv(void)
     _subPhase = 0;
   }
 
-  // The pre-LPF, kept where the chip's own neutral setting is: the JV has no
-  // chorus pre-LPF parameter, and 0x3f/64 is what a level of 0 means on this
-  // register.
-  _preA = 0.0f;
-  _preB = 0x3f / 64.0f;
+  // The pre-LPF, PER TYPE. The JV has no chorus pre-LPF parameter, but it does
+  // not need one: the driver writes record word w1 straight to slot 0x1F F012
+  // (ROM2 0x7409-0x743E), and F012 is this chip's pre-LPF coefficient pair. The
+  // three records carry 0x1828 / 0x2818 / 0x003F, and the halves are
+  // complementary - 0x18 + 0x28 = 0x40, 0x00 + 0x3F = 0x3F - which is the
+  // one-pole (a, 64 - a) signature. The reverb driver uses the same register the
+  // same way, writing record word 21 as an (a, 64 - a) mix pair to slot 0x1E
+  // F012 (ROM2 0x70EE).
+  //
+  // The byte order is forced rather than chosen: CHORUS3's 0x003F is
+  // byte-for-byte what the Sound Canvas law below produces for NO filtering
+  // (k = 0 gives _preA = 0, _preB = 0x3f/64), so the HIGH byte is _preA. Taken
+  // the other way round CHORUS3 would be (0x3F, 0x00), which that law cannot
+  // produce and which would silence the chorus.
+  //
+  // So CHORUS1 low-passes at a 0.375 pole, CHORUS2 at 0.625 - they are the same
+  // pair with the roles exchanged, which is why the two record words are
+  // byte-swapped copies - and CHORUS3 runs open. This had been pinned at
+  // CHORUS3's bypass for all three types, so the boot performance's CHORUS1 ran
+  // with no filter where the machine darkens the wet signal.
+  //
+  // Not modelled: the driver walks the LOW byte up from 1 to its stored value,
+  // one step per busy-wait, so the input coefficient FADES IN over 40 / 24 / 63
+  // steps on a type change (ROM2 0x7411-0x7446). Steady state is what matters
+  // for a render that does not change chorus type.
+  _preA = (w1 >> 8) / law.coeffUnity;
+  _preB = (w1 & 0xff) / law.coeffUnity;
 
   // The return matrix: eight BYTE writes, F014..F01B = (mix, rev, 0, fb) then
   // (0, rev, mix, fb), where 64 is unity. Chorus Output is a HARD SWITCH - the
