@@ -375,6 +375,16 @@ public:
     std::array<int, 16>       JVEnvTimeKeyFollow = {};
     bool                      hasJVEnvTimeSense = false;
 
+    // The JV's TVA attack shape, ROM2 0x5290: 256 bytes falling 254 -> 0. ROM1
+    // 0x2984-0x2997 applies it to the TVA envelope's segment 0 alone,
+    //   level = curve[remaining >> 8] * L1
+    // with `remaining` running 0xFFFF -> 0 across the segment, so the pre-curve
+    // level rises CONVEXLY from 0 to 254 * L1 (scdb devices/jv880
+    // 07_synthesis/envelopes.md, TM-018; D-35). hasJVTvaAttackCurve stays false
+    // on a device without the table and the linear ramp is used as before.
+    std::array<uint8_t, 256>  JVTvaAttackCurve = {};
+    bool                      hasJVTvaAttackCurve = false;
+
     // The JV-880's eight reverb type records in full: words 0..27 of each,
     // big-endian, laid end to end, so entry 28*type + w is word w of type
     // `type`'s record (P-0399). Words 0..27 and no further: the two DELAY

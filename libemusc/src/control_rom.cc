@@ -1861,6 +1861,10 @@ void ControlRom::_init_device_lookup_tables(void)
       case RomLookup::JVEnvTimeKeyFollow:
         jvTimeKeyFollow = rom8s(rt.offset, rt.entries, t.JVEnvTimeKeyFollow);
         break;
+      case RomLookup::JVTvaAttackCurve:
+        rom8(rt.offset, rt.entries, t.JVTvaAttackCurve);
+        t.hasJVTvaAttackCurve = true;
+        break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }

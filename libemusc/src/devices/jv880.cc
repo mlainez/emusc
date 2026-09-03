@@ -196,7 +196,18 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // SIGNED, so Unchecked - the shape check compares unsigned and would reject
   // them the way it nearly rejected JVTvfCutoffKF.
   { RomLookup::JVEnvTimeVelDepth,    0x05260,  16, 2, Monotonic::Unchecked },
-  { RomLookup::JVEnvTimeKeyFollow,   0x05280,  16, 1, Monotonic::Unchecked }
+  { RomLookup::JVEnvTimeKeyFollow,   0x05280,  16, 1, Monotonic::Unchecked },
+
+  // The TVA attack shape (scdb D-35). ROM1 0x2984-0x2997, the TVA block of the
+  // envelope stepper and no other, reads this table for segment 0 only:
+  //   r3 = remaining >> 8; dp = 4; r1 = @(0x5290, r3); r1 *= descriptor[+0x15]
+  // (descriptor +0x15 is the TVA L1 byte). 256 bytes, 254 at index 0 falling to
+  // 0 at index 255, identical in ROM2 v1.0.0 and v1.0.1 (TM-018). Falling is the
+  // right check: the counter it is indexed by runs 0xFFFF -> 0, so the level it
+  // produces rises. Without it every JV attack longer than one tick was a linear
+  // pre-curve ramp through the exponential register curve, i.e. concave, and
+  // `Glass Pad`'s 1.45 s attack sat 18 dB under the reference in its first half.
+  { RomLookup::JVTvaAttackCurve,     0x05290, 256, 1, Monotonic::Falling }
 };
 
 static const RecordRomLayout JV880_RECORDS = {

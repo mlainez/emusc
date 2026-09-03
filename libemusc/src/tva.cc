@@ -572,6 +572,26 @@ void TVA::_iterate_phase(void)
           phaseAccumulator += 1;
         }
 
+        // The JV's TVA segment 0 - that segment only, of that envelope only - is
+        // not the linear ramp. ROM1 0x2984-0x2997: with the segment index at 0
+        // the stepper takes the high byte of the UPDATED remaining-time counter
+        // (0xFFFF -> 0 across the segment), reads the 256-byte table at ROM2
+        // 0x5290 with it (254 at index 0, 0 at index 255) and multiplies by
+        // descriptor +0x15, the TVA L1 byte, so the pre-curve level rises
+        // CONVEXLY from 0 to 254 * L1 (scdb devices/jv880 envelopes.md,
+        // TM-018). Ramping this segment linearly in the pre-curve domain and
+        // converting through the exponential register curve made every attack
+        // longer than a tick concave: on `Glass Pad`'s 1453 ms attack the
+        // fundamental sat 17.9 dB under the reference at 500 ms and 9.8 dB at
+        // 1000 ms (scdb D-35). _phasePosition is the port's ELAPSED fraction,
+        // so remaining >> 8 is 255 - (position >> 8).
+        if (_envThroughCurve && _LUT.hasJVTvaAttackCurve &&
+            _phase == Phase::Attack1) {
+          const int remainingHi = 0xff - ((_phasePosition >> 8) & 0xff);
+          phaseAccumulator =
+            _LUT.JVTvaAttackCurve[remainingHi] * _phaseEndValue;
+        }
+
         int phaseIncrement = phaseAccumulator - _envLevel;
         _envLevel += phaseIncrement;
         tvaHigh = _envLevel;

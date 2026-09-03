@@ -276,7 +276,14 @@ enum class RomLookup
   // depth words the "T1/T4 velocity" nibbles index, and the signed
   // per-semitone key-follow bytes the "time KF" nibble indexes.
   JVEnvTimeVelDepth,
-  JVEnvTimeKeyFollow
+  JVEnvTimeKeyFollow,
+
+  // The JV's TVA attack shape (scdb D-35): the 256-byte table its TVA envelope
+  // stepper reads for SEGMENT 0 ONLY, indexed by the high byte of the segment's
+  // remaining-time counter and multiplied by the tone's L1. Every other
+  // segment, and every segment of the pitch and TVF envelopes, is the linear
+  // pre-curve ramp.
+  JVTvaAttackCurve
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have
