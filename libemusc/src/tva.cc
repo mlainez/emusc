@@ -29,6 +29,25 @@
 namespace EmuSC {
 
 
+// A tone whose pan is RANDOM draws its position once, at note start, exactly as
+// a part or drum pan does. 189 of the JV's 768 factory tones ask for it - patch
+// 21 `SAW Lead` tone 3 among them, which is three of the demo's twelve voices on
+// channel 1 - so it is not a corner case.
+//
+// Until this existed the raw sentinel reached _update_panpot_level() and was
+// clamped by it: 0xff clamped to 0x7f, putting every RANDOM tone HARD RIGHT.
+// Before the sentinel was introduced the same tones were nudged to hard LEFT.
+// Both are wrong in the same way - a fixed position where the device has none.
+//
+// std::rand() is deliberate rather than lazy: the engine never seeds it, so the
+// sequence is the C library's default and renders stay reproducible, which is
+// what keeps the corpus byte-identity check meaningful.
+static int jv_tone_pan(uint8_t stored)
+{
+  return stored == ControlRom::PANPOT_RANDOM ? (std::rand() % 128) : (int) stored;
+}
+
+
 TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
          WaveGenerator *LFO1, WaveGenerator *LFO2, Settings *settings,
          int8_t partId, uint16_t instrumentIndex, int partialId)
@@ -52,8 +71,8 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _drumSet(settings->get_param(PatchParam::UseForRhythm, partId)),
     _panpotBase(ctrlRom.instrument(instrumentIndex).panKeyFlw ?
                 ctrlRom.lookupTables.TVAPanKeyFollow[key] :
-                (int) ctrlRom.instrument(instrumentIndex)
-                        .partials[partialId].panpot),
+                jv_tone_pan(ctrlRom.instrument(instrumentIndex)
+                              .partials[partialId].panpot)),
     _panpot(-1),
     _panpotLocked(false),
     _settings(settings),
