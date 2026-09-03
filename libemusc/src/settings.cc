@@ -624,6 +624,12 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::Portamento      | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::PortamentoTime  | (partAddr << 8)] = 0x00;
 
+    // The JV keeps CC7 apart from the part level and its reset writes 127 there
+    // (scdb D-28, ROM1 0x67b0). Inert under GS, where CC7 IS the part level and
+    // nothing reads this slot - but it must be 127 rather than 0, or a JV part
+    // that never receives CC7 would be silent.
+    _patchParams[(int) PatchParam::PartVolume      | (partAddr << 8)] = 0x7f;
+
     _patchParams[(int) PatchParam::RPN_LSB         | (partAddr << 8)] = 0x7f;
     _patchParams[(int) PatchParam::RPN_MSB         | (partAddr << 8)] = 0x7f;
     _patchParams[(int) PatchParam::NRPN_LSB        | (partAddr << 8)] = 0x7f;

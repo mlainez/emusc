@@ -549,7 +549,16 @@ int Part::control_change(uint8_t msgId, uint8_t value)
 
   } else if (msgId == 7) {                             // Volume
     if (_settings->get_param(PatchParam::RxVolume, _id)) {
-      _settings->set_param(PatchParam::PartLevel, value, _id);
+      // Under GS, CC7 IS the part level - one parameter, and writing it here is
+      // correct. On a device that keeps them apart it is NOT: the JV holds the
+      // Performance part level and CC7 in different state and multiplies them
+      // into one level index, so writing CC7 over the part level destroys the
+      // performance's own balance. The demo does exactly that - CC7 = 100 on
+      // every channel flattened part levels 110/127/78 to 100 and left
+      // channel 1 +2.7 dB hot (scdb D-28; the composition is ROM1 0x44be).
+      _settings->set_param(_settings->device()->level.volumeIndexShift
+                             ? PatchParam::PartVolume : PatchParam::PartLevel,
+                           value, _id);
       updateGUI = true;
     }
 

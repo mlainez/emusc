@@ -404,6 +404,25 @@ struct LevelLaw
   // applied twice and the part-level curve comes out about twice as steep in
   // decibels. 1 = the Sound Canvas behaviour, part level applied here.
   int partLevelInDynamics;
+
+  // How CC7 Volume joins the level index, and this is a family split rather than
+  // a constant. Under GS, CC7 IS the part level: one slot, one curve, and
+  // writing the controller straight into the part level is correct there. The JV
+  // keeps the two apart - a Performance part level and a separate CC7 - and
+  // multiplies them into ONE index (scdb D-28, FW-EXACT):
+  //
+  //   idx = ((2*L + (L >= 64)) * volume) >> volumeIndexShift
+  //
+  // where L is the part-level product and the expansion is the same 0..127 ->
+  // 0..255 widening the firmware applies to every gain byte. ROM1 0x44c8-0x44d4
+  // on the JV-880, hence 8 there. Note that this is a /127.5 scale, not /127:
+  // at CC7 = 127 the index still lands one or two steps below L, so full volume
+  // is NOT unity on this device.
+  //
+  // 0 means "not this device": the index is used unscaled and CC7 arrives as the
+  // part level. That is the Sound Canvas behaviour and it is the default, so a
+  // profile that says nothing about volume keeps it.
+  int volumeIndexShift;
 };
 
 

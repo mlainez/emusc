@@ -568,7 +568,23 @@ const DeviceProfile JV880_PROFILE = {
     // dynamic-level path must not apply it a second time. It was: the
     // part-level curve came out about twice as steep in decibels as the
     // machine's, which is most of why every instrument measured too quiet.
-    0       // partLevelInDynamics
+    0,      // partLevelInDynamics
+
+    // CC7 Volume is NOT the part level on this machine, and mistaking it for one
+    // was the single largest error in the JV port: the boot performance's part
+    // levels 110/127/78 all collapsed to 100 the moment the demo sent CC7 = 100,
+    // leaving channel 1 +2.7 dB hot (scdb D-28).
+    //
+    // ROM1 0x44be-0x44d4 forms the index. The level product byte @0x9a1e is
+    // widened 0..127 -> 0..255 by `2*L + (L >= 64)` and multiplied by the raw
+    // CC7 data byte held per part at @0x0A6146, then shifted down EIGHT. Traced,
+    // not fitted: the writers of @0x9a1e are ROM1 0x4641-0x4648 (patch part) and
+    // 0x4c2a (rhythm part), the CC7 handler is ROM1 0x75a9, and the multiply is
+    // gated by the Tone's Volume switch, which the manual (p.6-16) documents in
+    // the same words the ROM implements. Predicting the seven oracle
+    // measurements from this law and the real ROM tables lands every one of them
+    // within 0.12 dB.
+    8       // volumeIndexShift
   },
 
   LevelLawKind::JVCurveProduct,

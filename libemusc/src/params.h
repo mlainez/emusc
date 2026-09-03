@@ -248,6 +248,16 @@ enum class PatchParam : int {
   PortamentoTime      = 0x108c,    // [0x00 - 0x7f : 0]
   PortamentoControl   = 0x108d,    // [0x00 - 0x7f : 0]
 
+  // CC7 Volume, where the device keeps it APART from the part level. Under GS
+  // the two ARE one parameter, so this slot is unused there: CC7 writes
+  // PartLevel and nothing reads this. The JV family has both - a Performance
+  // part level that survives, and a CC7 its level law multiplies in separately
+  // - so on those devices this holds the raw controller byte, default 127 as the
+  // firmware's own reset writes it (scdb D-28: ROM1 0x75a9 stores it into
+  // @0x0A6146, ROM1 0x67b0 defaults it to 0x7f). Engine state, like the rest of
+  // this block; not a Roland SysEx address.
+  PartVolume          = 0x108e,    // [0x00 - 0x7f : 0x7f]
+
   // Current RPN and NRPN
   RPN_LSB             = 0x1090,    // [0x00 - 0x7f : 0]
   RPN_MSB             = 0x1091,    // [0x00 - 0x7f : 0]

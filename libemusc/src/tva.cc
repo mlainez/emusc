@@ -744,9 +744,36 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
 
     const int gain = T[std::clamp(index >> L.toneIndexShift, 0, 127)];
 
+    // The level index, formed the way the firmware forms @0x9a1e and then reads
+    // it back (scdb D-28, FW-EXACT throughout).
+    //
+    // A PATCH part multiplies the Performance part level by the patch's own
+    // level byte and shifts down 7 (ROM1 0x4641-0x4648). The RHYTHM part - part
+    // 8 of a Performance, manual p.2-14 - does NOT: it stores the part level
+    // raw (ROM1 0x4c2a), because a Rhythm Set has no patch level and the per-key
+    // level is applied separately. Worth 0.23 dB at part level 127, since the
+    // patch-part product would give 126 where the device keeps 127.
     const int part  = _settings->get_param(PatchParam::PartLevel, _partId) & 0x7f;
     const int patch = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
-    const int dyn   = T[std::clamp((part * patch) >> L.dynamicsShift, 0, 127)];
+    int composed = _drumSet ? part : ((part * patch) >> L.dynamicsShift);
+
+    // Then CC7 Volume, on a device that keeps it apart from the part level.
+    // ROM1 0x44c8-0x44d4: the byte is widened 0..127 -> 0..255 by the firmware's
+    // usual gain-byte expansion and multiplied by the raw controller value,
+    // shifted down by volumeIndexShift. The multiply is what the port was
+    // missing, and letting CC7 overwrite the part level instead is what made
+    // the demo's channel 1 +2.7 dB hot.
+    //
+    // Note this is a /127.5 scale, not /127: at CC7 = 127 the index still lands
+    // one or two steps under `composed`, so full volume is not unity here. The
+    // measurements say the same, and the ROM is why.
+    if (L.volumeIndexShift) {
+      const int vol = _settings->get_param(PatchParam::PartVolume, _partId) & 0x7f;
+      composed = ((2 * composed + (composed >= 64 ? 1 : 0)) * vol)
+                 >> L.volumeIndexShift;
+    }
+
+    const int dyn = T[std::clamp(composed, 0, 127)];
 
     // The static level byte, exactly as the firmware stores it: the high byte
     // of high16(T[a] * T[b]), written to @0x8dc2 at ROM1 0x3d4c and from there
