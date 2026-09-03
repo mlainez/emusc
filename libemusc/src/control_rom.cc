@@ -1226,8 +1226,20 @@ int ControlRom::_read_device_samples(void)
     s.rootKey = _deviceRom[o + 13];
       s.volume    = _deviceRom[o + S.volume] & 0x7f;
                              // under the TVA level law, not "neutral"
-      s.pitchInit = 0x0400;  // 0x0400 is the SC-55's neutral pitch offset; the
-      s.pitchSust = 0x0400;  // JV table has no such field, and 0 detunes hard
+      // +14 and +16 ARE the SC-55's pitch_init / pitch_sust after all: a signed
+      // offset biased at 1024, 0.1 cent per unit, added to the pitch. Across 366
+      // of the 420 forward-looped records, +14 cancels the pitch of an
+      // (end - loop) + 1 sample loop against the root key to within one cent,
+      // which is what identifies the field (scdb
+      // devices/jv880/notes/track_pitch_bench_wip_2026-09-03.md R1).
+      //
+      // Pinned at 1024 - on the belief that "the JV table has no such field" -
+      // they left every zone of every multisample detuned by its own word, up
+      // to 75 cents and 8.7 cents sharp on average, and made the boot
+      // performance's three channel-1 octave layers beat against each other
+      // instead of coinciding. D-34.
+      s.pitchInit = ((uint16_t) _deviceRom[o + 14] << 8) | _deviceRom[o + 15];
+      s.pitchSust = ((uint16_t) _deviceRom[o + 16] << 8) | _deviceRom[o + 17];
     _samples.push_back(s);
   }
 
@@ -2133,6 +2145,16 @@ int ControlRom::_read_device_rhythm(void)
     // note reaches silence at the end of segment 3 whether or not a note off
     // ever arrives, and on this device none does - a rhythm key accepts note on
     // only (flags 0x10 above).
+    // The envelope time-sense, D-27. A rhythm note has ONE "time velo" nibble
+    // per envelope where a patch tone has a T1/T4 pair, and ROM1 0x4E85-0x4E8D
+    // mirrors it into both slots while forcing the time key-follow to neutral.
+    // _init_neutral_partial() has already left the key-follow indices at 7, so
+    // only the mirroring is needed here.
+    if (R.tvaTimeVelocity)
+      ip.TVAJVVelT1 = ip.TVAJVVelT4 = r[R.tvaTimeVelocity] & 0x0f;
+    if (R.tvfTimeVelocity)
+      ip.TVFJVVelT1 = ip.TVFJVVelT4 = r[R.tvfTimeVelocity] & 0x0f;
+
     ip.TVAEnvT1 = r[R.tvaEnv + 0] & 0x7f;
     ip.TVAEnvL1 = r[R.tvaEnv + 1] & 0x7f;
     ip.TVAEnvT2 = r[R.tvaEnv + 2] & 0x7f;
