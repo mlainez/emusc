@@ -354,15 +354,22 @@ static const RecordRomLayout JV880_RECORDS = {
       21, 0x0f, 6, 5
     },
 
-    // The reverb type records are at file 0x4800: eight big-endian pointers
-    // spaced exactly 0x3c, the 60-byte records of P-0382, whose byte 0x38
-    // scales the return (31, 29, 31, 28, 28, 28, 0, 61). Applying it is correct
-    // for the JV's own reverb unit and made this port measurably WORSE, because
-    // the reverb algorithm here is the Sound Canvas's and its internal gain is
-    // not this unit's: the return went from 13.3 dB hot to 12.7 dB quiet, and
-    // the instrument timbre error roughly doubled (Slap 10.7 -> 24.9 dB). Left
-    // unapplied until the JV reverb's own response is measured (P-0387).
-    0, 0, 0
+    // The reverb type records, reached through the pointer table at ROM2 0x4800.
+    // It has ELEVEN entries, not eight: the eight reverb records (spaced 0x3C
+    // for the six reverbs and 0x38 for the two delays, since the delays do not
+    // own the four bytes past +0x37) and then the three 0x0A-byte CHORUS
+    // records at 0x49EE/0x49F8/0x4A02, which RomLookup::JVChorusRecords reads
+    // and which must not be treated as reverb. Hence the count of 8.
+    //
+    // Byte +0x38 of each record scales the return: 31, 29, 31, 28, 28, 28, 0,
+    // 61 for ROOM1..PAN-DLY, read back from this ROM and verified against
+    // scdb 08_effects/reverb.md. reverb.cc applies it (P-0395).
+    //
+    // The predecessor of this entry was 0, 0, 0 - switched off after an attempt
+    // that measured 12.7 dB QUIET. That attempt divided the firmware's target a
+    // second time, by 255, where the field's own full scale is 64; the factor
+    // it introduced, 255/64 = 12.5 dB, is the entire discrepancy it reported.
+    0x004800, 8, 0x38
   },
 
   {
@@ -451,10 +458,12 @@ const DeviceProfile JV880_PROFILE = {
     // against reverb time, the way P-0304 did the other two.
     1.829f, -11.9f, 187,
 
-    // Return level, pre-LPF pair and delay taps. Shared across the family
-    // because the reverb DSP is: see ReverbLaw. levelDivisor is not the
-    // firmware's return law and ReverbLaw says why it still stands here.
+    // Return level, pre-LPF pair and delay taps. The 64 = unity scale is shared
+    // across the family because the reverb DSP is (see ReverbLaw), but the JV
+    // forms its numerator from the reverb TYPE's own record byte rather than
+    // from the level alone - which is the whole of D-05/D-17 (P-0395).
     64.0f,
+    ReverbReturnLaw::JVTypeCoefficient,
     8, 0x3f, 4,
     0x16, 112
   },

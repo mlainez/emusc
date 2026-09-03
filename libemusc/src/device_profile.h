@@ -127,11 +127,16 @@ struct PerformanceLayout
 
   // The reverb TYPE records. reverbTypeTable is a table of big-endian pointers,
   // one per type; the byte at reverbReturnCoeff inside the record it points at
-  // scales the return level, which the firmware forms as
-  //     return = ((2 * level + 1) * coeff) >> 8        (P-0382, P-0387)
-  // over a full scale of 255. Without it the return runs at the level byte
-  // alone, which is about 24 dB hot at maximum: the machine's own coefficient
-  // is 28..31 of 255 for its first six types. Zero disables the lookup.
+  // scales the return level (P-0382, P-0395). The table is longer than the
+  // reverb type list - on the JV-880 it has ELEVEN entries, the eight 0x3C-byte
+  // reverb records followed by the three 0x0A-byte chorus ones - so
+  // reverbTypeCount says how many of them are reverb records and the rest are
+  // left alone. Zero disables the lookup.
+  //
+  // The coefficients land in ControlRom::LookupTables::JVReverbReturnCoeff and
+  // the arithmetic that uses them is in reverb.cc, selected by
+  // ReverbLaw::returnLaw - the return has to follow the type, and baking one
+  // number into the boot performance's level byte could not.
   uint32_t reverbTypeTable;
   int      reverbTypeCount, reverbReturnCoeff;
 };
@@ -370,6 +375,17 @@ struct WaveAddressing
 // array, and the SC-55mkII's parts list carries that same Roland part number
 // (15239229). So one sibling differs from another only in the numbers below,
 // never in the topology.
+// Which arithmetic turns the Reverb Level parameter into the wet return gain.
+// A KIND rather than a constant, as with ChorusLawKind and LevelLawKind: the
+// two families do not differ by a factor here, they differ in whether the
+// reverb TYPE takes part at all.
+enum class ReverbReturnLaw
+{
+  LevelOverDivisor,
+  JVTypeCoefficient
+};
+
+
 struct ReverbLaw
 {
   // Reverb time -> loop gain, a rounded straight line saturating at timeCap.
@@ -379,17 +395,25 @@ struct ReverbLaw
   float timeSlope, timeOffset;
   int   timeCap;
 
-  // Return level: gain = level / levelDivisor.
+  // Return level. Both laws divide by levelDivisor, and 64 = unity is the
+  // chip's own scale for a byte-sized coefficient field, established four
+  // independent ways in the JV-880's firmware (P-0395).
   //
-  // This is NOT the firmware's law for either family, and knowingly so. The mk1
-  // writes the return as (level << 8) into a 16-bit register; the JV-880 forms
-  // ((2 * level + 1) * coeff) >> 8 out of 255, with coeff from the reverb TYPE
-  // record - some 24 dB below this divisor at full level. Applying the JV's own
-  // law moved its return from 13.3 dB hot to 12.7 dB quiet (P-0387), and those
-  // two figures bracket the truth: the residual is this network's internal gain,
-  // not the return law. Since the DSP is shared, correcting it means building the
-  // network from the traced tap set both devices upload - not a fudge factor.
+  // LevelOverDivisor is the Sound Canvas path: gain = level / levelDivisor, up
+  // to 1.98. It is NOT the mk1's firmware law either - that writes the return as
+  // (level << 8) into a 16-bit register - but it is what the family has been
+  // measured against and it stays until the mk1's own return is traced.
+  //
+  // JVTypeCoefficient is the JV-880's, from ROM2 0x71EC-0x7227 (P-0395):
+  //     expand(v) = 2 * v + (v >= 64)
+  //     target    = (expand(Level) * rec[+0x38]) >> 8      types 0-5
+  //     target    = Level >> 1                             types 6-7
+  // out of the same 64. An earlier attempt at this law divided the target a
+  // second time, by 255 rather than by 64, and measured 12.7 dB QUIET (P-0387);
+  // that arithmetic is the whole of the discrepancy the ReverbLaw comment used
+  // to attribute to the network's internal gain.
   float levelDivisor;
+  ReverbReturnLaw returnLaw;
 
   // Pre-LPF: a complementary one-pole pair whose halves sum to pairSum, stepped
   // by stepPerLevel and capped at maxLevel.

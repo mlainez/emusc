@@ -276,6 +276,13 @@ public:
     // sweep window's start and end in effect-PSRAM words, w4 the sweep-rate
     // base. Zero when the device has no such records.
     std::array<int,  15> JVChorusRecords;
+
+    // The JV-880's per-type reverb RETURN coefficients (P-0395): byte +0x38 of
+    // each of the eight reverb type records, reached through the pointer table
+    // at ROM2 0x4800. 31, 29, 31, 28, 28, 28, 0, 61 for ROOM1..PAN-DLY - and
+    // the two delay types do not use theirs, so the 0 and the 61 are read but
+    // never applied. Zero when the device has no such records.
+    std::array<int,   8> JVReverbReturnCoeff;
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };

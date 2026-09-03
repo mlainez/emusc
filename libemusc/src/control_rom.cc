@@ -1632,6 +1632,11 @@ void ControlRom::_init_device_lookup_tables(void)
   // it has no records to sweep between.
   t.JVChorusRecords.fill(0);
 
+  // The reverb type records' return coefficients, likewise: filled just after
+  // the lookup-table pass below and left zero otherwise, which is what tells
+  // reverb.cc that this device has no per-type return coefficient to apply.
+  t.JVReverbReturnCoeff.fill(0);
+
   t.LFORate.fill(0);
   t.LFODelayTime.fill(0);
   t.LFOTVFDepth.fill(0);
@@ -1762,6 +1767,31 @@ void ControlRom::_init_device_lookup_tables(void)
     }
   }
 
+  // The reverb RETURN coefficients, one per reverb type. They are not a table:
+  // the firmware reaches them through the pointer table at ROM2 0x4800, whose
+  // entries are spaced 0x3C for the six reverbs, 0x38 for the two delays and
+  // 0x0A for the three chorus records that follow, so nothing with a stride can
+  // read them and the pointers have to be followed one at a time (P-0395).
+  //
+  // ROM2 0x71EC-0x7227 reads byte +0x38 of the selected record; reverb.cc turns
+  // it into the return gain. Read here rather than there so the ROM stays in
+  // the ROM reader.
+  if (haveRom && _profile->records) {
+    const PerformanceLayout &V = _profile->records->performance;
+    const int n = std::min((int) t.JVReverbReturnCoeff.size(), V.reverbTypeCount);
+    if (V.reverbTypeTable) {
+      for (int type = 0; type < n; type++) {
+        const uint32_t po = V.reverbTypeTable + 2u * (uint32_t) type;
+        if ((size_t) po + 1 >= _deviceRom.size())
+          break;
+        const uint32_t rec = ((uint32_t) _deviceRom[po] << 8) | _deviceRom[po + 1];
+        if ((size_t) rec + V.reverbReturnCoeff >= _deviceRom.size())
+          break;
+        t.JVReverbReturnCoeff[type] = _deviceRom[rec + V.reverbReturnCoeff];
+      }
+    }
+  }
+
   // Envelope segment shape and the TVA's exponential change table, all read off
   // the SC-55 and reproduced rather than invented.
   {
@@ -1809,32 +1839,11 @@ int ControlRom::_read_device_performances(void)
   _deviceEffects.reverbType     = p[V.reverbType] & 0x07;
   _deviceEffects.reverbLevel    = p[V.reverbLevel] & 0x7f;
 
-  // The reverb RETURN is not the level byte. The firmware forms it as
-  // ((2 * level + 1) * coeff) >> 8 out of 255, where coeff comes from the
-  // reverb type's own 60-byte record (P-0382, P-0387). For the JV-880 that
-  // coefficient is 28..31 across its first six types, so a level of 127 returns
-  // at 11.8% of full scale. Applying the level byte alone put the return about
-  // 24 dB hot, which measured as a reverb 13.3 dB louder than the machine's
-  // relative to the dry signal - the "church" the owner kept reporting.
-  if (V.reverbTypeTable && V.reverbTypeCount > 0) {
-    const int type = _deviceEffects.reverbType;
-    if (type >= 0 && type < V.reverbTypeCount) {
-      const uint32_t po = V.reverbTypeTable + 2u * (uint32_t) type;
-      if ((size_t) po + 1 < _deviceRom.size()) {
-        uint32_t rec = ((uint32_t) _deviceRom[po] << 8) | _deviceRom[po + 1];
-        if (rec >= 0x40000) rec -= 0x40000;       // CPU page 4 -> file offset
-        if ((size_t) rec + V.reverbReturnCoeff < _deviceRom.size()) {
-          const int coeff = _deviceRom[rec + V.reverbReturnCoeff];
-          const int ret = (((2 * _deviceEffects.reverbLevel) + 1) * coeff) >> 8;
-
-          // reverb.cc turns a level into a gain as level/64, so the device's
-          // own 0..255 return is converted into those units here rather than
-          // teaching the engine about this device.
-          _deviceEffects.reverbLevel = std::clamp(ret * 64 / 255, 0, 127);
-        }
-      }
-    }
-  }
+  // The reverb RETURN is not the level byte, but the conversion does not belong
+  // here: it depends on the reverb TYPE, and a type change through SysEx would
+  // never reach a number baked into the performance's level. The Level
+  // parameter is passed through as the machine stores it and reverb.cc applies
+  // the firmware's law (ReverbReturnLaw::JVTypeCoefficient, P-0395).
   _deviceEffects.reverbTime     = p[V.reverbTime] & 0x7f;
   _deviceEffects.reverbFeedback = p[V.reverbFeedback] & 0x7f;
   _deviceEffects.chorusType     = (p[V.chorusType] >> 3) & 0x07;

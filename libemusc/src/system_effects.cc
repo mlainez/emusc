@@ -39,7 +39,7 @@ SystemEffects::SystemEffects(Settings *settings, ControlRom &ctrlRom)
     _reverb(NULL)
 {
   _chorus = new Chorus(settings, ctrlRom.lookupTables);
-  _reverb = new Reverb(settings);
+  _reverb = new Reverb(settings, ctrlRom.lookupTables);
 
   update();
 }

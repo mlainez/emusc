@@ -27,8 +27,9 @@
 namespace EmuSC {
 
 
-Reverb::Reverb(Settings *settings)
+Reverb::Reverb(Settings *settings, const struct ControlRom::LookupTables &LUT)
   : _settings(settings),
+    _LUT(LUT),
     _sweepIndex(0),
     _preLpfState(0.0f),
     _preLpfA(0.0f),
@@ -295,9 +296,45 @@ void Reverb::_set_delay_feedback(int delayFeedback)
 }
 
 
+// The wet RETURN gain, from the Reverb Level parameter.
+//
+// The Sound Canvas path is level / levelDivisor, unchanged. The JV-880's own
+// firmware (ROM2 0x71EC-0x7227, P-0395) instead scales the level by a
+// coefficient belonging to the reverb TYPE and lands the result in the same
+// 0..63 field, 64 = unity:
+//
+//     expand(v) = 2 * v + (v >= 64)          0..127 -> 0..255
+//     target    = (expand(Level) * rec[+0x38]) >> 8      types 0-5
+//     target    = Level >> 1                             types 6-7
+//
+// so at Level 127 ROOM1 returns 30/64 and the two delay types return 63/64 -
+// the delays are about 6.4 dB louder than the reverbs at the same setting, and
+// the level byte taken as a gain is 12.5 dB hot on the reverbs.
+//
+// Note the expansion is 2v below 64 and 2v + 1 from 64 up, not 2v + 1
+// throughout: the firmware adds the carry of a byte-wide shift.
+//
+// NOT IMPLEMENTED, and named rather than approximated: the firmware ramps the
+// register to this target one LSB at a time with a delay between steps, so a
+// Level change GLIDES over some tens of milliseconds. Nothing in this engine
+// steps a gain per control period, the ramp does not fall out of anything here,
+// and every measurement in P-0395 is of a level set before the first note.
 void Reverb::_set_level(int level)
 {
-  _outGain = std::clamp(level, 0, 127) / _settings->device()->reverb.levelDivisor;
+  const ReverbLaw &law = _settings->device()->reverb;
+  const int lvl = std::clamp(level, 0, 127);
+
+  if (law.returnLaw == ReverbReturnLaw::JVTypeCoefficient &&
+      _character >= 0 && _character < (int) _LUT.JVReverbReturnCoeff.size()) {
+    const int expand = 2 * lvl + (lvl >= 64 ? 1 : 0);
+    const int target = (_character <= 5)
+      ? ((expand * _LUT.JVReverbReturnCoeff[_character]) >> 8)
+      : (lvl >> 1);
+    _outGain = target / law.levelDivisor;
+    return;
+  }
+
+  _outGain = lvl / law.levelDivisor;
 }
 
 

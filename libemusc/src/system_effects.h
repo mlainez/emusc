@@ -35,7 +35,8 @@ class SystemEffects
 {
 public:
   // The control ROM comes in because the chorus reads its type records from the
-  // device's own ROM (PROVENANCE.md P-0394); nothing else here needs it.
+  // device's own ROM (PROVENANCE.md P-0394) and the reverb its per-type return
+  // coefficients from the same table (P-0395); nothing else here needs it.
   SystemEffects(Settings *settings, ControlRom &ctrlRom);
   ~SystemEffects();
 

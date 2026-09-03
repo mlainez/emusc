@@ -33,6 +33,7 @@
 #define __REVERB_H__
 
 
+#include "control_rom.h"
 #include "settings.h"
 
 #include <array>
@@ -45,7 +46,10 @@ namespace EmuSC {
 class Reverb
 {
 public:
-  Reverb(Settings *settings);
+  // The control ROM's lookup tables come in for one reason: a device whose
+  // return law is ReverbReturnLaw::JVTypeCoefficient reads a per-type
+  // coefficient out of its own reverb records (P-0395).
+  Reverb(Settings *settings, const struct ControlRom::LookupTables &LUT);
 
   void process_sample(float input, float output[2]);
   void update(void);
@@ -54,6 +58,7 @@ private:
   Reverb();
 
   Settings *_settings;
+  const struct ControlRom::LookupTables &_LUT;
 
   static constexpr int rBufferSize = 16384;
   static constexpr int rBufferMask = rBufferSize - 1;

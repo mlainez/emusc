@@ -98,6 +98,7 @@ const DeviceProfile SC55MKII_PROFILE = {
     // because the reverb DSP is: see ReverbLaw. levelDivisor is not the
     // firmware's return law and ReverbLaw says why it still stands here.
     64.0f,
+    ReverbReturnLaw::LevelOverDivisor,
     8, 0x3f, 4,
     0x16, 112
   },
