@@ -196,8 +196,9 @@ void TVF::_smooth_cutoff(void)
 }
 
 
-void TVF::note_off()
+void TVF::note_off(uint8_t releaseVelocity)
 {
+  set_jv_release_velocity(releaseVelocity);
   set_phase(Envelope::Phase::Release);
 }
 
@@ -290,6 +291,12 @@ void TVF::_init_envelope(void)
                                 _instPartial.TVFETVSens12 - 0x40, _velocity);
   set_time_velocity_sensitivity(Envelope::Type::TVF, 1,
                                 _instPartial.TVFETVSens35 - 0x40, _velocity);
+
+  // The JV's own time sense (scdb D-27), the same law as the TVA's on the
+  // filter envelope's own three nibbles.
+  set_jv_time_sense(_instPartial.TVFJVVelT1, _instPartial.TVFJVVelT4,
+                    _instPartial.TVFJVTimeKF, _key, _velocity,
+                    _instPartial.JVDelayKeyOff != 0);
 
   if (0) {
     std::cout << "\nNew TVF envelope [" << std::dec << (int) _key << "]\n"
@@ -767,6 +774,7 @@ void TVF::_init_new_phase(enum Phase newPhase)
   }
 
   _phaseDuration = _LUT.envelopeTime[std::clamp(_phaseDuration, 0, 127)];
+  _phaseDuration = _jv_time_sense(_phaseDuration, newPhase);
   _phasePosition = 0;
   _phaseRemainder = 0;
 

@@ -19,6 +19,7 @@
 
 #include "envelope.h"
 
+#include <cstdlib>
 #include <iostream>
 
 
@@ -120,6 +121,141 @@ void Envelope::set_time_velocity_sensitivity(enum Type type, bool phase,
     std::cout << "ETVS: phase (0:T1-2 1:T3-5)=" << std::dec << phase
               << " etvsROM=" << etvsROM << " velocity=" << velocity
               << " sensitivity=" << timeVelSens << std::endl;
+}
+
+
+// ---------------------------------------------------------------------------
+// The JV's envelope TIME-sense law (scdb devices/jv880 D-27, FW-EXACT).
+//
+// Each JV envelope block carries three 0-14 nibbles, 7 neutral: "T1 velocity",
+// "T4 velocity" and "time KF". The firmware's rate routines - ROM1 0x1E48 for
+// the pitch envelope, 0x1EF6 for the TVF's and 0x1FA4 for the TVA's, one per
+// envelope and identical in structure - apply them to the segment's
+// millisecond value out of the time table like this:
+//
+//   T1      ms = vel(ms, DEPTH[velT1], note-on velocity)          no key-follow
+//   T2, T3  ms = kf(ms, KF[timeKf], key)                          no velocity
+//   T4      ms = kf(vel(ms, DEPTH[velT4], note-OFF velocity), KF[timeKf], key)
+//
+// and a segment whose table time is already 0 is skipped before either.
+//
+// vel() is ROM1 0x2360 and is ADDITIVE in milliseconds:
+//
+//   ms' = ms + sign(d) * sign(v - 64) * ((|d| * |v - 64|) >> 8)
+//
+// with d out of DEPTH_5260 (-4000 .. 0 .. +4000): 984 ms either way at the
+// extremes. A result of zero or below sets the V flag and the segment is
+// skipped; a carry out of sixteen bits makes it the longest segment the
+// stepper can run. The manual's wording matches the sign: positive "T1
+// velocity" makes T1 LONGER as velocity rises (JV-880 owner's manual p.6-48).
+//
+// kf() is ROM1 0x22E1 and compounds per semitone group from key 60: with
+// k out of PITCH_5280 (+21 .. 0 .. -21) and |key - 60| split into a remainder
+// and whole octaves, each group of g semitones does
+//
+//   up:    ms += (|k| * g * ms) >> 8
+//   down:  ms  = (ms << 8) / (256 + |k| * g)
+//
+// "up" when k and (key - 60) share a sign. The displayed +100 is k = -21, so a
+// positive time KF makes higher keys SHORTER - the manual's "positive values:
+// the higher the note number, the shorter the time of T2-T4" (p.6-49).
+//
+// The note-off velocity is the note-off's own data byte. A note-on with
+// velocity 0 carries none, and the firmware's parser substitutes 127 for it
+// (ROM1 0x6C46) before entering the note-off handler, so a running-status
+// note-off is a LOUD release on this machine. A tone whose TVA Delay Time is
+// KEY-OFF reads the note-on velocity instead (ROM1 0x1FCD).
+
+// The firmware's carry case is a decrement of 1, i.e. 65535 ticks of 16 ms;
+// this stepper's longest representable segment is 65535 control periods of
+// 8 ms. Both are minutes and neither is reached by the factory data.
+static const int JV_LONGEST_MS = 0xffff * 8;
+
+static int jv_velocity_term(int ms, int depth, int velocity)
+{
+  const int s = velocity - 64;
+  const int term = (std::abs(depth) * std::abs(s)) >> 8;
+  if ((depth >= 0) == (s >= 0)) {
+    const int v = ms + term;
+    return (v > 0xffff) ? JV_LONGEST_MS : v;
+  }
+  const int v = ms - term;
+  return (v <= 0) ? 0 : v;
+}
+
+
+static int jv_key_follow(int ms, int k, int key)
+{
+  if (k == 0 || ms == 0)
+    return ms;
+
+  const int n = key - 60;
+  const bool up = (k > 0) == (n >= 0);
+  const int kk = std::abs(k);
+  int octaves = std::abs(n) / 12;
+  int v = ms;
+
+  for (int g = std::abs(n) % 12; ; g = 12) {
+    if (up) {
+      v += (kk * g * v) >> 8;
+      if (v > 0xffff)
+        return JV_LONGEST_MS;
+    } else {
+      v = (v << 8) / (256 + kk * g);
+    }
+    if (octaves-- == 0)
+      break;
+  }
+
+  return v;
+}
+
+
+void Envelope::set_jv_time_sense(int velT1Idx, int velT4Idx, int timeKfIdx,
+                                 int key, int velocity,
+                                 bool releaseUsesNoteOnVelocity)
+{
+  _jvTimeSense = _LUT.hasJVEnvTimeSense;
+  _jvVelT1Idx = velT1Idx & 0x0f;
+  _jvVelT4Idx = velT4Idx & 0x0f;
+  _jvTimeKfIdx = timeKfIdx & 0x0f;
+  _jvKey = key;
+  _jvVelocity = velocity & 0x7f;
+  _jvReleaseVelocity = 64;
+  _jvReleaseUsesNoteOn = releaseUsesNoteOnVelocity;
+}
+
+
+void Envelope::set_jv_release_velocity(int velocity)
+{
+  _jvReleaseVelocity = velocity & 0x7f;
+}
+
+
+int Envelope::_jv_time_sense(int ms, enum Phase phase) const
+{
+  if (!_jvTimeSense || ms == 0)
+    return ms;
+
+  switch (phase) {
+  case Phase::Attack1:                                    // T1
+    return jv_velocity_term(ms, _LUT.JVEnvTimeVelDepth[_jvVelT1Idx],
+                            _jvVelocity);
+
+  case Phase::Attack2:                                    // T2
+  case Phase::Decay1:                                     // T3
+    return jv_key_follow(ms, _LUT.JVEnvTimeKeyFollow[_jvTimeKfIdx], _jvKey);
+
+  case Phase::Release: {                                  // T4
+    const int vel = _jvReleaseUsesNoteOn ? _jvVelocity : _jvReleaseVelocity;
+    const int v = jv_velocity_term(ms, _LUT.JVEnvTimeVelDepth[_jvVelT4Idx],
+                                   vel);
+    return jv_key_follow(v, _LUT.JVEnvTimeKeyFollow[_jvTimeKfIdx], _jvKey);
+  }
+
+  default:            // Decay2 is this engine's extra hold segment, not the JV's
+    return ms;
+  }
 }
 
 }

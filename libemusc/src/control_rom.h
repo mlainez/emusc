@@ -181,6 +181,19 @@ public:
     uint8_t TVAETKeyF5;     // TVA Envelope Time Key Follow (T5)
     uint8_t TVAETVSens12;   // TVA Envelope Time Velocity Sensitivity (T1 - T2)
     uint8_t TVAETVSens35;   // TVA Envelope Time Velocity Sensitivity (T3 - T5)
+
+    // The JV's envelope TIME-sense nibbles (scdb D-27), 0-14 with 7 neutral,
+    // and the Delay Time KEY-OFF flag. The Sound Canvas fields above cannot
+    // carry them: the JV's are indices into two signed ROM tables, applied
+    // additively (velocity) and compounded (key), to T1, T4 and T2-T4
+    // respectively - a different law, so different names.
+    uint8_t TVAJVVelT1;     // "A-ENV T1 velocity"  -> T1 by note-on velocity
+    uint8_t TVAJVVelT4;     // "A-ENV T4 velocity"  -> T4 by note-OFF velocity
+    uint8_t TVAJVTimeKF;    // "A-ENV time KF"      -> T2, T3, T4 by key
+    uint8_t TVFJVVelT1;     // "F-ENV T1 velocity"
+    uint8_t TVFJVVelT4;     // "F-ENV T4 velocity"
+    uint8_t TVFJVTimeKF;    // "F-ENV time KF"
+    uint8_t JVDelayKeyOff;  // 1: TVA Delay Time is KEY-OFF, T4 reads note-on velocity
   };
 
   // A Sound Canvas instrument has two partials; a JV patch has four tones,
@@ -340,6 +353,22 @@ public:
     // tap is about 61 samples longer than the same arithmetic without it, and
     // the reference's echo jumps by exactly that at exactly that point.
     std::array<int,  16> JVReverbTapScale;
+
+    // The JV's envelope TIME-sense tables (scdb devices/jv880 D-27, FW-EXACT;
+    // ROM2 0x5260 and 0x5280). Indexed by the tone's 0-14 nibbles; entry 7 of
+    // both is 0, which is what makes 7 the neutral setting.
+    //
+    //   JVEnvTimeVelDepth  s16: -4000 -2800 -2000 -1600 -1000 -400 -200 0
+    //                           +200 +400 +1000 +1600 +2000 +2800 +4000 +4000
+    //                      ROM1 0x2360 adds (d * |velocity - 64|) >> 8 ms.
+    //   JVEnvTimeKeyFollow s8:  +21 +14 +10 +8 +6 +4 +2 0 -2 -4 -6 -8 -10 -14
+    //                           -21 -21, compounded per semitone by ROM1 0x22E1.
+    //
+    // hasJVEnvTimeSense is set only when both were read, and the envelopes
+    // leave their times alone otherwise - so a Sound Canvas is untouched.
+    std::array<int, 16>       JVEnvTimeVelDepth = {};
+    std::array<int, 16>       JVEnvTimeKeyFollow = {};
+    bool                      hasJVEnvTimeSense = false;
 
     // The JV-880's eight reverb type records in full: words 0..27 of each,
     // big-endian, laid end to end, so entry 28*type + w is word w of type

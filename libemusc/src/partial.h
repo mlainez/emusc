@@ -57,7 +57,7 @@ public:
   bool get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 		      std::array<float, 256> &sendBus);
 
-  void stop(void);
+  void stop(uint8_t releaseVelocity = 64);
   void damp(float dBPerMillisecond);
   void update(void);
 

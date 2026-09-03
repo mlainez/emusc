@@ -181,7 +181,22 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // fields per record, not a curve, so a shape check would mean nothing. What
   // stands in for it is that the three records agree with the driver's own use
   // of them - w3 > w2 in all three, both inside the PSRAM, w0 below both.
-  { RomLookup::JVChorusRecords,      0x049ee,  15, 2, Monotonic::Unchecked }
+  { RomLookup::JVChorusRecords,      0x049ee,  15, 2, Monotonic::Unchecked },
+
+  // The envelope TIME-sense tables (scdb devices/jv880 D-27, FW-EXACT). The
+  // first is what the tones' "T1 velocity" and "T4 velocity" nibbles index:
+  // sixteen signed words, -4000 -2800 -2000 -1600 -1000 -400 -200 0 +200 +400
+  // +1000 +1600 +2000 +2800 +4000 +4000, and ROM1 0x2360 ADDS
+  // (d * |velocity - 64|) >> 8 milliseconds to the segment - up to 984 ms
+  // either way at the extremes, not a ratio. The second is what "time KF"
+  // indexes: sixteen signed bytes +21 +14 +10 +8 +6 +4 +2 0 -2 -4 -6 -8 -10
+  // -14 -21 -21, the 1/256-per-semitone rate ROM1 0x22E1 compounds from key
+  // 60, so the displayed +100 (index 14, -21) halves T2-T4 per octave up.
+  // Entry 7 of both is 0: that is why 7 is the neutral nibble. Both are
+  // SIGNED, so Unchecked - the shape check compares unsigned and would reject
+  // them the way it nearly rejected JVTvfCutoffKF.
+  { RomLookup::JVEnvTimeVelDepth,    0x05260,  16, 2, Monotonic::Unchecked },
+  { RomLookup::JVEnvTimeKeyFollow,   0x05280,  16, 1, Monotonic::Unchecked }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -331,7 +346,18 @@ static const RecordRomLayout JV880_RECORDS = {
       // byte is only ever 0x00 or 0x80, 539 enabled either way, zero phantom
       // tones - so this cannot change factory output and no audible claim is
       // made for it (D-08).
-      7
+      7,
+
+      // The envelope TIME-sense nibbles (scdb D-27, FW-EXACT, from the Patch
+      // Tone descriptor table at ROM2 0x3A524 and the voice-descriptor builder
+      // at ROM1 0x4B19-0x4B3A). +73 holds "A-ENV T1 velocity" in bits 0-3 and
+      // "A-ENV T4 velocity" in bits 4-7 (SysEx 0x66/0x67); +70 bits 4-7 is
+      // "A-ENV time KF" (0x68). +57 and +54 are the TVF's (0x50/0x51, 0x52).
+      // 7 is neutral: 693, 700 and 612 of the 768 factory tones sit there.
+      0x49, 0x46, 0x39, 0x36,
+
+      // +69 TVA Delay Time; bit 7 set is KEY-OFF (the nibble-pair value 128).
+      0x45
     }
   },
 

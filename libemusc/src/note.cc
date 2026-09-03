@@ -170,14 +170,19 @@ void Note::stop(void)
 
     for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
       if (_partial[p])
-        _partial[p]->stop();
+        _partial[p]->stop(_releaseVelocity);
   }
 }
 
 
-void Note::stop(uint8_t key)
+// The release velocity is kept: a note held by the pedal releases later with
+// the velocity its note off carried, which is what the JV-880 does (its
+// note-off handler stores the byte per key and the release reads it back).
+void Note::stop(uint8_t key, uint8_t releaseVelocity)
 {
   if (key == _key) {
+    _releaseVelocity = releaseVelocity;
+
     if (_sustain)                       // Hold pedal (hold1) or Sostenuto
       _stopped = true;
 
@@ -185,7 +190,7 @@ void Note::stop(uint8_t key)
 
     for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
       if (_partial[p])
-        _partial[p]->stop();
+        _partial[p]->stop(_releaseVelocity);
   }
 }
 
@@ -205,7 +210,7 @@ void Note::sustain(bool state)
   _sustain = state;
 
   if (state == false && _stopped == true)
-    stop(_key);
+    stop(_key, _releaseVelocity);
 }
 
 

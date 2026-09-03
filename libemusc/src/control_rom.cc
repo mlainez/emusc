@@ -1279,6 +1279,12 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.TVFCFKeyFlw     = 0x40;
   ip.TVFCOFVSens     = 0x40;
   ip.TVABiasLevel    = 0;
+
+  // The JV's envelope time-sense nibbles: 7 is the neutral index (both of its
+  // tables hold 0 there), and no tone is a KEY-OFF delay tone.
+  ip.TVAJVVelT1 = ip.TVAJVVelT4 = ip.TVAJVTimeKF = 7;
+  ip.TVFJVVelT1 = ip.TVFJVVelT4 = ip.TVFJVTimeKF = 7;
+  ip.JVDelayKeyOff   = 0;
 }
 
 
@@ -1393,6 +1399,29 @@ int ControlRom::_read_device_patches(void)
         // so no audible claim is made for it (D-09).
         ip.TVALvlVSens  = (uint8_t) (int8_t) tb[F.tvaVelLevelSens];
         ip.TVALvlVelCur = tb[F.tvaVelCurve] & 0x07;
+
+        // The envelope TIME-sense triple (scdb D-27, FW-EXACT): "T1 velocity"
+        // in bits 0-3 and "T4 velocity" in bits 4-7 of one byte, "time KF" in
+        // the high nibble of another - +73/+70 for the TVA, +57/+54 for the
+        // TVF - each 0-14 with 7 neutral. The firmware copies these bytes
+        // verbatim into the voice descriptor (ROM1 0x4B19-0x4B3A) and its rate
+        // routines read the nibbles from there. Off-neutral on 64/48/103 of
+        // the 539 enabled factory tones for the TVA and 79/14/148 for the TVF;
+        // the two demo patches are neutral throughout, so this cannot move the
+        // demo. Delay Time (+69) bit 7 is KEY-OFF, six factory tones, whose
+        // release reads the note-on velocity instead of the note-off's.
+        if (F.tvaTimeVelocity) {
+          ip.TVAJVVelT1  = tb[F.tvaTimeVelocity] & 0x0f;
+          ip.TVAJVVelT4  = (tb[F.tvaTimeVelocity] >> 4) & 0x0f;
+          ip.TVAJVTimeKF = (tb[F.tvaTimeKeyFollow] >> 4) & 0x0f;
+        }
+        if (F.tvfTimeVelocity) {
+          ip.TVFJVVelT1  = tb[F.tvfTimeVelocity] & 0x0f;
+          ip.TVFJVVelT4  = (tb[F.tvfTimeVelocity] >> 4) & 0x0f;
+          ip.TVFJVTimeKF = (tb[F.tvfTimeKeyFollow] >> 4) & 0x0f;
+        }
+        if (F.tvaDelayTime)
+          ip.JVDelayKeyOff = (tb[F.tvaDelayTime] >> 7) & 0x01;
 
         // The filter. It was read but left DISABLED until now, because the
         // cutoff is assembled from fields this path did not fill and a filter
@@ -1538,7 +1567,16 @@ void ControlRom::_init_device_lookup_tables(void)
                            _deviceRom[base + i*2 + 1]);
     return true;
   };
+  // Signed bytes, for the same reason: the envelope time key-follow table
+  // runs +21 .. -21 (scdb D-27).
+  auto rom8s = [this](uint32_t base, int n, auto &dst) {
+    if ((size_t) base + n > _deviceRom.size()) return false;
+    n = std::min<int>(n, (int) dst.size());
+    for (int i = 0; i < n; i++) dst[i] = (int8_t) _deviceRom[base + i];
+    return true;
+  };
   bool haveRom = _deviceRom.size() > 0x40000 - 1;
+  bool jvTimeVelDepth = false, jvTimeKeyFollow = false;
 
 
   // Key follow: one flat map, so every key maps to bias 0 and no table lookup
@@ -1803,11 +1841,20 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16s(rt.offset, rt.entries, t.JVTvfCutoffKF);      break;
       case RomLookup::JVChorusRecords:
         rom16(rt.offset, rt.entries, t.JVChorusRecords);     break;
+      case RomLookup::JVEnvTimeVelDepth:
+        jvTimeVelDepth = rom16s(rt.offset, rt.entries, t.JVEnvTimeVelDepth);
+        break;
+      case RomLookup::JVEnvTimeKeyFollow:
+        jvTimeKeyFollow = rom8s(rt.offset, rt.entries, t.JVEnvTimeKeyFollow);
+        break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }
     }
   }
+  // The envelope time-sense law needs both of its tables; with either missing
+  // the envelopes keep their table times unscaled.
+  t.hasJVEnvTimeSense = jvTimeVelDepth && jvTimeKeyFollow;
 
   // The reverb RETURN coefficients, one per reverb type. They are not a table:
   // the firmware reaches them through the pointer table at ROM2 0x4800, whose

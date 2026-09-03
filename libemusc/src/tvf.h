@@ -47,7 +47,7 @@ public:
   void apply_sample_set(std::array<float, 256> &dryBus);
   void update(void);
 
-  void note_off();
+  void note_off(uint8_t releaseVelocity = 64);
 
 private:
   // A segment this short or shorter snaps instantly. The Sound Canvas's value;

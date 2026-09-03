@@ -81,6 +81,22 @@ struct ToneFieldMap
   // beside it, so a truthiness test reports a switched-off tone as on the
   // moment any of them is set.
   int enabledBit;
+
+  // The envelope TIME-sense triple of the TVA and TVF blocks (scdb
+  // devices/jv880 D-27, FW-EXACT). One byte holds two nibbles - bits 0-3
+  // "T1 velocity", bits 4-7 "T4 velocity" - and the high nibble of a second
+  // byte is "time KF"; each is 0-14 with 7 neutral, the manual's -100..+100
+  // in fifteen steps. The firmware copies both bytes verbatim into the voice
+  // descriptor (ROM1 0x4B19-0x4B3A) and reads them from there. 0 means the
+  // device has no such fields, and the engine applies the law only when the
+  // two tables it needs (RomLookup::JVEnvTimeVelDepth/KeyFollow) were read.
+  int tvaTimeVelocity, tvaTimeKeyFollow;
+  int tvfTimeVelocity, tvfTimeKeyFollow;
+
+  // TVA Delay Time. Its bit 7 is the KEY-OFF setting, and a KEY-OFF tone's
+  // release reads the note-ON velocity where every other tone reads the
+  // note-off's (ROM1 0x39FE sets the flag, 0x1FCD tests it).
+  int tvaDelayTime;
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -239,7 +255,13 @@ enum class RomLookup
   // The JV's chorus type records: three records of five big-endian words, laid
   // end to end, holding the effect-PSRAM addresses its chorus sweeps between
   // and the sweep-rate base (P-0394).
-  JVChorusRecords
+  JVChorusRecords,
+
+  // The JV's envelope TIME-sense tables (scdb D-27): the signed velocity
+  // depth words the "T1/T4 velocity" nibbles index, and the signed
+  // per-semitone key-follow bytes the "time KF" nibble indexes.
+  JVEnvTimeVelDepth,
+  JVEnvTimeKeyFollow
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have

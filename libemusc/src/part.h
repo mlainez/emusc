@@ -80,7 +80,7 @@ public:
   // samples [0, 256).  See Partial.
   int add_note(uint8_t key, uint8_t velocity, uint32_t serial = 0,
                int startDelay = 0);
-  int stop_note(uint8_t key);
+  int stop_note(uint8_t key, uint8_t releaseVelocity = 64);
   int control_change(uint8_t msgId, uint8_t value);
   int channel_pressure(uint8_t value);
   int poly_key_pressure(uint8_t key, uint8_t value);

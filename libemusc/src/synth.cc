@@ -355,16 +355,21 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
   switch (status & 0xf0)
     {
     case midi_NoteOff:
+      // The note-off's data byte is the release velocity. Only the JV's
+      // envelope time sense consumes it so far (scdb D-27).
       for (auto &p: _parts)
 	if (p.midi_channel() == channel)
-	  p.stop_note(data1);
+	  p.stop_note(data1, data2);
       break;
 
     case midi_NoteOn:
       if (!data2) {                   // Note On with velocity = 0 => Note Off
+	// This form carries no release velocity. The JV-880's parser writes
+	// 127 into the byte before entering its note-off handler (ROM1
+	// 0x6C46), so that is what its release sees; nothing else reads it.
 	for (auto &p: _parts)
 	  if (p.midi_channel() == channel)
-	    p.stop_note(data1);
+	    p.stop_note(data1, 127);
       } else {
 	_add_note(channel, data1, data2, startDelay);
       }

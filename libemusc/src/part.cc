@@ -422,10 +422,10 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
 }
 
 
-int Part::stop_note(uint8_t key)
+int Part::stop_note(uint8_t key, uint8_t releaseVelocity)
 {
   for (auto &n : _notes)
-    n->stop(key);
+    n->stop(key, releaseVelocity);
 
   return 0;
 }

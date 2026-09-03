@@ -49,7 +49,7 @@ public:
   void apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			std::array<float, 256> &sendBuf);
 
-  void note_off();
+  void note_off(uint8_t releaseVelocity = 64);
 
 private:
   // From the device profile: a segment this short or shorter snaps instantly.
@@ -89,6 +89,7 @@ private:
   ControlRom::InstPartial &_instPartial;
 
   uint8_t _key;
+  uint8_t _velocity;              // raw note-on velocity (JV time sense)
   int _drumSet;
 
   int _panpotBase;

@@ -45,7 +45,7 @@ public:
   ~Note();
 
   void stop(void);
-  void stop(uint8_t key);
+  void stop(uint8_t key, uint8_t releaseVelocity = 64);
   void sustain(bool state);
 
   // Voice allocation. A note keeps its partials until they have finished, so
@@ -83,6 +83,7 @@ private:
   bool _stopped;
   bool _releasing;           // Note off has released the partials
   bool _damped;              // Partials handed over to another note
+  uint8_t _releaseVelocity = 64;  // From the note off; 64 is neutral
 
   const uint32_t _serial;    // Note on order, for voice allocation
 

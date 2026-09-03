@@ -68,6 +68,7 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _LUT(ctrlRom.lookupTables),
     _instPartial(ctrlRom.instrument(instrumentIndex).partials[partialId]),
     _key(key),
+    _velocity(velocity),
     _drumSet(settings->get_param(PatchParam::UseForRhythm, partId)),
     _panpotBase(ctrlRom.instrument(instrumentIndex).panKeyFlw ?
                 ctrlRom.lookupTables.TVAPanKeyFollow[key] :
@@ -173,8 +174,9 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 }
 
 
-void TVA::note_off()
+void TVA::note_off(uint8_t releaseVelocity)
 {
+  set_jv_release_velocity(releaseVelocity);
   set_phase(Envelope::Phase::Release);
 }
 
@@ -853,6 +855,13 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     // an exponential approach would need (P-0391).
     for (int i = 0; i < 6; i++)
       _phaseShape[i] = 0;
+
+    // The JV's own time sense (scdb D-27): T1 by the RAW note-on velocity, T4
+    // by the note-off velocity, T2-T4 by the MIDI key, out of the tone's three
+    // nibbles and the ROM's two tables. At unity on a neutral (7/7/7) tone.
+    set_jv_time_sense(_instPartial.TVAJVVelT1, _instPartial.TVAJVVelT4,
+                      _instPartial.TVAJVTimeKF, _key, _velocity,
+                      _instPartial.JVDelayKeyOff != 0);
     return;
   }
 
@@ -974,6 +983,7 @@ void TVA::_init_new_phase(enum Phase newPhase)
   }
 
   _phaseDuration = _LUT.envelopeTime[std::clamp(_phaseDuration, 0, 127)];
+  _phaseDuration = _jv_time_sense(_phaseDuration, newPhase);
   _phasePosition = 0;
   _phaseRemainder = 0;
 

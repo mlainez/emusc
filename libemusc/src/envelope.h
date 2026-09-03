@@ -73,6 +73,15 @@ protected:
   void set_time_velocity_sensitivity(enum Type, bool phase, int etvsROM,
                                      int velocity);
 
+  // The JV's envelope TIME-sense law (scdb devices/jv880 D-27). The three
+  // nibbles are the tone's "T1 velocity", "T4 velocity" and "time KF"; the
+  // law is armed only when the ROM supplied both of its tables, so on a
+  // Sound Canvas these are inert. The release velocity arrives at note off.
+  void set_jv_time_sense(int velT1Idx, int velT4Idx, int timeKfIdx, int key,
+                         int velocity, bool releaseUsesNoteOnVelocity);
+  void set_jv_release_velocity(int velocity);
+  int  _jv_time_sense(int ms, enum Phase phase) const;
+
   int _phaseLevel[6];
   int _phaseTime[6];
 
@@ -100,6 +109,11 @@ protected:
   int _timeKeyFlwT5;
   int _timeVelSensT1T2;
   int _timeVelSensT3T5;
+
+  bool _jvTimeSense = false;
+  int  _jvVelT1Idx = 7, _jvVelT4Idx = 7, _jvTimeKfIdx = 7;
+  int  _jvKey = 60, _jvVelocity = 64, _jvReleaseVelocity = 64;
+  bool _jvReleaseUsesNoteOn = false;
 
   enum Phase _phase;
   const char *_phaseName[10] = { "Init", "Attack 1", "Attack 2", "Decay 1",
