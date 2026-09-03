@@ -1325,10 +1325,16 @@ int ControlRom::_read_device_patches(void)
 
         // The two machines agree on what random pan is and spell it differently:
         // the JV writes 128, the Sound Canvas writes 0 and randomises in tva.cc.
-        // A JV 0 is hard left, so it moves to 1 rather than becoming random.
+        // A JV 0 is hard LEFT, so it must not become random - but it must not be
+        // nudged to 1 either, which is what this did until 2026-09-03. Pan table
+        // entry 1 is 0x7f01, so a nudged hard-left note leaked its right channel
+        // at 1/127 = -42.07 dB, and the reference puts EXACT digital zero there
+        // (measured: Closed HAT 1 with the effects closed, reference R-L
+        // -237.4 dB against our -42.07). Random now has its own sentinel so that
+        // 0 can mean what the device means by it.
         {
           const int pv = tb[F.pan];
-          ip.panpot = (uint8_t) (pv >= 128 ? 0 : std::max(1, pv));
+          ip.panpot = (uint8_t) (pv >= 128 ? PANPOT_RANDOM : pv);
         }
 
         // Key follow: the engine's units put 100% at 0x4a and neutral at 0x40, so
@@ -2169,7 +2175,7 @@ int ControlRom::_read_device_rhythm(void)
     // Preset B's kit, and clamping turned every one of them hard right.
     {
       const int pv = r[R.pan];
-      ds.panpot[key] = (uint8_t) (pv >= 128 ? 0 : std::max(1, pv));
+      ds.panpot[key] = (uint8_t) (pv >= 128 ? PANPOT_RANDOM : pv);
     }
 
     // The choke group. 0 means ungrouped; the engine's own assign-group

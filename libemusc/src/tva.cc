@@ -96,9 +96,13 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
 
   // Calculate random pan if part pan or drum pan value is 0 (RND)
   // A note is locked to RND if it is started with that setting
-  if (settings->get_param(PatchParam::PartPanpot, _partId) == 0 ||
-      (_drumSet &&
-       settings->get_param(DrumParam::Panpot, _drumSet - 1, _key) == 0)) {
+  const int drumPan = _drumSet
+    ? (int) settings->get_param(DrumParam::Panpot, _drumSet - 1, _key) : -1;
+  const bool drumRandom =
+    drumPan == (int) ControlRom::PANPOT_RANDOM ||
+    (drumPan == 0 && !_LUT.hasJVPanLaw);      // 0 is random only where 0 cannot
+                                              // be a real position: not the JV
+  if (settings->get_param(PatchParam::PartPanpot, _partId) == 0 || drumRandom) {
     _panpot = std::rand() % 128;
     _set_panpot_gains();
     _panpotLocked = true;

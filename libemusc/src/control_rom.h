@@ -214,6 +214,12 @@ public:
     std::string name;       // 12 chars
   };
 
+  // Random pan needs a value that no real pan position can take, because the
+  // two families spell it differently: the Sound Canvas writes 0 (and 0 is not
+  // otherwise reachable there), while on the JV 0 is a legitimate hard left and
+  // 128 means random. Overloading 0 for both cost the JV its hard-left notes.
+  static const uint8_t PANPOT_RANDOM = 0xff;
+
   struct LookupTables {
     // PROGROM
     std::vector<uint8_t> VelocityCurves;
