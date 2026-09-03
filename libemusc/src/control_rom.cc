@@ -1305,7 +1305,12 @@ int ControlRom::_read_device_patches(void)
         struct InstPartial &ip = in.partials[t];
 
         ip.partialIndex = 0xFFFF;
-        if (!tb[F.enabled])                      // tone switched off
+        // The Tone Switch is one BIT of that byte - the rest of it is the wave
+        // group and SysEx 0x73 - so a truthiness test reports a switched-off
+        // tone as on as soon as a card or user patch sets either (D-08). On the
+        // factory data the byte is only ever 0x00 or 0x80 and the two tests
+        // agree exactly, 539 enabled either way, so this changes no output.
+        if (!(tb[F.enabled] & (1 << F.enabledBit)))   // tone switched off
           continue;
         if (tb[F.waveform] >= _partials.size())  // an expansion wave we cannot play
           continue;
@@ -1373,7 +1378,14 @@ int ControlRom::_read_device_patches(void)
         // Velocity, now read rather than assumed: the tone's own sensitivity at
         // +72 (signed) and its curve selector at +71. The firmware applies the
         // curve multiplicatively and skips it entirely at sensitivity 0.
-        ip.TVALvlVSens  = tb[F.tvaVelLevelSens];
+        //
+        // The sensitivity byte is SIGNED (descriptor param 0x65, bias 192), so
+        // 0xff is -1 and not 255. It is stored as a two's-complement byte and
+        // every JV consumer recovers it with an (int8_t) cast; the cast here
+        // says so at the point of reading rather than leaving it to be noticed
+        // downstream. Exactly 1 of the 539 enabled factory tones is negative,
+        // so no audible claim is made for it (D-09).
+        ip.TVALvlVSens  = (uint8_t) (int8_t) tb[F.tvaVelLevelSens];
         ip.TVALvlVelCur = tb[F.tvaVelCurve] & 0x07;
 
         // The filter. It was read but left DISABLED until now, because the
@@ -1926,8 +1938,41 @@ int ControlRom::_read_device_performances(void)
 // contiguous, as the performance table and the patch bank are.
 //
 // Byte +1 is the waveform, which the names settle beyond argument: key 36 is
-// "Bright Kick", 38 "90's Snare", 42 "Closed HAT 1", 46 "Open HAT 1". Byte +0
-// is the on/off switch, as it is in a patch tone.
+// "Bright Kick", 38 "90's Snare", 42 "Closed HAT 1", 46 "Open HAT 1".
+//
+// The record holds 52 parameters, not eight, and it is BIT-PACKED: the
+// firmware unpacks it through an 8-byte descriptor per SysEx address. Eight
+// were read here and the other forty-four were not, which left every drum on
+// one hardcoded envelope with no filter and no velocity response at all (D-01).
+// The positions are profile data (devices/jv880.cc) because they are this
+// device's, and they are the firmware's own rather than the manual's address
+// column.
+//
+// What is still NOT read, and why, so the next session inherits a decision
+// rather than an omission:
+//
+//   pitch envelope (+0x07..+0x10)  the engine's pitch-envelope path is the
+//                                  Sound Canvas's and indexes CPU-EPROM tables
+//                                  the JV family does not have. 180 of 183
+//                                  factory notes carry depth 0, so the gap is
+//                                  three notes wide.
+//   random pitch depth (+5 bits 4-7)  an index into the manual's cents list
+//                                  (0,5,10,20,...,1200); the engine's randPitch
+//                                  is a raw multiplier on a different scale and
+//                                  the conversion is not established. 12 of 183.
+//   pitch bend range (+6 bits 0-3)  per-key on the device, per-part in this
+//                                  engine. 7 of 183 carry 12, the rest 0.
+//   the three velocity TIME senses  the JV branch of TVA::_init_envelope
+//     (+5, +0x14, +0x21 low nibbles) returns before the engine's
+//                                  set_time_velocity_sensitivity, so there is
+//                                  no consumer to feed.
+//   envelope mode (+2 bit 7)       NO-SUSTAIN on all 183 notes, and a rhythm
+//                                  key here accepts note on only, so the
+//                                  envelope already plays out. Nothing to do.
+//   output select (+0 bit 4)       MAIN on all 183; this engine has no second
+//                                  output pair.
+//   wave group (+0 bits 0-1)       INT on all 183; the other pools are card and
+//                                  expansion waves we do not have.
 //
 // libEmuSC's drum path wants an INSTRUMENT per key, so each rhythm note becomes
 // one, appended after the patches. Their names come from the waveform, which
@@ -1952,7 +1997,12 @@ int ControlRom::_read_device_rhythm(void)
 
   for (int k = 0; k < R.keys; k++) {
     const uint8_t *r = &_deviceRom[R.offset + k * R.stride];
-    if (!r[R.enabled] || r[R.waveform] >= _partials.size())
+
+    // The Tone Switch is one BIT of a byte that also carries the wave group and
+    // the output select, so the whole byte is not the switch (D-08).
+    if (!(r[R.enabled] & (1 << R.enabledBit)))
+      continue;
+    if (r[R.waveform] >= _partials.size())
       continue;
 
     struct Instrument in = {};
@@ -1966,25 +2016,97 @@ int ControlRom::_read_device_rhythm(void)
     _init_neutral_partial(ip);
     ip.partialIndex = r[R.waveform];
 
-    // A percussive shape: instant attack, decay to silence. The rhythm record's
-    // own envelope bytes are not identified yet, so this is a default and not a
-    // reading - which is why the kit's attack is still slower than the machine's.
-    ip.TVAEnvT1 = 0x00; ip.TVAEnvL1 = 0x7f;
-    ip.TVAEnvT2 = 0x40; ip.TVAEnvL2 = 0x60;
-    ip.TVAEnvT3 = 0x50; ip.TVAEnvL3 = 0x00;
-    ip.TVAEnvT4 = 0x7f; ip.TVAEnvL4 = 0x00;
-    ip.TVAEnvT5 = 0x20;
+    // Pitch fine tune, signed cents, into the engine's 0x40-biased field - the
+    // same conversion the patch tones get.
+    ip.finePitch =
+      (uint8_t) std::clamp(0x40 + (int) (int8_t) r[R.fineTune], 0, 127);
+
+    // The TVA envelope, read rather than invented. The record gives three
+    // time/level pairs and a fourth time; the engine has one segment more, so
+    // its fourth is made a no-op holding L3 and its release takes the record's
+    // T4. L3 is the JV's own sustain level and it is 0 on every factory note,
+    // which is what NO-SUSTAIN (envelope mode 0 on all 183) sounds like: the
+    // note reaches silence at the end of segment 3 whether or not a note off
+    // ever arrives, and on this device none does - a rhythm key accepts note on
+    // only (flags 0x10 above).
+    ip.TVAEnvT1 = r[R.tvaEnv + 0] & 0x7f;
+    ip.TVAEnvL1 = r[R.tvaEnv + 1] & 0x7f;
+    ip.TVAEnvT2 = r[R.tvaEnv + 2] & 0x7f;
+    ip.TVAEnvL2 = r[R.tvaEnv + 3] & 0x7f;
+    ip.TVAEnvT3 = r[R.tvaEnv + 4] & 0x7f;
+    ip.TVAEnvL3 = r[R.tvaEnv + 5] & 0x7f;
+    ip.TVAEnvL4 = ip.TVAEnvL3;
+    ip.TVAEnvT4 = 0x7f;
+    ip.TVAEnvT5 = r[R.tvaEnv + 6] & 0x7f;
+
+    // TVA level velocity sensitivity, SIGNED. Held at 0 before this, which in
+    // the JV level law means the velocity helper is skipped entirely - so every
+    // drum played at exactly one level whatever the velocity. The record has no
+    // velocity CURVE field of its own, unlike a patch tone (+71 bits 0-2), so
+    // the curve stays 0. That is the LINEAR one - the bank's curve 0 is
+    // 254 - 2*v exactly, over all 128 entries - which is the neutral reading of
+    // a field the record does not carry. Which curve the firmware's own rhythm
+    // voice uses is NOT established here; see PROVENANCE P-0396.
+    ip.TVALvlVSens  = (uint8_t) (int8_t) r[R.tvaVelLevelSens];
+    ip.TVALvlVelCur = 0;
+
+    // Dry Level: the attenuator on the direct output register only, as on a
+    // patch tone. The sends sit in parallel with it and do not see it.
+    ip.dryLevel = r[R.dryLevel] & 0x7f;
+
+    // The filter. Filter Mode is two bits of +0x14 - a different position from
+    // the patch tone's +55 bits 3-4, which is why the shift is profile data.
+    // The engine's spelling puts low-pass first, so the device's 0/1/2 =
+    // OFF/LPF/HPF is translated here; OFF must reach the engine as "disabled"
+    // rather than as an open filter.
+    {
+      const int mode = (r[R.filterMode] >> R.filterModeShift) & 0x03;
+      ip.TVFType = (mode == 1) ? 0 : (mode == 2) ? 1 : 2;
+    }
+    ip.TVFBaseFlt      = (int8_t) (r[R.filterCutoff]    & 0x7f);
+    ip.TVFResonance    = (int8_t) (r[R.filterResonance] & 0x7f);
+    ip.TVFResoMode     = (uint8_t) (r[R.resoMode] >> 7);
+    ip.TVFEnvVelSens   = (int8_t) r[R.tvfVelLevelSens];
+    ip.TVFEnvDepth     = r[R.tvfEnvDepth];
+
+    // A rhythm note has no cutoff key follow and no TVF velocity curve, so both
+    // take the value that means "no effect": the table entry holding 0 cents
+    // per semitone, and curve 0.
+    ip.TVFCOFKeyFlwIdx = (uint8_t) R.cutoffKeyFollowNeutral;
+    ip.TVFCOFVelCur    = 0;
+
+    ip.TVFEnvT1 = r[R.tvfEnv + 0] & 0x7f;
+    ip.TVFEnvL1 = r[R.tvfEnv + 1] & 0x7f;
+    ip.TVFEnvT2 = r[R.tvfEnv + 2] & 0x7f;
+    ip.TVFEnvL2 = r[R.tvfEnv + 3] & 0x7f;
+    ip.TVFEnvT3 = r[R.tvfEnv + 4] & 0x7f;
+    ip.TVFEnvL3 = r[R.tvfEnv + 5] & 0x7f;
+    ip.TVFEnvT5 = r[R.tvfEnv + 6] & 0x7f;
+    ip.TVFEnvL5 = r[R.tvfEnv + 7] & 0x7f;
+    ip.TVFEnvL4 = ip.TVFEnvL3;
+    ip.TVFEnvT4 = 0x7f;
 
     const int key = R.firstKey + k;
     ds.key[key]    = r[R.playKey] & 0x7f;
     ds.volume[key] = r[R.level] & 0x7f;
 
-    // Clamped away from 0. The Sound Canvas reads a drum pan of 0 as RND and
-    // randomises the note (tva.cc), but the JV means hard left by it: the
-    // reference pans Closed HAT 1 and Open HAT 1 - both of which carry 0 here -
-    // 37.2 dB and 26.8 dB to the left, while ours came out dead centre because
-    // the random pan averages there. 1 is hard left without tripping RND.
-    ds.panpot[key] = (uint8_t) std::clamp<int>(r[R.pan], 1, 127);
+    // Pan. The range is 0..128 and the manual prints the list as "L64 - 63R,
+    // RND", so 128 is RANDOM and not an out-of-range hard right (D-02). The two
+    // machines agree on what random pan is and spell it differently: the JV
+    // writes 128, the Sound Canvas writes 0 and randomises in tva.cc. A JV 0 is
+    // hard left, so it moves to 1 rather than becoming random - the reference
+    // pans Closed HAT 1 and Open HAT 1, both of which carry 0 here, 37.2 dB and
+    // 26.8 dB to the left. 18 of the 183 factory notes carry 128, 13 of them in
+    // Preset B's kit, and clamping turned every one of them hard right.
+    {
+      const int pv = r[R.pan];
+      ds.panpot[key] = (uint8_t) (pv >= 128 ? 0 : std::max(1, pv));
+    }
+
+    // The choke group. 0 means ungrouped; the engine's own assign-group
+    // mechanism does the rest, and its semantics are the manual's - triggering
+    // a note silences the sounding notes of the same group, itself included.
+    ds.assignGroup[key] = r[R.muteGroup] & 0x1f;
 
     ds.reverb[key] = r[R.reverbSend] & 0x7f;
     ds.chorus[key] = r[R.chorusSend] & 0x7f;

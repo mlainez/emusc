@@ -296,7 +296,17 @@ static const RecordRomLayout JV880_RECORDS = {
       // applied, but this port's JV LFO rate table is still a placeholder of
       // zeros, so the modulator does not move yet and the term contributes
       // nothing.
-      55, 53, 54, 55, 56, 58, 59, 32, 35
+      55, 53, 54, 55, 56, 58, 59, 32, 35,
+
+      // Tone Switch is BIT 7 of +0 (firmware descriptor param 0x03: shift 7,
+      // mask 0x7f). The same byte carries Wave Group in bits 0-1 and SysEx
+      // 0x73 in bit 4, so the whole-byte truthiness test this port used reports
+      // a switched-off tone as ON the moment a card or user patch selects an
+      // EXP/PCM wave group. On the FACTORY data the two agree exactly - the
+      // byte is only ever 0x00 or 0x80, 539 enabled either way, zero phantom
+      // tones - so this cannot change factory output and no audible claim is
+      // made for it (D-08).
+      7
     }
   },
 
@@ -400,7 +410,85 @@ static const RecordRomLayout JV880_RECORDS = {
     // names: dry 110..127 (pinned near max), reverb 0..127 varying per instrument
     // (key 36 Bright Kick 0 - a dry kick - key 38 snare 120), chorus mostly 0.
     // A constant in any of them would have proved nothing.
-    42, 43
+    42, 43,
+
+    // The other forty-four parameters (D-01). Every offset, shift and mask
+    // below is the firmware's own, out of the 52-entry field-descriptor table
+    // the DT1 rhythm arm walks at ROM2 0x3A8C4 - eight bytes per SysEx
+    // parameter giving mode, min, max, bias, shift, destination mask, record
+    // offset and recalc bit. They are not read off the manual's address column:
+    // the manual gives the NAMES and the printed value lists, the ROM gives the
+    // positions, and 9150 field-range checks over the three factory sets pass
+    // with no violations against the descriptors' own min/max.
+    //
+    // Ten of the fields carry descriptor bias 192, which is what makes the
+    // stored byte a plain two's-complement signed value: SysEx sends 1..127 for
+    // -63..+63, the store subtracts 64, and the record byte is the signed
+    // number itself. 0xCE is -50 cents, not 206.
+
+    // Tone Switch, bit 7 of +0 (descriptor param 0x03). Bits 0-1 are Wave Group
+    // and bit 4 Output Select, so a whole-byte test is wrong for card and user
+    // data even though the factory sets never expose it (D-08).
+    7,
+
+    // Mute Group, +2 bits 0-4 - the choke group. It is why a closed hi-hat cuts
+    // an open one, and the factory sets use it exactly there: keys 42, 44 and 46
+    // (Closed HAT 1, Closed HAT 2, Open HAT 1) share group 1 in ALL THREE sets,
+    // plus three Spectrum keys in group 2 (Internal) and two in group 3
+    // (Preset B). 14 of 183 notes grouped, 169 ungrouped.
+    2,
+
+    // +4 pitch fine tune, signed cents. Zero on 155 of 183 notes and +/-50 on
+    // 23 of them - half a semitone, which is not a rounding error.
+    4,
+
+    // +41 Dry Level. 127 on 182 of 183 notes and 110 on one, so it is nearly a
+    // constant here; read because it is the same attenuator the patch tones use
+    // and a user kit can move it.
+    41,
+
+    // Filter Mode is +0x14 BITS 4-5, not the patch tone's bits 3-4 - the two
+    // records spell it differently, which is why the shift is data. The census
+    // over the 183 factory notes confirms the mask: LPF 176, HPF 4, OFF 3, and
+    // not one value above 2. A wrong shift puts values there.
+    0x14, 4,
+
+    // +0x11 cutoff, +0x12 resonance in bits 0-6 with the SOFT/HARD mode in bit
+    // 7. In the INTERNAL set - the one this device plays - keys 36 to 74 are all
+    // cutoff 127 / resonance 0 / depth 0, i.e. a wide-open static filter, and
+    // every filtered note is in the 75-96 range: the 808 Kicks at cutoff 11 /
+    // resonance 88 HARD / depth 58, the Pop Voices at 10/125 HARD, and the
+    // filtered Open HAT 1 at 41/127 HARD. So the filter is what those keys
+    // sound like and nearly nothing on the rest.
+    0x11, 0x12, 0x12,
+
+    // +0x13 TVF-ENV velocity level sense and +0x15 TVF-ENV depth, both signed.
+    // Depth is non-zero on 20 of 183.
+    0x13, 0x15,
+
+    // +0x16 begins four INTERLEAVED time/level pairs, T1 L1 T2 L2 T3 L3 T4 L4,
+    // in the same order as the patch tone's filter envelope.
+    0x16,
+
+    // +0x20 TVA-ENV velocity level sense, SIGNED. This is the drums' whole
+    // dynamic range and it was being held at 0 - no velocity response at all.
+    // The factory value is 32 on 148 of the 183 notes, spanning 5..56.
+    0x20,
+
+    // +0x22 the TVA envelope: T1 L1 T2 L2 T3 L3 and then +0x28 T4, the fourth
+    // segment, which the engine takes as its release. L3 is 0 on all 183 notes,
+    // so the note reaches silence at the end of segment 3 and the release is a
+    // formality - which is what NO-SUSTAIN means, and all 183 are NO-SUSTAIN.
+    // The hardcoded shape this replaces was T2 = 64, L2 = 96, T3 = 80 against
+    // the data's T2 = 40, L2 = 127, T3 = 40 on most of the kit: 1677 ms falling
+    // to three quarters and then 3546 ms to silence, where the machine holds
+    // full level for 505 ms and then falls to silence in another 505.
+    0x22,
+
+    // The JV's cutoff key-follow table is the manual's own percentage list read
+    // as cents per semitone, and its entry 0 is -100. A rhythm note has no key
+    // follow at all, so the neutral entry is index 5, which holds 0.
+    5
   }
 };
 

@@ -76,6 +76,11 @@ struct ToneFieldMap
   int tvfEnvDepth;                      // signed -63..+63
   int tvfEnv;                           // first of four interleaved time/level pairs
   int lfo1TvfDepth, lfo2TvfDepth;       // signed
+
+  // Which bit of `enabled` is the Tone Switch. The byte carries other fields
+  // beside it, so a truthiness test reports a switched-off tone as on the
+  // moment any of them is set.
+  int enabledBit;
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -142,6 +147,14 @@ struct PerformanceLayout
 };
 
 // A rhythm set: one record per key.
+//
+// The JV's rhythm note is a BIT-PACKED record of 52 parameters, not a byte
+// array, so a field that is not a whole byte names its shift and its width as
+// data. Every offset below is the firmware's own, out of the field-descriptor
+// table the DT1 apply routine walks.
+//
+// Positional initialisers, as everywhere in this header: the field order here
+// IS the initialiser order in devices/*.cc.
 struct RhythmLayout
 {
   uint32_t offset;
@@ -149,6 +162,30 @@ struct RhythmLayout
   int      enabled, waveform, playKey;
   int      level, pan;
   int      reverbSend, chorusSend;
+
+  // Everything from here down was unread until 2026-09-03 (D-01): 44 of the
+  // 52 parameters, which left every drum sharing one hardcoded envelope, no
+  // filter, no velocity response and no choke groups.
+  int      enabledBit;                  // bit of `enabled` that is Tone Switch
+  int      muteGroup;                   // bits 0-4; 0 = ungrouped, 1-31 a group
+  int      fineTune;                    // signed cents
+  int      dryLevel;
+  int      filterMode, filterModeShift; // two bits: 0 OFF, 1 LPF, 2 HPF
+  int      filterCutoff;
+  int      filterResonance;             // bits 0-6
+  int      resoMode;                    // bit 7 of the resonance byte
+  int      tvfVelLevelSens;             // signed -63..+63
+  int      tvfEnvDepth;                 // signed -63..+63
+  int      tvfEnv;                      // four interleaved time/level pairs
+  int      tvaVelLevelSens;             // signed -63..+63
+  int      tvaEnv;                      // T1 L1 T2 L2 T3 L3, then T4 = release
+
+  // A rhythm note has no cutoff key follow - drums are per-key, not
+  // keyboard-tracked - so the engine's key-follow index has to be told which
+  // entry of the device's cents-per-semitone table means zero. Entry 0 of the
+  // JV's table is -100, so leaving the index at zero detunes every drum's
+  // filter by a semitone's worth of cents per key away from 60.
+  int      cutoffKeyFollowNeutral;
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which
