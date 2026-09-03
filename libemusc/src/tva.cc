@@ -114,7 +114,16 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			   std::array<float, 256> &sendBuf)
 {
   auto norm = [](float v) { return v / 32768.0f; };
-  _smooth(_envLevelMode, norm(_prevEnvLevel), norm(_envLevel), _slewEnvGain,
+
+  // The envelope register's word, which is not always the envelope's own value.
+  // On the JV the running envelope value is converted through the register's
+  // OWN curve at every emit (ROM1 0x4578-0x459a), so the walk above is in the
+  // pre-curve domain and the conversion belongs here, at the point the value
+  // becomes a gain. On the Sound Canvas the walk already IS the gain.
+  const int envNow  = _env_register_value(_envLevel);
+  const int envPrev = _env_register_value(_prevEnvLevel);
+
+  _smooth(_envLevelMode, norm(envPrev), norm(envNow), _slewEnvGain,
           _firstBlock);
   _firstBlock = false;
 
@@ -587,6 +596,49 @@ void TVA::_iterate_phase(void)
 }
 
 
+// The value the TVA's envelope CHIP REGISTER receives, given the envelope's own
+// running value.
+//
+// On the Sound Canvas these are the same number: the envelope walks in the gain
+// domain and its value is written as it stands. On the JV they are not, and the
+// difference is not small. ROM1 0x4578-0x459a takes the RUNNING envelope value,
+// splits it as h = value >> 8 and frac = value & 0xff, and reads a (curve,
+// slope) pair at ROM2 0x6060/0x6160:
+//
+//     out = CURVE[h] + ((SLOPE[h] * frac) >> 16)
+//
+// storing the HIGH BYTE of that as the F018 write (ROM1 0x3da6). So the
+// envelope's segments are straight lines in the PRE-curve domain and the gain
+// they produce is that line pushed through an exponential.
+//
+// This port used to convert the segment ENDPOINTS once, at note-on, and then
+// interpolate between the converted values - a straight line in gain. The
+// endpoints were therefore exact and everything between them was wrong, by up
+// to 12.86 dB: for a decay from level 127 to 0, at the midpoint in TIME the
+// firmware's gain is CURVE[64] >> 8 = 29 of 255 and this port's was 128 of 255.
+// Measured on the reference at 12.39 dB on the one tone of SAW Lead that decays
+// (P-0400). It read as a LAYERING error because a patch's first tone sustains
+// and its later tones decay, and because single-note validation measured a 30 ms
+// window at the attack, where the endpoints are exact by construction.
+//
+// The slope term is carried even though it is a sub-LSB trim rather than an
+// interpolation - the shift is 16 where a linear interpolation would need 8, so
+// it contributes at most 6 of 65535 - because the byte taken is the high byte
+// and a trim of 6 can tip it at a boundary.
+int TVA::_env_register_value(int envValue) const
+{
+  if (!_envThroughCurve)
+    return envValue;
+
+  const int h    = std::clamp(envValue >> 8, 0, 127);
+  const int frac = envValue & 0xff;
+  const int out  = _LUT.JVLevelEnv[h] +
+                   ((_LUT.JVLevelEnvSlope[h] * frac) >> 16);
+
+  return std::clamp(out >> 8, 0, 255) << 8;
+}
+
+
 int TVA::_get_bias_level(int km, int biasPoint)
 {
   int kfDiv = _LUT.EnvTimeKeyFollowSens[std::abs(_instPartial.TVABiasLevel - 0x40)];
@@ -706,28 +758,27 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     _staticLevel8 =
       std::clamp((int) (((int64_t) gain * dyn) >> L.staticShift), 0, 255);
 
-    // The envelope register's own byte. The envelope level is not a linear
-    // fraction of the static level: ROM1 0x4578-0x459a converts the running
-    // envelope value through a SECOND (curve, slope) pair at ROM2
-    // 0x6060/0x6160 and stores the high byte of the result (ROM1 0x3da6), so
-    // level 127 gives 255 and level 64 gives 29 - 29/128 rather than 64/127,
-    // which is 7 dB apart. The two chip registers then multiply, and 255/128
-    // is where the missing 5.99 dB was (P-0398).
+    // The envelope walks in the device's PRE-CURVE domain, so the segment
+    // levels go in RAW. The envelope register's byte is not a linear fraction
+    // of the static level: ROM1 0x4578-0x459a converts the running envelope
+    // value through a SECOND (curve, slope) pair at ROM2 0x6060/0x6160 and
+    // stores the high byte of the result (ROM1 0x3da6), so level 127 gives 255
+    // and level 64 gives 29 - 29/128 rather than 64/127, which is 7 dB apart.
+    // The two chip registers then multiply, and 255/128 is where the missing
+    // 5.99 dB was (P-0398).
     //
-    // NAMED GAP: the firmware interpolates the envelope value BEFORE this
-    // curve, so a segment is a straight line in the pre-curve domain and
-    // exponential in gain; this engine interpolates between the converted
-    // endpoints, so the endpoints are exact and the path between them is a
-    // straight line in gain. Not measured, and separable from the level.
-    const auto &EC = _LUT.JVLevelEnv;
-    auto env = [&EC](uint8_t lv) -> int {
-      return std::clamp(EC[lv & 0x7f] >> 8, 0, 255);
-    };
+    // The conversion is done at every emit, in _env_register_value(), because
+    // that is where the firmware does it. Converting the ENDPOINTS here and
+    // interpolating between them - which is what this branch used to do, and
+    // what D-21 recorded as a named gap "separable from the level" - leaves the
+    // endpoints exact and everything between them out by up to 12.86 dB
+    // (P-0400).
+    _envThroughCurve = true;
     _phaseValueInit[0] = 0;
-    _phaseValueInit[1] = env(_instPartial.TVAEnvL1);
-    _phaseValueInit[2] = env(_instPartial.TVAEnvL2);
-    _phaseValueInit[3] = env(_instPartial.TVAEnvL3);
-    _phaseValueInit[4] = env(_instPartial.TVAEnvL4);
+    _phaseValueInit[1] = _instPartial.TVAEnvL1 & 0x7f;
+    _phaseValueInit[2] = _instPartial.TVAEnvL2 & 0x7f;
+    _phaseValueInit[3] = _instPartial.TVAEnvL3 & 0x7f;
+    _phaseValueInit[4] = _instPartial.TVAEnvL4 & 0x7f;
     _phaseValueInit[5] = 0;
 
     _phaseDurationInit[0] = 0;

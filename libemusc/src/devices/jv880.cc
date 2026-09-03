@@ -100,6 +100,12 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // is the +5.99 dB that was missing from every JV voice (P-0398).
   { RomLookup::JVLevelEnv,           0x06060, 128, 2, Monotonic::Rising },
 
+  // The slope half of the envelope pair, read by the same idiom at ROM1 0x4583.
+  // Monotonic::Unchecked: it is a table of per-step DELTAS of the curve above,
+  // not a curve, so a rising check would mean nothing - and the deltas of an
+  // exponential do rise, which would make the check pass for the wrong reason.
+  { RomLookup::JVLevelEnvSlope,      0x06160, 128, 2, Monotonic::Unchecked },
+
   // Seven velocity curves of 128 bytes at 0x5390 + c * 0x80, each falling 255 to
   // 0, selected per tone by record byte +55 & 7 for the TVF and +71 & 7 for the
   // TVA - the descriptor table's own velocity-curve fields. Curve 4 is 0x05590,

@@ -69,6 +69,10 @@ private:
   // part level and system volume instead.
   int _staticLevel8 = 0;
 
+  // True on a device whose envelope register carries its OWN curve, so the
+  // envelope walks in the PRE-curve domain and is converted at every emit.
+  bool _envThroughCurve = false;
+
   int _envLevel;
   int _envLevelMode;
   int _prevEnvLevel;
@@ -112,6 +116,7 @@ private:
   void _update_lfo_depth(int lfo);
 
   int _get_bias_level(int km, int biasPoint);
+  int _env_register_value(int envValue) const;
   float _dryGain = 1.0f;   // JV Dry Level; unity on devices without one
   bool _partLevelInDynamics = true;  // false when the level law owns it
 

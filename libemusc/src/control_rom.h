@@ -266,6 +266,16 @@ public:
     // engine's second gain factor and its top entry, 65535, is +6 dB over the
     // 32768 that means unity (P-0398).
     std::array<int, 128>      JVLevelEnv;
+
+    // The slope half of that same pair (ROM2 0x6160). The firmware's idiom is
+    //   h = x >> 8;  frac = x & 0xff;  out = CURVE[h] + ((SLOPE[h]*frac) >> 16)
+    // so this is the sub-LSB trim on a 128-step staircase, not an interpolation
+    // between CURVE[h] and CURVE[h+1] - the shift is 16 where a true linear
+    // interpolation would need 8. It is carried anyway because the byte the
+    // register receives is CURVE's HIGH byte, and a trim of up to 6 can tip
+    // that byte at a boundary (scdb devices/jv880/07_synthesis/tva.md, TM-017d).
+    std::array<int, 128>      JVLevelEnvSlope;
+
     std::array<uint8_t, 896>  JVVelCurves;
 
     // The JV's time-variant filter tables (P-0390). Read from its own control

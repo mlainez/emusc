@@ -209,6 +209,7 @@ enum class RomLookup
   EnvelopeTime,
   JVLevel,
   JVLevelEnv,
+  JVLevelEnvSlope,
   JVVelCurves,
 
   // The JV's time-variant filter tables, all in its control ROM (P-0390). The

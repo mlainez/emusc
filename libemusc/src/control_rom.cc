@@ -1757,6 +1757,8 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.JVLevel);             break;
       case RomLookup::JVLevelEnv:
         rom16(rt.offset, rt.entries, t.JVLevelEnv);          break;
+      case RomLookup::JVLevelEnvSlope:
+        rom16(rt.offset, rt.entries, t.JVLevelEnvSlope);     break;
       case RomLookup::JVVelCurves:
         rom8(rt.offset, rt.entries, t.JVVelCurves);          break;
       case RomLookup::JVTvfExpCoarse:
