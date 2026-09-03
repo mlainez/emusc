@@ -92,7 +92,8 @@ const DeviceProfile SC55_PROFILE = {
     64.0f,
     ReverbReturnLaw::LevelOverDivisor,
     8, 0x3f, 4,
-    0x16, 112
+    0x16, 112,
+    ReverbDelayTapLaw::LinearPerTime
   },
 
   { false, 0x10, 0x50 },

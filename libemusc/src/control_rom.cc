@@ -1648,6 +1648,7 @@ void ControlRom::_init_device_lookup_tables(void)
   // the lookup-table pass below and left zero otherwise, which is what tells
   // reverb.cc that this device has no per-type return coefficient to apply.
   t.JVReverbReturnCoeff.fill(0);
+  t.JVReverbTapScale.fill(0);
 
   t.LFORate.fill(0);
   t.LFODelayTime.fill(0);
@@ -1800,6 +1801,19 @@ void ControlRom::_init_device_lookup_tables(void)
         if ((size_t) rec + V.reverbReturnCoeff >= _deviceRom.size())
           break;
         t.JVReverbReturnCoeff[type] = _deviceRom[rec + V.reverbReturnCoeff];
+
+        // ...and, out of the same record, the two delay-time scale words the
+        // delay arm multiplies the Time parameter by (P-0397). Read for every
+        // type because they are read from every record; only 6 and 7 use them.
+        if (V.reverbTapScaleB &&
+            (size_t) rec + V.reverbTapScaleB + 1 < _deviceRom.size()) {
+          t.JVReverbTapScale[2 * type] =
+            ((int) _deviceRom[rec + V.reverbTapScaleA] << 8) |
+            _deviceRom[rec + V.reverbTapScaleA + 1];
+          t.JVReverbTapScale[2 * type + 1] =
+            ((int) _deviceRom[rec + V.reverbTapScaleB] << 8) |
+            _deviceRom[rec + V.reverbTapScaleB + 1];
+        }
       }
     }
   }

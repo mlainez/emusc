@@ -260,10 +260,46 @@ void Reverb::_set_reverb_time(int reverbTime)
                        law.timeCap);
     _gLoop = std::max(lut, 0) / 2 / 64.0f;
 
-  } else if (_character == 6 || _character == 7) {      // Measured & verified
-    uint16_t tapR = (uint16_t)(law.delayTapBase + law.delayTapPerTime * rt);
-    uint16_t tapL = (_character == 7)
-      ? (uint16_t)(law.delayTapBase + law.delayTapPerTime / 2 * rt) : tapR;
+  } else if (_character == 6 || _character == 7) {
+    // The delay-line taps. On the Sound Canvas this is a straight line in the
+    // parameter, measured on the machine, with the panning type's left tap at
+    // half the spacing.
+    //
+    // The JV-880 forms it from the selected type's own record instead
+    // (ROM2 0x47255-0x4727B, P-0397). The two scale words ARE the per-tap
+    // spacing, so PAN-DLY's 2:1 ratio comes out of the data rather than from a
+    // halving here: 0x3CF0/0x3CF0 for DELAY and 0x1E7D/0x3CF0 for PAN-DLY.
+    //
+    //     E = 2 * time + (time >= 64)
+    //     M = (E << 8) | (E >= 128 ? 0xFF : 0)      exts.b then swap.b
+    //     tap = base + ((M * scale) >> 16)
+    //
+    // M's low byte is the firmware's sign extension of E's bit 7, and it is
+    // worth about 61 samples from time 64 up - not a rounding term. The
+    // reference's echo steps by exactly that at exactly that point, which is
+    // how the term was found: measured against the oracle at nine Delay Times
+    // on both delay types, every point lands on this arithmetic to the sample.
+    //
+    // `base` is this program's own register layout, not a delay time - see
+    // ReverbLaw. Ours is 0x16 where the device's records carry 10, because the
+    // JV's delay program has ten write pointers and reverb.cc's has twenty-two.
+    // The residue is a constant 10 samples, 0.31 ms, at every Time; it belongs
+    // to the delay PROGRAM (which also scales two registers with Time that this
+    // one does not) and is recorded rather than cancelled with a fitted offset.
+    uint16_t tapL, tapR;
+    if (law.delayTapLaw == ReverbDelayTapLaw::JVRecordScale &&
+        2 * _character + 1 < (int) _LUT.JVReverbTapScale.size()) {
+      const int E = 2 * rt + (rt >= 64 ? 1 : 0);
+      const int M = (E << 8) | (E >= 128 ? 0xff : 0);
+      const int sA = _LUT.JVReverbTapScale[2 * _character];
+      const int sB = _LUT.JVReverbTapScale[2 * _character + 1];
+      tapL = (uint16_t)(law.delayTapBase + ((M * sA) >> 16));
+      tapR = (uint16_t)(law.delayTapBase + ((M * sB) >> 16));
+    } else {
+      tapR = (uint16_t)(law.delayTapBase + law.delayTapPerTime * rt);
+      tapL = (_character == 7)
+        ? (uint16_t)(law.delayTapBase + law.delayTapPerTime / 2 * rt) : tapR;
+    }
     _activeCharRegs.p28[6] = tapL;  _activeCharRegs.p28[10] = tapL;   // wet L
     _activeCharRegs.p29[2] = tapL;  _activeCharRegs.p29[6]  = tapL;
     _activeCharRegs.p28[7] = tapR;  _activeCharRegs.p28[11] = tapR;   // wet R

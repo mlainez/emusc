@@ -379,7 +379,14 @@ static const RecordRomLayout JV880_RECORDS = {
     // that measured 12.7 dB QUIET. That attempt divided the firmware's target a
     // second time, by 255, where the field's own full scale is 64; the factor
     // it introduced, 255/64 = 12.5 dB, is the entire discrepancy it reported.
-    0x004800, 8, 0x38
+    //
+    // Words +0x0C and +0x0E of the same records are the delay-time SCALE pair
+    // the delay arm multiplies Reverb Time by (P-0397). 0x3CF0/0x3CF0 for
+    // DELAY, 0x1E7D/0x3CF0 for PAN-DLY, so the panning type's left tap is at
+    // half the right's spacing - the 2:1 ratio is DATA here, not a division in
+    // the engine. Measured on the reference at nine Delay Times on both types,
+    // every echo lands on this arithmetic to the sample.
+    0x004800, 8, 0x38, 0x0c, 0x0e
   },
 
   {
@@ -553,7 +560,18 @@ const DeviceProfile JV880_PROFILE = {
     64.0f,
     ReverbReturnLaw::JVTypeCoefficient,
     8, 0x3f, 4,
-    0x16, 112
+
+    // The delay taps. `delayTapBase` is this ENGINE's register layout - the
+    // address one past reverb.cc's highest delay write pointer, 0x15 - and not
+    // a device number; the JV's own records carry 10 for the same reason,
+    // because their program has ten write pointers where ours has twenty-two.
+    // `delayTapPerTime` is unused under JVRecordScale: the JV takes the slope
+    // from the selected type record's words +0x0C and +0x0E, which is what
+    // makes PAN-DLY's two taps a 2:1 pair rather than a halving in code
+    // (P-0397). It is left at the Sound Canvas value rather than zeroed so the
+    // fallback path stays meaningful if the law is ever switched back.
+    0x16, 112,
+    ReverbDelayTapLaw::JVRecordScale
   },
 
   { true,  0x3f, 0x7f },

@@ -283,6 +283,27 @@ public:
     // the two delay types do not use theirs, so the 0 and the 61 are read but
     // never applied. Zero when the device has no such records.
     std::array<int,   8> JVReverbReturnCoeff;
+
+    // The JV-880's per-type delay-time SCALE words (P-0397): words +0x0C and
+    // +0x0E of each reverb type record, interleaved A,B per type, so entry
+    // 2*type is the left tap's scale and 2*type+1 the right's. Only the two
+    // delay types use them - 0x3CF0/0x3CF0 for DELAY and 0x1E7D/0x3CF0 for
+    // PAN-DLY, whose 2:1 ratio is the whole character of the type. Zero when
+    // the device has no such records.
+    //
+    // The firmware's tap address, ROM2 0x47255-0x4727B, disassembled:
+    //
+    //     E = 2*time + (time >= 64)          expand, as the return law's
+    //     exts.b then swap.b                 E -> (E << 8) | (E >= 128 ? 0xFF : 0)
+    //     mulxu.w, high word                 (that * scale) >> 16
+    //     + word[+0x1A] + 1                  the record's own base
+    //
+    // The sign extension is not a detail: `exts.b` fills the high byte from
+    // bit 7 of E, and the following `swap.b` moves that 0xFF into the LOW byte
+    // of the multiplicand. So from time 64 up - where E first reaches 128 - the
+    // tap is about 61 samples longer than the same arithmetic without it, and
+    // the reference's echo jumps by exactly that at exactly that point.
+    std::array<int,  16> JVReverbTapScale;
     std::array<int, 256> PitchFineExp;
     std::array<int, 47> PitchCoarseExp;
   };

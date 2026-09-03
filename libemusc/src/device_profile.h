@@ -144,6 +144,11 @@ struct PerformanceLayout
   // number into the boot performance's level byte could not.
   uint32_t reverbTypeTable;
   int      reverbTypeCount, reverbReturnCoeff;
+
+  // Byte offsets of the two delay-time scale WORDS inside the same record,
+  // big-endian: +0x0C is the left tap's and +0x0E the right's. Zero when the
+  // device has no such records.
+  int      reverbTapScaleA, reverbTapScaleB;
 };
 
 // A rhythm set: one record per key.
@@ -423,6 +428,19 @@ enum class ReverbReturnLaw
 };
 
 
+// How the Reverb Time parameter becomes a delay-line tap address on reverb
+// characters 6 and 7 - the two DELAY types. Again a KIND, not a constant: the
+// Sound Canvas's tap is a straight line in the parameter and the JV's is a
+// fixed-point multiply by a word taken from the selected type's own record,
+// with a sign-extension step in the middle that is worth 61 samples over half
+// the range (P-0397).
+enum class ReverbDelayTapLaw
+{
+  LinearPerTime,
+  JVRecordScale
+};
+
+
 struct ReverbLaw
 {
   // Reverb time -> loop gain, a rounded straight line saturating at timeCap.
@@ -456,9 +474,29 @@ struct ReverbLaw
   // by stepPerLevel and capped at maxLevel.
   int preLpfStep, preLpfPairSum, preLpfMaxLevel;
 
-  // Delay and panning-delay taps: tap = base + perTime * reverbTime. Panning
-  // delay puts its left tap at half the spacing.
+  // Delay and panning-delay taps.
+  //
+  // delayTapBase is a property of the reverb program's own register layout, not
+  // of the device's delay time: it is the address one past the highest WRITE
+  // pointer in the character's register set, which is what makes the shortest
+  // tap one sample of delay rather than a wrap of the whole 16384-word buffer.
+  // For reverb.cc's `_crDelayBase` the highest writer is 0x15, so the base is
+  // 0x16. The JV's own delay records put their ten write pointers at 0..9 and
+  // their base at `word[+0x1A] + 1 = 10` - the same rule, a different program.
+  // The 12-word difference is not a divergence in the Time law and must not be
+  // "corrected" by moving one program's base onto the other's (D-16 reads it as
+  // an error; P-0397 shows it is not).
+  //
+  // LinearPerTime:  tap = base + perTime * reverbTime, and the panning type's
+  //                 left tap at half the spacing. Measured on the Sound Canvas.
+  // JVRecordScale:  tap = base + ((M(time) * w) >> 16), with w the selected
+  //                 type record's own scale word - +0x0C for the left tap and
+  //                 +0x0E for the right, which is where the panning type's 2:1
+  //                 ratio comes from rather than from a hardcoded halving.
+  //                 perTime is then unused. See ControlRom::LookupTables::
+  //                 JVReverbTapScale for M and for the firmware trace.
   int delayTapBase, delayTapPerTime;
+  ReverbDelayTapLaw delayTapLaw;
 };
 
 

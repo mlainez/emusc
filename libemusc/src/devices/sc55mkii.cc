@@ -100,7 +100,8 @@ const DeviceProfile SC55MKII_PROFILE = {
     64.0f,
     ReverbReturnLaw::LevelOverDivisor,
     8, 0x3f, 4,
-    0x16, 112
+    0x16, 112,
+    ReverbDelayTapLaw::LinearPerTime
   },
 
   { true,  0x3f, 0x7f },
