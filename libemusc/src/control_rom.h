@@ -278,6 +278,17 @@ public:
 
     std::array<uint8_t, 896>  JVVelCurves;
 
+    // The JV pan law, split out of its packed words. hasJVPanLaw stays false on
+    // every device that has no such table, and the mirrored TVAPanpot path is
+    // then used exactly as before.
+    // Initialised HERE, in the declaration, not in the fallback that synthesises
+    // TVAPanpot: a Sound Canvas reads its own pan ramp through the CPU map and
+    // never runs that fallback, so a flag set only there is indeterminate on
+    // exactly the devices that must not take this branch.
+    std::array<uint8_t, 128>  JVPanLawL = {};
+    std::array<uint8_t, 128>  JVPanLawR = {};
+    bool                      hasJVPanLaw = false;
+
     // The JV's time-variant filter tables (P-0390). Read from its own control
     // ROM, each reproducing a closed form exactly - see devices/jv880.cc.
     // JVTvfExpCoarse is indexed by a SIGNED byte: entry 128 is -128.

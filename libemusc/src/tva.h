@@ -107,6 +107,8 @@ private:
   TVA();
 
   void _init_update(void);
+  void _set_panpot_gains(void);
+
   void _init_envelope(ControlRom &ctrlRom, int sampleIndex, int instrumentIndex,
                       uint8_t cVelocityLvl,
                       uint8_t cVelocity);

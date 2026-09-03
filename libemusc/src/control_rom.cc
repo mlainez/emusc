@@ -1618,6 +1618,13 @@ void ControlRom::_init_device_lookup_tables(void)
   for (int i = 0; i < 129; i++)
     t.TVAPanpot[i] = (uint8_t) std::lround(127.0 * std::sin((i / 128.0) * M_PI / 2.0));
 
+  // Off unless a device profile names a packed pan table below. The Sound Canvas
+  // reads its own 129-byte ramp through the CPU map, so this fallback is only
+  // ever the law on a device that has neither.
+  t.hasJVPanLaw = false;
+  t.JVPanLawL.fill(0);
+  t.JVPanLawR.fill(0);
+
   // Key follow. PitchParamScale scales |key - 60| into the base pitch, so zero
   // here means a note sounds at the same pitch whatever key is played - which is
   // exactly what it did. The SC-55's is a straight ramp, 0..65535 over 21 steps.
@@ -1775,6 +1782,17 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.JVTvfDampHard);       break;
       case RomLookup::JVTvfBase:
         rom16(rt.offset, rt.entries, t.JVTvfBase);           break;
+      case RomLookup::JVPanLaw:
+        // Packed big-endian (L << 8) | R, split into two independent channels.
+        // Verified against jv880_rom2 at 0x6B8A: W[0] = 0x7f00 (hard left),
+        // W[64] = 0x585a = (88, 90) - the asymmetric centre that rules out a
+        // mirrored single table - and W[127] = 0x007f (hard right).
+        for (int e = 0; e < rt.entries && e < 128; e++) {
+          t.JVPanLawL[e] = _deviceRom[rt.offset + 2 * e];
+          t.JVPanLawR[e] = _deviceRom[rt.offset + 2 * e + 1];
+        }
+        t.hasJVPanLaw = true;
+        break;
       case RomLookup::JVTvfCutoffKF:
         rom16s(rt.offset, rt.entries, t.JVTvfCutoffKF);      break;
       case RomLookup::JVChorusRecords:

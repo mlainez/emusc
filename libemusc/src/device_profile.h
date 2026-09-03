@@ -226,6 +226,16 @@ enum class RomLookup
   JVTvfBase,
   JVTvfCutoffKF,
 
+  // The JV's PAN law: 128 big-endian words, packed (L << 8) | R, one per pan
+  // position. The Sound Canvas keeps a single 129-byte ramp read through its CPU
+  // map and mirrored as T[p] against T[0x80 - p]; the JV cannot be expressed that
+  // way, because its centre is ASYMMETRIC - (88, 90) of 127 - so the two channels
+  // are stored independently and must be read independently. Shape is Unchecked
+  // on purpose: as a word sequence it is neither rising nor falling, since a step
+  // that leaves L alone and lifts R raises the word while a step that drops L
+  // lowers it by 255.
+  JVPanLaw,
+
   // The JV's chorus type records: three records of five big-endian words, laid
   // end to end, holding the effect-PSRAM addresses its chorus sweeps between
   // and the sweep-rate base (P-0394).

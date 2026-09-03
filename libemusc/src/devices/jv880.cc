@@ -152,6 +152,14 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // The check it passes instead is the strongest available: it IS the manual's
   // published list, entry for entry.
   { RomLookup::JVTvfCutoffKF,        0x057be,  16, 2, Monotonic::Unchecked },
+  // The pan law: 128 big-endian words at ROM2 0x6B8A, packed (L << 8) | R.
+  // The candidate at 0x3e946 named above was rejected for failing a RISE
+  // check, but that check was the wrong test: this is not a mirrored single
+  // ramp. Its centre is (88, 90) of 127, asymmetric, and its power sum
+  // L^2 + R^2 spans 1.000 to 1.189 of centre, so it is neither equal-power
+  // nor equal-gain and cannot be synthesised. Verified byte-exact against
+  // jv880_rom2: 0x7f00 hard left, 0x585a centre, 0x007f hard right.
+  { RomLookup::JVPanLaw, 0x6B8A, 128, 2, Monotonic::Unchecked },
 
   // The chorus type records (P-0394). Three records of five big-endian words,
   // contiguous from 0x49EE, which is also how the firmware reaches them: the

@@ -100,8 +100,7 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
       (_drumSet &&
        settings->get_param(DrumParam::Panpot, _drumSet - 1, _key) == 0)) {
     _panpot = std::rand() % 128;
-    _panpotL = _LUT.TVAPanpot[_panpot];
-    _panpotR = _LUT.TVAPanpot[0x80 - _panpot];
+    _set_panpot_gains();
     _panpotLocked = true;
   }
 }
@@ -411,8 +410,7 @@ void TVA::_update_panpot_level(bool reset)
       _panpot --;
   }
 
-  _panpotL = _LUT.TVAPanpot[_panpot];
-  _panpotR = _LUT.TVAPanpot[0x80 - _panpot];
+  _set_panpot_gains();
 }
 
 
@@ -1081,5 +1079,31 @@ void TVA::_smooth(int mode, float start, float target,
   gain[255] = target;
 }
 
+
+
+// The pan law. A device whose profile names a packed pan table has independent
+// L and R channels, because its centre is asymmetric and no mirrored table can
+// express it; every other device keeps the Sound Canvas's single 129-byte ramp
+// read as T[p] against T[0x80 - p], unchanged.
+void TVA::_set_panpot_gains(void)
+{
+  if (_LUT.hasJVPanLaw) {
+    int p = _panpot < 0 ? 0 : (_panpot > 127 ? 127 : _panpot);
+    // NOTE THE SWAP, and that it is not a bug here. `_panpotL` does not carry
+    // the left channel: the Sound Canvas path below assigns it TVAPanpot[_panpot]
+    // from a table that RISES 0..127, so pan 0 gives _panpotL = 0 and the sound
+    // arrives on the right. The field names are inverted with respect to the
+    // output, which the symmetric sin table it used to be filled with could never
+    // reveal. The JV's table is asymmetric and its hard-left entry is explicit
+    // (0x7f00 at index 0), so it exposes the misnomer immediately: assigned by
+    // name, Closed HAT 1 came out +30 dB right where the reference puts it 27 dB
+    // LEFT. Reading the high byte into _panpotR restores the reference's side.
+    _panpotR = _LUT.JVPanLawL[p];
+    _panpotL = _LUT.JVPanLawR[p];
+  } else {
+    _panpotL = _LUT.TVAPanpot[_panpot];
+    _panpotR = _LUT.TVAPanpot[0x80 - _panpot];
+  }
+}
 
 }  // namespace EmuSC
