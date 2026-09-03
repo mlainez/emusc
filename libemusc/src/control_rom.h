@@ -257,6 +257,15 @@ public:
     // 16-bit gain and is NOT exponential, so it cannot be fitted; the velocity
     // curves are a bank of seven, selected per tone.
     std::array<int, 128>      JVLevel;
+
+    // The SECOND of the JV's two level curves. The firmware has two
+    // (curve, slope) pairs and they are not interchangeable: 0x6260 converts
+    // the static level product (ROM1 0x4451, register F016) and 0x6060
+    // converts the running TVA envelope value (ROM1 0x4593, register F018).
+    // The two chip registers multiply, so the envelope's own curve carries the
+    // engine's second gain factor and its top entry, 65535, is +6 dB over the
+    // 32768 that means unity (P-0398).
+    std::array<int, 128>      JVLevelEnv;
     std::array<uint8_t, 896>  JVVelCurves;
 
     // The JV's time-variant filter tables (P-0390). Read from its own control

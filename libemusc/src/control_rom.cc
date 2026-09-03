@@ -1754,6 +1754,8 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.PitchCoarseExp);      break;
       case RomLookup::JVLevel:
         rom16(rt.offset, rt.entries, t.JVLevel);             break;
+      case RomLookup::JVLevelEnv:
+        rom16(rt.offset, rt.entries, t.JVLevelEnv);          break;
       case RomLookup::JVVelCurves:
         rom8(rt.offset, rt.entries, t.JVVelCurves);          break;
       case RomLookup::JVTvfExpCoarse:
@@ -2102,7 +2104,25 @@ int ControlRom::_read_device_rhythm(void)
 
     const int key = R.firstKey + k;
     ds.key[key]    = r[R.playKey] & 0x7f;
-    ds.volume[key] = r[R.level] & 0x7f;
+
+    // Rhythm Note Level goes in as the TONE level, through the device's own
+    // level law, and the drum-set level is held at full scale. It had been
+    // going in as DrumParam::Level, which the engine consumes in the Sound
+    // Canvas's dynamic-level chain - and on this device that chain no longer
+    // runs at all, because the dynamic register carries the level law's static
+    // byte (tva.cc, P-0398). The firmware has ONE per-voice level routine,
+    // ROM1 0x4451, whose first argument is a per-voice word at @0x90d2; no
+    // second level path exists for a rhythm voice, and a Rhythm Note's Level
+    // (+0x1E, SysEx 0x24, 0-127) is the same field in the same role as a Patch
+    // Tone's Level (D-21). The two laws differ by only 0.5 to 1.0 dB across
+    // the factory range 75..127, so this is the reading with ROM support and
+    // not a measurable preference.
+    if (_profile->levelLawKind == LevelLawKind::JVCurveProduct) {
+      ip.volume      = (uint8_t) (r[R.level] & 0x7f);
+      ds.volume[key] = 0x7f;
+    } else {
+      ds.volume[key] = r[R.level] & 0x7f;
+    }
 
     // Pan. The range is 0..128 and the manual prints the list as "L64 - 63R,
     // RND", so 128 is RANDOM and not an out-of-range hard right (D-02). The two

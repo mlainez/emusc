@@ -264,6 +264,30 @@ void TVA::_update_dynamic_level()
 {
   _prevDynLevel = _dynLevel;
 
+  // The JV's level is TWO chip registers, not one. ROM1 0x38a4-0x38b8 writes
+  // the level law's own byte to F016 and the TVA envelope's byte to F018, each
+  // as (byte << 8) | slew-mode - which is exactly the pair this engine already
+  // models, a dynamic register and an envelope register each contributing
+  // value/32768. So the static byte belongs HERE and the envelope's in
+  // _phaseValueInit. It had been multiplied into the envelope target instead,
+  // collapsing the two into one and losing the second register's gain: at
+  // envelope level 127 the F018 byte is 255, worth 255/128 = 1.9922, and that
+  // is +5.987 dB. Predicted before rendering and then measured on a single
+  // melodic voice on channel 4 and on four drums, where the deficit was a
+  // level-independent -5.2 to -6.0 dB, constant over velocity 20-127
+  // (PROVENANCE.md P-0398).
+  //
+  // Nothing below this point runs on that device: expression, system volume,
+  // the drum-set level and the two 0x8208/0x830e/0x208 corrections are the
+  // Sound Canvas's own arithmetic for its dynamic register, and the JV's
+  // firmware does not compute any of it - CC7 reaches the level law as Part
+  // Level instead. CC11 and master volume are therefore a NAMED GAP on this
+  // device rather than an approximation.
+  if (_settings->device()->levelLawKind == LevelLawKind::JVCurveProduct) {
+    _dynLevel = _staticLevel8 << 8;
+    return;
+  }
+
   // 1: Read expression, Part level and System level.
   //
   // A device whose own level law already folds the part level in says so in its
@@ -674,14 +698,30 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     const int patch = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
     const int dyn   = T[std::clamp((part * patch) >> L.dynamicsShift, 0, 127)];
 
-    const int stat8 = std::clamp((int) (((int64_t) gain * dyn) >> L.staticShift), 0, 255);
+    // The static level byte, exactly as the firmware stores it: the high byte
+    // of high16(T[a] * T[b]), written to @0x8dc2 at ROM1 0x3d4c and from there
+    // to the chip's F016 register at ROM1 0x38a4. It is the DYNAMIC register on
+    // this engine, so _update_dynamic_level() reads it; it must not be
+    // multiplied into the envelope target as well.
+    _staticLevel8 =
+      std::clamp((int) (((int64_t) gain * dyn) >> L.staticShift), 0, 255);
 
-    // The envelope scales that statically-computed level rather than sharing an
-    // index with it, because on the hardware they are two chip registers the tone
-    // generator multiplies.
-    const int full = L.envelopeFullScale;
-    auto env = [stat8, full](uint8_t lv) -> int {
-      return std::clamp((stat8 * (lv & 0x7f)) / full, 0, 255);
+    // The envelope register's own byte. The envelope level is not a linear
+    // fraction of the static level: ROM1 0x4578-0x459a converts the running
+    // envelope value through a SECOND (curve, slope) pair at ROM2
+    // 0x6060/0x6160 and stores the high byte of the result (ROM1 0x3da6), so
+    // level 127 gives 255 and level 64 gives 29 - 29/128 rather than 64/127,
+    // which is 7 dB apart. The two chip registers then multiply, and 255/128
+    // is where the missing 5.99 dB was (P-0398).
+    //
+    // NAMED GAP: the firmware interpolates the envelope value BEFORE this
+    // curve, so a segment is a straight line in the pre-curve domain and
+    // exponential in gain; this engine interpolates between the converted
+    // endpoints, so the endpoints are exact and the path between them is a
+    // straight line in gain. Not measured, and separable from the level.
+    const auto &EC = _LUT.JVLevelEnv;
+    auto env = [&EC](uint8_t lv) -> int {
+      return std::clamp(EC[lv & 0x7f] >> 8, 0, 255);
     };
     _phaseValueInit[0] = 0;
     _phaseValueInit[1] = env(_instPartial.TVAEnvL1);

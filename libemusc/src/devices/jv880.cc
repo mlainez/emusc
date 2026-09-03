@@ -89,6 +89,17 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // dB-per-step for this failed because there is not one.
   { RomLookup::JVLevel,              0x06260, 128, 2, Monotonic::Rising },
 
+  // The SECOND level curve, and it is not the same table. ROM1 0x4451 converts
+  // the static level product through 0x6260 and writes the result's high byte to
+  // the chip's F016; ROM1 0x44e7 converts the running TVA envelope value through
+  // THIS pair and writes its high byte to F018 (ROM1 0x4583/0x4593 read
+  // 0x6160/0x6060, the store is at ROM1 0x3da6, the register writes at
+  // 0x38a4-0x38b8). The two registers multiply. 0.2945 dB per step against
+  // 0x6260's 0.2297, both topping out at 65535: 0 rises inverted over 128
+  // entries, identical in ROM2 v1.0.0 and v1.0.1. Entry 127 >> 8 is 255, which
+  // is the +5.99 dB that was missing from every JV voice (P-0398).
+  { RomLookup::JVLevelEnv,           0x06060, 128, 2, Monotonic::Rising },
+
   // Seven velocity curves of 128 bytes at 0x5390 + c * 0x80, each falling 255 to
   // 0, selected per tone by record byte +55 & 7 for the TVF and +71 & 7 for the
   // TVA - the descriptor table's own velocity-curve fields. Curve 4 is 0x05590,
@@ -528,7 +539,10 @@ const DeviceProfile JV880_PROFILE = {
     5,      // velocityShift
     127,    // velocityPivot
     10,     // keyFollowUnitsPerPct
-    127,    // envelopeFullScale
+    // envelopeFullScale: 0, meaning "not this device". The envelope's level does
+    // not scale the static level linearly here - it goes through ROM2 0x6060 and
+    // into its own chip register, F018 (P-0398, RomLookup::JVLevelEnv above).
+    0,
 
     // The JV's envelope times are milliseconds, and only a table entry of 0 - a
     // time byte of 0 - snaps instantly. Every tone in the instruments the owner

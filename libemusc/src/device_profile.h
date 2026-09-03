@@ -208,6 +208,7 @@ enum class RomLookup
   PitchCoarseExp,
   EnvelopeTime,
   JVLevel,
+  JVLevelEnv,
   JVVelCurves,
 
   // The JV's time-variant filter tables, all in its control ROM (P-0390). The
@@ -371,7 +372,13 @@ struct LevelLaw
   int velocityShift;         // (sensitivity x (pivot - velocity)) >> this
   int velocityPivot;         // full-scale velocity, the point of no attenuation
   int keyFollowUnitsPerPct;  // engine key-follow units per ten percent
-  int envelopeFullScale;     // envelope level that means "no attenuation"
+  // WITHDRAWN and no longer consumed. It encoded the assumption that the
+  // envelope scales the static level linearly, "no attenuation" at 127. It does
+  // not: the firmware converts the envelope value through its own (curve, slope)
+  // pair and writes the result to a SEPARATE chip register (P-0398). Kept as a
+  // named zero so the profile's field order is not silently reshuffled; set it
+  // to 0 for a device whose envelope register has its own curve.
+  int envelopeFullScale;
 
   // What the device's envelope time table holds. The JV's is in MILLISECONDS
   // (P-0383); the Sound Canvas's is already in engine control ticks, which is

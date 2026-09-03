@@ -63,6 +63,12 @@ private:
   int _dynLevelMode;
   int _prevDynLevel;
 
+  // The JV's static level byte: the level law's own result, which on that
+  // device IS the dynamic register (chip F016, ROM1 0x38a4). Unused by the
+  // Sound Canvas path, whose dynamic register is computed from expression,
+  // part level and system volume instead.
+  int _staticLevel8 = 0;
+
   int _envLevel;
   int _envLevelMode;
   int _prevEnvLevel;
