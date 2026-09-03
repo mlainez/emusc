@@ -207,6 +207,16 @@ struct RhythmLayout
   // JV's table is -100, so leaving the index at zero detunes every drum's
   // filter by a semitone's worth of cents per key away from 60.
   int      cutoffKeyFollowNeutral;
+
+  // The envelope TIME-sense nibbles, added 2026-09-03 with D-27. A rhythm note
+  // carries ONE "time velocity" nibble per envelope rather than the patch tone's
+  // pair, and the firmware mirrors it into both the T1 and T4 slots while forcing
+  // the time key-follow to neutral (ROM1 0x4E85-0x4E8D writes 0x70) - drums are
+  // per-key, so key-following their envelope times would be meaningless. Low
+  // nibble of each byte; 7 is neutral, as entry 7 of both depth tables is 0.
+  // Appended last so a profile written before these existed still compiles.
+  int      tvaTimeVelocity;             // rhythm record +0x21, bits 0-3
+  int      tvfTimeVelocity;             // rhythm record +0x14, bits 0-3
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which

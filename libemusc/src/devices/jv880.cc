@@ -546,7 +546,16 @@ static const RecordRomLayout JV880_RECORDS = {
     // The JV's cutoff key-follow table is the manual's own percentage list read
     // as cents per semitone, and its entry 0 is -100. A rhythm note has no key
     // follow at all, so the neutral entry is index 5, which holds 0.
-    5
+    5,
+
+    // The envelope time-velocity nibbles. The rhythm descriptor table at ROM2
+    // 0x3A8C4 puts SysEx 0x28 on record byte +0x21 and 0x1a on +0x14, both
+    // 0-14 in the LOW nibble (their clear-mask is 0xf0) - the TVA's and the
+    // TVF's "time velo". There is a third at +0x05 for the PITCH envelope
+    // (SysEx 0x0b), left unwired because this engine has no JV pitch envelope
+    // yet. The time key-follow is deliberately absent: the firmware forces it
+    // neutral for rhythm notes, which _init_neutral_partial() already does.
+    0x21, 0x14
   }
 };
 
