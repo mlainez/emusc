@@ -1254,9 +1254,27 @@ int ControlRom::_read_device_samples(void)
     // Bit 2 of the flag byte plays the sample backwards: every forward /
     // "REV ..." pair in the waveform list shares one address and length and
     // differs only in this bit (P-0372). The low two bits carry the SC-55's
-    // own loop semantics, so they are passed through unchanged.
-    s.loopMode  = _deviceRom[o + 12] & 0x03;
+    // own loop semantics.
+    //
+    // A reverse wave does NOT loop. The firmware's reverse path (ROM1 @0x643e,
+    // reached from the wave-select routine @0x6359) starts the chip's position
+    // pointer at the record's END, runs it downward and freezes it at START -
+    // there is no loop register in that path at all, so the low two bits are
+    // not a loop mode for these records.
+    //
+    // Ten of the fifteen reverse records carry flag 6, whose low bits already
+    // mean "no loop" and whose loop field equals end, so they came out right by
+    // accident. The other five carry flag 4 (records 562, 563) or flag 5 (564,
+    // 570, 576) - low bits 0 and 1, forward loop and ping-pong. Those were
+    // looped, and over a region derived from the FORWARD record while the buffer
+    // had already been reversed, which puts the loop on the mirror of the
+    // forward sample's attack and sustains its loudest part instead of letting
+    // the note decay. Internal A64 "REVERSE MAD" (PC 63) runs three of its four
+    // tones on reverse waves and read +10.5 dB against the device - scdb D-47.
     s.reverse   = _deviceRom[o + 12] & 0x04;
+    s.loopMode  = s.reverse ? 2 : (_deviceRom[o + 12] & 0x03);
+    if (s.reverse)
+      s.loopLen = 0;
     }
     s.rootKey = _deviceRom[o + 13];
       s.volume    = _deviceRom[o + S.volume] & 0x7f;
