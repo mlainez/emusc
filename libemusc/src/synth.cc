@@ -624,8 +624,11 @@ void Synth::_apply_midi_sysex(uint8_t *data, uint16_t length)
   if (data[2] != _settings->get_param(SystemParam::DeviceID) - 1)
     return;
   
-  // Verify valid Model IDs: GSstandard (0x42) or SC-55/88 (0x45)
-  if (data[3] != 0x42 && data[3] != 0x45)
+  // Verify valid Model IDs: GSstandard (0x42), SC-55/88 (0x45) or JV-880
+  // (0x46). The JV's own ID was missing, so every SysEx a JV file sends was
+  // rejected here before the DT1 handler could see it - and two demo songs
+  // depend on those writes. scdb D-57.
+  if (data[3] != 0x42 && data[3] != 0x45 && data[3] != 0x46)
     return;
 
   // Verify checksum (assuming 1 byte Device ID)
@@ -1012,12 +1015,80 @@ void Synth::set_param(enum DrumParam dp, uint8_t map, uint8_t *data,
 
 
 // TODO: Verify length when expexted data length is known!!
+// The JV-880's DT1 address map, for the blocks this port can act on. The
+// address is four bytes: 00 00 10 pp is Performance Common parameter pp, and
+// 00 00 18+n pp is Performance PART n+1 (n = 0..7).
+//
+// Nothing of this was reaching the engine: the DT1 handler only ever accepted
+// model 0x42, the Sound Canvas, so every SysEx a JV file sends was discarded.
+// Two demo songs depend on it. "The Race" opens by writing Part Level 105 to
+// all eight parts, and ignoring that left our render 6.27 dB hot; putting the
+// same 105 in the ROM so both sides see it brings the gap to 1.91 dB, so this
+// one parameter was worth 4.36 dB. "Lost Weekend" writes part parameter 0x17
+// on seven parts. scdb D-57.
+//
+// Only parameters this project has identified are acted on. An unknown one is
+// ignored rather than guessed at, because a wrong write is worse than none.
+static bool jv_dt1_common(Settings *settings, uint8_t prm, uint8_t val)
+{
+  switch (prm) {
+    case 0x0d: settings->set_param(PatchParam::ReverbCharacter, (uint8_t)(val & 0x07)); return true;
+    case 0x0e: settings->set_param(PatchParam::ReverbLevel, val); return true;
+    case 0x0f: settings->set_param(PatchParam::ReverbTime, val); return true;
+    case 0x10: settings->set_param(PatchParam::ReverbDelayFeedback, val); return true;
+    case 0x11: settings->set_param(PatchParam::ChorusMacro, (uint8_t)(val & 0x07)); return true;
+    case 0x12: settings->set_param(PatchParam::ChorusLevel, val); return true;
+    case 0x13: settings->set_param(PatchParam::ChorusDepth, val); return true;
+    case 0x14: settings->set_param(PatchParam::ChorusRate, val); return true;
+    case 0x15: settings->set_param(PatchParam::ChorusFeedback, val); return true;
+    case 0x16: settings->set_param(PatchParam::ChorusSendToReverb,
+                                   (uint8_t)(val ? 0x7f : 0)); return true;
+    default: return false;
+  }
+}
+
+
+static bool jv_dt1_part(Settings *settings, int part, uint8_t prm, uint8_t val)
+{
+  switch (prm) {
+    case 0x19: settings->set_param(PatchParam::PartLevel, val, part); return true;
+    case 0x1a: settings->set_param(PatchParam::PartPanpot, val, part); return true;
+    default: return false;
+  }
+}
+
+
 void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 {
   if (length < 4)
     return;
 
   int p = 0;
+  if (model == 0x46) {
+    // Four address bytes, then a BLOCK of consecutive parameters - Roland's
+    // DT1 writes from the address onward, one byte per parameter, and the JV
+    // demos rely on that: "Lost Weekend" sends a single message per part
+    // carrying the patch-number nibble pair (0x17, 0x18) AND the Part Level
+    // (0x19), so a handler that read one byte saw only the patch nibble and
+    // ignored the level. Only 00 00 xx is mapped here.
+    if (length < 5 || data[0] != 0x00 || data[1] != 0x00)
+      return;
+    const uint8_t blk = data[2];
+    bool acted = false;
+    for (int i = 4; i < length; i++) {
+      const uint8_t prm = (uint8_t) (data[3] + (i - 4));
+      const uint8_t val = data[i] & 0x7f;
+      if (blk == 0x10)
+        acted |= jv_dt1_common(_settings, prm, val);
+      else if (blk >= 0x18 && blk <= 0x1f)
+        acted |= jv_dt1_part(_settings, blk - 0x18, prm, val);
+    }
+    if (acted)
+      for (const auto &cb : _partMidiModCallbacks)
+        cb(-1);
+    return;
+  }
+
   if (model == 0x42) {
 
     // System parameters
