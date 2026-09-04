@@ -785,6 +785,15 @@ void Synth::_process_samples(void)
   for (auto &p : _parts)
     p.update();
 
+  // EMUSC_DEBUG_VOICES prints the pool occupancy once per control period, so a
+  // rendered window can be joined to the number of voices that made it (scdb
+  // M-065 asked whether the hardware's level tracks the voice count; it does
+  // not). Diagnostics only.
+  static const bool dbgVoices = getenv("EMUSC_DEBUG_VOICES") != nullptr;
+  if (dbgVoices)
+    std::cerr << "VOICES t=" << (_blockStart / 32000.0) << " n="
+              << _partials_in_use() << std::endl;
+
   _systemEffects->update();
 
   // Clear all relative buffers before accumulating new samples
