@@ -70,6 +70,16 @@ public:
   bool steal_candidate(uint32_t &serial, bool &releasing);
   int steal_voice(uint32_t serial, float dBPerMillisecond);
 
+  // The JV-880's allocator (Synth::_steal_partial_jv) works on single voices.
+  // live_partials() appends every sounding partial of this part, oldest first:
+  // notes in note-on order and, within a note, slot 3 down to 0, which is the
+  // order the JV-880's Task 4 gives a note its tones (tone 4 first, ROM1
+  // 0xA72-0xA95). damp_partial() hands one of them over and returns 1, or 0
+  // if it was no longer sounding.
+  struct LivePartial { uint32_t serial; int slot; };
+  void live_partials(std::vector<LivePartial> &out);
+  int  damp_partial(uint32_t serial, int slot, float dBPerMillisecond);
+
   // Rhythm parts only: silence every note sounding on this part that shares
   // the new key's assign group. Returns the number of partials released.
   int choke_assign_group(uint8_t key, float dBPerMillisecond);

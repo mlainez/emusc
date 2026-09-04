@@ -844,6 +844,23 @@ const float ControlRom::voice_damp_rate(void)
 }
 
 
+const uint8_t ControlRom::device_voice_reserve(int part)
+{
+  if (!_profile || !_profile->records)
+    return 0;
+
+  const PerformanceLayout &V = _profile->records->performance;
+  if (!V.offset || !V.voiceReserve || part < 0 || part >= V.parts)
+    return 0;
+
+  const size_t at = V.offset + V.bootIndex * V.stride + V.voiceReserve + part;
+  if (at >= _deviceRom.size())
+    return 0;
+
+  return _deviceRom[at];
+}
+
+
 int ControlRom::dump_demo_songs(std::string path)
 {
   int index = 1;

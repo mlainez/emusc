@@ -61,6 +61,9 @@ public:
   void damp(float dBPerMillisecond);
   void update(void);
 
+  // Whether this partial's voice has been handed to another note
+  inline bool is_damping(void) const { return _damping; }
+
   void first_run_cb(void);
 
   inline int get_current_lfo(void)

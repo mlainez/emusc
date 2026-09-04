@@ -184,6 +184,15 @@ struct PerformanceLayout
   // big-endian: +0x0C is the left tap's and +0x0E the right's. Zero when the
   // device has no such records.
   int      reverbTapScaleA, reverbTapScaleB;
+
+  // Byte offset, inside the common block, of the eight Voice Reserve bytes,
+  // one per part, 0-28. On the JV-880 they are Performance Common SysEx
+  // 0x17-0x1E and the firmware's own descriptor table (ROM2 0x3A204) puts
+  // them at +0x14..+0x1B, max 0x1C; ROM1 0x2BA6 copies them to the allocator's
+  // reserve array. The allocator lets no other part take a part's newest
+  // `reserve` voices (scdb devices/jv880/06_voice_engine/allocation.md, D-44).
+  // Last, so an initialiser written before it existed leaves it 0 = none.
+  int      voiceReserve;
 };
 
 // A rhythm set: one record per key.

@@ -140,8 +140,11 @@ int Synth::_partials_in_use(void)
 // The reserve defaults sum to 24 on both models, so on the SC-55mkII four
 // partials are free for whichever part asks first (SC-55 OM p.79,
 // SC-55mkII OM p.98; PROVENANCE.md P-0077, P-0078, P-0079).
-int Synth::_steal_partials(void)
+int Synth::_steal_partials(Part &requester)
 {
+  if (_settings->generation() == ControlRom::SynthGen::JV880)
+    return _steal_partial_jv(requester);
+
   Part *victim = NULL;
   int victimRank = -1;
   uint32_t victimSerial = 0;
@@ -176,6 +179,71 @@ int Synth::_steal_partials(void)
 }
 
 
+// The JV-880's policy, from its firmware (scdb devices/jv880/06_voice_engine/
+// allocation.md, D-44). Task 4 (ROM1 0x0892) takes a voice from lists that
+// Task 8 (ROM1 0x1AC8) rebuilds from a permutation of all 28 voices kept in
+// ALLOCATION order: first a free voice; then the head of a list holding, for
+// every part, its oldest (active - reserve) voices merged in global age order;
+// then the requesting part's own oldest voice; and when the part has none of
+// its own, no voice at all. So:
+//
+//  * the victim is the oldest-allocated voice among those exceeding their
+//    part's Voice Reserve, whichever part it belongs to. The part number
+//    plays no role and neither does the requesting part;
+//  * release state plays no role either: nothing reorders the lists on a key
+//    off, and a voice leaves the pool only when the envelope task frees it;
+//  * one VOICE is taken, not a note: the note it came from keeps its other
+//    tones (ROM1 0xE1B re-links the voice into the new note's chain and the
+//    old note's chain closes around the gap). Tone 4 of a note was allocated
+//    first (ROM1 0xA72, r3 = 3 down to 0), so it is the oldest of its note;
+//  * the reserve is the performance's Voice Reserve (Performance Common
+//    +0x14..+0x1B, copied to @0x8C53 at ROM1 0x2BA6), a floor no other part
+//    can reach under. With every part at or under its reserve the requesting
+//    part recycles its own oldest voice rather than staying silent.
+//
+// The firmware's list is rebuilt once per Task 8 round rather than per voice;
+// recomputing it here for every request idealises that, and within one note
+// the two agree exactly (taking a part's oldest voice and lowering its excess
+// by one leaves the same set). What the chip does to a voice re-keyed while it
+// sounds is silicon, so the stolen partial fades at the device's damp rate.
+int Synth::_steal_partial_jv(Part &requester)
+{
+  struct Candidate { uint32_t serial; int slot; Part *part; };
+  std::vector<Candidate> stealable;
+  std::vector<Part::LivePartial> own;
+
+  for (auto &p : _parts) {
+    std::vector<Part::LivePartial> live;
+    p.live_partials(live);                       // oldest first
+
+    if (&p == &requester)
+      own = live;
+
+    const int reserve = _ctrlRom.device_voice_reserve(p.id());
+    const int excess = (int) live.size() - reserve;
+    for (int i = 0; i < excess; i++)
+      stealable.push_back({live[i].serial, live[i].slot, &p});
+  }
+
+  // Oldest first: the lowest note serial, and within one note the highest slot
+  const Candidate *victim = nullptr;
+  for (auto &c : stealable)
+    if (!victim || c.serial < victim->serial ||
+        (c.serial == victim->serial && c.slot > victim->slot))
+      victim = &c;
+
+  if (victim)
+    return victim->part->damp_partial(victim->serial, victim->slot,
+                                      _ctrlRom.voice_damp_rate());
+
+  if (!own.empty())
+    return requester.damp_partial(own[0].serial, own[0].slot,
+                                  _ctrlRom.voice_damp_rate());
+
+  return 0;
+}
+
+
 void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
                      int startDelay)
 {
@@ -200,7 +268,7 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
 
     bool haveVoices = true;
     while (_partials_in_use() + needed > maxPolyphony) {
-      if (_steal_partials() <= 0) {
+      if (_steal_partials(p) <= 0) {
         haveVoices = false;
         break;
       }

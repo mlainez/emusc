@@ -53,6 +53,13 @@ public:
   // to a new note while this one fades out.
   void damp(float dBPerMillisecond);
 
+  // The JV-880 takes voices one at a time, not a note at a time: damp_partial()
+  // hands over the partial in slot p alone and the rest of the note keeps
+  // sounding. partial_live() says whether slot p still sounds for this note,
+  // and get_num_partials() does not count a partial that has been handed over.
+  bool partial_live(int p);
+  int  damp_partial(int p, float dBPerMillisecond);
+
   uint8_t key(void) { return _key; }
   uint32_t serial(void) { return _serial; }
   bool is_releasing(void) { return _releasing; }

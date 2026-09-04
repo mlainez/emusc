@@ -320,6 +320,41 @@ bool Part::steal_candidate(uint32_t &serial, bool &releasing)
 }
 
 
+void Part::live_partials(std::vector<LivePartial> &out)
+{
+  _notesMutex->lock();
+
+  for (auto &n : _notes) {              // _notes is in note on order
+    if (n->is_damped())
+      continue;
+    for (int slot = ControlRom::MAX_PARTIALS - 1; slot >= 0; slot--)
+      if (n->partial_live(slot))
+        out.push_back({n->serial(), slot});
+  }
+
+  _notesMutex->unlock();
+}
+
+
+int Part::damp_partial(uint32_t serial, int slot, float dBPerMillisecond)
+{
+  int released = 0;
+
+  _notesMutex->lock();
+
+  for (auto &n : _notes) {
+    if (n->serial() == serial && !n->is_damped()) {
+      released = n->damp_partial(slot, dBPerMillisecond);
+      break;
+    }
+  }
+
+  _notesMutex->unlock();
+
+  return released;
+}
+
+
 int Part::steal_voice(uint32_t serial, float dBPerMillisecond)
 {
   int numPartials = 0;

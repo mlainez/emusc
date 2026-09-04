@@ -238,7 +238,8 @@ private:
                    int startDelay);
   void _apply_midi_sysex(uint8_t *data, uint16_t length);
   int _partials_in_use(void);
-  int _steal_partials(void);
+  int _steal_partials(Part &requester);
+  int _steal_partial_jv(Part &requester);
 
   void _midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length);
 

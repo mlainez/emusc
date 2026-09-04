@@ -205,6 +205,23 @@ void Note::damp(float dBPerMillisecond)
 }
 
 
+bool Note::partial_live(int p)
+{
+  return p >= 0 && p < ControlRom::MAX_PARTIALS &&
+         _partial[p] && !_partial[p]->is_damping();
+}
+
+
+int Note::damp_partial(int p, float dBPerMillisecond)
+{
+  if (!partial_live(p))
+    return 0;
+
+  _partial[p]->damp(dBPerMillisecond);
+  return 1;
+}
+
+
 void Note::sustain(bool state)
 {
   _sustain = state;
@@ -256,7 +273,7 @@ int Note::get_num_partials()
 {
   int numPartials = 0;
   for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++)
-    if (_partial[p])
+    if (_partial[p] && !_partial[p]->is_damping())
       numPartials ++;
 
   return numPartials;

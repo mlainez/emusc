@@ -504,7 +504,12 @@ static const RecordRomLayout JV880_RECORDS = {
     // half the right's spacing - the 2:1 ratio is DATA here, not a division in
     // the engine. Measured on the reference at nine Delay Times on both types,
     // every echo lands on this arithmetic to the sample.
-    0x004800, 8, 0x38, 0x0c, 0x0e
+    0x004800, 8, 0x38, 0x0c, 0x0e,
+
+    // Voice Reserve, eight bytes from +0x14. The boot performance "Syn Lead"
+    // carries 4,4,4,4,4,0,0,0 (sum 20); every factory sum is 28 or less, which
+    // is the rule ROM2 0x30207 enforces by zeroing the eight when it is not.
+    0x14
   },
 
   {

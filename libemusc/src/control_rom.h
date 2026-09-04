@@ -492,6 +492,10 @@ public:
   // Rate at which a partial whose voice has been taken is faded out
   const float voice_damp_rate(void);
 
+  // JV only: the boot performance's Voice Reserve for one of its eight parts
+  // (0-7), in voices. 0 on a device without the field, and past part 8.
+  const uint8_t device_voice_reserve(int part);
+
   std::vector<std::vector<std::string>> get_instruments_list(void);
   std::vector<std::vector<std::string>> get_partials_list(void);
   std::vector<std::vector<std::string>> get_samples_list(void);
