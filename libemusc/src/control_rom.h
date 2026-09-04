@@ -474,7 +474,14 @@ public:
   // The JV's eight performance parts, as parts rather than as a channel map.
   // Two parts may share a MIDI channel to layer two patches, which a
   // channel-keyed map cannot express and the machine's own demo relies on.
-  struct DevicePart { int patch, channel, level, pan, keyShift, reverb, chorus; bool rhythm; };
+  // revSwitch / choSwitch are the PERFORMANCE part's own effect switches, kept
+  // apart from the resolved send because the two come from different places:
+  // the switch belongs to the performance part, the send depth to the PATCH.
+  // A program change therefore has to recompute the send from the new patch
+  // while the switch stays put - which the port did not do, leaving every part
+  // sending at the depth of whatever patch the performance had loaded (D-55).
+  struct DevicePart { int patch, channel, level, pan, keyShift, reverb, chorus;
+                      bool rhythm; bool revSwitch, choSwitch; };
 
   // The performance's own effect settings. The manual's Performance Common
   // table gives Reverb Type at SysEx 0x0D, Level 0x0E, Time 0x0F, Feedback
@@ -484,6 +491,11 @@ public:
                      chorusFeedback, chorusToReverb; };
   inline const DeviceEffects& device_effects(void) { return _deviceEffects; }
   inline const std::array<DevicePart, 8>& device_parts(void) { return _deviceParts; }
+
+  // A patch's own effect sends: the loudest enabled tone's, per instrument.
+  inline std::pair<uint8_t,uint8_t> instrument_send(int i) const
+  { return (i >= 0 && i < (int) _instrumentSend.size()) ? _instrumentSend[i]
+                                                        : std::pair<uint8_t,uint8_t>(0, 0); }
 
   // Load the Performance a control-channel program change names (D-46).
   // False means nothing was loaded and the current performance still stands.

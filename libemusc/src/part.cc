@@ -936,6 +936,23 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
 
     _settings->set_param(PatchParam::ToneNumber, bank, _id);
 
+    // A patch carries its own effect send depths, and selecting a patch brings
+    // them with it; the performance part contributes only the on/off switch.
+    // Without this a part kept sending at the depth of whatever patch the
+    // performance had loaded - on "for CompuMix", part 2 went on sending at
+    // reverb 124 after the song selected a patch whose own send is 0, and part
+    // 4 at 60 where the new patch asks for 127. scdb D-55.
+    if (jv880 && _id < (int) _ctrlRom.device_parts().size()) {
+      const auto &dp = _ctrlRom.device_parts()[_id];
+      const auto snd = _ctrlRom.instrument_send(
+          _ctrlRom.variation(bank)[index] != 0xffff
+          ? (int) _ctrlRom.variation(bank)[index] : -1);
+      _settings->set_param(PatchParam::ReverbSendLevel,
+                           (uint8_t) (dp.revSwitch ? snd.first  : 0), _id);
+      _settings->set_param(PatchParam::ChorusSendLevel,
+                           (uint8_t) (dp.choSwitch ? snd.second : 0), _id);
+    }
+
   // If part is used for drums, select correct drum set
   } else {
     // The JV selects a rhythm SET BY BANK: the selector's top two bits name the

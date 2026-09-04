@@ -2157,7 +2157,7 @@ int ControlRom::_load_performance(uint32_t base, int index)
     // drops all but the first, which is one patch of two on the demo's melody.
     _deviceParts[t] = { patch, chan,
                     pt[M.level] & 0x7f, pt[M.pan] & 0x7f,
-                    (int8_t) pt[M.coarseTune], 0, 0, rhythm };
+                    (int8_t) pt[M.coarseTune], 0, 0, rhythm, revSw, choSw };
 
     if (rhythm) {
       _deviceDrumChannel = chan;
