@@ -234,7 +234,13 @@ int Part::get_num_partials(void)
 
   int numPartials = 0;
 
-  if (_settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm) {
+  // On the JV-880 every drum hit holds its voice until its envelope ends, a
+  // repeated key included: the rhythm note-on path (ROM1 0xB4D -> 0xBCD ->
+  // 0xCA4) re-uses a sounding voice only for a Mute Group sibling (@0x8419),
+  // never for the same key. So its rhythm part is counted like a tonal one
+  // (scdb D-44).
+  if (_settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm ||
+      _settings->generation() == ControlRom::SynthGen::JV880) {
     for (auto &n: _notes)
       if (!n->is_damped())
         numPartials += n->get_num_partials();
