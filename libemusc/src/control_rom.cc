@@ -1372,6 +1372,8 @@ int ControlRom::_read_device_patches(void)
       in.volume = _deviceRom[off + P.level] & 0x7f;
       in.analogFeel = P.analogFeel
         ? (_deviceRom[off + P.analogFeel] & 0x7f) : 0;
+      in.velSwitch = P.velocitySwitch
+        ? ((_deviceRom[off + P.velocitySwitch] >> 7) & 1) : 0;
       in.partialsUsed = 0;
 
       for (int t = 0; t < P.tones; t++) {

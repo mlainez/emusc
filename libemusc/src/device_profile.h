@@ -144,6 +144,13 @@ struct PatchLayout
   // 0x1D, 0x1E). ROM1 0x2B72-0x2B8B reads the same bits into the allocator's
   // per-part flags @0x8C50/@0x8C52. Zero when the device has no such byte.
   int      keyAssign;
+
+  // Patch Common byte holding the "Velocity Switch" in bit 7. It gates the
+  // per-Tone Velocity Range: with the bit clear the firmware never reads the
+  // range bytes (ROM1 0xBDF). Appended last, so a profile written before this
+  // existed leaves it 0 = no such switch, and the range then always applies -
+  // which is the Sound Canvas behaviour. scdb D-54.
+  int      velocitySwitch;
 };
 
 // Byte offsets within one performance part record.

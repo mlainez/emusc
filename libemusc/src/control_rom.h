@@ -234,6 +234,15 @@ public:
     // patches, 12 on patch 21 `SAW Lead`. D-25 / L-26.
     uint8_t analogFeel = 0;
 
+    // Patch Common byte +0x0C bit 7, the manual's "Velocity Switch": it
+    // decides whether the per-Tone Velocity Range is consulted AT ALL. The
+    // firmware tests it first (ROM1 0xBDF `btst.b #7,@(0x0c,r4)`) and jumps
+    // past both range comparisons when it is clear, so on a patch with the
+    // switch off the range bytes are dead data. 131 of the 192 factory
+    // patches have it off, including "Wave Bells", whose tones 1 and 2 are
+    // marked 71-127 and nevertheless sound at velocity 8. scdb D-54.
+    uint8_t velSwitch = 0;
+
     struct InstPartial partials[MAX_PARTIALS];
   };
 

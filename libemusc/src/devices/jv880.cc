@@ -430,7 +430,17 @@ static const RecordRomLayout JV880_RECORDS = {
     // +0x18: Key Assign in bit 7. Eleven factory patches are SOLO, among them
     // patch 21 SAW Lead (byte 0xD2), which the boot performance puts on parts
     // 1-6 - so channels 1-3 play one note at a time on the machine (D-44).
-    0x18
+    0x18,
+
+    // +0x0C bit 7: the manual's Patch Common "Velocity Switch", which decides
+    // whether the per-Tone Velocity Range is consulted at all. The firmware
+    // tests it FIRST and jumps past both range comparisons when it is clear
+    // (ROM1 0xBDF `btst.b #7,@(0x0c,r4)`, then `bne 0xbf4`), so on a patch with
+    // the switch off the range bytes are never read. 131 of the 192 factory
+    // patches have it off - "Wave Bells" among them, whose tones 1 and 2 are
+    // marked 71-127 and sound at velocity 8 on the machine regardless, which
+    // is what an unconditional gate got wrong by up to 14.3 dB. scdb D-54.
+    0x0c
   },
 
   {

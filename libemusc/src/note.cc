@@ -136,11 +136,22 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
       continue;
     const ControlRom::InstPartial &instPartial =
       ctrlRom.instrument(instrumentIndex).partials[p];
-    uint8_t low = instPartial.velRangeLow;
-    uint8_t high = (instPartial.velRangeHigh > 0) ? instPartial.velRangeHigh
-                                                  : 127;
-    if (velocity < low || velocity > high)
-      continue;
+    // The Velocity Range is consulted only when the patch's own Velocity
+    // Switch is set. The JV's firmware tests that bit first and jumps past
+    // both comparisons when it is clear (ROM1 0xBDF), so on such a patch the
+    // range bytes are dead data - 131 of the 192 factory patches. Devices with
+    // no such switch leave velSwitch 0 and keep the unconditional behaviour
+    // they had, which is the Sound Canvas's. Both bounds are inclusive.
+    // scdb D-54.
+    const bool gated = (ctrlRom.instrument(instrumentIndex).velSwitch != 0) ||
+                       (settings->generation() != ControlRom::SynthGen::JV880);
+    if (gated) {
+      uint8_t low = instPartial.velRangeLow;
+      uint8_t high = (instPartial.velRangeHigh > 0) ? instPartial.velRangeHigh
+                                                    : 127;
+      if (velocity < low || velocity > high)
+        continue;
+    }
     try {
       _partial[p] = new Partial(p, key, velocity, instrumentIndex, ctrlRom,
                                 waveRom, _LFO1, settings, partId, startDelay);
