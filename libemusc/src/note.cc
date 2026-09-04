@@ -208,14 +208,29 @@ void Note::stop(uint8_t key, uint8_t releaseVelocity)
   if (key == _key) {
     _releaseVelocity = releaseVelocity;
 
-    if (_sustain)                       // Hold pedal (hold1) or Sostenuto
+    // The pedal HOLDS the note: mark it stopped and release nothing, exactly as
+    // the no-argument overload above does. This branch fell through to the
+    // release instead - it set `_stopped` and then released anyway, so the
+    // `else` was simply missing - and `Part::stop_note` is the ordinary
+    // note-off path, so the sustain pedal did nothing at all. `Note::sustain`
+    // is what later turns a `_stopped` note into a release, when the pedal
+    // comes up.
+    //
+    // Found on JV-880 demo song 2 "Guitars", whose three melodic parts press
+    // the pedal 93 times between them: its channel 3 released its notes at
+    // 16.86 s with the pedal down since 16.55 s, and our render of that
+    // channel went 22.2 dB quiet there and to DIGITAL SILENCE from 24 s while
+    // the reference kept sounding. scdb D-62.
+    if (_sustain) {                     // Hold pedal (hold1) or Sostenuto
       _stopped = true;
 
-    _releasing = true;
+    } else {
+      _releasing = true;
 
-    for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
-      if (_partial[p])
-        _partial[p]->stop(_releaseVelocity);
+      for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+        if (_partial[p])
+          _partial[p]->stop(_releaseVelocity);
+    }
   }
 }
 
