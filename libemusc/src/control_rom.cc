@@ -2249,8 +2249,19 @@ int ControlRom::_read_device_rhythm(void)
   if (!R.offset || (size_t) R.offset + R.keys * R.stride > _deviceRom.size())
     return -1;
 
+  // One rhythm set per memory bank, at R.bankStride apart. The bank a program
+  // change reaches is decided by its bank bits alone, so the sets are stored in
+  // bank order and Settings picks by index.
+  const int banks = (R.banks > 0) ? R.banks : 1;
+  static const char *BANK_NAME[3] = { "Rhythm I", "Rhythm A", "Rhythm B" };
+
+  for (int b = 0; b < banks; b++) {
+  const uint32_t bankBase = R.offset + (uint32_t) b * R.bankStride;
+  if ((size_t) bankBase + R.keys * R.stride > _deviceRom.size())
+    break;
+
   struct DrumSet ds = {};
-  ds.name = "Rhythm";
+  ds.name = (b < 3) ? BANK_NAME[b] : "Rhythm";
 
   for (int k = 0; k < 128; k++) {
     ds.preset[k] = 0xffff;
@@ -2261,7 +2272,7 @@ int ControlRom::_read_device_rhythm(void)
   }
 
   for (int k = 0; k < R.keys; k++) {
-    const uint8_t *r = &_deviceRom[R.offset + k * R.stride];
+    const uint8_t *r = &_deviceRom[bankBase + k * R.stride];
 
     // The Tone Switch is one BIT of a byte that also carries the wave group and
     // the output select, so the whole byte is not the switch (D-08).
@@ -2409,7 +2420,13 @@ int ControlRom::_read_device_rhythm(void)
   }
 
   _drumSets.push_back(ds);
-  _drumSetsLUT.fill(0);              // one rhythm set, reachable from every bank
+  }
+
+  // The LUT is indexed by PROGRAM and cannot express a bank, so it maps every
+  // program to the first set; the bank is applied separately, by index, in
+  // Settings::update_drum_set_bank(). Leaving it as the only mechanism is what
+  // made every demo play the Internal kit.
+  _drumSetsLUT.fill(0);
 
   return 0;
 }

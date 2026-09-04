@@ -775,6 +775,36 @@ int Settings::update_drum_set(uint8_t map, uint8_t bank)
   if (index >= _ctrlRom.numDrumSets())
     return -1;
 
+  return _copy_drum_set(map, index);
+}
+
+
+// A JV rhythm program change selects the SET BY BANK: the top two bits of the
+// selector name the memory bank and the program number within it is ignored
+// (ROM2 0x30446, devices/jv880/04_protocol/program_bank.md). Internal is set 0,
+// Preset A set 1, Preset B set 2; the Card bank is absent on a bare machine and
+// is rejected exactly as an absent patch bank is (D-43). Returns the set index,
+// or -1 when nothing was selected and the part keeps the kit it has.
+int Settings::update_drum_set_bank(uint8_t map, int selector)
+{
+  if (map > 1) return -2;
+
+  int set;
+  switch ((selector >> 6) & 0x03) {
+    case 0:  set = 0; break;          // Internal
+    case 1:  return -1;               // Card: not present
+    case 2:  set = 1; break;          // Preset A
+    default: set = 2; break;          // Preset B
+  }
+  if (set >= _ctrlRom.numDrumSets())
+    return -1;
+
+  return _copy_drum_set(map, set);
+}
+
+
+int Settings::_copy_drum_set(uint8_t map, int index)
+{
   // On the original hardware both the active drum set configurations are
   // copied from ROM to RAM where they can be modified by the user
   for (unsigned int i = 0; i < 12; i ++) {
@@ -1244,8 +1274,17 @@ void Settings::_apply_device_performance(void)
     _patchParams[(int) PatchParam::PolyMode        | (partAddr << 8)] =
       (!j.rhythm && j.patch >= 0 && _ctrlRom.device_patch_solo(j.patch)) ? 0 : 1;
     if (j.rhythm) {
-      // The rhythm part selects a drum set, and ToneNumber is that index.
-      _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] = 0;
+      // The rhythm part takes a Rhythm SET, and which one is named by the bank
+      // of the performance's own patch byte: below 64 Internal, 64-127 Preset A
+      // (the translation in control_rom.cc puts raw 128-191 there), 128 and up
+      // Preset B. "for CompuMix", which every demo song selects, carries 128 -
+      // Preset A - and loading the Internal kit instead was worth +20 dB on
+      // song 3's rhythm channel alone. scdb D-52.
+      const int set = (j.patch < 0) ? 0
+                    : (j.patch < 64) ? 0 : (j.patch < 128) ? 1 : 2;
+      const int idx = _copy_drum_set(0, set);
+      _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] =
+        (idx >= 0) ? idx : 0;
       _patchParams[(int) PatchParam::ToneNumber + 1| (partAddr << 8)] = 0;
     } else if (j.patch >= 0) {
       // A part's patch has to be written as the (bank, program) pair the engine

@@ -645,7 +645,18 @@ static const RecordRomLayout JV880_RECORDS = {
     // (SysEx 0x0b), left unwired because this engine has no JV pitch envelope
     // yet. The time key-follow is deliberately absent: the firmware forces it
     // neutral for rhythm notes, which _init_neutral_partial() already does.
-    0x21, 0x14
+    0x21, 0x14,
+
+    // Rhythm banks. ROM2 keeps one set per memory bank at the same 0x8000
+    // stride as the patch banks: 0x0E760 (above) is the Internal FACTORY set,
+    // 0x16760 Preset A, 0x1E760 Preset B. A program change on the rhythm part
+    // picks between them by its bank bits alone (ROM2 0x30446).
+    //
+    // With one set loaded, every demo song played the wrong kit: songs 1 and 7
+    // ask for Preset A (PC 0 under the preset flag), songs 3 and 6 for Preset B
+    // (PC 64 and PC 126). Song 3's rhythm channel measured +20.37 dB against
+    // the oracle on that alone. scdb D-52.
+    3, 0x8000
   }
 };
 

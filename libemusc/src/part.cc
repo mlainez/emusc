@@ -938,7 +938,22 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
 
   // If part is used for drums, select correct drum set
   } else {
-    int dsIndex = _settings->update_drum_set(rhythm - 1, index);
+    // The JV selects a rhythm SET BY BANK: the selector's top two bits name the
+    // memory bank and the program number inside it is ignored (ROM2 0x30446).
+    // Every demo song relies on this - songs 1 and 7 ask for Preset A with
+    // PC 0, songs 3 and 6 for Preset B with PC 64 and PC 126 - and routing them
+    // through the program-indexed table gave all of them the Internal kit.
+    // scdb D-52.
+    int dsIndex;
+    if (jv880) {
+      const int presets = _ctrlRom.device()->records->patch.midiBankPresets;
+      const int flag = (bank == presets) ? 0x80 : 0x00;
+      dsIndex = _settings->update_drum_set_bank(rhythm - 1, flag | index);
+      if (dsIndex < 0)
+        return 0;                    // absent bank: the part keeps its kit
+    } else {
+      dsIndex = _settings->update_drum_set(rhythm - 1, index);
+    }
     if (dsIndex < 0) {
       std::cerr << "libEmuSC: Illegal program for drum set ("
 		<< (int) index << ")" << std::endl;

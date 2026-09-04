@@ -279,6 +279,20 @@ struct RhythmLayout
   // Appended last so a profile written before these existed still compiles.
   int      tvaTimeVelocity;             // rhythm record +0x21, bits 0-3
   int      tvfTimeVelocity;             // rhythm record +0x14, bits 0-3
+
+  // Rhythm BANKS. The JV keeps one rhythm set per memory bank, and a program
+  // change on the rhythm part selects between them by its BANK BITS ALONE -
+  // the program number within the bank is ignored (ROM2 0x30446,
+  // devices/jv880/04_protocol/program_bank.md). ROM2 holds them at a 0x8000
+  // stride alongside the patch banks: 0x0E760 the Internal factory set,
+  // 0x16760 Preset A, 0x1E760 Preset B.
+  //
+  // Every one of the seven demo songs asks for a PRESET set - song 1 and song 7
+  // for Preset A, songs 3 and 6 for Preset B - so with one set loaded from the
+  // Internal offset they all played the wrong kit. Appended last; 0 means one
+  // bank, which is what a profile written before this existed wants.
+  int      banks;
+  uint32_t bankStride;
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which

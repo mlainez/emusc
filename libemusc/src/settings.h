@@ -172,10 +172,14 @@ private:
   void _initialize_patch_params(enum Mode = Mode::GS);
   void _initialize_drumSet_params();
   void _apply_device_performance();
+  int  _copy_drum_set(uint8_t map, int index);
 public:
   // A control-channel program change selected a Performance (D-46): reload it
   // and re-apply every part. False when the selection was rejected.
   bool select_performance(int selector);
+
+  // Select a rhythm set by memory bank, for a JV rhythm program change.
+  int  update_drum_set_bank(uint8_t map, int selector);
 private:
 
   // BE / LE conversion
