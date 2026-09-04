@@ -1296,6 +1296,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   // tables hold 0 there), and no tone is a KEY-OFF delay tone.
   ip.TVAJVVelT1 = ip.TVAJVVelT4 = ip.TVAJVTimeKF = 7;
   ip.TVFJVVelT1 = ip.TVFJVVelT4 = ip.TVFJVTimeKF = 7;
+  ip.PitchJVVelT1 = ip.PitchJVVelT4 = ip.PitchJVTimeKF = 7;
   ip.JVDelayKeyOff   = 0;
 }
 
@@ -1486,6 +1487,46 @@ int ControlRom::_read_device_patches(void)
         ip.TVFLFO1Depth = tb[F.lfo1TvfDepth];
         ip.TVFLFO2Depth = tb[F.lfo2TvfDepth];
 
+        // The pitch block (scdb D-37, FW-EXACT). Depth is signed -12..+12 and
+        // each unit is 100 cents at level 63; the four levels are signed; the
+        // velocity sense always takes curve 0 (ROM1 0x487B clears the curve
+        // index). Non-zero depth on 68 of the 539 factory tones.
+        if (F.pitchEnv) {
+          ip.PitchJVDepth   = (int8_t) tb[F.pitchEnvDepth];
+          ip.PitchJVVelSens = (int8_t) tb[F.pitchEnvVelSens];
+          ip.PitchJVVelT1   = tb[F.pitchTimeVelocity] & 0x0f;
+          ip.PitchJVVelT4   = (tb[F.pitchTimeVelocity] >> 4) & 0x0f;
+          ip.PitchJVTimeKF  = (tb[F.pitchTimeKeyFollow] >> 4) & 0x0f;
+          for (int i = 0; i < 4; i++) {
+            ip.PitchJVT[i] = tb[F.pitchEnv + 2 * i] & 0x7f;
+            ip.PitchJVL[i] = (int8_t) tb[F.pitchEnv + 2 * i + 1];
+          }
+        }
+
+        // The two LFOs, per tone. One byte carries form (bits 0-2), offset
+        // (3-5), synchro (6) and fade polarity (7); the delay byte's bit 7 is
+        // KEY-OFF. The pitch depths are signed (D-37); the TVF depths were read
+        // above; the TVA depths have no decoded law yet and are not read.
+        if (F.lfo1Rate) {
+          const int prm[2] = { F.lfo1Params, F.lfo2Params };
+          const int rat[2] = { F.lfo1Rate,   F.lfo2Rate };
+          const int dly[2] = { F.lfo1Delay,  F.lfo2Delay };
+          const int fad[2] = { F.lfo1Fade,   F.lfo2Fade };
+          const int pdp[2] = { F.lfo1PitchDepth, F.lfo2PitchDepth };
+          for (int l = 0; l < 2; l++) {
+            ip.JVLfoForm[l]        = tb[prm[l]] & 0x07;
+            ip.JVLfoOffset[l]      = (tb[prm[l]] >> 3) & 0x07;
+            ip.JVLfoSync[l]        = (tb[prm[l]] >> 6) & 0x01;
+            ip.JVLfoFadeOut[l]     = (tb[prm[l]] >> 7) & 0x01;
+            ip.JVLfoRate[l]        = tb[rat[l]] & 0x7f;
+            ip.JVLfoDelay[l]       = tb[dly[l]] & 0x7f;
+            ip.JVLfoDelayKeyOff[l] = (tb[dly[l]] >> 7) & 0x01;
+            ip.JVLfoFade[l]        = tb[fad[l]] & 0x7f;
+            ip.JVLfoPitchDepth[l]  = (int8_t) tb[pdp[l]];
+          }
+          ip.hasJVLfo = 1;
+        }
+
       }
 
       // libEmuSC sends per part, the JV per tone. The loudest enabled tone
@@ -1591,6 +1632,7 @@ void ControlRom::_init_device_lookup_tables(void)
   };
   bool haveRom = _deviceRom.size() > 0x40000 - 1;
   bool jvTimeVelDepth = false, jvTimeKeyFollow = false;
+  bool jvLfoRate = false, jvLfoOffset = false, jvLfoWaves = false;
 
 
   // Key follow: one flat map, so every key maps to bias 0 and no table lookup
@@ -1867,6 +1909,15 @@ void ControlRom::_init_device_lookup_tables(void)
         rom8(rt.offset, rt.entries, t.JVTvaAttackCurve);
         t.hasJVTvaAttackCurve = true;
         break;
+      case RomLookup::JVLfoRate:
+        jvLfoRate = rom16(rt.offset, rt.entries, t.JVLfoRate);      break;
+      case RomLookup::JVLfoOffset:
+        jvLfoOffset = rom8s(rt.offset, rt.entries, t.JVLfoOffset);  break;
+      case RomLookup::JVLfoWaves:
+        jvLfoWaves = rom8s(rt.offset, rt.entries, t.JVLfoWaves);    break;
+      case RomLookup::JVLfoPitchDepth:
+        t.hasJVLfoPitchDepth = rom16(rt.offset, rt.entries, t.JVLfoPitchDepth);
+        break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }
@@ -1875,6 +1926,10 @@ void ControlRom::_init_device_lookup_tables(void)
   // The envelope time-sense law needs both of its tables; with either missing
   // the envelopes keep their table times unscaled.
   t.hasJVEnvTimeSense = jvTimeVelDepth && jvTimeKeyFollow;
+  // The JV LFO needs its rate table, its offsets and its waveforms; with any
+  // of them missing the engine keeps the Sound Canvas generator, which on this
+  // device is inert.
+  t.hasJVLfo = jvLfoRate && jvLfoOffset && jvLfoWaves;
 
   // The reverb RETURN coefficients, one per reverb type. They are not a table:
   // the firmware reaches them through the pointer table at ROM2 0x4800, whose

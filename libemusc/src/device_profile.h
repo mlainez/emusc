@@ -97,6 +97,20 @@ struct ToneFieldMap
   // release reads the note-ON velocity where every other tone reads the
   // note-off's (ROM1 0x39FE sets the flag, 0x1FCD tests it).
   int tvaDelayTime;
+
+  // The pitch block and the two LFOs (scdb devices/jv880 D-37, FW-EXACT: the
+  // Patch Tone descriptor table at ROM2 0x3A524, the readers in ROM1's note-on
+  // voice setup and the pitch combine at ROM1 0x40AB). Appended last, so a
+  // profile written before these existed still compiles and reads nothing:
+  // pitchEnv == 0 means no pitch envelope fields, lfo1Rate == 0 no LFO fields.
+  int pitchEnv;                         // first of T1 L1 T2 L2 T3 L3 T4 L4, L signed
+  int pitchEnvDepth;                    // signed -12..+12: 100 cents per unit at level 63
+  int pitchEnvVelSens;                  // signed -63..+63, velocity curve 0
+  int pitchTimeVelocity;                // bits 0-3 "T1 velocity", 4-7 "T4 velocity"
+  int pitchTimeKeyFollow;               // bits 4-7 "time KF"
+  int lfo1Params, lfo1Rate, lfo1Delay, lfo1Fade;   // form b0-2, offset b3-5, sync b6, fade OUT b7; rate; delay (b7 KEY-OFF); fade time
+  int lfo2Params, lfo2Rate, lfo2Delay, lfo2Fade;
+  int lfo1PitchDepth, lfo2PitchDepth;   // signed; |d| indexes RomLookup::JVLfoPitchDepth
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -291,7 +305,11 @@ enum class RomLookup
   // remaining-time counter and multiplied by the tone's L1. Every other
   // segment, and every segment of the pitch and TVF envelopes, is the linear
   // pre-curve ramp.
-  JVTvaAttackCurve
+  JVTvaAttackCurve,
+  JVLfoRate,                            // 128 u16 phase increments per 16 ms tick
+  JVLfoOffset,                          // 8 s8 offsets added to the waveform sample
+  JVLfoWaves,                           // 4 x 256 s8 waveform tables
+  JVLfoPitchDepth                       // 64 u16: |depth| -> cents/4 at full swing
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have
@@ -761,6 +779,17 @@ struct TvfJvLaw
 };
 
 
+// The JV's pitch envelope constant (scdb devices/jv880 D-37). ROM1 0x48BF forms
+// the depth word as sign(d) * ((|2d| << 8) * envDepthScale >> 16) and the pitch
+// combine at ROM1 0x40BF multiplies the velocity-attenuated envelope level
+// (L << 8) by it, high word taken: depth +12 at level +63 is exactly 1200
+// cents. 0 means the device has no such law and the engine adds nothing.
+struct PitchJvLaw
+{
+  int envDepthScale;
+};
+
+
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
@@ -805,6 +834,9 @@ struct DeviceProfile
   // this field existed.
   ChorusLawKind  chorusLawKind;
   ChorusJvLaw    chorusJv;
+
+  // And for the pitch: omitted, the scale is 0 and the JV pitch path is off.
+  PitchJvLaw     pitchJv;
 };
 
 extern const RomSignature SC55_SIGNATURE;

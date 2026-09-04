@@ -121,6 +121,27 @@ private:
 
   int  _af_drift_cents10(void);
 
+  // The JV's pitch envelope and LFO pitch depths (scdb devices/jv880 D-37,
+  // FW-EXACT). The firmware's pitch word is in cents; this engine's
+  // _targetPitch is in tenths of a cent, so the term lands x10. Segments run
+  // 0 -> L1 (T1), L1 -> L2 (T2), L2 -> L3 (T3), hold L3, and on note off the
+  // current level -> L4 (T4); the level word is L << 8 and the decrement per
+  // 8 ms tick is 2^19 / ms (ROM1 0x1E48 via 0x227B), so a segment lasts its
+  // milliseconds. The combine (ROM1 0x40AB) attenuates the level by the
+  // velocity word, multiplies by the depth word and adds the two LFO products.
+  bool _jv = false;
+  int  _jvDepthWord = 0;                // @0x910A[v]
+  int  _jvVelAtten = 0;                 // @0x8FBA[v]
+  int  _jvLfoDepth[2] = { 0, 0 };       // @0x9452[v], @0x948A[v]
+  int  _jvLevel[5] = { 0, 0, 0, 0, 0 }; // 0, L1..L4 as L << 8
+  int  _jvTime[4] = { 0, 0, 0, 0 };
+  int  _jvSeg = 5;                      // 0..2 ramps, 3 hold L3, 4 release, 5 hold L4
+  int  _jvPos = 0, _jvDec = 0, _jvFrom = 0, _jvTo = 0, _jvEnvWord = 0;
+  void _jv_init(uint8_t velocity);
+  void _jv_start_segment(int seg);
+  void _jv_step(void);
+  int  _jv_cents10(void);
+
 
   bool _lfo1FadeComplete;
   bool _lfo2FadeComplete;

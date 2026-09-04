@@ -106,6 +106,7 @@ private:
   float _dampFactor;       // Gain factor applied per sample while damping
 
   WaveGenerator *_LFO2;
+  WaveGenerator *_LFO1own = nullptr;   // the JV's per-tone LFO1 (D-37); null elsewhere
 
   WaveOscillator *_waveOscillator;
 

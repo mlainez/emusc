@@ -194,6 +194,23 @@ public:
     uint8_t TVFJVVelT4;     // "F-ENV T4 velocity"
     uint8_t TVFJVTimeKF;    // "F-ENV time KF"
     uint8_t JVDelayKeyOff;  // 1: TVA Delay Time is KEY-OFF, T4 reads note-on velocity
+
+    // The JV's pitch envelope (scdb D-37). Its levels are SIGNED, its depth is
+    // -12..+12 and its velocity sensitivity always uses curve 0, none of which
+    // the Sound Canvas pitch fields above can carry. PitchJVDepth 0 = none.
+    int8_t  PitchJVDepth;
+    int8_t  PitchJVVelSens;
+    uint8_t PitchJVVelT1, PitchJVVelT4, PitchJVTimeKF;   // 0-14, 7 neutral
+    uint8_t PitchJVT[4];                                 // T1..T4
+    int8_t  PitchJVL[4];                                 // L1..L4, -63..+63
+
+    // The JV's two LFOs, one set per tone (the Sound Canvas shares LFO1 across
+    // an instrument's partials; the JV does not). hasJVLfo is 1 when the tone
+    // map supplied them.
+    uint8_t JVLfoForm[2], JVLfoOffset[2], JVLfoSync[2], JVLfoFadeOut[2];
+    uint8_t JVLfoRate[2], JVLfoDelay[2], JVLfoDelayKeyOff[2], JVLfoFade[2];
+    int8_t  JVLfoPitchDepth[2];
+    uint8_t hasJVLfo;
   };
 
   // A Sound Canvas instrument has two partials; a JV patch has four tones,
@@ -384,6 +401,18 @@ public:
     // on a device without the table and the linear ramp is used as before.
     std::array<uint8_t, 256>  JVTvaAttackCurve = {};
     bool                      hasJVTvaAttackCurve = false;
+
+    // The JV's LFO (scdb devices/jv880/07_synthesis/lfo.md, FW-EXACT): rate ->
+    // 16-bit phase increment per 16 ms tick (ROM2 0x4C58), eight signed
+    // offsets (0x4C52), four 256-byte signed waveforms TRI/SIN/SAW/SQR (0x4D60),
+    // and the pitch depth table (0x6C8A, D-37). hasJVLfo is set only when the
+    // first three were read; the engine's JV LFO does not run without them.
+    std::array<int, 128>      JVLfoRate = {};
+    std::array<int, 8>        JVLfoOffset = {};
+    std::array<int8_t, 1024>  JVLfoWaves = {};
+    std::array<int, 64>       JVLfoPitchDepth = {};
+    bool                      hasJVLfo = false;
+    bool                      hasJVLfoPitchDepth = false;
 
     // The JV-880's eight reverb type records in full: words 0..27 of each,
     // big-endian, laid end to end, so entry 28*type + w is word w of type

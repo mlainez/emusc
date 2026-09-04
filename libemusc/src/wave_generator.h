@@ -60,6 +60,18 @@ public:
 
   inline int fade(void) { return _fade; }
 
+  // The JV's LFO (scdb devices/jv880/07_synthesis/lfo.md, D-37). One per tone
+  // and per LFO: jvLfoIndex 0 builds LFO1 from the tone's LFO1 bytes, 1 LFO2.
+  // value() is then the firmware's per-voice word - the waveform sample (+/-64)
+  // plus offset, << 8, through the delay and fade stages - and jv_raw() the
+  // same word without delay/fade, which is what the controller matrix reads.
+  WaveGenerator(struct ControlRom::InstPartial &instPartial,
+                struct ControlRom::LookupTables &LUT,
+                Settings *settings, int partId, int jvLfoIndex);
+  inline bool is_jv(void) { return _jv; }
+  inline int jv_raw(void) { return _jvRaw; }
+  void note_off(void);                  // arms a KEY-OFF delay
+
 private:
   WaveGenerator();
 
@@ -93,6 +105,24 @@ private:
   int _generate_triangle(int rate);
   int _generate_sample_hold(int rate);
   int _generate_random(int rate);
+
+  // JV state. Task 13 steps the LFO every 16 ms, i.e. every second control
+  // period of this engine, so _jvTick halves the update rate.
+  bool     _jv = false;
+  int      _jvForm = 0, _jvOffsetIdx = 2, _jvSync = 1, _jvFadeOut = 0;
+  int      _jvRate = 0, _jvDelayKeyOff = 0;
+  int      _jvDelayInc = 0x10000, _jvFadeInc = 0x10000;
+  uint16_t _jvPhase = 0;
+  int      _jvTick = 0;
+  int      _jvStage = 0;                // 0 delay, 1 fade, 2 steady
+  uint32_t _jvStageAcc = 0;
+  bool     _jvKeyOff = false;
+  int      _jvRnd = 0, _jvRndPrev = 0, _jvRndDelta = 0;
+  uint32_t _jvRng = 1;
+  int      _jvRaw = 0;
+
+  void _jv_update(void);
+  int  _jv_draw(void);
 };
 
 }

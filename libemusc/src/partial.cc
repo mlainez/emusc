@@ -77,7 +77,17 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
   if (_drumSet)
     _drumRxNoteOff = _settings->get_param(DrumParam::RxNoteOff, _drumSet-1,key);
 
-  _LFO2 = new WaveGenerator(_instPartial, ctrlRom.lookupTables,settings,partId);
+  // The JV's LFOs are per tone, both of them, and run the JV law (scdb D-37).
+  // Everything else keeps the Note's shared LFO1 and a Sound Canvas LFO2.
+  if (_instPartial.hasJVLfo && ctrlRom.lookupTables.hasJVLfo) {
+    _LFO1own = new WaveGenerator(_instPartial, ctrlRom.lookupTables, settings,
+                                 partId, 0);
+    _LFO2 = new WaveGenerator(_instPartial, ctrlRom.lookupTables, settings,
+                              partId, 1);
+    LFO1 = _LFO1own;
+  } else {
+    _LFO2 = new WaveGenerator(_instPartial, ctrlRom.lookupTables,settings,partId);
+  }
 
   _pitch = new Pitch(ctrlRom, instrumentIndex, partialId, key, velocity, LFO1,
                      _LFO2, settings, partId);
@@ -116,6 +126,7 @@ Partial::~Partial()
   delete _waveOscillator;
 
   delete _LFO2;
+  delete _LFO1own;
 }
 
 
@@ -214,6 +225,8 @@ void Partial::stop(uint8_t releaseVelocity)
     if (_pitch) _pitch->note_off();
     if (_tvf) _tvf->note_off(releaseVelocity);
     if (_tva) _tva->note_off(releaseVelocity);
+    if (_LFO1own) _LFO1own->note_off();
+    if (_LFO2) _LFO2->note_off();
   }
 }
 
@@ -240,6 +253,7 @@ void Partial::damp(float dBPerMillisecond)
 // Update parameters every 256th sample @32k
 void Partial::update(void)
 {
+  if (_LFO1own) _LFO1own->update();     // before its consumers, as LFO2 below is not (unchanged order for the SC-55)
   if (_pitch) _pitch->update();
   if (_tvf) _tvf->update();
   if (_tva) _tva->update();

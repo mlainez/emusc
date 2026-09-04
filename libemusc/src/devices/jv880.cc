@@ -222,7 +222,24 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // produces rises. Without it every JV attack longer than one tick was a linear
   // pre-curve ramp through the exponential register curve, i.e. concave, and
   // `Glass Pad`'s 1.45 s attack sat 18 dB under the reference in its first half.
-  { RomLookup::JVTvaAttackCurve,     0x05290, 256, 1, Monotonic::Falling }
+  { RomLookup::JVTvaAttackCurve,     0x05290, 256, 1, Monotonic::Falling },
+
+  // The LFO (scdb devices/jv880/07_synthesis/lfo.md, FW-EXACT, all four read
+  // by RTOS task 13 at ROM1 0x0FF6/0x10C6, 0x1309, 0x102F). The rate table is
+  // 128 u16 phase increments per 16 ms tick, 128 -> 16127, i.e. 0.122 Hz to
+  // 15.37 Hz - the table this port had once mistaken for the envelope times.
+  // The offsets are -63 -31 0 +31 +63 -1 0 -128 (the manual's -100..+100 in
+  // the first five), signed, hence Unchecked. The four waveforms are 256
+  // signed bytes each, +/-64, in the parameter order TRI SIN SAW SQR.
+  { RomLookup::JVLfoRate,            0x04c58, 128, 2, Monotonic::Rising },
+  { RomLookup::JVLfoOffset,          0x04c52,   8, 1, Monotonic::Unchecked },
+  { RomLookup::JVLfoWaves,           0x04d60,1024, 1, Monotonic::Unchecked },
+
+  // LFO -> pitch depth (scdb D-37, TM-036m): 64 u16 indexed by |depth| at
+  // ROM1 0x47AB, sign restored after; rising 0 -> 2418, no closed form.
+  // Multiplied by the LFO word (sample << 8, +/-0x4000 full scale) and the
+  // high word taken, so the peak deviation is table/4 cents: 604 at 63.
+  { RomLookup::JVLfoPitchDepth,      0x06c8a,  64, 2, Monotonic::Rising }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -383,7 +400,25 @@ static const RecordRomLayout JV880_RECORDS = {
       0x49, 0x46, 0x39, 0x36,
 
       // +69 TVA Delay Time; bit 7 set is KEY-OFF (the nibble-pair value 128).
-      0x45
+      0x45,
+
+      // The pitch block (scdb D-37, FW-EXACT: descriptor table ROM2 0x3A524,
+      // readers ROM1 0x487F / 0x48BF / 0x4A8F-0x4ABC, combine 0x40AB). +0x2C
+      // starts T1 L1 T2 L2 T3 L3 T4 L4 interleaved with SIGNED levels; +0x2B is
+      // the depth (-12..+12, 100 cents per unit at level 63); +0x29 the
+      // velocity level sense (curve 0 always); +0x2A the T1/T4 velocity
+      // nibbles and +0x28 bits 4-7 the time KF. The five bytes +0x1F/+0x29/
+      // +0x2B/+0x2D/+0x2E were the unread ones: on Glass Pad they are what
+      // separates the two tones the mix was cancelling between.
+      0x2c, 0x2b, 0x29, 0x2a, 0x28,
+
+      // The two LFOs (lfo.md): +0x17 form/offset/sync/fade-polarity, +0x18
+      // rate, +0x19 delay (bit 7 KEY-OFF), +0x1A fade time; LFO2 at +0x1B..+0x1E.
+      0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+
+      // LFO-1 / LFO-2 Pitch Depth, signed, through ROM2 0x6C8A (ROM1 0x47A4 /
+      // 0x47C7). Non-zero on 115 / 80 of the 539 factory tones.
+      0x1f, 0x22
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named
@@ -753,7 +788,12 @@ const DeviceProfile JV880_PROFILE = {
     1,          // wet gain = ((level & 0x7f) >> 1) / 64, so at most 63/64
     2,          // feedback  = (feedback >> 2) / 64,      so at most 31/64
     64.0f       // 64 = unity for every byte coefficient this chip takes
-  }
+  },
+
+  // The pitch envelope's depth scale (scdb D-37, ROM1 0x48CC): the TVF's
+  // 0x9994 has a pitch twin, 0xCB2C, and with it depth +12 at level +63 comes
+  // out at 0x3F00 * 4876 >> 16 = 1200 cents, one octave exactly.
+  { 0xcb2c }
 };
 
 }

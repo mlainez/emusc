@@ -140,6 +140,11 @@ WaveGenerator::~WaveGenerator()
 // This function is called at ~125Hz and has 256 samples between each run @32k
 void WaveGenerator::update(void)
 {
+  if (_jv) {
+    _jv_update();
+    return;
+  }
+
   // Check if we are in the delay phase (no LFO output)
   if (_delay < 0xffff) {
     _delay += _delayIncLUT;
@@ -303,6 +308,165 @@ int WaveGenerator::_generate_random(int rate)
     result = (_currentValue - step > _random) ? _currentValue - step : _random;
 
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// The JV's LFO, from the firmware (scdb devices/jv880/07_synthesis/lfo.md,
+// FW-EXACT except where marked; D-37). RTOS task 13 at ROM1 0x0EEE runs every
+// 16 ms and, per voice and per LFO: adds LFO_RATE[rate] (ROM2 0x4C58) to a
+// 16-bit phase, doubled for the two random forms; takes the waveform byte at
+// phase >> 8 from one of four 256-byte tables (ROM2 0x4D60..), or a held /
+// interpolated random byte; adds LFO_OFFSET[offset] (ROM2 0x4C52) as a byte;
+// then runs the delay and fade coroutine, whose stages use the envelopes' time
+// law (2^20 / LUT_5160[param] per tick, so a stage lasts its milliseconds) and
+// whose fade ramps the sample by (accum >> 8). The result leaves two words per
+// voice: the faded one (@0x9372/@0x93AA) the tone's own depths multiply, and
+// the raw sample << 8 (@0x93E2/@0x941A) the controller matrix multiplies.
+//
+// Two things the ROM cannot give and are stated as deviations:
+//  - Synchro OFF means the slot's phase is simply never reset, so a note takes
+//    whatever phase the slot had. That history is not reproducible here; a
+//    deterministic per-voice pseudo-random start phase stands in for it.
+//  - The random forms draw from a sound-chip register (ROM1 0x17E1, undecoded);
+//    an xorshift seeded per voice gives the character, not the sequence. Their
+//    amplitude is taken as the waveform tables' +/-64.
+// ---------------------------------------------------------------------------
+
+WaveGenerator::WaveGenerator(struct ControlRom::InstPartial &ip,
+                             struct ControlRom::LookupTables &LUT,
+                             Settings *settings, int partId, int jvLfoIndex)
+  : _id(jvLfoIndex ? 1 : 0),
+    _waveform(Waveform::Sine),
+    _LUT(LUT),
+    _instRate(0),
+    _rateChange(0),
+    _delay(0xffff),
+    _delayIncLUT(0),
+    _fade(0xffff),                      // the Sound Canvas depth paths read
+    _fadeIncLUT(0),                     // this; on a JV they multiply zeros
+    _currentValue(0),
+    _currentValueNorm(0),
+    _accRate(0),
+    _random(0),
+    _randomFirstRun(true),
+    _settings(settings),
+    _partId(partId)
+{
+  static unsigned int seedCounter = 0;
+
+  const int l = jvLfoIndex ? 1 : 0;
+  _jv = true;
+  _jvForm = ip.JVLfoForm[l] & 7;
+  _jvOffsetIdx = ip.JVLfoOffset[l] & 7;
+  _jvSync = ip.JVLfoSync[l];
+  _jvFadeOut = ip.JVLfoFadeOut[l];
+  _jvRate = ip.JVLfoRate[l] & 0x7f;
+  _jvDelayKeyOff = ip.JVLfoDelayKeyOff[l];
+
+  _jvRng = 0x9E3779B9u * ++seedCounter + 0x7F4A7C15u;
+  // Synchro ON: the note-on request zeroes the phase at the next task-13 wake.
+  _jvPhase = _jvSync ? 0 : (uint16_t) (_jvRng >> 8);
+
+  // Delay and fade times in milliseconds from the shared time table; a byte of
+  // 0 is table entry 0, and the stage completes on its first tick.
+  const int dms = _LUT.envelopeTime[ip.JVLfoDelay[l] & 0x7f];
+  const int fms = _LUT.envelopeTime[ip.JVLfoFade[l] & 0x7f];
+  _jvDelayInc = dms > 0 ? std::max(1, (1 << 20) / dms) : 0x10000;
+  _jvFadeInc  = fms > 0 ? std::max(1, (1 << 20) / fms) : 0x10000;
+  _jvStage = 0;
+  _jvStageAcc = 0;
+}
+
+
+void WaveGenerator::note_off(void)
+{
+  _jvKeyOff = true;
+}
+
+
+int WaveGenerator::_jv_draw(void)
+{
+  _jvRng ^= _jvRng << 13; _jvRng ^= _jvRng >> 17; _jvRng ^= _jvRng << 5;
+  return (int) ((_jvRng >> 9) & 0x7f) - 64;
+}
+
+
+void WaveGenerator::_jv_update(void)
+{
+  if (++_jvTick & 1)                    // 16 ms task on an 8 ms control period
+    return;
+
+  int inc = _LUT.JVLfoRate[std::clamp(_jvRate, 0, 127)];
+  if (_jvForm >= 4)
+    inc <<= 1;
+
+  int sample;
+  if (_jvForm < 4) {
+    _jvPhase = (uint16_t) (_jvPhase + inc);
+    sample = _LUT.JVLfoWaves[_jvForm * 256 + (_jvPhase >> 8)];
+
+  } else if (_jvForm == 4) {            // RND1: sample and hold on phase wrap
+    const uint32_t sum = (uint32_t) _jvPhase + (uint32_t) inc;
+    if (sum >> 16)
+      _jvRnd = _jv_draw();
+    _jvPhase = (uint16_t) sum;
+    sample = _jvRnd;
+
+  } else {                              // RND2: interpolate to the next draw
+    const uint32_t sum = (uint32_t) _jvPhase + (uint32_t) inc;
+    if (sum >> 16) {
+      _jvRndPrev = (int8_t) (_jvRndPrev + _jvRndDelta);
+      _jvRndDelta = (int8_t) (_jv_draw() - _jvRndPrev);
+    }
+    _jvPhase = (uint16_t) sum;
+    sample = (int8_t) (_jvRndPrev + ((_jvRndDelta * (_jvPhase >> 8)) >> 8));
+  }
+
+  // The offset is a byte add and wraps as the firmware's does (ROM1 0x1309).
+  sample = (int8_t) (sample + _LUT.JVLfoOffset[_jvOffsetIdx]);
+  _jvRaw = sample << 8;
+
+  // Delay, then fade, then steady. Fade IN: silent through the delay, ramping
+  // up; fade OUT (manual): full through the delay, ramping down to nothing.
+  // A stage whose time is 0 is left in the same tick it is entered.
+  int word = 0;
+  for (int guard = 0; guard < 3; guard++) {
+    if (_jvStage == 0) {
+      bool done;
+      if (_jvDelayKeyOff) {
+        done = _jvKeyOff;
+      } else {
+        _jvStageAcc += _jvDelayInc;
+        done = _jvStageAcc >= 0x10000;
+      }
+      word = _jvFadeOut ? (sample << 8) : 0;
+      if (!done)
+        break;
+      _jvStage = 1;
+      _jvStageAcc = 0;
+      if (_jvFadeInc < 0x10000)
+        break;
+      continue;
+    }
+    if (_jvStage == 1) {
+      _jvStageAcc += _jvFadeInc;
+      if (_jvStageAcc >= 0x10000) {
+        _jvStage = 2;
+        continue;
+      }
+      int level = (_jvStageAcc >> 8) & 0xff;          // ROM1 0x161E-0x1628
+      if (_jvFadeOut)
+        level = 255 - level;
+      word = sample * level;
+      break;
+    }
+    word = _jvFadeOut ? 0 : (sample << 8);
+    break;
+  }
+
+  _currentValue = word;
+  _currentValueNorm = word;
 }
 
 }

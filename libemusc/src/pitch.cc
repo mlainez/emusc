@@ -25,6 +25,7 @@
 
 
 #include "pitch.h"
+#include "jv_velocity.h"
 
 #include <algorithm>
 #include <cmath>
@@ -121,6 +122,7 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
   }
 
   _init_envelope(velocity);
+  _jv_init(velocity);
 
   update();
 }
@@ -223,6 +225,10 @@ int Pitch::_get_env_phase_rate(int etRom, int phase)
 void Pitch::note_off()
 {
   set_phase(Phase::Release);
+
+  // The JV pitch envelope releases from wherever it is toward L4 over T4.
+  if (_jv && _jvDepthWord && _jvSeg < 4)
+    _jv_start_segment(4);
 }
 
 
@@ -733,6 +739,10 @@ void Pitch::_iterate_phase(void)
     _targetPitch += _portamentoDelta;
   }
 
+  // The JV's pitch envelope and LFO pitch depths, in cents x10 (scdb D-37).
+  if (_jv)
+    _targetPitch = std::max(_targetPitch + _jv_cents10(), 0);
+
   // Convert accumulated pitch values to oscillator frequency / phase increment
   int relativePitch = _targetPitch - _samplePitchOffsetActive - 12000;
   int octave = relativePitch / 12000;
@@ -872,6 +882,132 @@ int Pitch::_calc_phase_inc_from_pitch(int frac)
   int and3 = (rotl2 & 0xff00) | (rotl2 & 3);
 
   return (and3 << 8 | and3 >> 8) + coarse;
+}
+
+
+// ---------------------------------------------------------------------------
+// The JV's pitch envelope and LFO pitch depths (scdb devices/jv880 D-37;
+// 07_synthesis/pitch.md, tone_schema.md 5d; verify_claims.py TM-036).
+// ---------------------------------------------------------------------------
+
+void Pitch::_jv_init(uint8_t velocity)
+{
+  const DeviceProfile *dev = _settings->device();
+  if (!dev || dev->pitchJv.envDepthScale == 0)
+    return;                             // not this device
+  _jv = true;
+
+  // LFO pitch depths: |d| indexes ROM2 0x6C8A and the sign is restored
+  // (ROM1 0x47A4 / 0x47C7). Without the table the term stays at 0.
+  if (_LUT.hasJVLfoPitchDepth) {
+    for (int l = 0; l < 2; l++) {
+      const int d = _instPartial.JVLfoPitchDepth[l];
+      const int m = _LUT.JVLfoPitchDepth[std::min(std::abs(d), 63)];
+      _jvLfoDepth[l] = (d < 0) ? -m : m;
+    }
+  }
+
+  // P-ENV depth word, ROM1 0x48BF: sign(d) * ((|2d| << 8) * 0xCB2C >> 16).
+  {
+    const int d = _instPartial.PitchJVDepth;
+    const int m = ((std::abs(2 * d) << 8) * dev->pitchJv.envDepthScale) >> 16;
+    _jvDepthWord = (d < 0) ? -m : m;
+  }
+  if (_jvDepthWord == 0)                // depth 0: the envelope adds nothing (0x40C5)
+    return;
+
+  // ROM1 0x487F: the shared velocity helper on P-ENV Velocity Level Sense with
+  // the curve index cleared - curve 0 always. A sense of 0 skips the helper.
+  _jvVelAtten = jv_velocity_attenuation(_LUT.JVVelCurves, 0,
+                                        _instPartial.PitchJVVelSens, velocity);
+
+  // The time-sense triple (D-27) on this envelope's own nibbles. Its T4 uses
+  // the note-off velocity, which this class is not handed; every factory tone
+  // is neutral there (index 7), so 64 stands in.
+  set_jv_time_sense(_instPartial.PitchJVVelT1, _instPartial.PitchJVVelT4,
+                    _instPartial.PitchJVTimeKF, _key, velocity, false);
+
+  _jvLevel[0] = 0;                      // segment 0 starts from 0 (ROM1 0x2558)
+  for (int i = 0; i < 4; i++) {
+    _jvLevel[i + 1] = (int) _instPartial.PitchJVL[i] << 8;
+    _jvTime[i] = _instPartial.PitchJVT[i] & 0x7f;
+  }
+  _jvEnvWord = 0;
+  _jv_start_segment(0);
+}
+
+
+void Pitch::_jv_start_segment(int seg)
+{
+  static const Phase phaseOf[4] =
+    { Phase::Attack1, Phase::Attack2, Phase::Decay1, Phase::Release };
+
+  _jvSeg = seg;
+  if (seg == 3 || seg == 5) {           // holds: L3, or L4 after the release
+    _jvDec = 0;
+    return;
+  }
+
+  const int t = (seg == 4) ? 3 : seg;
+  _jvFrom = (seg == 4) ? _jvEnvWord : _jvLevel[seg];
+  _jvTo   = (seg == 4) ? _jvLevel[4] : _jvLevel[seg + 1];
+
+  int ms = _LUT.envelopeTime[std::clamp(_jvTime[t], 0, 127)];
+  ms = _jv_time_sense(ms, phaseOf[t]);
+
+  // 2^19 per 8 ms tick, so the segment lasts ms milliseconds; 0 is the skip.
+  _jvDec = (ms > 0) ? std::clamp((1 << 19) / ms, 1, 0xffff) : 0x10000;
+  _jvPos = 0;
+}
+
+
+void Pitch::_jv_step(void)
+{
+  if (_jvSeg == 3) { _jvEnvWord = _jvLevel[3]; return; }
+  if (_jvSeg == 5) { _jvEnvWord = _jvLevel[4]; return; }
+
+  _jvPos += _jvDec;
+  for (int guard = 0; guard < 8 && _jvPos >= 0xffff; guard++) {
+    _jvEnvWord = _jvTo;
+    const int next = (_jvSeg == 4) ? 5 : (_jvSeg == 2) ? 3 : _jvSeg + 1;
+    _jv_start_segment(next);
+    if (_jvSeg == 3 || _jvSeg == 5)
+      return;
+    if (_jvDec >= 0x10000)              // a zero-length segment: skip it
+      _jvPos = 0xffff;
+  }
+  _jvEnvWord = _jvFrom + (int) (((int64_t) (_jvTo - _jvFrom) * _jvPos) >> 16);
+}
+
+
+// ROM1 0x40AB-0x41FA, the terms this engine did not have, in tenths of a cent.
+int Pitch::_jv_cents10(void)
+{
+  int cents = 0;
+
+  if (_jvDepthWord) {
+    _jv_step();
+    int env = _jvEnvWord;
+    // 0x40AB-0x40BD: the velocity word takes a share of the magnitude
+    const int att = (int) (((int64_t) std::abs(env) * _jvVelAtten) >> 16);
+    env += (env < 0) ? att : -att;
+    // 0x40BF-0x40E1: signed high-word product with the depth word
+    const int m = (int) (((int64_t) std::abs(env) * std::abs(_jvDepthWord)) >> 16);
+    cents += ((env < 0) != (_jvDepthWord < 0)) ? -m : m;
+  }
+
+  // 0x41AC-0x41FA: the tone's LFO depth words against the faded LFO words,
+  // through the signed high-word multiply at 0x3843. The controller-matrix
+  // half of each term (raw word x PITCH LFO sum) is not modelled here.
+  const int lfo[2] = { _LFO1->value(), _LFO2->value() };
+  for (int l = 0; l < 2; l++) {
+    if (!_jvLfoDepth[l] || !lfo[l])
+      continue;
+    const int m = (int) (((int64_t) std::abs(_jvLfoDepth[l]) * std::abs(lfo[l])) >> 16);
+    cents += ((_jvLfoDepth[l] < 0) != (lfo[l] < 0)) ? -m : m;
+  }
+
+  return cents * 10;
 }
 
 }
