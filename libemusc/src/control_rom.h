@@ -496,6 +496,10 @@ public:
   // (0-7), in voices. 0 on a device without the field, and past part 8.
   const uint8_t device_voice_reserve(int part);
 
+  // JV only: whether patch `patch` (0..191, Internal then Preset A then B) is
+  // Key Assign SOLO. False on a device without the field.
+  bool device_patch_solo(int patch);
+
   std::vector<std::vector<std::string>> get_instruments_list(void);
   std::vector<std::vector<std::string>> get_partials_list(void);
   std::vector<std::vector<std::string>> get_samples_list(void);

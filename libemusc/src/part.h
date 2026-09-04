@@ -80,6 +80,10 @@ public:
   void live_partials(std::vector<LivePartial> &out);
   int  damp_partial(uint32_t serial, int slot, float dBPerMillisecond);
 
+  // JV-880 Key Assign SOLO: hand every sounding note of this part over, so the
+  // new key takes their voices. Returns the partials released.
+  int  solo_release(float dBPerMillisecond);
+
   // Rhythm parts only: silence every note sounding on this part that shares
   // the new key's assign group. Returns the number of partials released.
   int choke_assign_group(uint8_t key, float dBPerMillisecond);

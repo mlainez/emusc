@@ -266,6 +266,16 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
     // it (SC-55mkII OM p.88-89; PROVENANCE.md P-0085)
     p.choke_assign_group(key, _ctrlRom.voice_damp_rate());
 
+    // A JV-880 part whose patch is Key Assign SOLO plays one note at a time:
+    // the note it is sounding gives up its voices to the new key before the
+    // pool is consulted (ROM1 0x9D6 path; scdb devices/jv880/06_voice_engine/
+    // note_lifecycle.md, D-44). Solo Legato ON (re-pitch without retrigger)
+    // and the hand-back to a still-held key on release are not modelled yet.
+    if (_settings->generation() == ControlRom::SynthGen::JV880 &&
+        _settings->get_param(PatchParam::PolyMode, p.id()) == 0 &&
+        _settings->get_param(PatchParam::UseForRhythm, p.id()) == 0)
+      p.solo_release(_ctrlRom.voice_damp_rate());
+
     bool haveVoices = true;
     while (_partials_in_use() + needed > maxPolyphony) {
       if (_steal_partials(p) <= 0) {

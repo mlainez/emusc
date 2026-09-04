@@ -355,6 +355,29 @@ int Part::damp_partial(uint32_t serial, int slot, float dBPerMillisecond)
 }
 
 
+// Key Assign SOLO on the JV-880: the part's sounding note gives its voices to
+// the new key. The firmware re-programs the same voices in place (ROM1 0xC84
+// -> 0xDA2 -> 0xE7E); here the old note fades at the device's damp rate while
+// the new one starts, and its partials count as free at once. Returns the
+// partials released.
+int Part::solo_release(float dBPerMillisecond)
+{
+  int released = 0;
+
+  _notesMutex->lock();
+
+  for (auto &n : _notes)
+    if (!n->is_damped()) {
+      released += n->get_num_partials();
+      n->damp(dBPerMillisecond);
+    }
+
+  _notesMutex->unlock();
+
+  return released;
+}
+
+
 int Part::steal_voice(uint32_t serial, float dBPerMillisecond)
 {
   int numPartials = 0;
@@ -449,8 +472,11 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
 
   // 6. Remove all existing notes if part is in mono mode according to the
   //    SC-55 owner's manual page 39
+  //    The JV-880 does not: its SOLO note has already been handed over in
+  //    Synth::_add_note (solo_release) and fades while the new one starts.
   if (_settings->get_param(PatchParam::PolyMode, _id) == false &&
-      _settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm)
+      _settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm &&
+      _settings->generation() != ControlRom::SynthGen::JV880)
     delete_all_notes();
 
   _notesMutex->lock();

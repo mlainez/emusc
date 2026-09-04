@@ -425,7 +425,12 @@ static const RecordRomLayout JV880_RECORDS = {
     // by its neighbours: +0x14, +0x15 and +0x16 are three adjacent 0-127 bytes
     // and the manual lists Analog Feel, Patch Level, Patch Pan in that order.
     // Non-zero on 119 of the 192 factory patches. L-26 / D-25.
-    0x14
+    0x14,
+
+    // +0x18: Key Assign in bit 7. Eleven factory patches are SOLO, among them
+    // patch 21 SAW Lead (byte 0xD2), which the boot performance puts on parts
+    // 1-6 - so channels 1-3 play one note at a time on the machine (D-44).
+    0x18
   },
 
   {

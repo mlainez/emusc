@@ -138,6 +138,12 @@ struct PatchLayout
   // Appended last so a profile written before it existed still compiles, and
   // zero means the device has no such parameter.
   int      analogFeel;
+
+  // Patch-common byte whose bit 7 is Key Assign (0 POLY, 1 SOLO), bit 5 Solo
+  // Legato and bit 6 the Portamento switch: the JV-880's +0x18 (SysEx 0x1C,
+  // 0x1D, 0x1E). ROM1 0x2B72-0x2B8B reads the same bits into the allocator's
+  // per-part flags @0x8C50/@0x8C52. Zero when the device has no such byte.
+  int      keyAssign;
 };
 
 // Byte offsets within one performance part record.

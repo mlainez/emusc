@@ -1226,6 +1226,14 @@ void Settings::_apply_device_performance(void)
     _patchParams[(int) PatchParam::RxNoteMessage   | (partAddr << 8)] = 1;
     _patchParams[(int) PatchParam::UseForRhythm    | (partAddr << 8)] = j.rhythm ? 1 : 0;
     _patchParams[(int) PatchParam::AssignMode      | (partAddr << 8)] = j.rhythm ? 0 : 1;
+
+    // Key Assign. A SOLO patch plays one note at a time on its part: the
+    // firmware's note-on path for such a part re-uses the sounding note's
+    // voices for the new key (ROM1 0x9D6 -> 0xBCD -> 0xC84, selected by patch
+    // common +0x18 bit 7 through @0x8C50). The boot performance's SAW Lead is
+    // SOLO, on parts 1-6 (scdb D-44).
+    _patchParams[(int) PatchParam::PolyMode        | (partAddr << 8)] =
+      (!j.rhythm && j.patch >= 0 && _ctrlRom.device_patch_solo(j.patch)) ? 0 : 1;
     if (j.rhythm) {
       // The rhythm part selects a drum set, and ToneNumber is that index.
       _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] = 0;

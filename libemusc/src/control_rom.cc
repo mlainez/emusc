@@ -861,6 +861,24 @@ const uint8_t ControlRom::device_voice_reserve(int part)
 }
 
 
+bool ControlRom::device_patch_solo(int patch)
+{
+  if (!_profile || !_profile->records)
+    return false;
+
+  const PatchLayout &P = _profile->records->patch;
+  if (!P.keyAssign || patch < 0 || patch >= P.banks * P.perBank)
+    return false;
+
+  const size_t at = P.bankOffset + (patch / P.perBank) * P.bankStride +
+                    (patch % P.perBank) * P.stride + P.keyAssign;
+  if (at >= _deviceRom.size())
+    return false;
+
+  return (_deviceRom[at] >> 7) & 1;
+}
+
+
 int ControlRom::dump_demo_songs(std::string path)
 {
   int index = 1;
