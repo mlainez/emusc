@@ -96,6 +96,8 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   //
   // A tonal part has no such table and sends at the part's level alone.
   _reverbDepth = _chorusDepth = 1.0f;
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+    _partialRevShare[p] = _partialChoShare[p] = 1.0f;
   uint8_t rhythm = settings->get_param(PatchParam::UseForRhythm, partId);
   if (rhythm != 0) {
     _reverbDepth =
@@ -129,6 +131,13 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
   // this note will glide from (PROVENANCE.md P-0278).
   Pitch::begin_note(partId);
 
+  // The part's send level is the loudest tone's, so a tone's own share of it
+  // is its send divided by that maximum: the two multiply back to the tone's
+  // send at the device's scale, and the part-level parameter keeps the meaning
+  // every other caller gives it. A patch whose tones all send alike - SAW Lead
+  // sends 127 four times - gets 1.0 on every partial and does not move.
+  const auto instSend = ctrlRom.instrument_send(instrumentIndex);
+
   std::bitset<ControlRom::MAX_PARTIALS>
     partialBits(ctrlRom.instrument(instrumentIndex).partialsUsed);
   for (int p = 0; p < ControlRom::MAX_PARTIALS; p++) {
@@ -152,6 +161,11 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
       if (velocity < low || velocity > high)
         continue;
     }
+    if (instPartial.revSend >= 0 && instSend.first > 0)
+      _partialRevShare[p] = instPartial.revSend / (float) instSend.first;
+    if (instPartial.choSend >= 0 && instSend.second > 0)
+      _partialChoShare[p] = instPartial.choSend / (float) instSend.second;
+
     try {
       _partial[p] = new Partial(p, key, velocity, instrumentIndex, ctrlRom,
                                 waveRom, _LFO1, settings, partId, startDelay);
@@ -256,20 +270,26 @@ bool Note::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 {
   bool finished[ControlRom::MAX_PARTIALS] = {0};
 
-  // The partials write their send into this note's own block, so the drum
-  // instrument's depths can be applied before it joins the part's send.
-  std::array<float, 256> noteSend = {};
-
+  // Each partial writes its send into a block of its own, so the drum
+  // instrument's depths AND the tone's own share of the part's send can be
+  // applied before it joins the part's send. One block per partial rather than
+  // one per note is what makes the per-tone send possible (scdb D-40); a
+  // device without per-tone sends leaves every share at 1.0 and the sum is
+  // identical to the single-block form it replaces.
   for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++) {
-    if  (_partial[p] == NULL)
+    if  (_partial[p] == NULL) {
       finished[p] = 1;
-    else
-      finished[p] = _partial[p]->get_sample_set(dryBus, noteSend);
-  }
+      continue;
+    }
+    std::array<float, 256> partialSend = {};
+    finished[p] = _partial[p]->get_sample_set(dryBus, partialSend);
 
-  for (int i = 0; i < 256; i ++) {
-    reverbSend[i] += noteSend[i] * _reverbDepth;
-    chorusSend[i] += noteSend[i] * _chorusDepth;
+    const float rd = _reverbDepth * _partialRevShare[p];
+    const float cd = _chorusDepth * _partialChoShare[p];
+    for (int i = 0; i < 256; i ++) {
+      reverbSend[i] += partialSend[i] * rd;
+      chorusSend[i] += partialSend[i] * cd;
+    }
   }
 
   for (int p = 0; p < ControlRom::MAX_PARTIALS; p ++)

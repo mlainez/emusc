@@ -989,8 +989,38 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
     // scdb D-52.
     int dsIndex;
     if (jv880) {
-      const int presets = _ctrlRom.device()->records->patch.midiBankPresets;
-      const int flag = (bank == presets) ? 0x80 : 0x00;
+      const auto &PL = _ctrlRom.device()->records->patch;
+      // The bank the head of this function fell back to is MEANINGLESS on a
+      // rhythm part: there, `ToneNumber` holds the drum SET index, not a MIDI
+      // bank, so comparing it against the preset bank number is comparing a
+      // kit index against 81 and almost always yields "not presets".
+      //
+      // What the device has is a one-bit bank flag PER PART (@0x65B8[part],
+      // ROM1 0x749C) that a performance select writes from that part's own
+      // patch selector and that a program change does not spend. So the
+      // fallback when no CC0 = 80 or 81 has been seen is the bank of the
+      // patch the PERFORMANCE put on this part - not a kit index, and not
+      // zero.
+      //
+      // Every demo song depends on it. "Lost Weekend" sends `PC 126` on
+      // channel 10 with no bank select on that channel at all - its only
+      // CC0 = 81 goes to channel 16, to select the performance - and "for
+      // CompuMix" gives its rhythm part selector 0x80, Preset A, so the flag
+      // is set and the selector becomes 0xFE: Preset B. Read as flag 0 the
+      // selector is 0x7E, which is the CARD bank, and we loaded a different
+      // kit for the whole song. Measured: the reference's render of the song's
+      // own channel-10 sequence is IDENTICAL to one with CC0 = 81 added, and
+      // ours was identical to one with CC0 = 80 added. On key 83 - 155 notes
+      // of the song - the reference's spectral centroid is 70 Hz and ours was
+      // 1796, which is the whole of the 27 dB deficit the 40-80 Hz band showed
+      // across every window of that channel. scdb D-61.
+      int flag;
+      if (_pendingBank >= 0)
+        flag = (_pendingBank == PL.midiBankPresets) ? 0x80 : 0x00;
+      else if (_id < (int) _ctrlRom.device_parts().size())
+        flag = (_ctrlRom.device_parts()[_id].patch >= PL.perBank) ? 0x80 : 0x00;
+      else
+        flag = 0x00;
       dsIndex = _settings->update_drum_set_bank(rhythm - 1, flag | index);
       if (dsIndex < 0)
         return 0;                    // absent bank: the part keeps its kit

@@ -102,6 +102,12 @@ private:
   float _reverbDepth;
   float _chorusDepth;
 
+  // Each partial's share of the part's send, for a device whose sends are per
+  // TONE (scdb D-40). 1.0 where they are not, which leaves the note's depth
+  // acting alone exactly as before.
+  float _partialRevShare[ControlRom::MAX_PARTIALS];
+  float _partialChoShare[ControlRom::MAX_PARTIALS];
+
   const double _7bScale;     // Constant: 1 / 127
 
   WaveGenerator *_LFO1;

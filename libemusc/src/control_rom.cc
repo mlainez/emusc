@@ -1318,6 +1318,8 @@ const RomLookupTable *ControlRom::_find_lookup(RomLookup id)
 
 void ControlRom::_init_neutral_partial(struct InstPartial &ip)
 {
+  ip.revSend         = -1;
+  ip.choSend         = -1;
   ip.panpot          = 0x40;
   ip.coarsePitch     = 0x40;
   ip.finePitch       = 0x40;
@@ -1591,6 +1593,14 @@ int ControlRom::_read_device_patches(void)
         const uint8_t *tb = &_deviceRom[off + P.firstTone + t * P.toneStride];
         if (!tb[F.enabled])
           continue;
+        // The per-instrument pair below is the LOUDEST tone's, and it stays:
+        // it is what the part's own send level is set to, so the part-level
+        // parameter keeps the meaning every caller already gives it. Each
+        // partial also keeps its OWN send, and Note takes the ratio of the two
+        // - so the product is the tone's send at the device's scale, with
+        // nothing upstream of the part having to change. scdb D-40.
+        in.partials[t].revSend = (int16_t) (tb[F.reverbSend] & 0x7f);
+        in.partials[t].choSend = (int16_t) (tb[F.chorusSend] & 0x7f);
         reverb = std::max(reverb, (uint8_t) (tb[F.reverbSend] & 0x7f));
         chorus = std::max(chorus, (uint8_t) (tb[F.chorusSend] & 0x7f));
       }

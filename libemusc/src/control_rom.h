@@ -74,6 +74,15 @@ public:
 
     uint8_t TVFFlags;       // TVF feature flags (always 0xff, used for debug?)
 
+    // The JV carries a reverb and a chorus send PER TONE (+82 / +83), and a
+    // patch that sends its tones to the effects in different amounts is a
+    // normal patch, not an exotic one: Pop Piano 2 asks for chorus 25 on the
+    // tone at level 127 and 127 on the tone at level 75. -1 means the device
+    // has no such field, which is every Sound Canvas, and then the note's own
+    // depth stands alone. scdb D-40.
+    int16_t revSend;
+    int16_t choSend;
+
     uint16_t partialIndex;  // Partial table index, 0xFFFF for unused
     int8_t panpot;          // [-64, 64]. Default 0x40 (0-127)
     int8_t coarsePitch;     // Shifts pitch in semitones. Default 0x40
