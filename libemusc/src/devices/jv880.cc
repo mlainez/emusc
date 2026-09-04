@@ -785,7 +785,14 @@ const DeviceProfile JV880_PROFILE = {
     // 1.98, not the 0.99 that dividing by 128 gives. Halving every send is the
     // whole of D-39: the reverb tail measured 39.60 dB where the reference
     // gives 45.66, and 45.62 with this in place - a 0.03 dB residual.
-    64.0f
+    64.0f,
+
+    // chorusSendDivisor. The chorus send does NOT take the reverb's scale, and
+    // sharing it was worth up to 5.4 dB of extra chorus (scdb D-60). See
+    // device_profile.h for the measurement and the reason: a 0-127 parameter
+    // feeding a 64-is-unity byte field is written shifted down by one, which
+    // is what this law already does to the chorus level.
+    128.0f
   },
 
   { true,  0x3f, 0x7f },

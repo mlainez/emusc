@@ -132,7 +132,9 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     // it rests on the chip-wide property rather than on its own trace - and it
     // is measurably NOT the cause of Glass Pad's effects deficit, which does
     // not move at all with it.
-    float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / sendDiv;
+    const float choDiv = _settings->device()->reverb.chorusSendDivisor > 0.0f
+                       ? _settings->device()->reverb.chorusSendDivisor : sendDiv;
+    float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / choDiv;
     float reverbSL = _settings->get_param(PatchParam::ReverbSendLevel, _id) / sendDiv;
 
     for (int i = 0; i < 256; i++) {
@@ -951,6 +953,30 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
                            (uint8_t) (dp.revSwitch ? snd.first  : 0), _id);
       _settings->set_param(PatchParam::ChorusSendLevel,
                            (uint8_t) (dp.choSwitch ? snd.second : 0), _id);
+    }
+
+    // Key Assign travels with the patch too, for the same reason the sends do.
+    // A patch carries POLY or SOLO in its common +0x18 bit 7, and the part's
+    // allocator flag was written ONLY where a performance is loaded - so a
+    // part kept the Key Assign of whatever patch the performance had put
+    // there, however many program changes later. Both directions were wrong,
+    // and the loud one is inherited SOLO: the boot performance's SAW Lead is
+    // SOLO on parts 1-6, so any program change on those parts still played one
+    // note at a time. An eight-note cluster on Brass Sect 1 sounded its last
+    // two notes where the reference sounds all eight, and the part's level did
+    // not rise at all from one note to eight where the reference gains the
+    // 8.0 dB an incoherent sum of eight asks for. In the other direction the
+    // demo songs select "for CompuMix", whose eight parts are all POLY, and
+    // then ask for patches of their own - 11 of the 192 factory patches are
+    // SOLO, House Bass among them - which we were playing polyphonically.
+    // scdb D-59.
+    if (jv880) {
+      const auto &PL = _ctrlRom.device()->records->patch;
+      const int linear = (bank == PL.midiBankPresets) ? PL.perBank + index
+                                                      : index;
+      _settings->set_param(PatchParam::PolyMode,
+                           (uint8_t) (_ctrlRom.device_patch_solo(linear) ? 0 : 1),
+                           _id);
     }
 
   // If part is used for drums, select correct drum set

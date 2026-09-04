@@ -747,6 +747,20 @@ struct ReverbLaw
   // whole of D-39: its reverb tail measured 39.60 dB against the reference's
   // 45.66, and 45.62 once corrected.
   float sendDivisor = 128.0f;
+
+  // What a CHORUS send of 127 means, when that is not the same as a reverb
+  // send. Zero keeps them equal, which is what every Sound Canvas profile
+  // wants. The JV needs them apart: its reverb send really is 64 = unity and
+  // D-39 measured it, but its chorus send is a 0-127 PARAMETER feeding the
+  // same byte coefficient field, and such a parameter is written into the
+  // field shifted down by one - which is exactly what ChorusJvLaw::levelShift
+  // already does to the chorus LEVEL. Measured on nine single-tone factory
+  // patches spanning send 8-127 with the reverb closed, taking the wet as the
+  // sample difference between a chorus-open and chorus-closed render of the
+  // same engine: at 64 = unity ours ran +2.7 to +5.4 dB hot from send 31 up,
+  // mean +4.3, and the reference's implied coefficient tracked send/128 to
+  // within a factor 1.07-1.47. scdb D-60.
+  float chorusSendDivisor = 0.0f;
 };
 
 
