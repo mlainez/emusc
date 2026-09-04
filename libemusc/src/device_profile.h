@@ -199,6 +199,34 @@ struct PerformanceLayout
   // `reserve` voices (scdb devices/jv880/06_voice_engine/allocation.md, D-44).
   // Last, so an initialiser written before it existed leaves it 0 = none.
   int      voiceReserve;
+
+  // Performance BANKS, for the control-channel Performance select (D-46).
+  //
+  // A program change whose channel equals the control channel does not set a
+  // part's patch: in Performance mode it loads a whole Performance, and with it
+  // every part's patch, receive channel, level, pan, coarse tune and the common
+  // effect settings (ROM1 0x6D83 stages it, ROM2 0x301B1 loads it). The
+  // selector is `bank flag | program`, the flag coming from CC0 on the same
+  // channel (only 80 -> 0x00 and 81 -> 0x80 are stored, and it persists):
+  //
+  //   0x00-0x3F Internal   `offset` above
+  //   0x40-0x7F Card       absent on a bare machine: the select is REJECTED
+  //   0x80-0xBF Preset A   presetABase
+  //   0xC0-0xFF Preset B   presetBBase
+  //
+  // and the index within the bank is the selector's low four bits - sixteen
+  // performances per bank (ROM2 0x301D7 masks with 0xCF, clearing bits 4-5).
+  //
+  // Every JV-880 demo song opens with CC0 81 then PC 72 here, which is selector
+  // 0xC8 = Preset B index 8, "for CompuMix": one part on each of channels 1-7
+  // and 10 at level 127. Without this the songs play through the boot
+  // performance, whose map is [1,1,1,2,2,3,4,10] - three parts stacked on
+  // channel 1 at coarse tune 0/-12/+12 and nothing at all on channels 5-7.
+  //
+  // controlChannel is 0-based; the firmware's 0x10 (= 16) means OFF, so 16 here
+  // disables the whole path, as does a zero preset base.
+  uint32_t presetABase, presetBBase;
+  int      controlChannel;
 };
 
 // A rhythm set: one record per key.

@@ -484,6 +484,10 @@ public:
                      chorusFeedback, chorusToReverb; };
   inline const DeviceEffects& device_effects(void) { return _deviceEffects; }
   inline const std::array<DevicePart, 8>& device_parts(void) { return _deviceParts; }
+
+  // Load the Performance a control-channel program change names (D-46).
+  // False means nothing was loaded and the current performance still stands.
+  bool select_performance(int selector);
   inline const std::array<int, 16>& device_channel_reverb(void) { return _channelReverb; }
   inline const std::array<int, 16>& device_channel_chorus(void) { return _channelChorus; }
   const std::array<uint8_t, 128>& get_drum_sets_LUT(void) { return _drumSetsLUT; }
@@ -593,6 +597,7 @@ private:
   int  _read_device_patches(void);
   void _init_device_lookup_tables(void);
   int  _read_device_performances(void);
+  int  _load_performance(uint32_t base, int index);
   int  _read_device_rhythm(void);
 
   const DeviceProfile *_profile = nullptr;

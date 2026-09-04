@@ -147,6 +147,12 @@ public:
   /* End of public API. Below are internal data structures only */
 
 private:
+  // JV-880 control channel (D-46). The bank flag CC0 leaves for the next
+  // Performance select; it persists, as the firmware's does.
+  int _perfBankFlag = 0;
+  bool _jv_control_channel(uint8_t channel) const;
+
+private:
   Settings *_settings;
   
   uint32_t _sampleRate;

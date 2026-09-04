@@ -1187,6 +1187,15 @@ void Settings::clear_part_callback(void)
 // per-part defaults resetting PitchKeyShift, which cost an octave on the demo's
 // melody, and again by the drum-set pass rewriting part 10's tone number, pan
 // and reverb send. Running last is the only placement that survives both.
+bool Settings::select_performance(int selector)
+{
+  if (!_ctrlRom.select_performance(selector))
+    return false;
+  _apply_device_performance();
+  return true;
+}
+
+
 void Settings::_apply_device_performance(void)
 {
   if (_ctrlRom.generation() != ControlRom::SynthGen::JV880 &&
