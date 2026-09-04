@@ -1840,6 +1840,8 @@ void ControlRom::_init_device_lookup_tables(void)
         rom16(rt.offset, rt.entries, t.JVTvfDampHard);       break;
       case RomLookup::JVTvfBase:
         rom16(rt.offset, rt.entries, t.JVTvfBase);           break;
+      case RomLookup::LFORateTable:
+        rom16(rt.offset, rt.entries, t.LFORate);             break;
       case RomLookup::JVPanLaw:
         // Packed big-endian (L << 8) | R, split into two independent channels.
         // Verified against jv880_rom2 at 0x6B8A: W[0] = 0x7f00 (hard left),

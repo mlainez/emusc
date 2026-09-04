@@ -54,6 +54,21 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   { RomLookup::EnvTimeKeyFollowSens, 0x3ff49,  21, 1, Monotonic::Rising },
   { RomLookup::LFOSine,              0x04edf, 130, 1, Monotonic::Unchecked },
 
+  // The LFO rate table, ROM2 0x4C58: 128 big-endian words rising 128 to 16127
+  // on a constant ratio, doubling every 19 steps - verified here at v = 32, 64
+  // and 96 alike, so it is a clean exponential and Rising is a real check.
+  // scdb's lfo.md has it FW-EXACT as `inc = LFO_RATE[rate]` reached from
+  // descriptor 0x18, and the lane that identified it found its only four
+  // readers are all the same LFO phase accumulator.
+  //
+  // This port filled LFORate with ZEROS, so the JV's LFO never advanced and
+  // every LFO term - pitch, TVF and TVA - contributed nothing. Measured
+  // consequence (D-38): SAW Lead carries 10.4 of 1-3 Hz modulation energy
+  // where the reference carries 27.8. Note 0x4C58 was once misread as the
+  // envelope TIME table and corrected; this is the same address in its real
+  // role, not a revival of that mistake.
+  { RomLookup::LFORateTable,         0x04c58, 128, 2, Monotonic::Rising },
+
   // Envelope phase times: 128 big-endian 16-bit entries, 128 rising to 16127 on
   // a constant ratio of 1.0384 - a doubling every ~18 steps. The same shape and
   // magnitude as the SC-55's envelopeTime, which is what makes it recognisable:

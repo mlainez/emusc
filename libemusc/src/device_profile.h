@@ -236,6 +236,14 @@ enum class RomLookup
   TVALevelIndex,
   EnvTimeKeyFollowSens,
   LFOSine,
+
+  // The LFO RATE table: 128 big-endian words indexed by the tone's rate
+  // parameter, giving the LFO's phase increment. Documented FW-EXACT in
+  // scdb devices/jv880/07_synthesis/lfo.md (ROM2 0x4C58, u16 BE, reached from
+  // descriptor 0x18), and the lane that found it established that its only
+  // four readers are all the same LFO phase accumulator. The port has been
+  // filling this table with ZEROS, so the JV's LFO has never moved. D-38.
+  LFORateTable,
   PitchCoarseExp,
   EnvelopeTime,
   JVLevel,
