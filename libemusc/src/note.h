@@ -64,6 +64,11 @@ public:
   uint32_t serial(void) { return _serial; }
   bool is_releasing(void) { return _releasing; }
   bool is_damped(void) { return _damped; }
+  // Key up, but the hold pedal keeps the note sounding
+  bool is_pedal_held(void) { return _stopped && !_releasing; }
+  bool partial_released(int p)
+  { return p >= 0 && p < ControlRom::MAX_PARTIALS && _partial[p] &&
+           _partial[p]->released(); }
 
   // Number of partials a note on this key would use in this part, without
   // creating it. Used to decide how many voices a note on needs.

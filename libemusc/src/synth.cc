@@ -32,6 +32,8 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <algorithm>
 #include <iomanip>
 
 #include "config.h"
@@ -180,70 +182,96 @@ int Synth::_steal_partials(Part &requester)
 
 
 // The JV-880's policy, from its firmware (scdb devices/jv880/06_voice_engine/
-// allocation.md, D-44). Task 4 (ROM1 0x0892) takes a voice from lists that
-// Task 8 (ROM1 0x1AC8) rebuilds from a permutation of all 28 voices kept in
-// ALLOCATION order: first a free voice; then the head of a list holding, for
-// every part, its oldest (active - reserve) voices merged in global age order;
-// then the requesting part's own oldest voice; and when the part has none of
-// its own, no voice at all. So:
+// allocation.md, D-44 and D-67). Task 4 (ROM1 0x0892) takes a voice from lists
+// that Task 8 (ROM1 0x1AC8) rebuilds each round from a master list of all 28
+// voices: first a free voice; then the head of list B, which holds, for every
+// part, its first (active - reserve) voices in MASTER order; then the
+// requesting part's own list; and when the part has none of its own, no voice
+// at all.
 //
-//  * the victim is the oldest-allocated voice among those exceeding their
-//    part's Voice Reserve, whichever part it belongs to. The part number
-//    plays no role and neither does the requesting part;
-//  * release state plays no role either: nothing reorders the lists on a key
-//    off, and a voice leaves the pool only when the envelope task frees it;
+// The master list is NOT plain allocation order. Task 8 sorts it by two of the
+// allocator's masks before walking it (ROM1 0x1C31-0x1C89): voices whose GATE
+// bit @0x8128 is clear go first, then gated voices whose key-down bit @0x812C
+// is clear, then the rest - each group in allocation order. The allocator sets
+// both bits for a new voice (0xAFE, 0xB0D); the note-off routine (0x1878-
+// 0x19FC) clears the gate, or only the key-down bit when the tone's Hold-1
+// switch is on and the part's hold pedal (@0x6176) is down; the envelope task
+// reads the gate as its release trigger (0x2612). So a RELEASED voice is taken
+// before a pedal-held one, and a pedal-held one before a key that is still
+// down, oldest first inside each group. A released voice stays in the pool
+// until its T4 countdown ends (0x2821), so it still counts against the 28.
+//
+// Measured on the reference (scdb M-061, D-67): with 28 voices sounding and
+// one of them released 0.1-2 s earlier, a new note takes the released voice
+// and cuts its tail; with all 28 held it takes the oldest. Demo song 3
+// "Synthony" plays 0.1 s chords whose tails run 2.5 s under a held pad, and
+// ordering by age alone stole the pad 283 times where the device never does.
+//
 //  * one VOICE is taken, not a note: the note it came from keeps its other
 //    tones (ROM1 0xE1B re-links the voice into the new note's chain and the
 //    old note's chain closes around the gap). Tone 4 of a note was allocated
 //    first (ROM1 0xA72, r3 = 3 down to 0), so it is the oldest of its note;
-//  * the reserve is the performance's Voice Reserve (Performance Common
-//    +0x14..+0x1B, copied to @0x8C53 at ROM1 0x2BA6), a floor no other part
-//    can reach under. With every part at or under its reserve the requesting
-//    part recycles its own oldest voice rather than staying silent.
+//  * the reserve is the loaded performance's Voice Reserve (Performance
+//    Common +0x14..+0x1B, copied to @0x8C53 at ROM1 0x2BA6), a floor no other
+//    part can reach under. With every part at or under its reserve the
+//    requesting part recycles the head of its own list rather than staying
+//    silent.
 //
 // The firmware's list is rebuilt once per Task 8 round rather than per voice;
-// recomputing it here for every request idealises that, and within one note
-// the two agree exactly (taking a part's oldest voice and lowering its excess
-// by one leaves the same set). What the chip does to a voice re-keyed while it
-// sounds is silicon, so the stolen partial fades at the device's damp rate.
+// recomputing it here for every request idealises that. What the chip does to
+// a voice re-keyed while it sounds is silicon, so the stolen partial fades at
+// the device's damp rate.
 int Synth::_steal_partial_jv(Part &requester)
 {
   // EMUSC_DEBUG_STEAL prints every steal with the internal time, the pool
   // occupancy, the requesting part and the victim, so a mix that loses a voice
   // can be told apart from one that never had it. Diagnostics only.
   static const bool dbg = getenv("EMUSC_DEBUG_STEAL") != nullptr;
-  struct Candidate { uint32_t serial; int slot; Part *part; };
-  std::vector<Candidate> stealable;
-  std::vector<Part::LivePartial> own;
+  struct Candidate { int gate; uint32_t serial; int slot; Part *part; };
+  std::vector<Candidate> master;
+  std::map<Part *, int> excess;
 
   for (auto &p : _parts) {
     std::vector<Part::LivePartial> live;
     p.live_partials(live);                       // oldest first
-
-    if (&p == &requester)
-      own = live;
-
-    const int reserve = _ctrlRom.device_voice_reserve(p.id());
-    const int excess = (int) live.size() - reserve;
-    for (int i = 0; i < excess; i++)
-      stealable.push_back({live[i].serial, live[i].slot, &p});
+    for (auto &l : live)
+      master.push_back({l.gate, l.serial, l.slot, &p});
+    excess[&p] = (int) live.size() - _ctrlRom.device_voice_reserve(p.id());
   }
 
-  // Oldest first: the lowest note serial, and within one note the highest slot
+  // Master order: released, then pedal-held, then key down; allocation order
+  // inside each group (the lowest note serial, and within one note the
+  // highest slot, which was allocated first).
+  std::stable_sort(master.begin(), master.end(),
+                   [](const Candidate &a, const Candidate &b) {
+                     if (a.gate != b.gate) return a.gate < b.gate;
+                     if (a.serial != b.serial) return a.serial < b.serial;
+                     return a.slot > b.slot;
+                   });
+
+  // List B: walking the master order, a voice is stealable while its part is
+  // still over its reserve. The head of that list is the victim.
   const Candidate *victim = nullptr;
-  for (auto &c : stealable)
-    if (!victim || c.serial < victim->serial ||
-        (c.serial == victim->serial && c.slot > victim->slot))
-      victim = &c;
+  for (auto &c : master) {
+    int &ex = excess[c.part];
+    if (ex > 0) { ex--; victim = &c; break; }
+  }
+
+  // The requesting part's own list: its first voice in master order.
+  const Candidate *own = nullptr;
+  if (!victim)
+    for (auto &c : master)
+      if (c.part == &requester) { own = &c; break; }
 
   if (dbg) {
     std::cerr << "steal t=" << (_blockStart / 32000.0) << "s inUse="
               << _partials_in_use() << " req=part" << requester.id() + 1;
     if (victim)
       std::cerr << " victim=part" << victim->part->id() + 1 << " serial="
-                << victim->serial << " slot=" << victim->slot;
-    else if (!own.empty())
-      std::cerr << " victim=OWN serial=" << own[0].serial;
+                << victim->serial << " slot=" << victim->slot
+                << " gate=" << victim->gate;
+    else if (own)
+      std::cerr << " victim=OWN serial=" << own->serial << " gate=" << own->gate;
     else
       std::cerr << " victim=NONE";
     std::cerr << " live/reserve=";
@@ -261,8 +289,8 @@ int Synth::_steal_partial_jv(Part &requester)
     return victim->part->damp_partial(victim->serial, victim->slot,
                                       _ctrlRom.voice_damp_rate());
 
-  if (!own.empty())
-    return requester.damp_partial(own[0].serial, own[0].slot,
+  if (own)
+    return requester.damp_partial(own->serial, own->slot,
                                   _ctrlRom.voice_damp_rate());
 
   return 0;

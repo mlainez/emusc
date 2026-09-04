@@ -64,6 +64,11 @@ public:
   // Whether this partial's voice has been handed to another note
   inline bool is_damping(void) const { return _damping; }
 
+  // Whether the note off has reached this partial's envelopes. A rhythm tone
+  // that ignores note off never releases, and the JV-880's allocator orders
+  // its voices by this (Synth::_steal_partial_jv), so it is kept per partial.
+  inline bool released(void) const { return _released; }
+
   void first_run_cb(void);
 
   inline int get_current_lfo(void)
@@ -105,6 +110,7 @@ private:
   // then terminated, while the note that took its place already sounds.
   bool  _damping;
   bool  _dampComplete;
+  bool  _released = false;
   float _dampGain;
   float _dampFactor;       // Gain factor applied per sample while damping
 

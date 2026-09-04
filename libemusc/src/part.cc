@@ -335,9 +335,11 @@ void Part::live_partials(std::vector<LivePartial> &out)
   for (auto &n : _notes) {              // _notes is in note on order
     if (n->is_damped())
       continue;
+    const int held = n->is_pedal_held() ? 1 : 2;
     for (int slot = ControlRom::MAX_PARTIALS - 1; slot >= 0; slot--)
       if (n->partial_live(slot))
-        out.push_back({n->serial(), slot});
+        out.push_back({n->serial(), slot,
+                       n->partial_released(slot) ? 0 : held});
   }
 
   _notesMutex->unlock();

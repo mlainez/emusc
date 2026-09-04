@@ -76,7 +76,10 @@ public:
   // order the JV-880's Task 4 gives a note its tones (tone 4 first, ROM1
   // 0xA72-0xA95). damp_partial() hands one of them over and returns 1, or 0
   // if it was no longer sounding.
-  struct LivePartial { uint32_t serial; int slot; };
+  // gate is the voice's standing on the JV-880, from the two masks its Task 8
+  // sorts by (ROM1 0x1C31-0x1C89): 0 = released (the note off has reached
+  // it), 1 = key up but held by the pedal, 2 = key down.
+  struct LivePartial { uint32_t serial; int slot; int gate; };
   void live_partials(std::vector<LivePartial> &out);
   int  damp_partial(uint32_t serial, int slot, float dBPerMillisecond);
 

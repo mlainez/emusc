@@ -222,6 +222,7 @@ void Partial::stop(uint8_t releaseVelocity)
 {
   // Ignore note off for uninterruptible drums (set by drum set flag)
   if (!(_drumSet && !_drumRxNoteOff)) {
+    _released = true;
     if (_pitch) _pitch->note_off();
     if (_tvf) _tvf->note_off(releaseVelocity);
     if (_tva) _tva->note_off(releaseVelocity);

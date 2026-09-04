@@ -844,20 +844,17 @@ const float ControlRom::voice_damp_rate(void)
 }
 
 
+// The Voice Reserve of the performance that is LOADED, not the boot one. The
+// firmware copies the eight bytes into the allocator's array at every
+// performance load (ROM1 0x2BA6), and until this read the loaded record every
+// performance ran under the boot performance "Syn Lead"'s 4,4,4,4,4,0,0,0 -
+// demo song 3 selects "for CompuMix", whose reserves are all zero (scdb D-67).
 const uint8_t ControlRom::device_voice_reserve(int part)
 {
-  if (!_profile || !_profile->records)
+  if (part < 0 || part >= (int) _deviceVoiceReserve.size())
     return 0;
 
-  const PerformanceLayout &V = _profile->records->performance;
-  if (!V.offset || !V.voiceReserve || part < 0 || part >= V.parts)
-    return 0;
-
-  const size_t at = V.offset + V.bootIndex * V.stride + V.voiceReserve + part;
-  if (at >= _deviceRom.size())
-    return 0;
-
-  return _deviceRom[at];
+  return _deviceVoiceReserve[part];
 }
 
 
@@ -2124,6 +2121,11 @@ int ControlRom::_load_performance(uint32_t base, int index)
     return -1;
 
   const uint8_t *p = &_deviceRom[base + index * V.stride];
+
+  _deviceVoiceReserve.fill(0);
+  if (V.voiceReserve)
+    for (int t = 0; t < (int) _deviceVoiceReserve.size() && t < V.parts; t++)
+      _deviceVoiceReserve[t] = p[V.voiceReserve + t] & 0x1f;
 
   _deviceEffects.reverbType     = p[V.reverbType] & 0x07;
   _deviceEffects.reverbLevel    = p[V.reverbLevel] & 0x7f;

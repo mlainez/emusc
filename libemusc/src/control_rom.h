@@ -647,6 +647,8 @@ private:   // set when the device is identified
   std::array<int, 16> _channelKeyShift;
   std::array<DevicePart, 8> _deviceParts;
   DeviceEffects _deviceEffects = { 4, 0x40, 0x40, 0, 0x40, 0x13 };
+  // Voice Reserve of the performance currently loaded, one byte per part
+  std::array<uint8_t, 8> _deviceVoiceReserve = {};
   std::vector<std::pair<uint8_t,uint8_t>> _instrumentSend;  // reverb, chorus per instrument
   std::array<int, 16> _channelReverb;
   std::array<int, 16> _channelChorus;

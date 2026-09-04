@@ -245,8 +245,30 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
 static const RecordRomLayout JV880_RECORDS = {
 
   // Waveform record table. 129 records of 60 bytes from the very start of the
-  // ROM: a 12-byte name, then 11 key zones.
-  { 0x000004, 60, 12, 11 },
+  // ROM: a 12-byte name, then SIXTEEN key zones - 16 breakpoint bytes followed
+  // by 16 u16 sample indices, which is exactly the 12 + 16 + 32 = 60 the record
+  // holds. A zone is real while its sample index is not 0xFFFF.
+  //
+  // This said ELEVEN, and 14 of the 129 records have more: Trombone 1 has 14
+  // zones with breakpoints running to 78 in the first eleven and then 83, 103,
+  // 127 with real samples 191, 192 and 193. Synth Saw 2 and Synth Square have
+  // 15. With ZONES = 11 the loader padded breaks[11..15] to 0x7f and their
+  // samples to 0xFFFF, so `pitch.cc`'s zone search matched the 0x7f at zone 11,
+  // found 0xFFFF, and `Partial` threw "Undefined sample" - which `Note` catches
+  // and turns into a silent tone. Every one of those 14 waveforms was therefore
+  // SILENT above its eleventh breakpoint, at keys 78 to 99 depending on the
+  // wave, and lower still on any tone transposed up by its coarse tune.
+  //
+  // Found from `B13 Orch Stab 1`, whose tone 2 is Trombone 1 at coarse +12: at
+  // key 72 it sounds as key 84, above Trombone 1's eleventh breakpoint of 78,
+  // and our render had no 1046 Hz component at all where the reference has a
+  // clean harmonic series on it. scdb D-67, M-060.
+  //
+  // Checked before changing: all 129 records carry a 0x7f breakpoint inside
+  // their real zones and none has a hole, so the search always terminates on a
+  // valid sample, and the 115 records with 11 or fewer zones are unaffected
+  // because their 0x7f already falls at or before zone 10.
+  { 0x000004, 60, 12, 16 },
 
   // Sample table. 577 records of 18 bytes. +0 is the per-sample attenuation,
   // the field the Sound Canvas describes as "Volume attenuation (0x7f - 0)":
