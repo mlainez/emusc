@@ -554,8 +554,25 @@ int Part::control_change(uint8_t msgId, uint8_t value)
     // ToneNumber here made the bare bank select take effect at the next NOTE,
     // so five corpus files played the wrong instrument at 29 places.
     // TODO: This check is only available for SC-55mkII+
-    if (_settings->get_param(PatchParam::RxBankSelect, _id))
-      _pendingBank = value;
+    if (_settings->get_param(PatchParam::RxBankSelect, _id)) {
+      if (_settings->generation() == ControlRom::SynthGen::JV880) {
+        // JV-880 firmware, ROM1 0x749C-0x74EA: the handler stores a one-bit
+        // bank flag, and only for two values - CC0 = 80 clears it (Internal
+        // or Card), CC0 = 81 sets it (Presets). Any other CC0 value returns
+        // without storing, so the flag keeps its previous value. The flag is
+        // a per-part byte (@0x65B8[part]) that stays until the next CC0 = 80
+        // or 81; a program change does not spend it. It lives in _pendingBank
+        // here, mapped onto the rows of the variation table.
+        // devices/jv880/03_disassembly/midi_handlers.md, D-43.
+        const auto &P = _ctrlRom.profile()->records->patch;
+        if (value == 80)
+          _pendingBank = P.midiBankFirst;
+        else if (value == 81)
+          _pendingBank = P.midiBankPresets;
+      } else {
+        _pendingBank = value;
+      }
+    }
 
   } else if (msgId == 1) {                             // Modulation
     if (_settings->get_param(PatchParam::RxModulation, _id))
@@ -855,18 +872,42 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
 		      !_settings->get_param(SystemParam::RxInstrumentChange)))
     return -1;
 
+  const bool jv880 = (_settings->generation() == ControlRom::SynthGen::JV880);
+
   if (bank < 0) {
-    // A latched bank select is spent here, and nowhere else.
+    // A latched bank select is spent here, and nowhere else - on the Sound
+    // Canvas. The JV-880's bank flag persists (see set_controller).
     bank = (_pendingBank >= 0) ? _pendingBank
                                : _settings->get_param(PatchParam::ToneNumber, _id);
-    _pendingBank = -1;
+    if (!jv880)
+      _pendingBank = -1;
   }
+
+  int rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
+
+  // JV-880 firmware validates the selection before writing anything. ROM2
+  // 0x30487 takes the bank from the selector byte (flag | program): 0x00-0x3F
+  // Internal, 0x40-0x7F Card, 0x80-0xBF Preset A, 0xC0-0xFF Preset B. For the
+  // Card bank it requires a card whose page-0x0E signature and checksum pass
+  // (0x3049B, pjsr 0x314C7); with no card it returns carry set, and every
+  // caller (patch mode 0x3036C, performance part 0x30315, performance select
+  // 0x301B4) skips the copy: the part record's patch byte, the bank flag and
+  // the temporary patch stay as they were and no voice event is posted. So a
+  // bare program change 64-127 on a JV-880 without a card is REJECTED and the
+  // part keeps the patch it has. The variation table holds 0xffff exactly
+  // where the machine has no bank, so here 0xffff means "reject", not
+  // "silence". Measured on the reference: CC0 81 + PC 64 (Preset B 0) then
+  // CC0 80 + PC 64 stays on Preset B 0; PC 64 alone renders identically to no
+  // program change. devices/jv880/12_implementation/
+  // implementation_divergences.md D-43.
+  if (jv880 && rhythm == mode_Norm &&
+      _ctrlRom.variation(bank)[index] == 0xffff)
+    return 0;
 
   _settings->set_param(PatchParam::ToneNumber2, index, _id);
 
   // Finds correct instrument variation from variations table
   // Implemented according to SC-55 Owner's Manual page 42-45
-  int rhythm = _settings->get_param(PatchParam::UseForRhythm, _id);
   if (rhythm == mode_Norm) {
     // What the synth does when the variation table has no tone at
     // [index, bank] is one of the places the two generations disagree
