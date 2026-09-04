@@ -974,9 +974,18 @@ void TVF::_jv_iterate(void)
   const int coarse = _LUT.JVTvfExpCoarse[(x >> 8) & 0xff];
   const int E = coarse + ((coarse * _LUT.JVTvfExpFine[x & 0xff]) >> 16);
 
-  int word = (E * _LUT.JVTvfBase[_jvCutoff]) >> 8;
-  if (word > 0xffff)                         // the product's high word carried
-    word = 0xffff;
+  // The product SATURATES, and it has to be computed wide enough to see that.
+  // E reaches 65536 when the envelope drives the cutoff a full octave up
+  // (x = 9600 cents) and JVTvfBase[127] is 0xffff, so E * base reaches about
+  // 4.29e9 - past INT_MAX. Computed in `int` it wrapped NEGATIVE, and then
+  // `word > 0xffff` could not fire on a negative value: the resonance-0 cap
+  // below kept it, and a negative F1 (measured -0.3125) puts the
+  // state-variable filter's poles outside the unit circle. The state then grew
+  // exponentially to inf and to NaN, which the render clamped to the negative
+  // rail - 427496 non-finite samples on one demo channel, sounding as a 6.68 s
+  // full-scale blast. scdb D-51.
+  int word = (int) std::min<int64_t>(
+      ((int64_t) E * (int64_t) _LUT.JVTvfBase[_jvCutoff]) >> 8, 0xffff);
 
   // Resonance moves at most one slew step per tick, and decides both the cutoff
   // ceiling and the damping. Resonance 0 is not a table row but a rule of its
@@ -1001,10 +1010,13 @@ void TVF::_jv_iterate(void)
   _jvWord = word;
   _jvQ1 = (float) damp / (float) _jvLaw->dampUnity;
 
-  if (0)
-    std::cout << "JV TVF: env=" << std::dec << (_jvEnvLevel >> 8)
+  static const bool dbg = getenv("EMUSC_DEBUG_TVF") != nullptr;
+  if (dbg)
+    std::cerr << "JV TVF: env=" << std::dec << (_jvEnvLevel >> 8)
               << " x=" << x << " word=0x" << std::hex << word
               << " damp=0x" << damp << std::dec << " res=" << _jvRes
+              << " F1=" << ((float) word / 32768.0f)
+              << " Q1=" << _jvQ1
               << std::endl;
 }
 
