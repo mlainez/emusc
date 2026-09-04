@@ -208,6 +208,10 @@ int Synth::_steal_partials(Part &requester)
 // sounds is silicon, so the stolen partial fades at the device's damp rate.
 int Synth::_steal_partial_jv(Part &requester)
 {
+  // EMUSC_DEBUG_STEAL prints every steal with the internal time, the pool
+  // occupancy, the requesting part and the victim, so a mix that loses a voice
+  // can be told apart from one that never had it. Diagnostics only.
+  static const bool dbg = getenv("EMUSC_DEBUG_STEAL") != nullptr;
   struct Candidate { uint32_t serial; int slot; Part *part; };
   std::vector<Candidate> stealable;
   std::vector<Part::LivePartial> own;
@@ -231,6 +235,27 @@ int Synth::_steal_partial_jv(Part &requester)
     if (!victim || c.serial < victim->serial ||
         (c.serial == victim->serial && c.slot > victim->slot))
       victim = &c;
+
+  if (dbg) {
+    std::cerr << "steal t=" << (_blockStart / 32000.0) << "s inUse="
+              << _partials_in_use() << " req=part" << requester.id() + 1;
+    if (victim)
+      std::cerr << " victim=part" << victim->part->id() + 1 << " serial="
+                << victim->serial << " slot=" << victim->slot;
+    else if (!own.empty())
+      std::cerr << " victim=OWN serial=" << own[0].serial;
+    else
+      std::cerr << " victim=NONE";
+    std::cerr << " live/reserve=";
+    for (auto &p : _parts) {
+      std::vector<Part::LivePartial> live;
+      p.live_partials(live);
+      if (!live.empty() || _ctrlRom.device_voice_reserve(p.id()))
+        std::cerr << " p" << p.id() + 1 << ":" << live.size() << "/"
+                  << (int) _ctrlRom.device_voice_reserve(p.id());
+    }
+    std::cerr << std::endl;
+  }
 
   if (victim)
     return victim->part->damp_partial(victim->serial, victim->slot,
