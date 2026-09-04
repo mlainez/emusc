@@ -336,6 +336,20 @@ int Synth::_export_sample_24(std::vector<int32_t> &sampleSet,
 */
 
 
+// True only for the JV-880's control channel, which the device profile names
+// (0-based; 16 = off, as the firmware's own 0x10 does). Never true on a Sound
+// Canvas, so the SC-55 path is untouched.
+bool Synth::_jv_control_channel(uint8_t channel) const
+{
+  if (_settings->generation() != ControlRom::SynthGen::JV880)
+    return false;
+  const auto *rec = _ctrlRom.device()->records;
+  if (!rec) return false;
+  const int cc = rec->performance.controlChannel;
+  return cc >= 0 && cc < 16 && channel == (uint8_t) cc;
+}
+
+
 void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2,
                        uint32_t frameOffset)
 {
@@ -461,6 +475,16 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
       break;
 
     case midi_CtrlChange:
+      // Bank select on the control channel sets the flag the next Performance
+      // select uses. The firmware acts on two values only - CC0 80 stores 0x00
+      // and 81 stores 0x80 - and the flag PERSISTS across program changes
+      // (ROM1 0x749C, kept in @0x65B7 for this destination).
+      if (data1 == 0 && _jv_control_channel(channel)) {
+	if (data2 == 80)      _perfBankFlag = 0x00;
+	else if (data2 == 81) _perfBankFlag = 0x80;
+	break;
+      }
+
       for (auto &p: _parts) {
 	if (p.midi_channel() == channel) {
 	  if (p.control_change(data1, data2)) {
@@ -472,6 +496,19 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
       break;
 
     case midi_PrgChange:
+      // On the JV-880 the control channel is not a part. A program change there
+      // selects a whole PERFORMANCE - every part's patch, receive channel,
+      // level, pan, coarse tune and the common effects at once (ROM1 0x6D83,
+      // ROM2 0x301B1). Every demo song opens with CC0 81 then PC 72 here, which
+      // is Preset B 8 "for CompuMix". scdb D-46.
+      if (_jv_control_channel(channel)) {
+	if (_settings->select_performance(_perfBankFlag | data1))
+	  for (auto &p : _parts)
+	    for (const auto &cb : _partMidiModCallbacks)
+	      cb(p.id());
+	break;
+      }
+
       for (auto &p : _parts)
 	if (p.midi_channel() == channel) {
 	  p.set_program(data1);

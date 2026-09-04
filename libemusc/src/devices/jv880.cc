@@ -514,7 +514,20 @@ static const RecordRomLayout JV880_RECORDS = {
     // Voice Reserve, eight bytes from +0x14. The boot performance "Syn Lead"
     // carries 4,4,4,4,4,0,0,0 (sum 20); every factory sum is 28 or less, which
     // is the rule ROM2 0x30207 enforces by zeroing the eight when it is not.
-    0x14
+    0x14,
+
+    // Preset A and Preset B performance banks, and the control channel.
+    // The bank table at ROM2 0x30000 gives page 0x01 base 0x0020 for Preset A
+    // and 0x8020 for Preset B, which are ROM2 0x10020 and 0x18020; sixteen
+    // records of 204 at each. Preset A 0-15 are "Jazz Split".."PopOrchestra",
+    // Preset B 0-15 "GTR Players".."NewListening", and B8 is "for CompuMix",
+    // the one every demo song selects.
+    //
+    // The control channel is the machine's own system setting (battery-backed
+    // page 0x0C, byte +0x0C), not a fixed constant; this NVRAM holds 0x0F, so
+    // channel 16. It is given here as a profile default because libEmuSC does
+    // not read the system area.
+    0x010020, 0x018020, 15
   },
 
   {

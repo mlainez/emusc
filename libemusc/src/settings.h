@@ -172,6 +172,11 @@ private:
   void _initialize_patch_params(enum Mode = Mode::GS);
   void _initialize_drumSet_params();
   void _apply_device_performance();
+public:
+  // A control-channel program change selected a Performance (D-46): reload it
+  // and re-apply every part. False when the selection was rejected.
+  bool select_performance(int selector);
+private:
 
   // BE / LE conversion
   inline bool _le_native(void) { uint16_t n = 1; return (*(uint8_t *) & n); }

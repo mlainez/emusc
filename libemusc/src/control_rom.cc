@@ -2065,6 +2065,39 @@ void ControlRom::_init_device_lookup_tables(void)
 // DistanceCall. See docs/service-notes/jv880-owner.md.
 int ControlRom::_read_device_performances(void)
 {
+  const PerformanceLayout &V = _profile->records->performance;
+  return _load_performance(V.offset, V.bootIndex);
+}
+
+
+// Resolve a control-channel program change to a bank and an index and load it.
+// Selector = bank flag | program; the low four bits are the index, sixteen
+// performances per bank (ROM2 0x301D7 masks with 0xCF). The Card bank is absent
+// on a bare machine and ROM2 0x30487 returns carry set for it, every caller
+// skipping the copy - so the selection is REJECTED and the machine keeps the
+// performance it has, exactly as for a patch (D-43). Returns false when nothing
+// was loaded, so the caller can leave its state alone.
+bool ControlRom::select_performance(int selector)
+{
+  const PerformanceLayout &V = _profile->records->performance;
+  if (!V.offset) return false;
+
+  const int index = selector & 0x0f;
+  uint32_t base;
+  switch ((selector >> 6) & 0x03) {
+    case 0: base = V.offset;      break;   // Internal
+    case 1: return false;                  // Card: not present, rejected
+    case 2: base = V.presetABase; break;
+    default: base = V.presetBBase; break;
+  }
+  if (!base) return false;
+
+  return _load_performance(base, index) == 0;
+}
+
+
+int ControlRom::_load_performance(uint32_t base, int index)
+{
   const PerformanceLayout   &V = _profile->records->performance;
   const PerformancePartMap  &M = V.part;
 
@@ -2075,10 +2108,10 @@ int ControlRom::_read_device_performances(void)
   _channelPan.fill(0x40);
   _channelKeyShift.fill(0);
 
-  if (!V.offset || (size_t) V.offset + (V.bootIndex + 1) * V.stride > _deviceRom.size())
+  if (!base || (size_t) base + (index + 1) * V.stride > _deviceRom.size())
     return -1;
 
-  const uint8_t *p = &_deviceRom[V.offset + V.bootIndex * V.stride];
+  const uint8_t *p = &_deviceRom[base + index * V.stride];
 
   _deviceEffects.reverbType     = p[V.reverbType] & 0x07;
   _deviceEffects.reverbLevel    = p[V.reverbLevel] & 0x7f;

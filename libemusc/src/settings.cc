@@ -1187,6 +1187,15 @@ void Settings::clear_part_callback(void)
 // per-part defaults resetting PitchKeyShift, which cost an octave on the demo's
 // melody, and again by the drum-set pass rewriting part 10's tone number, pan
 // and reverb send. Running last is the only placement that survives both.
+bool Settings::select_performance(int selector)
+{
+  if (!_ctrlRom.select_performance(selector))
+    return false;
+  _apply_device_performance();
+  return true;
+}
+
+
 void Settings::_apply_device_performance(void)
 {
   if (_ctrlRom.generation() != ControlRom::SynthGen::JV880 &&
@@ -1239,8 +1248,25 @@ void Settings::_apply_device_performance(void)
       _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] = 0;
       _patchParams[(int) PatchParam::ToneNumber + 1| (partAddr << 8)] = 0;
     } else if (j.patch >= 0) {
-      _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] = 0;
-      _patchParams[(int) PatchParam::ToneNumber + 1| (partAddr << 8)] = j.patch;
+      // A part's patch has to be written as the (bank, program) pair the engine
+      // resolves through _variations, not as a raw instrument index. On the JV
+      // the table is built as _variations[0][0..63] = Internal and
+      // _variations[81][0..127] = Preset A then Preset B, so an instrument at
+      // or above 64 written into bank 0 lands on 0xffff and the part is SILENT.
+      //
+      // That never showed while the port only ever loaded the boot performance:
+      // "Syn Lead" carries Internal patches throughout. Every other performance
+      // has preset patches - "for CompuMix", the one all seven demo songs
+      // select, carries 129/183/195/172/140/166/155, all Preset - and each of
+      // those parts went quiet. scdb D-46.
+      const auto &P = _ctrlRom.device()->records->patch;
+      int bank = P.midiBankFirst, prog = j.patch;
+      if (j.patch >= P.perBank) {
+        bank = P.midiBankPresets;
+        prog = j.patch - P.perBank;      // Preset A at 0-63, Preset B at 64-127
+      }
+      _patchParams[(int) PatchParam::ToneNumber    | (partAddr << 8)] = bank;
+      _patchParams[(int) PatchParam::ToneNumber + 1| (partAddr << 8)] = prog;
     }
     _patchParams[(int) PatchParam::PartLevel       | (partAddr << 8)] = j.level;
     _patchParams[(int) PatchParam::PartPanpot      | (partAddr << 8)] = j.pan;
