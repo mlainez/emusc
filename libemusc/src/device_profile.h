@@ -674,6 +674,15 @@ struct ReverbLaw
   // because the JV's pre-LPF, tap base and loop gain are all in its records.
   ReverbNetworkKind network;
   ReverbFeedbackLaw feedbackLaw;
+
+  // What a SEND of 127 means, appended LAST so every profile written before it
+  // still compiles and keeps the Sound Canvas value. The Sound Canvas path uses
+  // 128, so 127 is just under unity. The JV's byte coefficients are 64 = unity
+  // (P-0395, four independent ways), the same scale as its reverb RETURN, so a
+  // send of 127 there means 1.98 and not 0.99. Halving every JV send is the
+  // whole of D-39: its reverb tail measured 39.60 dB against the reference's
+  // 45.66, and 45.62 once corrected.
+  float sendDivisor = 128.0f;
 };
 
 

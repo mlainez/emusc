@@ -116,7 +116,15 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     _lastPeakSample = std::max(_lastPeakSample, *itR);
 
     float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / 128.0f;
-    float reverbSL = _settings->get_param(PatchParam::ReverbSendLevel, _id) / 128.0f;
+    // The send scale is the DEVICE's, not a constant. On the JV a byte-sized
+    // coefficient field has 64 = unity - established four independent ways in
+    // its firmware (P-0395), and the same scale its reverb RETURN uses - so a
+    // send of 127 means 1.98, not 0.99. Dividing by 128 here made every JV
+    // send half what the firmware asks for, which is the whole of D-39's
+    // 6.06 dB quiet reverb: measured tail 39.60 dB against the reference's
+    // 45.66, and 45.62 once corrected.
+    const float sendDiv = _settings->device()->reverb.sendDivisor;
+    float reverbSL = _settings->get_param(PatchParam::ReverbSendLevel, _id) / sendDiv;
 
     for (int i = 0; i < 256; i++) {
       dryBus[0][i] += partBus[0][i];

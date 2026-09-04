@@ -733,7 +733,15 @@ const DeviceProfile JV880_PROFILE = {
     // Sound Canvas path stays meaningful if the network is ever switched back,
     // exactly as delayTapPerTime already is.
     ReverbNetworkKind::JVMultiTapLine,
-    ReverbFeedbackLaw::JVFirmwareRegister
+    ReverbFeedbackLaw::JVFirmwareRegister,
+
+    // sendDivisor. A byte-sized coefficient on this chip has 64 = unity,
+    // established four independent ways in the firmware (P-0395) and already
+    // used by this same law's return level above. So a reverb send of 127 is
+    // 1.98, not the 0.99 that dividing by 128 gives. Halving every send is the
+    // whole of D-39: the reverb tail measured 39.60 dB where the reference
+    // gives 45.66, and 45.62 with this in place - a 0.03 dB residual.
+    64.0f
   },
 
   { true,  0x3f, 0x7f },
