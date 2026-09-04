@@ -262,7 +262,7 @@ static const RecordRomLayout JV880_RECORDS = {
   // Found from `B13 Orch Stab 1`, whose tone 2 is Trombone 1 at coarse +12: at
   // key 72 it sounds as key 84, above Trombone 1's eleventh breakpoint of 78,
   // and our render had no 1046 Hz component at all where the reference has a
-  // clean harmonic series on it. scdb D-67, M-060.
+  // clean harmonic series on it. scdb D-68, M-060.
   //
   // Checked before changing: all 129 records carry a 0x7f breakpoint inside
   // their real zones and none has a hole, so the search always terminates on a
