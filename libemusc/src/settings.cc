@@ -765,6 +765,16 @@ int Settings::update_drum_set(uint8_t map, uint8_t bank)
       index++;
   }
 
+  // The index is counted out of the drum-set LOOKUP TABLE, which has 128 slots,
+  // but it then subscripts the device's actual drum-set array. Those two are not
+  // the same size on every device: the JV-880 has THREE rhythm sets while the
+  // table it inherits admits far more, so a General MIDI file selecting a high
+  // drum kit indexed past the end and the render died with SIGSEGV - two of the
+  // first five corpus files (D-42). Treat an out-of-range kit exactly as the
+  // function already treats an invalid table entry.
+  if (index >= _ctrlRom.numDrumSets())
+    return -1;
+
   // On the original hardware both the active drum set configurations are
   // copied from ROM to RAM where they can be modified by the user
   for (unsigned int i = 0; i < 12; i ++) {
