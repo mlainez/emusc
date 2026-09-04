@@ -332,14 +332,30 @@ void Reverb::_process_sample_jv(float input, float output[2])
   // in all eight records, so its DC gain is exactly 1 and it only shapes.
   _preLpfState = _preLpfA * _preLpfState + _preLpfB * input;
 
-  // The loop tap is read BEFORE the write, so the recirculation is exactly w20
-  // samples - the one claim about this network confirmed by direct measurement
-  // (envelope self-similarity r = +0.82..0.87 at lag w20, and the two halves of
-  // one w20 window anti-correlated at -0.69..-0.92, which is what refuted a
-  // w20/2 sub-period).
-  const float fb = _rBuffer[(_jvLoopTap + _sweepIndex) & rBufferMask];
-  _rBuffer[_sweepIndex] = _preLpfState * _jvInGain + _gLoop * fb;
-
+  // The line feeds back its OWN WET OUTPUT, not a single point w20 samples
+  // back. Using w20 as a feedback tap - which this did, and whose supposed
+  // confirmation was measured against our own render rather than the reference
+  // (scdb docs/corrections_2026-09-04.md 27) - makes the whole nine-tap pattern
+  // recirculate at w20 and be heard as a discrete repeat. On HALL1, w20 is
+  // 12919 samples = 403.7 ms at this line's 32 kHz, and the owner heard it as
+  // a stutter in the piano's reverb at the end of demo song 4.
+  //
+  // Measured on the reference with a single 60 ms stab: envelope
+  // self-similarity at the w20 lag is +0.04 on HALL1 and +0.05 on PAN-DLY,
+  // i.e. nothing, and the structure that IS there sits at 46 and 48 ms -
+  // HALL1's second tap is 1483 samples = 46.3 ms. Ours had +0.52 at w20.
+  //
+  // Feeding the wet output back instead reproduces that: +0.06 at w20, its
+  // strongest structure at 44 ms, and a decay slope of -30.9 dB/s against the
+  // reference's -29.4 where the old model gave -26.9. It also tracks Reverb
+  // Time better on an axis that was not tuned for it - the slope error across
+  // times 30/60/90/127 falls from +18.0/+9.9/+2.7/-2.6 to +2.6/+0.6/+2.0/+5.8
+  // dB/s, a mean of 8.3 down to 2.75.
+  //
+  // This is a BETTER-MEASURING MODEL, not a trace. w20's real role is unknown:
+  // it sits just past the last tap in every one of the eight records (12172 vs
+  // 12919 on HALL1, 7115 vs 7440 on ROOM1), which is what a line LENGTH looks
+  // like, and nothing here establishes that.
   float wetL = 0.0f, wetR = 0.0f;
   for (int k = 0; k < _jvTaps; k++) {
     if (!_jvActive[k])                  // a zero gain byte is a MUTED pair
@@ -347,6 +363,8 @@ void Reverb::_process_sample_jv(float input, float output[2])
     wetL += _jvGain[k] * _rBuffer[(_jvTapL[k] + _sweepIndex) & rBufferMask];
     wetR += _jvGain[k] * _rBuffer[(_jvTapR[k] + _sweepIndex) & rBufferMask];
   }
+  const float fb = 0.5f * (wetL + wetR);
+  _rBuffer[_sweepIndex] = _preLpfState * _jvInGain + _gLoop * fb;
 
   _sweepIndex = (_sweepIndex - 1) & rBufferMask;
 
