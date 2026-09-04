@@ -69,56 +69,42 @@ private:
   WaveGenerator *_LFO1;
   WaveGenerator *_LFO2;
 
-  // Analog Feel, the manual's "1/f fluctuation": a slow per-voice pitch drift.
-
-  // The firmware keeps one signed byte per voice slot in @0x8572, stepped by
-
-  // task 13 every 16 ms at ROM1 0x0F12-0x0F9D as two-pole filtered noise
-
-  // sampled into a linear ramp of about 128 ms per segment, and never resets
-
-  // it at note-on. The pitch consumer is ROM1 0x40E3 with
-
-  //   t = drift >> 1        (-64..+63)
-
-  //   dCents = sign(t) * ((|t| * 2*AF) >> 8)
-
-  // giving +/-5 cents at this device's commonest non-zero setting, AF = 12,
-
-  // and +/-62 cents at AF = 127. There is a level consumer too (0x445D) but
-
-  // its worst case over the whole parameter space is 0.12 dB, so it is left
-
-  // out as numerically negligible - Analog Feel is audibly a PITCH mechanism,
-
-  // and reaches level only by decohering a stack. D-25, L-26.
-
+  // Analog Feel (patch common +0x14), scdb devices/jv880 D-25 / L-26. The
+  // firmware keeps one drift generator per voice slot in RTOS task 13 (16 ms),
+  // ROM1 0x0F12-0x0F9D, and this is that machine byte for byte: a signed-byte
+  // drift ramps toward a signed-byte target at a step of (target - drift) >> 3
+  // per tick (byte arithmetic, so a target more than 127 away drives it the
+  // wrong way into the clamp), and when it arrives or the byte overflows a new
+  // target is drawn by pushing a sound-chip word through two IIR poles and
+  // taking the low byte. Pitch takes (|drift >> 1| * 2 * AF) >> 8 cents.
   //
-
-  // DEVIATION, stated because it is real: the device's entropy is a sound-chip
-
-  // register read, so its drift SEQUENCE is not computable from the ROM and no
-
-  // port can match it sample-for-sample - only its magnitude, bandwidth and
-
-  // per-voice independence. This generator is therefore seeded per voice from
-
-  // a monotonic counter rather than shared and never-reset. That reproduces
-
-  // the within-note wander and the fact that two identical notes differ; it
-
-  // does not reproduce continuity of one slot's drift across notes.
-
-  int  _afDepth;                        // 2 * Analog Feel, 0 disables
-
-  int  _afDrift, _afFrom, _afTo;        // current, ramp start, ramp target
-
-  int  _afStep;                         // 8 ms ticks since the segment began
-
-  int  _afN1, _afN2;                    // two-pole noise state
-
+  // The chip word (ROM1 0x382C, a read of unused voice slot 30) is the one
+  // input the ROM cannot supply. Its SEQUENCE is unknowable; its statistics
+  // were measured on the reference from a single voice at Analog Feel 127 and
+  // 12 (scdb notes/track_d41_wip_2026-09-04.md). An arbitrary full-range word
+  // per read, pushed through this machine WITH its byte wraps, reproduces the
+  // drift's rms (33 cents at 127), its p99 (61), its autocorrelation at every
+  // lag to 0.5 s, its ramp-step statistics and the 3 % of time it spends at
+  // the clamp. The wraps are load-bearing: a target more than 127 away sends
+  // the ramp the wrong way into the clamp for a tick or two and a fresh draw,
+  // which is what slows the drift to the machine's 0.24 s correlation time;
+  // a smooth (random-walk) word instead parks the drift at the clamp for
+  // seconds, and a machine without the wraps sweeps the whole range in eight
+  // ticks - neither is seen on the reference. MEASURED (proxy).
+  //
+  // Per voice rather than per slot: this engine has no persistent slot state,
+  // so each voice warms its own machine up from a per-voice seed instead of
+  // inheriting the slot's, which reproduces "two identical notes differ" and
+  // the arbitrary drift phase a note starts with on the device.
+  int      _afDepth;                    // 2 * Analog Feel, 0 disables
+  int8_t   _afDrift;                    // @0x8572[slot]
+  int8_t   _afStepPerTick;              // @0x85FE[slot]
+  int8_t   _afTarget;                   // @0x861A[slot]
+  int16_t  _afA, _afB;                  // @0x858E / @0x85C6, the two filter words
+  int16_t  _afNoise;                    // the modelled chip word
+  bool     _afTickPhase;                // the 16 ms task runs every second 8 ms call
   uint32_t _afRng;
-
+  void _af_tick(void);
   int  _af_drift_cents10(void);
 
   // The JV's pitch envelope and LFO pitch depths (scdb devices/jv880 D-37,

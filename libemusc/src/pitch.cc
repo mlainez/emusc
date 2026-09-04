@@ -28,6 +28,7 @@
 #include "jv_velocity.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 
 // One monotonic counter across all voices, incremented per Pitch instance. It
@@ -71,10 +72,12 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
     _LFO1(LFO1),
     _LFO2(LFO2),
     _afDepth(2 * (int) ctrlRom.instrument(instrumentIndex).analogFeel),
-    _afDrift(0), _afFrom(0), _afTo(0), _afStep(0), _afN1(0), _afN2(0),
+    _afDrift(0), _afStepPerTick(0), _afTarget(0), _afA(0), _afB(0),
+    _afNoise(0), _afTickPhase(false),
     // Seeded per voice from a monotonic counter so that every voice and every
     // note gets its own sequence while the render stays reproducible - the
-    // counter is the only state, and nothing seeds it from the clock.
+    // counter is the only state here; std::rand() is folded in below only on a
+    // patch that uses Analog Feel, so a render's seed varies the drift.
     _afRng(0x2545F491u + 0x9E3779B9u * ++_afSeedCounter),
     _lfo1FadeComplete(false),
     _lfo2FadeComplete(false),
@@ -83,6 +86,18 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
     _settings(settings),
     _partId(partId)
 {
+  // A voice on the device lands in a slot whose Analog Feel machine has been
+  // running since power-on, so its drift starts at an arbitrary point of the
+  // trajectory, not at zero. Run the machine for 4 s of device time (256 ticks)
+  // from the per-voice seed before the first sample. Nothing here touches a
+  // patch with Analog Feel 0, which keeps every Sound Canvas render bit-exact.
+  if (_afDepth) {
+    _afRng ^= 2654435761u * (uint32_t) std::rand();
+    if (!_afRng) _afRng = 0x9E3779B9u;
+    for (int i = 0; i < 256; i++)
+      _af_tick();
+  }
+
   // UseForRhythm is 0 = off, 1 = map 1, 2 = map 2, so the drum-map table
   // index is _drumSet - 1, as every other DrumParam consumer already passes
   // (tva.cc, partial.cc, note.cc). Passing _drumSet itself made a map-1 part
@@ -232,39 +247,69 @@ void Pitch::note_off()
 }
 
 
+// One pass of the firmware's Analog Feel machine for this voice's slot: ROM1
+// 0x0F12-0x0F9D, the body of the 16 ms task-13 loop, with the H8/500's byte and
+// word wrap kept where the code relies on it. Register names in the comments
+// are the firmware's.
+static inline int8_t  wrap8(int v)  { return (int8_t)  (((v + 128) & 0xFF) - 128); }
+static inline int16_t wrap16(int v) { return (int16_t) (((v + 32768) & 0xFFFF) - 32768); }
+
+void Pitch::_af_tick(void)
+{
+  // f12-f3c: v = drift + step, as a byte add. On overflow the firmware
+  // substitutes +127 (0x7f) or -127 (0x81) and draws a new target. Otherwise
+  // it keeps ramping while v is still short of the target - blt for a rising
+  // ramp, bgt for a falling one - and draws when v has reached or passed it.
+  int v = _afDrift + _afStepPerTick;
+  bool draw;
+  if (v > 127)       { v =  127; draw = true; }
+  else if (v < -128) { v = -127; draw = true; }
+  else if (_afStepPerTick >= 0) draw = !(v < _afTarget);
+  else                          draw = !(v > _afTarget);
+
+  if (draw) {
+    // f3e: bsr 0x382c, the sound-chip word. Modelled as an arbitrary 16-bit
+    // word per read - white and full-range - which is what the reference's
+    // drift statistics select once the byte wraps below are kept (pitch.h).
+    _afRng ^= _afRng << 13; _afRng ^= _afRng >> 17; _afRng ^= _afRng << 5;
+    _afNoise = (int16_t) (_afRng >> 16);
+
+    // f43-f7b, in 16-bit words: A' = n + A - (A >> 6);
+    // B' = (A' - A) + (A >> 4) + B - (B >> 2); the target is the low byte of
+    // B' - (B >> 2), with B the OLD word.
+    const int a = _afA, b = _afB;
+    const int a2 = wrap16(_afNoise + a - (a >> 6));
+    const int b2 = wrap16((a2 - a) + (a >> 4) + b - (b >> 2));
+    _afA = (int16_t) a2;
+    _afB = (int16_t) b2;
+    _afTarget = wrap8(b2 - (b >> 2));                            // f81
+
+    // f85-f91: step = (target - v) >> 3 as a BYTE subtraction and an
+    // arithmetic byte shift; a result of 0 becomes +1. Because shar never
+    // rounds a negative difference to 0, the forced +1 is always the right
+    // direction.
+    int8_t step = (int8_t) (wrap8(_afTarget - v) >> 3);
+    if (step == 0) step = 1;
+    _afStepPerTick = step;
+  }
+  _afDrift = (int8_t) v;                                          // f97
+}
+
+
 // The drift, in tenths of a cent, which is the unit _targetPitch works in.
-// Structure follows the firmware's: filtered noise resampled into linear ramps.
-// Called once per 8 ms control period, so the device's 16 ms task is every
-// second call and its ~128 ms segment is eight of them.
+// Called once per 8 ms control period; the device's task runs every 16 ms, so
+// the machine advances on every second call and holds between them.
 int Pitch::_af_drift_cents10(void)
 {
   if (!_afDepth)                        // Analog Feel 0: exactly no effect
     return 0;
 
-  if (++_afStep >= 16) {                // 16 * 8 ms = 128 ms, one segment
-    _afStep = 0;
-    _afFrom = _afTo;
-    // xorshift, then two poles of averaging - the firmware filters its noise
-    // twice before sampling it, which is what keeps the drift slow rather than
-    // steppy. Range is kept inside +/-127 so `t = drift >> 1` matches the
-    // firmware's signed byte.
-    _afRng ^= _afRng << 13; _afRng ^= _afRng >> 17; _afRng ^= _afRng << 5;
-    int white = (int) (_afRng % 255) - 127;
-    _afN1 += (white - _afN1) >> 1;
-    _afN2 += (_afN1  - _afN2) >> 1;
-    _afTo = std::clamp(_afN2, -127, 127);
-    // A x3 rescale was tried here on the theory that two poles of averaging
-    // left the drift short of the signed-byte range, with a prediction of
-    // roughly double the modulation. Measured: 13.35 -> 12.46 dB, i.e. no
-    // change, so the drift was never range-limited and the clamp merely
-    // saturated. Reverted. The depth arithmetic already reaches the law's
-    // documented peak: |t| <= 63 with _afDepth = 24 at AF = 12 gives
-    // (63 * 24) >> 8 = 5 cents exactly.
-  }
+  _afTickPhase = !_afTickPhase;
+  if (_afTickPhase)
+    _af_tick();
 
-  // Linear ramp between segment endpoints, as the firmware's sampler does.
-  _afDrift = _afFrom + ((_afTo - _afFrom) * _afStep) / 16;
-
+  // ROM1 0x40E3-0x40FD: t = drift >> 1 (shar.b), delta = (|t| * 2AF) >> 8
+  // cents, added with t's sign.
   const int t = _afDrift >> 1;                       // -64..+63
   const int mag = ((std::abs(t) * _afDepth) >> 8);   // _afDepth is already 2*AF
   return (t < 0 ? -mag : mag) * 10;                  // cents -> tenths
