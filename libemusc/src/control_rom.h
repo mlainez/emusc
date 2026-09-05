@@ -465,8 +465,6 @@ public:
   enum class SynthGen {
     SC55    = 0,
     SC55mk2 = 1,
-    SC88    = 2,
-    SC88Pro = 3,
     JV880   = 4,
     JV1080  = 5
   };
@@ -563,8 +561,6 @@ private:
     sm_SC55,              // Original Sound Canvas
     sm_SC55mkII,          // Upgraded model
     sm_SCC1,              // ISA card version
-    sm_SC88,
-    sm_SC88Pro,
     sm_JV880,
     sm_JV1080,
   };

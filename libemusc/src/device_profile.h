@@ -978,7 +978,6 @@ extern const RomSignature SC55_SIGNATURE;
 extern const RomSignature SCC1_SIGNATURE;
 extern const RomSignature SC55MKII_SIGNATURE;
 extern const RomSignature SCB55_SIGNATURE;
-extern const RomSignature SC88_SIGNATURE;
 
 // The Sound Canvas family's shared behaviour, for a generation whose ROM layout
 // has not been mapped yet and so has no profile of its own. It carries only what

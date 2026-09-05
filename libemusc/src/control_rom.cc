@@ -178,8 +178,7 @@ const ControlRom::KnownDevice ControlRom::KNOWN_DEVICES[] = {
   { &SC55_SIGNATURE,     sm_SC55,     SynthGen::SC55    },
   { &SC55MKII_SIGNATURE, sm_SC55mkII, SynthGen::SC55mk2 },
   { &SCB55_SIGNATURE,    sm_SC55mkII, SynthGen::SC55mk2 },
-  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    },
-  { &SC88_SIGNATURE,     sm_SC88,     SynthGen::SC88    }
+  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    }
 };
 const int ControlRom::KNOWN_DEVICE_COUNT =
   (int) (sizeof(KNOWN_DEVICES) / sizeof(KNOWN_DEVICES[0]));
