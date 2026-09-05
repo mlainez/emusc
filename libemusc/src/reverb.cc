@@ -327,6 +327,27 @@ float Reverb::_fade_step(void)
 //    producing numbers that measure beautifully on the axis they were fitted
 //    on and destroy the others.
 //
+//    AND IT IS REFUTED by a measurement scdb had already made. Its
+//    08_effects/reverb.md tested a w20/2 sub-period directly against the
+//    reference: the first and second half of one w20 window are ANTI-correlated
+//    at r = -0.69 to -0.92 at every Time, while adjacent w20 windows correlate
+//    at r = +0.82 to +0.87. That is how w20 was confirmed as the loop period in
+//    the first place, and byte-addressed taps require exactly the w20/2 period
+//    that test rules out. The same page settles the other half: +0x36 is word
+//    27's HIGH byte, values 74/142/94/116/116/154, and the firmware's mulxu.b
+//    at ROM2 0x71CD multiplies by it "confirmed to the instruction" - so
+//    reading the LOW byte as the Time scale contradicts a disassembly.
+//
+//    Both were built and measured before that page was read, and both measured
+//    BETTER - envelope error +3.91 -> +0.30 dB, the kit's effects tail 4.81 ->
+//    3.27. Neither is kept. A structure that measures better and contradicts a
+//    direct correlation measurement and a disassembled instruction is a warning
+//    that the metric is incomplete, not a discovery; this session has already
+//    produced three of those. Read 08_effects/reverb.md before touching this
+//    network again - it also records that in-loop damping is real but "not
+//    driven by any field in the record", which makes the byte used above for
+//    the damping pole a candidate rather than a finding.
+//
 //    THAT JOINT SEARCH WAS RUN, and it is a negative result worth having. Three
 //    axes: tap scale (as read, or halved), feedback (the wet sum, or the single
 //    w20 tap), and a multiplier on the loop gain. Scored on the drum tail with
@@ -455,14 +476,7 @@ void Reverb::_process_sample_jv(float input, float output[2])
   // 2.5 s - and the mean error over the whole decay goes 3.3 dB at 1.0 to
   // 10.9 dB at 0.80. The two interact: less feedback reaches the line's one-LSB
   // floor sooner, so a gain fitted on slope alone truncates the end.
-  // The loop is closed from the single loop tap on a device that says so.
-  // The wet sum was adopted because a w20 feedback produced an audible stutter
-  // at that tap's lag - but that was measured with the tap read as SAMPLES,
-  // where w20 is 403 ms. Read as bytes it is 224 ms and a different structure
-  // entirely, and the objection does not carry over.
-  const float fb = _settings->device()->reverb.loopTapFeedback
-    ? _rBuffer[(_jvLoopTap + _sweepIndex) & rBufferMask]
-    : 0.5f * (wetL + wetR);
+  const float fb = 0.5f * (wetL + wetR);
   // The delay line is the chip's, and the chip's is FIXED POINT. Writing a
   // float here means the recirculating signal halves forever and never reaches
   // zero; the hardware's underflows to silence once it falls below one LSB,
@@ -584,34 +598,15 @@ void Reverb::_set_jv_character(int character)
     return;
 
   _jvPreDelay  = (uint16_t) rec[1];
-  // Tap words are BYTE addresses on a device that declares a byte-per-sample:
-  // the effect memory is 16-bit, which is the same fact the line's own 1/32768
-  // truncation rests on. Measured, it is what puts the wet onset at 20 ms
-  // against the reference's 18 where reading them as samples gives 40.
-  const int bps = std::max(1, _settings->device()->reverb.tapAddressBytesPerSample);
-  _jvLoopTap   = (uint16_t) (rec[20] / bps);
+  _jvLoopTap   = (uint16_t) rec[20];
   _jvTapBase   = (uint16_t) (rec[13] + 1);   // word +0x1A plus one
   _jvInGain    = sByte((uint16_t) rec[22], true);
-  // WORD 27's TWO HALVES, and a challenge to a firmware trace.
-  //
-  // This reads +0x37 as the Time scale and +0x36 as the damping pole. The
-  // profile documents the opposite - +0x36 is the byte the firmware multiplies
-  // Reverb Time by at ROM2 0x71C3-0x71DC - and that is a trace, which outranks
-  // a measurement in this project's evidence order. It is written this way
-  // because the alternative needs an INVENTED NUMBER and this does not.
-  //
-  // With +0x36 as the scale the loop gain has to be multiplied by a fitted 1.8
-  // to reach the reference; 256/1.8 is 142 and nothing in any record is 142.
-  // With +0x37 the firmware's own arithmetic reaches it with no multiplier at
-  // all, and measures BETTER: envelope error +2.22 -> +0.30 dB on the drum
-  // tail, kit-wide effects tail 3.44 -> 3.27 dB. The two bytes are adjacent and
-  // differ by 116 against 199 on HALL1, so a trace that named one could have
-  // named the other.
-  //
-  // Either the trace is about a different register, or this is wrong and the
-  // 1.8 hides a real term. Re-reading ROM2 0x71C3 settles it, and until then
-  // the version with no invented number is the one that ships.
-  _jvTimeScale = rec[27] & 0xff;             // record[+0x37]
+  // +0x36, the Time scale the firmware multiplies Reverb Time by at ROM2
+  // 0x71CD - confirmed to the instruction, values 74/142/94/116/116/154 across
+  // the six reverbs (scdb 08_effects/reverb.md). Reading the LOW byte instead
+  // needs no fitted multiplier and measures better; it was tried and is NOT
+  // kept, because it contradicts a disassembled mulxu.b. See the note below.
+  _jvTimeScale = rec[27] >> 8;               // record[+0x36]
 
   // The pre-LPF pair, high byte the pole and low byte the input gain. Which is
   // which comes from the SC-55 mk1, which drives the same chip register from its
@@ -629,7 +624,7 @@ void Reverb::_set_jv_character(int character)
   //
   // The DELAY records are 0x38 bytes and do not own words 28-29 at all; theirs
   // read out of the record that follows, so only characters 0-5 use this.
-  _jvDampPole = (rec[27] >> 8) / 256.0f;     // record[+0x36]
+  _jvDampPole = (rec[27] & 0xff) / 256.0f;   // record[+0x37]
 
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
@@ -643,8 +638,8 @@ void Reverb::_set_jv_character(int character)
   };
 
   for (int k = 0; k < _jvTaps; k++) {
-    _jvTapL[k] = (uint16_t) (rec[2 * (k + 1)] / bps);
-    _jvTapR[k] = (uint16_t) (rec[2 * (k + 1) + 1] / bps);
+    _jvTapL[k] = (uint16_t) rec[2 * (k + 1)];
+    _jvTapR[k] = (uint16_t) rec[2 * (k + 1) + 1];
     const int raw = gainByte[k].hi ? (rec[gainByte[k].word] >> 8)
                                    : (rec[gainByte[k].word] & 0xff);
     // k == 1 is P2, whose byte is 0x00 in every record on both devices. It is
