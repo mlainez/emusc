@@ -74,7 +74,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   // The JV family: partials, samples and the two preset patch banks live in
   // ROM. There is no drum-set table and no separate CPU ROM holding the lookup
   // tables, so the SC-55 sequence below does not apply.
-  if (_synthModel == sm_JV880 || _synthModel == sm_JV1080) {
+  if (_synthModel == sm_JV880) {
     _read_device_waveforms();
     _read_device_samples();
     if (_profile->records->has_patches()) {
@@ -1071,10 +1071,7 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 }
 
 
-// Both JV machines were mapped by measuring their own ROMs (P-0356, P-0361).
-// They share every structure with each other and differ only in these numbers;
-// the JV-880's dumps read straight where the JV-1080's address bus is permuted,
-// which WaveRom handles.
+// The JV-880 was mapped by measuring its own ROM (P-0356, P-0361).
 // The only place in the engine that names a device. Everything else asks the
 // profile.
 const DeviceProfile *ControlRom::_profile_for(enum SynthModel model)
@@ -1084,14 +1081,12 @@ const DeviceProfile *ControlRom::_profile_for(enum SynthModel model)
   case sm_SCC1:      return &SC55_PROFILE;
   case sm_SC55mkII:  return &SC55MKII_PROFILE;
   case sm_JV880:     return &JV880_PROFILE;
-  case sm_JV1080:    return &JV1080_PROFILE;
   default:           return nullptr;
   }
 }
 
 
 const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
-  { sm_JV1080, SynthGen::JV1080, &JV1080_PROFILE },
   { sm_JV880,  SynthGen::JV880,  &JV880_PROFILE  },
 };
 const int ControlRom::DEVICE_COUNT =

@@ -1228,8 +1228,7 @@ bool Settings::select_performance(int selector)
 
 void Settings::_apply_device_performance(void)
 {
-  if (_ctrlRom.generation() != ControlRom::SynthGen::JV880 &&
-      _ctrlRom.generation() != ControlRom::SynthGen::JV1080)
+  if (_ctrlRom.generation() != ControlRom::SynthGen::JV880)
     return;
 
   // The performance's effect settings, applied before the parts.

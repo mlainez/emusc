@@ -9,7 +9,6 @@ add_library(emusc
   chorus.h
   control_rom.cc
   devices/jv880.cc
-  devices/jv1080.cc
   devices/sc55.cc
   devices/sc55mkii.cc
   devices/sound_canvas_default.cc

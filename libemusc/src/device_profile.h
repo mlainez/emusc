@@ -986,7 +986,6 @@ extern const RomSignature SCB55_SIGNATURE;
 extern const DeviceProfile SOUND_CANVAS_DEFAULT_PROFILE;
 
 extern const DeviceProfile JV880_PROFILE;
-extern const DeviceProfile JV1080_PROFILE;
 extern const DeviceProfile SC55_PROFILE;
 extern const DeviceProfile SC55MKII_PROFILE;
 

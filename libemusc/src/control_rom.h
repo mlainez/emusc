@@ -465,8 +465,7 @@ public:
   enum class SynthGen {
     SC55    = 0,
     SC55mk2 = 1,
-    JV880   = 4,
-    JV1080  = 5
+    JV880   = 4
   };
 
   int dump_demo_songs(std::string path);
@@ -562,7 +561,6 @@ private:
     sm_SC55mkII,          // Upgraded model
     sm_SCC1,              // ISA card version
     sm_JV880,
-    sm_JV1080,
   };
   enum SynthModel _synthModel;
 
