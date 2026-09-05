@@ -808,11 +808,24 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     _partLevelInDynamics = ctrlRom.profile()->level.partLevelInDynamics != 0;
   }
 
-  // Dry Level, 7 bits widened to 8 the way the firmware widens a gain byte.
-  // 0x7f gives exactly 1.0f, so a device without a dry attenuator is bit-exact.
+  // Dry Level. The gain is proportional to d - 1, not to d: the device is
+  // SILENT at 1 as well as at 0, and every step above that is one 126th of
+  // full scale. 0x7f gives exactly 1.0f, so a device without a dry attenuator
+  // is bit-exact.
+  //
+  // Measured on the reference (scdb D-28), Internal kit key 42 `Closed HAT 1`
+  // and key 46 `Open HAT 1` - both in mute group 1, so a repeated hit chokes
+  // its predecessor and each window holds one voice - with the note's own
+  // sends and the performance's effect levels closed, sweeping Dry Level over
+  // DT1: sixteen values from 127 down to 1 land on (d-1)/126 to 0.006 dB and
+  // eleven to 0.001 dB, over 42 dB of range and at two absolute levels 10.8 dB
+  // apart. The widening this replaces - the (2d + carry)/255 form the firmware
+  // uses on OTHER gain bytes - was right to 0.2 dB above d = 32 and wrong by
+  // 5.9 dB at d = 2 and by 28.2 dB at d = 1, where it played a tone the
+  // machine mutes.
   {
     const int d = _instPartial.dryLevel & 0x7f;
-    _dryGain = (2 * d + (d >= 64 ? 1 : 0)) / 255.0f;
+    _dryGain = (d > 1) ? (d - 1) / 126.0f : 0.0f;
   }
 
   // The JV family computes level multiplicatively in the linear domain and
