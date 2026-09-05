@@ -858,6 +858,7 @@ const DeviceProfile JV880_PROFILE = {
     // (IC24, service notes p.3), so the line truncates below 1/32768.
     // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
     // (IC24, service notes p.3), so the line truncates below 1/32768.
+true,     // close the loop from w20, not from the wet sum
     1.0f / 32768.0f
   },
 

@@ -762,6 +762,11 @@ struct ReverbLaw
   // within a factor 1.07-1.47. scdb D-60.
   float chorusSendDivisor = 0.0f;
 
+  // Close the recirculation from the single loop tap rather than from the wet
+  // sum. False keeps the wet-sum form, which is what the network was written
+  // with before the loop period was measured.
+  bool loopTapFeedback = false;
+
   // One LSB of the effect memory's word, for a device whose reverb line is
   // fixed point. It decides where a tail STOPS: below one LSB the recirculating
   // signal truncates to zero and the line goes silent, where a float line

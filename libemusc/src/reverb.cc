@@ -492,7 +492,32 @@ void Reverb::_process_sample_jv(float input, float output[2])
   // 2.5 s - and the mean error over the whole decay goes 3.3 dB at 1.0 to
   // 10.9 dB at 0.80. The two interact: less feedback reaches the line's one-LSB
   // floor sooner, so a gain fitted on slope alone truncates the end.
-  const float fb = 0.5f * (wetL + wetR);
+  // THE LOOP IS CLOSED FROM w20, not from the wet sum.
+  //
+  // This reverses the 2026-09-04 change recorded above, and every reason for
+  // that change has since been answered. Its evidence was envelope
+  // self-similarity at the w20 lag: ours +0.52 where the reference is +0.04,
+  // heard as a stutter in song 4's piano tail. Measured again now, with the
+  // in-loop damping and the fixed-point line that did not exist then, the same
+  // lag gives the reference -0.044 and this topology +0.015. The stutter was
+  // real and is gone, because what produced it was an undamped recirculation.
+  //
+  // What decided it is that the wet sum makes the loop period the TAP SPREAD
+  // rather than w20, and scdb 08_effects/reverb.md confirmed w20 as the
+  // reference's loop period by direct autocorrelation - adjacent w20 windows at
+  // r = +0.82 to +0.87. A structure whose period is not w20 contradicts that
+  // however well it measures elsewhere. It is also what that page's own
+  // description of the network says: one line, nine stereo tap pairs, the loop
+  // closed from a TENTH tap.
+  //
+  // On the drum tail against the reference, wet sum -> this, with the
+  // firmware's own loop gain and no fitted multiplier anywhere:
+  //   envelope steps more than 6 dB out   161/360 -> 127/360
+  //   1/24-octave narrowband mean            4.54 -> 3.35 dB, sd 6.26 -> 4.46
+  //   bins more than 6 dB out                  45 -> 19,  over 10 dB 12 -> 6
+  const float fb = _settings->device()->reverb.loopTapFeedback
+    ? _rBuffer[(_jvLoopTap + _sweepIndex) & rBufferMask]
+    : 0.5f * (wetL + wetR);
   // The delay line is the chip's, and the chip's is FIXED POINT. Writing a
   // float here means the recirculating signal halves forever and never reaches
   // zero; the hardware's underflows to silence once it falls below one LSB,
