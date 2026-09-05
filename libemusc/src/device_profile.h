@@ -300,6 +300,17 @@ struct RhythmLayout
   // bank, which is what a profile written before this existed wants.
   int      banks;
   uint32_t bankStride;
+
+  // The pitch block, the rhythm note's WG modulation - the same five fields a
+  // patch tone carries in ToneFieldMap, in the same encoding, read by the same
+  // JV pitch envelope (Pitch::_jv_init). Zero pitchEnv means the record has no
+  // pitch envelope and the whole block is left neutral. The rhythm note has
+  // ONE time-velocity nibble for this envelope, mirrored into T1 and T4 like
+  // the TVA's and TVF's, and no time key-follow.
+  int      pitchEnv;                    // first of T1 L1 T2 L2 T3 L3 T4 L4, L signed
+  int      pitchEnvDepth;               // signed -12..+12
+  int      pitchEnvVelSens;             // signed -63..+63
+  int      pitchTimeVelocity;           // low nibble, 0-14, 7 neutral
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which

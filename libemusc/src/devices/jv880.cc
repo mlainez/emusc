@@ -700,7 +700,18 @@ static const RecordRomLayout JV880_RECORDS = {
     // ask for Preset A (PC 0 under the preset flag), songs 3 and 6 for Preset B
     // (PC 64 and PC 126). Song 3's rhythm channel measured +20.37 dB against
     // the oracle on that alone. scdb D-52.
-    3, 0x8000
+    3, 0x8000,
+
+    // The pitch block (D-71). +0x09 begins the four INTERLEAVED time/level
+    // pairs T1 L1 T2 L2 T3 L3 T4 L4 (descriptors 0x0D-0x14), +0x08 is P-ENV
+    // Depth (0x0C, signed -12..+12), +0x07 P-ENV Velocity Level Sense (0x0A,
+    // signed) and +0x05's low nibble the P-ENV time velocity (0x0B). Three
+    // factory notes carry a non-zero depth - Internal 90 (+12), Internal 92
+    // (-12) and Preset B 87 REV TAMB (+12), each with L1 = +63 and a T1 of 74
+    // or 83 - and on those the note sweeps a full octave. Preset B 87 is the
+    // only note of its kit exercising this, and it measured a semitone flat
+    // over its body with the block unread.
+    0x09, 0x08, 0x07, 0x05
   }
 };
 

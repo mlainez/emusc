@@ -2400,6 +2400,20 @@ int ControlRom::_read_device_rhythm(void)
     ip.TVFEnvL4 = ip.TVFEnvL3;
     ip.TVFEnvT4 = 0x7f;
 
+    // The pitch block, into the same fields and the same envelope the patch
+    // tones use (Pitch::_jv_init, D-37). The rhythm note has ONE time-velocity
+    // nibble for this envelope, mirrored into T1 and T4 as for the other two,
+    // and no time key-follow; _init_neutral_partial() has left that at 7.
+    if (R.pitchEnv) {
+      ip.PitchJVDepth   = (int8_t) r[R.pitchEnvDepth];
+      ip.PitchJVVelSens = (int8_t) r[R.pitchEnvVelSens];
+      ip.PitchJVVelT1 = ip.PitchJVVelT4 = r[R.pitchTimeVelocity] & 0x0f;
+      for (int i = 0; i < 4; i++) {
+        ip.PitchJVT[i] = r[R.pitchEnv + 2 * i] & 0x7f;
+        ip.PitchJVL[i] = (int8_t) r[R.pitchEnv + 2 * i + 1];
+      }
+    }
+
     const int key = R.firstKey + k;
     ds.key[key]    = r[R.playKey] & 0x7f;
 
