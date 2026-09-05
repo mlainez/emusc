@@ -856,6 +856,8 @@ const DeviceProfile JV880_PROFILE = {
     // them: the expand(Time) term, the loop-length term, and the offset in dB.
     // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
     // (IC24, service notes p.3), so the line truncates below 1/32768.
+    // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
+    // (IC24, service notes p.3), so the line truncates below 1/32768.
     1.0f / 32768.0f
   },
 

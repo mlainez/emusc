@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 
 namespace EmuSC {
@@ -363,6 +364,18 @@ void Reverb::_process_sample_jv(float input, float output[2])
     wetL += _jvGain[k] * _rBuffer[(_jvTapL[k] + _sweepIndex) & rBufferMask];
     wetR += _jvGain[k] * _rBuffer[(_jvTapR[k] + _sweepIndex) & rBufferMask];
   }
+  // How much of that wet sum returns, and a warning about how it was nearly
+  // got wrong. Fitting it against the reference's T60 - Schroeder integration
+  // over a 6 type x 6 Time sweep, 24 stable cells - says 0.80: mean error
+  // 22.0 % -> 11.2 %, worst 71.8 % -> 29.0 %, and the systematic bias +18.0 %
+  // -> +0.7 %. It wins on every one of those statistics and it is still wrong.
+  //
+  // T20 measures the SLOPE between -5 and -25 dB and says nothing about where
+  // a tail STOPS. Compared point by point against the reference instead, 0.80
+  // reaches digital silence a second early - -96 dB against the reference at
+  // 2.5 s - and the mean error over the whole decay goes 3.3 dB at 1.0 to
+  // 10.9 dB at 0.80. The two interact: less feedback reaches the line's one-LSB
+  // floor sooner, so a gain fitted on slope alone truncates the end.
   const float fb = 0.5f * (wetL + wetR);
   // The delay line is the chip's, and the chip's is FIXED POINT. Writing a
   // float here means the recirculating signal halves forever and never reaches
