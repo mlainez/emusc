@@ -818,7 +818,14 @@ int Settings::update_drum_set_bank(uint8_t map, int selector)
 int Settings::_copy_drum_set(uint8_t map, int index)
 {
   // On the original hardware both the active drum set configurations are
-  // copied from ROM to RAM where they can be modified by the user
+  // copied from ROM to RAM where they can be modified by the user.
+  //
+  // On the JV that copy is the temporary rhythm setup, and selecting a set is
+  // also what THROWS AWAY any DT1 edits the previous selection had collected -
+  // so the records go back to what the ROM holds before anything is read out
+  // of them (scdb D-32). A no-op when nothing was edited.
+  _ctrlRom.device_rhythm_reload(index);
+
   for (unsigned int i = 0; i < 12; i ++) {
     if (i < _ctrlRom.drumSet(index).name.length()) {
       _drumParams[(int) DrumParam::DrumsMapName + i |(map << 12)] =
@@ -827,26 +834,66 @@ int Settings::_copy_drum_set(uint8_t map, int index)
       _drumParams[(int) DrumParam::DrumsMapName + i |(map << 12)] = ' ';
     }
   }
-  for (int r = 0; r < 128; r++) {
-    _drumParams[(int) DrumParam::PlayKeyNumber     | (map << 12) | r] =
-      _ctrlRom.drumSet(index).key[r];
-    _drumParams[(int) DrumParam::Level             | (map << 12) | r] =
-      _ctrlRom.drumSet(index).volume[r];
-    _drumParams[(int) DrumParam::AssignGroupNumber | (map << 12) | r] =
-      _ctrlRom.drumSet(index).assignGroup[r];
-    _drumParams[(int) DrumParam::Panpot            | (map << 12) | r] =
-      _ctrlRom.drumSet(index).panpot[r];
-    _drumParams[(int) DrumParam::ReverbDepth       | (map << 12) | r] =
-      _ctrlRom.drumSet(index).reverb[r];
-    _drumParams[(int) DrumParam::ChorusDepth       | (map << 12) | r] =
-      _ctrlRom.drumSet(index).chorus[r];
-    _drumParams[(int) DrumParam::RxNoteOff         | (map << 12) | r] =
-      _ctrlRom.drumSet(index).flags[r] & 0x01;
-    _drumParams[(int) DrumParam::RxNoteOn          | (map << 12) | r] =
-      _ctrlRom.drumSet(index).flags[r] & 0x10;
-  }
+  for (int r = 0; r < 128; r++)
+    _copy_drum_key(map, index, r);
+
+  if (map < 2)
+    _drumSetIndex[map] = index;
 
   return index;
+}
+
+
+// One key of a drum set, from the control ROM's copy into the map's RAM. Split
+// out of _copy_drum_set() because a JV rhythm-note DT1 changes one key.
+void Settings::_copy_drum_key(uint8_t map, int index, int r)
+{
+  _drumParams[(int) DrumParam::PlayKeyNumber     | (map << 12) | r] =
+    _ctrlRom.drumSet(index).key[r];
+  _drumParams[(int) DrumParam::Level             | (map << 12) | r] =
+    _ctrlRom.drumSet(index).volume[r];
+  _drumParams[(int) DrumParam::AssignGroupNumber | (map << 12) | r] =
+    _ctrlRom.drumSet(index).assignGroup[r];
+  _drumParams[(int) DrumParam::Panpot            | (map << 12) | r] =
+    _ctrlRom.drumSet(index).panpot[r];
+  _drumParams[(int) DrumParam::ReverbDepth       | (map << 12) | r] =
+    _ctrlRom.drumSet(index).reverb[r];
+  _drumParams[(int) DrumParam::ChorusDepth       | (map << 12) | r] =
+    _ctrlRom.drumSet(index).chorus[r];
+  _drumParams[(int) DrumParam::RxNoteOff         | (map << 12) | r] =
+    _ctrlRom.drumSet(index).flags[r] & 0x01;
+  _drumParams[(int) DrumParam::RxNoteOn          | (map << 12) | r] =
+    _ctrlRom.drumSet(index).flags[r] & 0x10;
+}
+
+
+// A JV rhythm-note DT1. The device has ONE temporary rhythm setup, so the edit
+// lands on whichever set the drum maps hold - both, when they hold the same
+// one, which is the only case the JV reaches.
+bool Settings::rhythm_note_dt1(int note, uint8_t param, uint8_t value)
+{
+  if (!_ctrlRom.has_device_rhythm_dt1())
+    return false;
+
+  bool acted = false;
+  int done = -1;
+  for (uint8_t map = 0; map < 2; map++) {
+    const int index = _drumSetIndex[map];
+    if (index < 0 || index == done)
+      continue;
+
+    const int key = _ctrlRom.device_rhythm_dt1(index, note, param, value);
+    done = index;
+    if (key < 0 || key > 127)
+      continue;
+
+    for (uint8_t m = 0; m < 2; m++)
+      if (_drumSetIndex[m] == index)
+        _copy_drum_key(m, index, key);
+    acted = true;
+  }
+
+  return acted;
 }
 
 

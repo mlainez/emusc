@@ -191,7 +191,18 @@ public:
 
   // Select a rhythm set by memory bank, for a JV rhythm program change.
   int  update_drum_set_bank(uint8_t map, int selector);
+
+  // A JV rhythm-note DT1 (00 07 4n pp): edit the temporary rhythm setup, which
+  // is the set the rhythm part currently holds, and re-read the drum
+  // parameters of the key it touched. True when a key changed.
+  bool rhythm_note_dt1(int note, uint8_t param, uint8_t value);
 private:
+
+  // Which rhythm set each of the two drum maps holds, or -1 for none. The JV
+  // needs it because a DT1 edits the LOADED set and nothing else records which
+  // that is.
+  int _drumSetIndex[2] = { -1, -1 };
+  void _copy_drum_key(uint8_t map, int index, int key);
 
   // BE / LE conversion
   inline bool _le_native(void) { uint16_t n = 1; return (*(uint8_t *) & n); }

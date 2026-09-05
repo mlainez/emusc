@@ -552,6 +552,29 @@ public:
   // Key Assign SOLO. False on a device without the field.
   bool device_patch_solo(int patch);
 
+  // JV only: the RHYTHM SETUP AS RUNTIME STATE.
+  //
+  // On the device the rhythm records are not read from ROM at note-on: the
+  // selected set is copied into the temporary rhythm setup in work RAM
+  // (0x0A2B1C, 61 notes of 0x2C bytes) and a DT1 to 00 07 4n pp edits that
+  // copy, so a sequencer can retune a kit while it plays. This port had baked
+  // the records into _instruments at load time and no edit could reach them
+  // (scdb D-32).
+  //
+  // device_rhythm_reload() puts a bank back the way the ROM has it, which is
+  // what a program change on the rhythm part does - the edits are lost, as
+  // they are on the machine. device_rhythm_dt1() applies one DT1 parameter
+  // through the ROM's own field descriptor and re-derives that key's voice
+  // state; it returns the MIDI key it changed, or -1 when nothing was written.
+  //
+  // Both are no-ops on a device with no rhythm descriptor table.
+  bool device_rhythm_reload(int bank);
+  int  device_rhythm_dt1(int bank, int note, uint8_t param, uint8_t value);
+  bool has_device_rhythm_dt1(void) const
+  { return _profile && _profile->records &&
+           _profile->records->rhythm.descriptorCount > 0 &&
+           !_deviceRhythmRam.empty(); }
+
   std::vector<std::vector<std::string>> get_instruments_list(void);
   std::vector<std::vector<std::string>> get_partials_list(void);
   std::vector<std::vector<std::string>> get_samples_list(void);
@@ -644,6 +667,7 @@ private:
   int  _read_device_performances(void);
   int  _load_performance(uint32_t base, int index);
   int  _read_device_rhythm(void);
+  void _decode_device_rhythm_key(int bank, int k);
 
   const DeviceProfile *_profile = nullptr;
 public:
@@ -656,6 +680,19 @@ public:
   { return _profile ? _profile : &SOUND_CANVAS_DEFAULT_PROFILE; }
 private:   // set when the device is identified
   std::vector<uint8_t> _deviceRom;       // whole JV control ROM, for table walking
+
+  // Whether _deviceRom carries the later firmware revision's banner. Several
+  // tables move between the two, and the DT1 descriptor table is one of them.
+  bool _laterRevision = false;
+
+  // The rhythm records as RAM: one editable copy of every bank's records, the
+  // drum set and instrument slots they decode into, and the DT1 nibble stash
+  // the firmware keeps at @0x62DB for the value pairs that arrive in halves.
+  std::vector<uint8_t> _deviceRhythmRam;
+  int     _deviceRhythmBanks   = 0;
+  int     _deviceRhythmDrumSet0 = -1;
+  int     _deviceRhythmInst0    = -1;
+  uint8_t _deviceRhythmNibble   = 0;
   std::array<int, 16> _channelPatch;
   std::array<int, 16> _channelLevel;
   std::array<int, 16> _channelPan;

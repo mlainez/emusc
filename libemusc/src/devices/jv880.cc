@@ -731,7 +731,17 @@ static const RecordRomLayout JV880_RECORDS = {
     // rest 0. On the reference a full bend moves Internal 88 and 89 by +1200
     // cents and Internal 87 (range 0) by nothing, where the part's own range
     // would have moved all three by 200.
-    0x06
+    0x06,
+
+    // The Rhythm Note field-descriptor table the DT1 rhythm arm walks (ROM2
+    // 0x2F148 -> the generic apply routine at 0x2F604), 52 entries of eight
+    // bytes. v1.0.1 inserts 318 bytes of code below it, so the two revisions
+    // hold it at 0x3A786 and 0x3A8C4 - the same 318-byte shift the Performance
+    // Common, Performance Part and Patch Tone tables take. Checked: the two
+    // images carry byte-identical tables at those two addresses, the shift
+    // derived from each entry's +4 equals the lowest cleared bit of its +5 in
+    // all 52, and the largest +6 is 0x2B = the record size minus one.
+    0x03A786, 0x03A8C4, 52
   }
 };
 

@@ -322,6 +322,18 @@ struct RhythmLayout
   // leave it at 0 on 176 of 183 notes, so a bend on the rhythm channel moves
   // only the seven that ask for it.
   int      bendRange;
+
+  // The DT1 FIELD-DESCRIPTOR TABLE for a rhythm note: eight bytes per SysEx
+  // parameter - nibble mode, min, max, bias, shift-1, preserve mask, record
+  // offset, recalc bit - which is what turns an incoming DT1 byte into a bit
+  // field of the record. Reading it out of the ROM is what lets a rhythm-note
+  // edit reach the engine without a second copy of the parameter map here.
+  // Zero means the device has none and rhythm DT1 is ignored.
+  //
+  // `descriptorsAlt` is the same table in the later firmware revision, used
+  // exactly as RomLookupTable::offsetAlt is.
+  uint32_t descriptors, descriptorsAlt;
+  int      descriptorCount;
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which

@@ -72,6 +72,17 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
 
   _profile = _profile_for(_synthModel);
 
+  // Which firmware revision this image is, for the tables that move with it.
+  // The banner is the device's own and appears exactly once, so searching for
+  // it beats trusting a file name or a fixed address - the banner itself moved
+  // between the two JV-880 revisions.
+  _laterRevision =
+    !_deviceRom.empty() &&
+    std::search(_deviceRom.begin(), _deviceRom.end(),
+                LATER_REVISION_BANNER,
+                LATER_REVISION_BANNER + sizeof(LATER_REVISION_BANNER) - 1)
+      != _deviceRom.end();
+
   // A ROM we can name but have no profile for is recognised, not supported: say
   // so rather than reading it with another device's offsets.
   if (!_profile)
@@ -1897,16 +1908,7 @@ void ControlRom::_init_device_lookup_tables(void)
       return inversions == 0;
     };
 
-  // Which firmware revision this image is, for the tables that move with it.
-  // The banner is the device's own and appears exactly once, so searching for
-  // it beats trusting a file name or a fixed address - the banner itself moved
-  // between the two JV-880 revisions.
-  const bool laterRevision =
-    _deviceRom.size() > 0 &&
-    std::search(_deviceRom.begin(), _deviceRom.end(),
-                LATER_REVISION_BANNER,
-                LATER_REVISION_BANNER + sizeof(LATER_REVISION_BANNER) - 1)
-      != _deviceRom.end();
+  const bool laterRevision = _laterRevision;
 
   if (haveRom) {
     for (int i = 0; i < _profile->lookupTableCount; i++) {
@@ -2272,199 +2274,50 @@ int ControlRom::_read_device_rhythm(void)
   const int banks = (R.banks > 0) ? R.banks : 1;
   static const char *BANK_NAME[3] = { "Rhythm I", "Rhythm A", "Rhythm B" };
 
+  const size_t span = (size_t) R.keys * R.stride;
+  int nBanks = 0;
   for (int b = 0; b < banks; b++) {
-  const uint32_t bankBase = R.offset + (uint32_t) b * R.bankStride;
-  if ((size_t) bankBase + R.keys * R.stride > _deviceRom.size())
-    break;
+    if ((size_t) R.offset + (size_t) b * R.bankStride + span > _deviceRom.size())
+      break;
+    nBanks++;
+  }
+  if (!nBanks)
+    return -1;
 
-  struct DrumSet ds = {};
-  ds.name = (b < 3) ? BANK_NAME[b] : "Rhythm";
+  // The records go into RAM, because on the device that is where they live: a
+  // rhythm program change copies the set into the temporary rhythm setup and a
+  // DT1 edits THAT, so nothing may read the ROM image after this point.
+  _deviceRhythmBanks    = nBanks;
+  _deviceRhythmDrumSet0 = (int) _drumSets.size();
+  _deviceRhythmInst0    = (int) _instruments.size();
+  _deviceRhythmRam.resize((size_t) nBanks * span);
 
-  for (int k = 0; k < 128; k++) {
-    ds.preset[k] = 0xffff;
-    ds.volume[k] = 0x7f;
-    ds.key[k]    = 60;
-    ds.panpot[k] = 0x40;
-    ds.flags[k]  = 0x10;
+  for (int b = 0; b < nBanks; b++) {
+    const uint32_t bankBase = R.offset + (uint32_t) b * R.bankStride;
+    std::copy(&_deviceRom[bankBase], &_deviceRom[bankBase] + span,
+              &_deviceRhythmRam[(size_t) b * span]);
+
+    struct DrumSet ds = {};
+    ds.name = (b < 3) ? BANK_NAME[b] : "Rhythm";
+    for (int k = 0; k < 128; k++) {
+      ds.preset[k] = 0xffff;
+      ds.volume[k] = 0x7f;
+      ds.key[k]    = 60;
+      ds.panpot[k] = 0x40;
+      ds.flags[k]  = 0x10;
+    }
+    _drumSets.push_back(ds);
+
+    // One instrument slot per key whether or not the key sounds today, so that
+    // its index never moves - a DT1 may switch a note on, and the drum set
+    // holds the index of the slot, not a position in a compacted list.
+    for (int k = 0; k < R.keys; k++)
+      _instruments.push_back(Instrument());
   }
 
-  for (int k = 0; k < R.keys; k++) {
-    const uint8_t *r = &_deviceRom[bankBase + k * R.stride];
-
-    // The Tone Switch is one BIT of a byte that also carries the wave group and
-    // the output select, so the whole byte is not the switch (D-08).
-    if (!(r[R.enabled] & (1 << R.enabledBit)))
-      continue;
-    if (r[R.waveform] >= _partials.size())
-      continue;
-
-    struct Instrument in = {};
-    in.name         = _partials[r[R.waveform]].name;
-    in.volume       = 0x7f;
-    in.partialsUsed = 1;
-    for (int t = 0; t < 4; t++)
-      in.partials[t].partialIndex = 0xFFFF;
-
-    struct InstPartial &ip = in.partials[0];
-    _init_neutral_partial(ip);
-    ip.partialIndex = r[R.waveform];
-
-    // Pitch fine tune, signed cents, into the engine's 0x40-biased field - the
-    // same conversion the patch tones get.
-    ip.finePitch =
-      (uint8_t) std::clamp(0x40 + (int) (int8_t) r[R.fineTune], 0, 127);
-
-    // The TVA envelope, read rather than invented. The record gives three
-    // time/level pairs and a fourth time; the engine has one segment more, so
-    // its fourth is made a no-op holding L3 and its release takes the record's
-    // T4. L3 is the JV's own sustain level and it is 0 on every factory note,
-    // which is what NO-SUSTAIN (envelope mode 0 on all 183) sounds like: the
-    // note reaches silence at the end of segment 3 whether or not a note off
-    // ever arrives, and on this device none does - a rhythm key accepts note on
-    // only (flags 0x10 above).
-    // The envelope time-sense, D-27. A rhythm note has ONE "time velo" nibble
-    // per envelope where a patch tone has a T1/T4 pair, and ROM1 0x4E85-0x4E8D
-    // mirrors it into both slots while forcing the time key-follow to neutral.
-    // _init_neutral_partial() has already left the key-follow indices at 7, so
-    // only the mirroring is needed here.
-    if (R.tvaTimeVelocity)
-      ip.TVAJVVelT1 = ip.TVAJVVelT4 = r[R.tvaTimeVelocity] & 0x0f;
-    if (R.tvfTimeVelocity)
-      ip.TVFJVVelT1 = ip.TVFJVVelT4 = r[R.tvfTimeVelocity] & 0x0f;
-
-    ip.TVAEnvT1 = r[R.tvaEnv + 0] & 0x7f;
-    ip.TVAEnvL1 = r[R.tvaEnv + 1] & 0x7f;
-    ip.TVAEnvT2 = r[R.tvaEnv + 2] & 0x7f;
-    ip.TVAEnvL2 = r[R.tvaEnv + 3] & 0x7f;
-    ip.TVAEnvT3 = r[R.tvaEnv + 4] & 0x7f;
-    ip.TVAEnvL3 = r[R.tvaEnv + 5] & 0x7f;
-    ip.TVAEnvL4 = ip.TVAEnvL3;
-    ip.TVAEnvT4 = 0x7f;
-    ip.TVAEnvT5 = r[R.tvaEnv + 6] & 0x7f;
-
-    // TVA level velocity sensitivity, SIGNED. Held at 0 before this, which in
-    // the JV level law means the velocity helper is skipped entirely - so every
-    // drum played at exactly one level whatever the velocity. The record has no
-    // velocity CURVE field of its own, unlike a patch tone (+71 bits 0-2), so
-    // the curve stays 0. That is the LINEAR one - the bank's curve 0 is
-    // 254 - 2*v exactly, over all 128 entries - which is the neutral reading of
-    // a field the record does not carry. Which curve the firmware's own rhythm
-    // voice uses is NOT established here; see PROVENANCE P-0396.
-    ip.TVALvlVSens  = (uint8_t) (int8_t) r[R.tvaVelLevelSens];
-    ip.TVALvlVelCur = 0;
-
-    // Dry Level: the attenuator on the direct output register only, as on a
-    // patch tone. The sends sit in parallel with it and do not see it.
-    ip.dryLevel = r[R.dryLevel] & 0x7f;
-
-    // The filter. Filter Mode is two bits of +0x14 - a different position from
-    // the patch tone's +55 bits 3-4, which is why the shift is profile data.
-    // The engine's spelling puts low-pass first, so the device's 0/1/2 =
-    // OFF/LPF/HPF is translated here; OFF must reach the engine as "disabled"
-    // rather than as an open filter.
-    {
-      const int mode = (r[R.filterMode] >> R.filterModeShift) & 0x03;
-      ip.TVFType = (mode == 1) ? 0 : (mode == 2) ? 1 : 2;
-    }
-    ip.TVFBaseFlt      = (int8_t) (r[R.filterCutoff]    & 0x7f);
-    ip.TVFResonance    = (int8_t) (r[R.filterResonance] & 0x7f);
-    ip.TVFResoMode     = (uint8_t) (r[R.resoMode] >> 7);
-    ip.TVFEnvVelSens   = (int8_t) r[R.tvfVelLevelSens];
-    ip.TVFEnvDepth     = r[R.tvfEnvDepth];
-
-    // A rhythm note has no cutoff key follow and no TVF velocity curve, so both
-    // take the value that means "no effect": the table entry holding 0 cents
-    // per semitone, and curve 0.
-    ip.TVFCOFKeyFlwIdx = (uint8_t) R.cutoffKeyFollowNeutral;
-    ip.TVFCOFVelCur    = 0;
-
-    ip.TVFEnvT1 = r[R.tvfEnv + 0] & 0x7f;
-    ip.TVFEnvL1 = r[R.tvfEnv + 1] & 0x7f;
-    ip.TVFEnvT2 = r[R.tvfEnv + 2] & 0x7f;
-    ip.TVFEnvL2 = r[R.tvfEnv + 3] & 0x7f;
-    ip.TVFEnvT3 = r[R.tvfEnv + 4] & 0x7f;
-    ip.TVFEnvL3 = r[R.tvfEnv + 5] & 0x7f;
-    ip.TVFEnvT5 = r[R.tvfEnv + 6] & 0x7f;
-    ip.TVFEnvL5 = r[R.tvfEnv + 7] & 0x7f;
-    ip.TVFEnvL4 = ip.TVFEnvL3;
-    ip.TVFEnvT4 = 0x7f;
-
-    // The pitch block, into the same fields and the same envelope the patch
-    // tones use (Pitch::_jv_init, D-37). The rhythm note has ONE time-velocity
-    // nibble for this envelope, mirrored into T1 and T4 as for the other two,
-    // and no time key-follow; _init_neutral_partial() has left that at 7.
-    if (R.pitchEnv) {
-      ip.PitchJVDepth   = (int8_t) r[R.pitchEnvDepth];
-      ip.PitchJVVelSens = (int8_t) r[R.pitchEnvVelSens];
-      ip.PitchJVVelT1 = ip.PitchJVVelT4 = r[R.pitchTimeVelocity] & 0x0f;
-      for (int i = 0; i < 4; i++) {
-        ip.PitchJVT[i] = r[R.pitchEnv + 2 * i] & 0x7f;
-        ip.PitchJVL[i] = (int8_t) r[R.pitchEnv + 2 * i + 1];
-      }
-    }
-
-    // Random Pitch Depth, the index into the manual's cents list. 12 of the
-    // 183 factory notes carry one, all in Preset B: 30, 50 or 100 cents on
-    // its snares, hi-hats and toms.
-    if (R.randomPitch)
-      ip.JVRandomPitchIdx = (r[R.randomPitch] >> R.randomPitchShift) & 0x0f;
-
-    // Pitch Bend Range, per note. The part's range does not apply to a rhythm
-    // note at all: 176 of the 183 factory notes carry 0 and do not bend.
-    if (R.bendRange) {
-      ip.JVBendRange    = r[R.bendRange] & 0x0f;
-      ip.hasJVBendRange = 1;
-    }
-
-    const int key = R.firstKey + k;
-    ds.key[key]    = r[R.playKey] & 0x7f;
-
-    // Rhythm Note Level goes in as the TONE level, through the device's own
-    // level law, and the drum-set level is held at full scale. It had been
-    // going in as DrumParam::Level, which the engine consumes in the Sound
-    // Canvas's dynamic-level chain - and on this device that chain no longer
-    // runs at all, because the dynamic register carries the level law's static
-    // byte (tva.cc, P-0398). The firmware has ONE per-voice level routine,
-    // ROM1 0x4451, whose first argument is a per-voice word at @0x90d2; no
-    // second level path exists for a rhythm voice, and a Rhythm Note's Level
-    // (+0x1E, SysEx 0x24, 0-127) is the same field in the same role as a Patch
-    // Tone's Level (D-21). The two laws differ by only 0.5 to 1.0 dB across
-    // the factory range 75..127, so this is the reading with ROM support and
-    // not a measurable preference.
-    if (_profile->levelLawKind == LevelLawKind::JVCurveProduct) {
-      ip.volume      = (uint8_t) (r[R.level] & 0x7f);
-      ds.volume[key] = 0x7f;
-    } else {
-      ds.volume[key] = r[R.level] & 0x7f;
-    }
-
-    // Pan. The range is 0..128 and the manual prints the list as "L64 - 63R,
-    // RND", so 128 is RANDOM and not an out-of-range hard right (D-02). The two
-    // machines agree on what random pan is and spell it differently: the JV
-    // writes 128, the Sound Canvas writes 0 and randomises in tva.cc. A JV 0 is
-    // hard left, so it moves to 1 rather than becoming random - the reference
-    // pans Closed HAT 1 and Open HAT 1, both of which carry 0 here, 37.2 dB and
-    // 26.8 dB to the left. 18 of the 183 factory notes carry 128, 13 of them in
-    // Preset B's kit, and clamping turned every one of them hard right.
-    {
-      const int pv = r[R.pan];
-      ds.panpot[key] = (uint8_t) (pv >= 128 ? PANPOT_RANDOM : pv);
-    }
-
-    // The choke group. 0 means ungrouped; the engine's own assign-group
-    // mechanism does the rest, and its semantics are the manual's - triggering
-    // a note silences the sounding notes of the same group, itself included.
-    ds.assignGroup[key] = r[R.muteGroup] & 0x1f;
-
-    ds.reverb[key] = r[R.reverbSend] & 0x7f;
-    ds.chorus[key] = r[R.chorusSend] & 0x7f;
-
-    ds.preset[key] = (uint16_t) _instruments.size();
-    _instruments.push_back(in);
-  }
-
-  _drumSets.push_back(ds);
-  }
+  for (int b = 0; b < nBanks; b++)
+    for (int k = 0; k < R.keys; k++)
+      _decode_device_rhythm_key(b, k);
 
   // The LUT is indexed by PROGRAM and cannot express a bank, so it maps every
   // program to the first set; the bank is applied separately, by index, in
@@ -2476,6 +2329,282 @@ int ControlRom::_read_device_rhythm(void)
 }
 
 
+// One rhythm note's record turned into the drum set entry and the instrument
+// the engine plays. Called for every key at load and again for a single key
+// after a DT1 edits its record, so it must depend on nothing but the record.
+void ControlRom::_decode_device_rhythm_key(int bank, int k)
+{
+  const RhythmLayout &R = _profile->records->rhythm;
+  const uint8_t *r =
+    &_deviceRhythmRam[((size_t) bank * R.keys + k) * R.stride];
+
+  struct DrumSet &ds  = _drumSets[_deviceRhythmDrumSet0 + bank];
+  const int instIndex = _deviceRhythmInst0 + bank * R.keys + k;
+  struct Instrument &in = _instruments[instIndex];
+  const int key = R.firstKey + k;
+
+  // The Tone Switch is one BIT of a byte that also carries the wave group and
+  // the output select, so the whole byte is not the switch (D-08). A switched
+  // off note, or one naming a waveform this ROM has not got, makes no sound;
+  // its instrument slot stays allocated so the switch can be turned back on.
+  if (!(r[R.enabled] & (1 << R.enabledBit)) || r[R.waveform] >= _partials.size()) {
+    ds.preset[key] = 0xffff;
+    return;
+  }
+
+  in = Instrument();
+  in.name         = _partials[r[R.waveform]].name;
+  in.volume       = 0x7f;
+  in.partialsUsed = 1;
+  for (int t = 0; t < 4; t++)
+    in.partials[t].partialIndex = 0xFFFF;
+
+  struct InstPartial &ip = in.partials[0];
+  _init_neutral_partial(ip);
+  ip.partialIndex = r[R.waveform];
+
+  // Pitch fine tune, signed cents, into the engine's 0x40-biased field - the
+  // same conversion the patch tones get.
+  ip.finePitch =
+    (uint8_t) std::clamp(0x40 + (int) (int8_t) r[R.fineTune], 0, 127);
+
+  // The TVA envelope, read rather than invented. The record gives three
+  // time/level pairs and a fourth time; the engine has one segment more, so
+  // its fourth is made a no-op holding L3 and its release takes the record's
+  // T4. L3 is the JV's own sustain level and it is 0 on every factory note,
+  // which is what NO-SUSTAIN (envelope mode 0 on all 183) sounds like: the
+  // note reaches silence at the end of segment 3 whether or not a note off
+  // ever arrives, and on this device none does - a rhythm key accepts note on
+  // only (flags 0x10 above).
+  // The envelope time-sense, D-27. A rhythm note has ONE "time velo" nibble
+  // per envelope where a patch tone has a T1/T4 pair, and ROM1 0x4E85-0x4E8D
+  // mirrors it into both slots while forcing the time key-follow to neutral.
+  // _init_neutral_partial() has already left the key-follow indices at 7, so
+  // only the mirroring is needed here.
+  if (R.tvaTimeVelocity)
+    ip.TVAJVVelT1 = ip.TVAJVVelT4 = r[R.tvaTimeVelocity] & 0x0f;
+  if (R.tvfTimeVelocity)
+    ip.TVFJVVelT1 = ip.TVFJVVelT4 = r[R.tvfTimeVelocity] & 0x0f;
+
+  ip.TVAEnvT1 = r[R.tvaEnv + 0] & 0x7f;
+  ip.TVAEnvL1 = r[R.tvaEnv + 1] & 0x7f;
+  ip.TVAEnvT2 = r[R.tvaEnv + 2] & 0x7f;
+  ip.TVAEnvL2 = r[R.tvaEnv + 3] & 0x7f;
+  ip.TVAEnvT3 = r[R.tvaEnv + 4] & 0x7f;
+  ip.TVAEnvL3 = r[R.tvaEnv + 5] & 0x7f;
+  ip.TVAEnvL4 = ip.TVAEnvL3;
+  ip.TVAEnvT4 = 0x7f;
+  ip.TVAEnvT5 = r[R.tvaEnv + 6] & 0x7f;
+
+  // TVA level velocity sensitivity, SIGNED. Held at 0 before this, which in
+  // the JV level law means the velocity helper is skipped entirely - so every
+  // drum played at exactly one level whatever the velocity. The record has no
+  // velocity CURVE field of its own, unlike a patch tone (+71 bits 0-2), so
+  // the curve stays 0. That is the LINEAR one - the bank's curve 0 is
+  // 254 - 2*v exactly, over all 128 entries - which is the neutral reading of
+  // a field the record does not carry. Which curve the firmware's own rhythm
+  // voice uses is NOT established here; see PROVENANCE P-0396.
+  ip.TVALvlVSens  = (uint8_t) (int8_t) r[R.tvaVelLevelSens];
+  ip.TVALvlVelCur = 0;
+
+  // Dry Level: the attenuator on the direct output register only, as on a
+  // patch tone. The sends sit in parallel with it and do not see it.
+  ip.dryLevel = r[R.dryLevel] & 0x7f;
+
+  // The filter. Filter Mode is two bits of +0x14 - a different position from
+  // the patch tone's +55 bits 3-4, which is why the shift is profile data.
+  // The engine's spelling puts low-pass first, so the device's 0/1/2 =
+  // OFF/LPF/HPF is translated here; OFF must reach the engine as "disabled"
+  // rather than as an open filter.
+  {
+    const int mode = (r[R.filterMode] >> R.filterModeShift) & 0x03;
+    ip.TVFType = (mode == 1) ? 0 : (mode == 2) ? 1 : 2;
+  }
+  ip.TVFBaseFlt      = (int8_t) (r[R.filterCutoff]    & 0x7f);
+  ip.TVFResonance    = (int8_t) (r[R.filterResonance] & 0x7f);
+  ip.TVFResoMode     = (uint8_t) (r[R.resoMode] >> 7);
+  ip.TVFEnvVelSens   = (int8_t) r[R.tvfVelLevelSens];
+  ip.TVFEnvDepth     = r[R.tvfEnvDepth];
+
+  // A rhythm note has no cutoff key follow and no TVF velocity curve, so both
+  // take the value that means "no effect": the table entry holding 0 cents
+  // per semitone, and curve 0.
+  ip.TVFCOFKeyFlwIdx = (uint8_t) R.cutoffKeyFollowNeutral;
+  ip.TVFCOFVelCur    = 0;
+
+  ip.TVFEnvT1 = r[R.tvfEnv + 0] & 0x7f;
+  ip.TVFEnvL1 = r[R.tvfEnv + 1] & 0x7f;
+  ip.TVFEnvT2 = r[R.tvfEnv + 2] & 0x7f;
+  ip.TVFEnvL2 = r[R.tvfEnv + 3] & 0x7f;
+  ip.TVFEnvT3 = r[R.tvfEnv + 4] & 0x7f;
+  ip.TVFEnvL3 = r[R.tvfEnv + 5] & 0x7f;
+  ip.TVFEnvT5 = r[R.tvfEnv + 6] & 0x7f;
+  ip.TVFEnvL5 = r[R.tvfEnv + 7] & 0x7f;
+  ip.TVFEnvL4 = ip.TVFEnvL3;
+  ip.TVFEnvT4 = 0x7f;
+
+  // The pitch block, into the same fields and the same envelope the patch
+  // tones use (Pitch::_jv_init, D-37). The rhythm note has ONE time-velocity
+  // nibble for this envelope, mirrored into T1 and T4 as for the other two,
+  // and no time key-follow; _init_neutral_partial() has left that at 7.
+  if (R.pitchEnv) {
+    ip.PitchJVDepth   = (int8_t) r[R.pitchEnvDepth];
+    ip.PitchJVVelSens = (int8_t) r[R.pitchEnvVelSens];
+    ip.PitchJVVelT1 = ip.PitchJVVelT4 = r[R.pitchTimeVelocity] & 0x0f;
+    for (int i = 0; i < 4; i++) {
+      ip.PitchJVT[i] = r[R.pitchEnv + 2 * i] & 0x7f;
+      ip.PitchJVL[i] = (int8_t) r[R.pitchEnv + 2 * i + 1];
+    }
+  }
+
+  // Random Pitch Depth, the index into the manual's cents list. 12 of the
+  // 183 factory notes carry one, all in Preset B: 30, 50 or 100 cents on
+  // its snares, hi-hats and toms.
+  if (R.randomPitch)
+    ip.JVRandomPitchIdx = (r[R.randomPitch] >> R.randomPitchShift) & 0x0f;
+
+  // Pitch Bend Range, per note. The part's range does not apply to a rhythm
+  // note at all: 176 of the 183 factory notes carry 0 and do not bend.
+  if (R.bendRange) {
+    ip.JVBendRange    = r[R.bendRange] & 0x0f;
+    ip.hasJVBendRange = 1;
+  }
+
+  ds.key[key]    = r[R.playKey] & 0x7f;
+
+  // Rhythm Note Level goes in as the TONE level, through the device's own
+  // level law, and the drum-set level is held at full scale. It had been
+  // going in as DrumParam::Level, which the engine consumes in the Sound
+  // Canvas's dynamic-level chain - and on this device that chain no longer
+  // runs at all, because the dynamic register carries the level law's static
+  // byte (tva.cc, P-0398). The firmware has ONE per-voice level routine,
+  // ROM1 0x4451, whose first argument is a per-voice word at @0x90d2; no
+  // second level path exists for a rhythm voice, and a Rhythm Note's Level
+  // (+0x1E, SysEx 0x24, 0-127) is the same field in the same role as a Patch
+  // Tone's Level (D-21). The two laws differ by only 0.5 to 1.0 dB across
+  // the factory range 75..127, so this is the reading with ROM support and
+  // not a measurable preference.
+  if (_profile->levelLawKind == LevelLawKind::JVCurveProduct) {
+    ip.volume      = (uint8_t) (r[R.level] & 0x7f);
+    ds.volume[key] = 0x7f;
+  } else {
+    ds.volume[key] = r[R.level] & 0x7f;
+  }
+
+  // Pan. The range is 0..128 and the manual prints the list as "L64 - 63R,
+  // RND", so 128 is RANDOM and not an out-of-range hard right (D-02). The two
+  // machines agree on what random pan is and spell it differently: the JV
+  // writes 128, the Sound Canvas writes 0 and randomises in tva.cc. A JV 0 is
+  // hard left, so it moves to 1 rather than becoming random - the reference
+  // pans Closed HAT 1 and Open HAT 1, both of which carry 0 here, 37.2 dB and
+  // 26.8 dB to the left. 18 of the 183 factory notes carry 128, 13 of them in
+  // Preset B's kit, and clamping turned every one of them hard right.
+  {
+    const int pv = r[R.pan];
+    ds.panpot[key] = (uint8_t) (pv >= 128 ? PANPOT_RANDOM : pv);
+  }
+
+  // The choke group. 0 means ungrouped; the engine's own assign-group
+  // mechanism does the rest, and its semantics are the manual's - triggering
+  // a note silences the sounding notes of the same group, itself included.
+  ds.assignGroup[key] = r[R.muteGroup] & 0x1f;
+
+  ds.reverb[key] = r[R.reverbSend] & 0x7f;
+  ds.chorus[key] = r[R.chorusSend] & 0x7f;
+
+  ds.preset[key] = (uint16_t) instIndex;
+}
+
+
+// Put a rhythm bank back the way the ROM has it. This is what selecting the
+// set does on the device, and it is also what discards any DT1 edits made to
+// the set that was loaded before - the temporary rhythm setup is overwritten,
+// not merged.
+bool ControlRom::device_rhythm_reload(int bank)
+{
+  if (_deviceRhythmRam.empty() || bank < 0 || bank >= _deviceRhythmBanks)
+    return false;
+
+  const RhythmLayout &R = _profile->records->rhythm;
+  const size_t span = (size_t) R.keys * R.stride;
+  const uint32_t bankBase = R.offset + (uint32_t) bank * R.bankStride;
+  uint8_t *ram = &_deviceRhythmRam[(size_t) bank * span];
+
+  if (std::equal(ram, ram + span, &_deviceRom[bankBase]))
+    return false;                       // never edited: nothing to put back
+
+  std::copy(&_deviceRom[bankBase], &_deviceRom[bankBase] + span, ram);
+  for (int k = 0; k < R.keys; k++)
+    _decode_device_rhythm_key(bank, k);
+
+  return true;
+}
+
+
+// One DT1 parameter of one rhythm note, applied the way the firmware's own
+// apply routine applies it (ROM2 0x2F604, reached for this area from the
+// rhythm arm at 0x2F148): the 8-byte descriptor at descriptors[param] says
+// where in the record the value goes and how.
+//
+//   nibble mode  +0   2 = this byte is the HIGH half of a value that arrives
+//                        in two parameters; stash it and write nothing.
+//                    1 = the LOW half; combine with the stash, then write.
+//   range        +1/+2 reject outside [min, max] - checked on the COMPOSED
+//                    value, which is how Pan reaches 128 through 7-bit bytes
+//   bias         +3   added before storing; 192 on the signed fields, which is
+//                    what makes the stored byte the plain two's-complement one
+//   shift        +4   left shift, minus one; bit 7 set means no shift
+//   mask         +5   the bits of the destination byte to PRESERVE
+//   offset       +6   byte within the record
+//
+// Returns the MIDI key whose voice state was re-derived, or -1 when the write
+// was rejected or only stashed.
+int ControlRom::device_rhythm_dt1(int bank, int note, uint8_t param,
+                                  uint8_t value)
+{
+  if (!has_device_rhythm_dt1())
+    return -1;
+
+  const RhythmLayout &R = _profile->records->rhythm;
+  if (bank < 0 || bank >= _deviceRhythmBanks) return -1;
+  if (note < 0 || note >= R.keys)             return -1;
+  if (param >= R.descriptorCount)             return -1;
+
+  const uint32_t dBase =
+    (_laterRevision && R.descriptorsAlt) ? R.descriptorsAlt : R.descriptors;
+  if ((size_t) dBase + (size_t) R.descriptorCount * 8 > _deviceRom.size())
+    return -1;
+  const uint8_t *d = &_deviceRom[dBase + (size_t) param * 8];
+
+  int v = value & 0x7f;
+  if (d[0] == 2) {
+    _deviceRhythmNibble = (uint8_t) (v & 0x0f);
+    return -1;
+  }
+  if (d[0] == 1)
+    v = (_deviceRhythmNibble << 4) | (v & 0x0f);
+
+  if (v < (int) d[1] || v > (int) d[2])
+    return -1;
+
+  const int     shift = (d[4] & 0x80) ? 0 : (d[4] + 1);
+  const uint8_t mask  = d[5];
+  const int     off   = d[6];
+  if (off >= R.stride)
+    return -1;
+
+  uint8_t *rec = &_deviceRhythmRam[((size_t) bank * R.keys + note) * R.stride];
+  const uint8_t stored =
+    (uint8_t) ((rec[off] & mask) |
+               ((((uint8_t) (v + d[3])) << shift) & (uint8_t) ~mask));
+
+  if (stored != rec[off]) {
+    rec[off] = stored;
+    _decode_device_rhythm_key(bank, note);
+  }
+
+  return R.firstKey + note;
+}
 
 
 }

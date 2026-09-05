@@ -1142,18 +1142,27 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
     // demos rely on that: "Lost Weekend" sends a single message per part
     // carrying the patch-number nibble pair (0x17, 0x18) AND the Part Level
     // (0x19), so a handler that read one byte saw only the patch nibble and
-    // ignored the level. Only 00 00 xx is mapped here.
-    if (length < 5 || data[0] != 0x00 || data[1] != 0x00)
+    // ignored the level.
+    //
+    // The firmware decodes the address as a 14-bit RECORD SELECTOR made of the
+    // second and third bytes and dispatches on it - ROM2 0x2EF38 compares that
+    // selector against 0x10, 0x18, 0x20, 0x3C0 and 0x420 - with the fourth
+    // byte the parameter within the record. Only the areas this port can act
+    // on are decoded here; the first byte selects the memory area and only its
+    // zero (the temporary areas) is handled.
+    if (length < 5 || data[0] != 0x00)
       return;
-    const uint8_t blk = data[2];
+    const int sel = ((int) data[1] << 7) | data[2];
     bool acted = false;
     for (int i = 4; i < length; i++) {
       const uint8_t prm = (uint8_t) (data[3] + (i - 4));
       const uint8_t val = data[i] & 0x7f;
-      if (blk == 0x10)
+      if (sel == 0x10)
         acted |= jv_dt1_common(_settings, prm, val);
-      else if (blk >= 0x18 && blk <= 0x1f)
-        acted |= jv_dt1_part(_settings, blk - 0x18, prm, val);
+      else if (sel >= 0x18 && sel <= 0x1f)
+        acted |= jv_dt1_part(_settings, sel - 0x18, prm, val);
+      else if (sel >= 0x3c0 && sel <= 0x3fc)
+        acted |= _settings->rhythm_note_dt1(sel - 0x3c0, prm, val);
     }
     if (acted)
       for (const auto &cb : _partMidiModCallbacks)
