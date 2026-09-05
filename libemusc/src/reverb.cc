@@ -292,6 +292,24 @@ float Reverb::_fade_step(void)
 //    reference's 228 whatever value is used. A constant offset is therefore the
 //    wrong shape of answer, and none is applied.
 //
+//    THE STRONGEST LEAD, and why it is not applied. If the record's tap words
+//    are BYTE addresses into a 16-bit effect memory - which is what that memory
+//    is, and what the delay line's own 1/32768 truncation already assumes -
+//    then every delay is half what this code uses. Halving them puts the onset
+//    at 20 ms against the reference's 18, where reading them as samples gives
+//    40, and takes the envelope error's standard deviation from 15.6 to 8.1 dB.
+//    The loop tap halves with them: 14334/2 = 7167 samples = 224 ms, and the
+//    reference's build-up peaks at 228.
+//
+//    It cannot be adopted alone. Halving the loop halves the time of a pass, so
+//    the same per-pass gain doubles the decay RATE: the tail then dies to
+//    silence, envelope mean -48 dB against the reference and a worst step of
+//    -160. Every g measured from a decay in this file was derived assuming the
+//    unhalved length, so the loop-gain law has to be re-derived in the same
+//    move - g would go roughly as its own square root. That is a coherent piece
+//    of work and not a one-line change, and shipping half of it is worse than
+//    shipping neither.
+//
 //    What this does establish: the residual is a TIMING error, not a spectral
 //    one. It is why the narrowband comb is misplaced by up to 27 dB at 209 Hz
 //    while the octave-band mean reads 2.5 dB, and why no damping or gain
