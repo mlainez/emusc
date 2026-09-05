@@ -1585,15 +1585,19 @@ int ControlRom::_read_device_patches(void)
 
         // The two LFOs, per tone. One byte carries form (bits 0-2), offset
         // (3-5), synchro (6) and fade polarity (7); the delay byte's bit 7 is
-        // KEY-OFF. The pitch depths are signed (D-37); the TVF depths were read
-        // above; the TVA depths have no decoded law yet and are not read.
+        // KEY-OFF. The pitch, TVF and TVA depths are all signed bytes (D-37,
+        // D-75); the TVA pair is two's complement like the others and NOT the
+        // Sound Canvas's sign-and-magnitude, so it gets its own field.
         if (F.lfo1Rate) {
           const int prm[2] = { F.lfo1Params, F.lfo2Params };
           const int rat[2] = { F.lfo1Rate,   F.lfo2Rate };
           const int dly[2] = { F.lfo1Delay,  F.lfo2Delay };
           const int fad[2] = { F.lfo1Fade,   F.lfo2Fade };
           const int pdp[2] = { F.lfo1PitchDepth, F.lfo2PitchDepth };
+          const int adp[2] = { F.lfo1TvaDepth,   F.lfo2TvaDepth };
           for (int l = 0; l < 2; l++) {
+            if (adp[l])
+              ip.JVLfoTvaDepth[l] = (int8_t) tb[adp[l]];
             ip.JVLfoForm[l]        = tb[prm[l]] & 0x07;
             ip.JVLfoOffset[l]      = (tb[prm[l]] >> 3) & 0x07;
             ip.JVLfoSync[l]        = (tb[prm[l]] >> 6) & 0x01;

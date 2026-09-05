@@ -83,6 +83,15 @@ private:
   int _envLevelMode;
   int _prevEnvLevel;
 
+  // The JV's LFO -> TVA tremolo (scdb D-75). The two expanded depth words are
+  // fixed for the life of the voice; the term they make with the LFO is
+  // recomputed every control period, and the previous period's is kept so the
+  // block's gain ramp is between two consistent pairs.
+  int  _jvTvaLfoDepth[2] = { 0, 0 };
+  int  _jvTremolo = 0;
+  int  _jvTremoloPrev = 0;
+  bool _hasJvTremolo = false;
+
   WaveGenerator *_LFO1;
   WaveGenerator *_LFO2;
 
@@ -126,7 +135,8 @@ private:
   void _update_lfo_depth(int lfo);
 
   int _get_bias_level(int km, int biasPoint);
-  int _env_register_value(int envValue) const;
+  int _env_register_value(int envValue, int tremolo) const;
+  void _update_jv_tremolo(void);
   float _dryGain = 1.0f;   // JV Dry Level; unity on devices without one
   bool _partLevelInDynamics = true;  // false when the level law owns it
 

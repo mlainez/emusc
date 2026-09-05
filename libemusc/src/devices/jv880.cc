@@ -472,7 +472,16 @@ static const RecordRomLayout JV880_RECORDS = {
       // path already had the gate traced (ROM1 0x49ff -> @0x9bfe bit 5,
       // consumed at 0x44be-0x44e6). Measured on the reference with the bit
       // cleared in a ROM copy: CC7 stops reaching the tone entirely. D-30.
-      0x47, 0x47
+      0x47, 0x47,
+
+      // LFO-1 / LFO-2 -> TVA Depth, +0x21 and +0x24, signed (SysEx 0x2C and
+      // 0x37). The loader ROM1 0x480F-0x483E / 0x4842-0x4871 expands the byte
+      // and the consumer ROM1 0x44E7-0x4576 multiplies the TVA LEVEL INDEX by
+      // it before the 0x6060/0x6160 curve pair, so the decibels come out of
+      // the curve rather than out of the depth. Off-neutral on 36 and 47 of
+      // the 539 enabled factory tones; `61 Arctic Winds` holds -32 on three of
+      // its four. scdb D-75, 07_synthesis/lfo.md "LFO -> TVA".
+      0x21, 0x24
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named

@@ -120,6 +120,14 @@ struct ToneFieldMap
   // scdb D-30.
   int      toneVolumeSwitch;            // bit 7
   int      toneHold1Switch;             // bit 6
+
+  // The two LFO -> TVA depths, signed, appended last for the same reason the
+  // pitch block was: a profile written before they existed still compiles and
+  // reads nothing. 0 means the device has no such field. On the JV they are
+  // SysEx 0x2C / 0x37 at +0x21 / +0x24 and they are two's complement, not the
+  // Sound Canvas's sign-and-magnitude - which is why they cannot share
+  // TVALFO1Depth / TVALFO2Depth with the Sound Canvas path. scdb D-75.
+  int      lfo1TvaDepth, lfo2TvaDepth;
 };
 
 // A bank of patches, and the tone records inside each patch.

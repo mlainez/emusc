@@ -218,6 +218,9 @@ public:
     // map supplied them.
     uint8_t JVLfoForm[2], JVLfoOffset[2], JVLfoSync[2], JVLfoFadeOut[2];
     uint8_t JVLfoRate[2], JVLfoDelay[2], JVLfoDelayKeyOff[2], JVLfoFade[2];
+    // Two's complement, unlike TVALFO1Depth/TVALFO2Depth beside it, which
+    // are the Sound Canvas's sign-and-magnitude bytes (scdb D-75).
+    int8_t  JVLfoTvaDepth[2];
     int8_t  JVLfoPitchDepth[2];
     uint8_t hasJVLfo;
 

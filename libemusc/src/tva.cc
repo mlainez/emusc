@@ -144,8 +144,8 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
   // OWN curve at every emit (ROM1 0x4578-0x459a), so the walk above is in the
   // pre-curve domain and the conversion belongs here, at the point the value
   // becomes a gain. On the Sound Canvas the walk already IS the gain.
-  const int envNow  = _env_register_value(_envLevel);
-  const int envPrev = _env_register_value(_prevEnvLevel);
+  const int envNow  = _env_register_value(_envLevel, _jvTremolo);
+  const int envPrev = _env_register_value(_prevEnvLevel, _jvTremoloPrev);
 
   _smooth(_envLevelMode, norm(envPrev), norm(envNow), _slewEnvGain,
           _firstBlock);
@@ -201,6 +201,8 @@ void TVA::update(bool reset)
   if (!_lfo2FadeComplete)
     _update_lfo_depth(2);
 
+  _update_jv_tremolo();
+
   // Update external envelope variable for e.g. bar display (clamp to 0xfe)
   _envelopeOut = std::min(_envLevel >> 8, 0xfe);
 
@@ -243,6 +245,9 @@ void TVA::_init_update(void)
   _dynLevelMode = (_dynLevel & 0xff00) | 0xba;
 
   _update_panpot_level(true);
+
+  _update_jv_tremolo();
+  _jvTremoloPrev = _jvTremolo;          // no ramp into the note's first block
 
   // Initialize envelope track
   _init_new_phase(Phase::Attack1);
@@ -670,10 +675,23 @@ void TVA::_iterate_phase(void)
 // interpolation - the shift is 16 where a linear interpolation would need 8, so
 // it contributes at most 6 of 65535 - because the byte taken is the high byte
 // and a trim of 6 can tip it at a boundary.
-int TVA::_env_register_value(int envValue) const
+int TVA::_env_register_value(int envValue, int tremolo) const
 {
   if (!_envThroughCurve)
     return envValue;
+
+  // The LFO -> TVA tremolo multiplies the envelope value BEFORE the curve, so
+  // its decibels come out of the curve's own shape and not out of the depth
+  // (ROM1 0x4560-0x4576, scdb D-75 / 07_synthesis/lfo.md "LFO -> TVA"). A
+  // positive term that overflows clamps at 0x7fff, which is why a note already
+  // at the top of the index hears the tremolo as attenuation only - measured:
+  // the envelope's maximum is identical at every depth and only its minimum
+  // falls (M-090).
+  if (tremolo) {
+    const int64_t d = ((int64_t) std::abs(tremolo) * 2 * envValue) >> 16;
+    envValue = (tremolo > 0) ? (int) std::min<int64_t>(envValue + d, 0x7fff)
+                             : (int) std::max<int64_t>(envValue - d, 0);
+  }
 
   const int h    = std::clamp(envValue >> 8, 0, 127);
   const int frac = envValue & 0xff;
@@ -681,6 +699,46 @@ int TVA::_env_register_value(int envValue) const
                    ((_LUT.JVLevelEnvSlope[h] * frac) >> 16);
 
   return std::clamp(out >> 8, 0, 255) << 8;
+}
+
+
+// The JV's tremolo term, one control period's worth (ROM1 0x44E7-0x4555).
+//
+// Each LFO contributes `((depth x lfo) >> 16) << 1` and the two are summed
+// with 16-bit saturation. `depth` is the expanded word the note-on loader
+// builds from the tone's signed byte (ROM1 0x4814-0x4824): two threshold bits
+// shifted in below the value, then the byte moved into the high half.
+//
+//     lo = (4|d| + 3*(|d| >= 32)) & 0xff
+//     w  = ((lo << 8) | (lo & 0x80 ? 0xff : 0)) >> 1
+//
+// so w runs 0 .. 0x7fff over |d| = 0 .. 63, about 520|d|, and the index's peak
+// deviation is w/65536 ~ |d|/128. Predicted against the machine at seven
+// depths on a stripped patch: 0.29 dB rms over a 2.3 to 18.5 dB range (M-090).
+//
+// The controller-matrix TVA-LFO terms of the same routine are not modelled -
+// the JV path reads none of the twelve controller destination/sense pairs
+// (scdb 05_data_model/tone_schema.md section 6).
+void TVA::_update_jv_tremolo(void)
+{
+  _jvTremoloPrev = _jvTremolo;
+
+  if (!_hasJvTremolo) {
+    _jvTremolo = 0;
+    return;
+  }
+
+  auto term = [](int depth, int lfo) -> int {
+    if (!depth || !lfo)
+      return 0;
+    return (int) std::clamp<int64_t>((((int64_t) depth * lfo) >> 16) * 2,
+                                     -0x7fff, 0x7fff);
+  };
+
+  const int m1 = term(_jvTvaLfoDepth[0], _LFO1 ? _LFO1->value() : 0);
+  const int m2 = term(_jvTvaLfoDepth[1], _LFO2 ? _LFO2->value() : 0);
+
+  _jvTremolo = (int) std::clamp(m1 + m2, -0x7fff, 0x7fff);
 }
 
 
@@ -894,6 +952,18 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     // endpoints exact and everything between them out by up to 12.86 dB
     // (P-0400).
     _envThroughCurve = true;
+
+    // The two LFO -> TVA depths, expanded the way the note-on loader does
+    // (ROM1 0x4814-0x4824 / 0x4847-0x4857). scdb D-75.
+    for (int l = 0; l < 2; l++) {
+      const int d  = _instPartial.JVLfoTvaDepth[l];
+      const int a  = std::abs(d);
+      const int lo = (4 * a + (a >= 32 ? 3 : 0)) & 0xff;
+      const int w  = ((lo << 8) | ((lo & 0x80) ? 0xff : 0)) >> 1;
+      _jvTvaLfoDepth[l] = (d < 0) ? -w : w;
+    }
+    _hasJvTremolo = _jvTvaLfoDepth[0] || _jvTvaLfoDepth[1];
+
     _phaseValueInit[0] = 0;
     _phaseValueInit[1] = _instPartial.TVAEnvL1 & 0x7f;
     _phaseValueInit[2] = _instPartial.TVAEnvL2 & 0x7f;
