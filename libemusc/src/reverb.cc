@@ -276,6 +276,22 @@ float Reverb::_fade_step(void)
 //    and it is NOT inserted into the path - inventing a position for it would
 //    move every tap by 9.4 to 29 ms on a guess.
 //
+//    THE MEASUREMENT BELOW IS NOT TRUSTWORTHY - read this first. It isolates
+//    the wet by subtracting a reverb-closed render from a reverb-open one, and
+//    that method fails its own control. Repeated across all six reverb types
+//    with a MATCHED dry render per type, so the character-change transient
+//    cancels, it reports the wet beginning at 0 to 5 ms on types 1, 2, 4 and 5
+//    - before the earliest tap in any record, which is 16.6 ms. A reverb cannot
+//    output before its first tap. Types 0 and 3 report 18-19 ms and are the
+//    only self-consistent pair.
+//
+//    So the "22 ms late" figure below rests on a method that produces
+//    impossible numbers on four types out of six, and it should be treated as
+//    unproven rather than as a finding. What it would take to measure properly:
+//    a stimulus that drives the reverb without a dry path at all, or a
+//    register-level capture. Everything downstream of that number - the tap
+//    scale hypothesis and its refutation both - inherits the doubt.
+//
 //    MEASURED 2026-09-05, and it says the taps are in the wrong place. Feeding
 //    one short drum hit through HALL1 at Reverb Time 64 and taking the wet as
 //    the difference between a reverb-open and reverb-closed render, the
