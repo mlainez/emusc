@@ -815,13 +815,25 @@ const DeviceProfile JV880_PROFILE = {
     // other writer of that register. See ReverbFeedbackLaw.
     ReverbFeedbackLaw::JVFirmwareRegister,
 
-    // sendDivisor. A byte-sized coefficient on this chip has 64 = unity,
-    // established four independent ways in the firmware (P-0395) and already
-    // used by this same law's return level above. So a reverb send of 127 is
-    // 1.98, not the 0.99 that dividing by 128 gives. Halving every send is the
-    // whole of D-39: the reverb tail measured 39.60 dB where the reference
-    // gives 45.66, and 45.62 with this in place - a 0.03 dB residual.
-    64.0f,
+    // sendDivisor. 128: a reverb send of 127 is just under unity, as on the
+    // Sound Canvas. This REVERSES D-39 (2026-09-04), which set 64 on the
+    // argument that a byte coefficient on this chip has 64 = unity and
+    // closed a 6.06 dB deficit in the reverb tail to 0.03 dB with it. That
+    // deficit was measured under the nine-tap network of the time, whose
+    // return summed each tap once; the chip's own program (reverb.cc,
+    // a875364) sums FOUR taps per channel, and with 64 kept every one of the
+    // eight reverb types comes out 5-6.5 dB hot against the reference,
+    // measured on the same firmware revision with a drum hit through each:
+    // wet level 0.3-0.9 s after the hit, six reverb types +4 to +6.7 dB in
+    // every band; DELAY echo -7.5 against -13.9 dB, PAN-DLY -1.7/-1.5 against
+    // -7.7/-8.0. With 128: reverbs within -2.6..+1.4 dB (mostly under 1.5),
+    // DELAY -13.5, PAN-DLY -7.9/-7.5. The delay types are the clean case -
+    // their gain path has no per-type coefficient in doubt - and they move
+    // by exactly this 6.02 dB. So D-39's 64 was the network's missing 6 dB
+    // wearing the send's clothes, and the per-tone send is a 0-127 parameter
+    // written into the coefficient field the way the chorus send already
+    // is (chorusSendDivisor below, scdb D-60): as itself, over 128.
+    128.0f,
 
     // chorusSendDivisor. The chorus send does NOT take the reverb's scale, and
     // sharing it was worth up to 5.4 dB of extra chorus (scdb D-60). See

@@ -116,22 +116,12 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     _lastPeakSample = std::max(_lastPeakSample, *itR);
 
 
-    // The send scale is the DEVICE's, not a constant. On the JV a byte-sized
-    // coefficient field has 64 = unity - established four independent ways in
-    // its firmware (P-0395), and the same scale its reverb RETURN uses - so a
-    // send of 127 means 1.98, not 0.99. Dividing by 128 here made every JV
-    // send half what the firmware asks for, which is the whole of D-39's
-    // 6.06 dB quiet reverb: measured tail 39.60 dB against the reference's
-    // 45.66, and 45.62 once corrected.
+    // The send scale is the DEVICE's, not a constant (ReverbLaw::sendDivisor).
+    // The JV-880 ran 64 here for a day (D-39) to close a 6 dB reverb deficit
+    // that belonged to its reverb network of the time, not to the send; it is
+    // back at 128 with the chip's own program (devices/jv880.cc).
     const float sendDiv = _settings->device()->reverb.sendDivisor;
-    // The chorus send takes the same scale as the reverb send, by the same
-    // argument: 64 = unity is this chip's scale for a byte-sized coefficient
-    // field, established four independent ways in the JV's firmware (P-0395),
-    // and a chorus send is such a field. Worth +0.45 dB on SAW Lead, whose
-    // tones send 127. NOT independently proven for the chorus specifically -
-    // it rests on the chip-wide property rather than on its own trace - and it
-    // is measurably NOT the cause of Glass Pad's effects deficit, which does
-    // not move at all with it.
+    // The chorus send has its own divisor where a device needs one (scdb D-60).
     const float choDiv = _settings->device()->reverb.chorusSendDivisor > 0.0f
                        ? _settings->device()->reverb.chorusSendDivisor : sendDiv;
     float chorusSL = _settings->get_param(PatchParam::ChorusSendLevel, _id) / choDiv;
