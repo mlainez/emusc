@@ -1006,9 +1006,19 @@ void TVF::_jv_iterate(void)
     damp = hard ? _LUT.JVTvfDampHard[_jvRes] : _LUT.JVTvfDampSoft[_jvRes];
   }
 
+  // Only the HIGH BYTE of each 16-bit control word reaches the chip: the CPU
+  // sends `(target & 0xFF00) | slew_rate` and the chip interpolates from there
+  // (the differential write of D-15). Both words are therefore quantised to
+  // 1/256 of full scale, and the low bytes of the ROM's own tables never leave
+  // the CPU. Measured on the reference at ROM2 v1.0.0, rhythm key 51 with the
+  // filter driven over DT1: resonance 40 and 41 differ in DAMP_SOFT
+  // (0x297f / 0x290d) and in LIMIT_SOFT (0x9036 / 0x9090) but share both high
+  // bytes, and the two renders come out byte-identical - at cutoff 40, where
+  // only the damping is live, and again at cutoff 127, where the limit is what
+  // the cutoff word becomes. Without the mask this engine rendered them apart.
   _jvWordPrev = _jvWord;
-  _jvWord = word;
-  _jvQ1 = (float) damp / (float) _jvLaw->dampUnity;
+  _jvWord = word & 0xff00;
+  _jvQ1 = (float) (damp & 0xff00) / (float) _jvLaw->dampUnity;
 
   static const bool dbg = getenv("EMUSC_DEBUG_TVF") != nullptr;
   if (dbg)
