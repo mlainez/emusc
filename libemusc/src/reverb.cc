@@ -327,6 +327,29 @@ float Reverb::_fade_step(void)
 //    producing numbers that measure beautifully on the axis they were fitted
 //    on and destroy the others.
 //
+//    THAT JOINT SEARCH WAS RUN, and it is a negative result worth having. Three
+//    axes: tap scale (as read, or halved), feedback (the wet sum, or the single
+//    w20 tap), and a multiplier on the loop gain. Scored on the drum tail with
+//    tail_fine.py, envelope in 5 ms steps and 1/24-octave bands together:
+//
+//      as read + wet sum      envelope +3.91 dB, 161/360 steps out; 45 bins >6 dB
+//      halved  + wet sum      no gain is stable - x1.0 dies at -48 dB, x1.3
+//                             overshoots to +15, x2.0 to +53. The transition
+//                             from dead to runaway skips the target entirely,
+//                             which is a loop sitting on its stability boundary
+//      halved  + w20 tap x1.8 envelope +1.34 dB, 113/360 steps out - the BEST
+//                             envelope measured - but 99 bins >6 dB, twice as
+//                             many as the shipped structure
+//
+//    The two feedback topologies trade against each other: the wet sum smears
+//    the comb and gets the narrowband right, the single tap gets the timing and
+//    the envelope right. No point in the space is good at both, so the
+//    STRUCTURE is wrong, not the constants, and no further parameter sweep will
+//    find it. What would: the firmware's own tap-setup code, or a register-level
+//    trace. Until then the shipped structure is kept because it is the one that
+//    is right about frequency, and being wrong about time is the lesser of the
+//    two audible errors - the owner can still hear it.
+//
 //    What this does establish: the residual is a TIMING error, not a spectral
 //    one. It is why the narrowband comb is misplaced by up to 27 dB at 209 Hz
 //    while the octave-band mean reads 2.5 dB, and why no damping or gain
