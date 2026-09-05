@@ -428,13 +428,38 @@ void Reverb::_process_sample_jv(float input, float output[2])
     // 1.2-1.8 s 5.2 -> 4.2 dB - which is weak evidence that the filter sits on
     // the line's write port rather than in the return alone. Filtering ONLY
     // the write port measures 4.7, so it is not simply that either.
-    _jvLoopLpf  = _jvDampPole * _jvLoopLpf  + (1.0f - _jvDampPole) * fb;
-    _jvLoopLpf2 = _jvDampGain * _jvLoopLpf2 + (1.0f - _jvDampGain) * _jvLoopLpf;
-    const float fbd = _jvLoopLpf2;
-    _jvLoopLpf3 = _jvDampPole * _jvLoopLpf3
-                + (1.0f - _jvDampPole) * (_preLpfState * _jvInGain + _gLoop * fbd);
-
-    float v = _jvLoopLpf3;
+    // HF DAMPING IN THE LOOP: one one-pole on the return, and its coefficient
+    // is the LOW byte of record word 27 - 217 on ROOM1/ROOM3, 199 on
+    // everything else - over 256.
+    //
+    // That byte was the last one in a reverb record that nothing else claimed.
+    // Words 0-26 are the pre-delay, the nine tap pairs, the loop tap, the
+    // pre-LPF pair, the input gain and the nine tap gains; word 27's HIGH byte
+    // is the Time scale at +0x36 and word 28's is the return coefficient at
+    // +0x38. The loader read 28 words, so words 28-29 were never loaded at all
+    // and this byte was simply never looked at.
+    //
+    // Without any damping the tail error is monotonic in frequency - measured
+    // against the reference on a drum hit at 1.2-1.8 s, +0.2 dB at 60-250 Hz
+    // rising to +29.8 dB at 6-12 kHz. The bass was always right; all of it was
+    // treble, which is why no loop-gain constant ever helped.
+    //
+    // Two wrong turns are worth recording. Word 28's high byte gives a pole of
+    // 0.44 and measures 4.2 dB mean band error, which looked like a find - but
+    // that byte is the RETURN coefficient, and reaching 4.2 needed three
+    // cascaded poles to make up the missing damping. Word 27's low byte gives
+    // 0.777, needs ONE pole, and measures 2.5 dB. The three-pole stack was
+    // compensating for the wrong coefficient.
+    //
+    // Per-band, ours minus the reference at 1.2-1.8 s: -1.5 at 60-250 Hz,
+    // +0.3 at 250-600, +3.9 at 600-1500, -2.4 at 1.5-3k, 0.0 at 3-6k, +2.0 at
+    // 6-12k. The DELAY records are 0x38 bytes and end at word 27, so their low
+    // byte is the same 199 by coincidence of layout; only characters 0-5 run
+    // this network at all.
+    _jvLoopLpf = _jvDampPole * _jvLoopLpf + (1.0f - _jvDampPole) * fb;
+    const float fbd = _jvLoopLpf;
+    const float wv = _preLpfState * _jvInGain + _gLoop * fbd;
+    float v = wv;
     if (q > 0.0f)
       v = q * truncf(v / q);
     _rBuffer[_sweepIndex] = v;
@@ -492,7 +517,7 @@ void Reverb::_set_jv_character(int character)
   //
   // The DELAY records are 0x38 bytes and do not own words 28-29 at all; theirs
   // read out of the record that follows, so only characters 0-5 use this.
-  _jvDampPole = _jvDampGain = (rec[29] >> 8) / 64.0f;
+  _jvDampPole = (rec[27] & 0xff) / 256.0f;
 
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
@@ -541,7 +566,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
-    _jvLoopLpf = _jvLoopLpf2 = _jvLoopLpf3 = 0.0f;
+    _jvLoopLpf = 0.0f;
 
   // Delay, Panning Delay
   } else if (character == 6 || character == 7) {
@@ -549,7 +574,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
-    _jvLoopLpf = _jvLoopLpf2 = _jvLoopLpf3 = 0.0f;
+    _jvLoopLpf = 0.0f;
   }
 }
 
