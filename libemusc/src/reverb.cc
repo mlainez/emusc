@@ -364,7 +364,29 @@ void Reverb::_process_sample_jv(float input, float output[2])
     wetR += _jvGain[k] * _rBuffer[(_jvTapR[k] + _sweepIndex) & rBufferMask];
   }
   const float fb = 0.5f * (wetL + wetR);
-  _rBuffer[_sweepIndex] = _preLpfState * _jvInGain + _gLoop * fb;
+  // The delay line is the chip's, and the chip's is FIXED POINT. Writing a
+  // float here means the recirculating signal halves forever and never reaches
+  // zero; the hardware's underflows to silence once it falls below one LSB,
+  // and that is not a detail - it is the whole shape of the end of a tail.
+  //
+  // Measured on a drum hit, ours against the reference: identical to within
+  // 1-2 dB for the first second, then the reference falls off a cliff to
+  // EXACT digital silence by about 3 s while ours decayed on, 12 to 17 dB hot
+  // at 1.8-2.5 s. The owner heard it as a wash over every percussion hit. It
+  // reads like a loop-gain error and is not one: measured directly over a
+  // 6 type x 6 Time sweep, our gain at the character the demos use sits within
+  // 0.4 dB of the reference's.
+  //
+  // rBufferQuantum is one LSB of the effect memory's word. Zero leaves the
+  // line in float, which is what every Sound Canvas profile wants until the
+  // same measurement is made on one.
+  {
+    const float q = _settings->device()->reverb.rBufferQuantum;
+    float v = _preLpfState * _jvInGain + _gLoop * fb;
+    if (q > 0.0f)
+      v = q * truncf(v / q);
+    _rBuffer[_sweepIndex] = v;
+  }
 
   _sweepIndex = (_sweepIndex - 1) & rBufferMask;
 

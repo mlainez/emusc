@@ -761,6 +761,12 @@ struct ReverbLaw
   // mean +4.3, and the reference's implied coefficient tracked send/128 to
   // within a factor 1.07-1.47. scdb D-60.
   float chorusSendDivisor = 0.0f;
+
+  // One LSB of the effect memory's word, for a device whose reverb line is
+  // fixed point. It decides where a tail STOPS: below one LSB the recirculating
+  // signal truncates to zero and the line goes silent, where a float line
+  // decays forever. Zero keeps the float behaviour.
+  float rBufferQuantum = 0.0f;
 };
 
 
