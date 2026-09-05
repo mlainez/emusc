@@ -251,7 +251,13 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // ROM1 0x47AB, sign restored after; rising 0 -> 2418, no closed form.
   // Multiplied by the LFO word (sample << 8, +/-0x4000 full scale) and the
   // high word taken, so the peak deviation is table/4 cents: 604 at 63.
-  { RomLookup::JVLfoPitchDepth,      0x06c8a,  64, 2, Monotonic::Rising }
+  { RomLookup::JVLfoPitchDepth,      0x06c8a,  64, 2, Monotonic::Rising },
+
+  // The Random Pitch Depth list: the manual's 15 cents values for indices
+  // 1..15, at 0x57A0 (scdb 07_synthesis/pitch.md, TM-036n). The word before
+  // it at 0x579E is not an entry - the firmware skips the whole term at index
+  // 0 - so the table starts at index 1 and is read as 15 rising words.
+  { RomLookup::JVRandomPitch,        0x057a0,  15, 2, Monotonic::Rising }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -711,7 +717,14 @@ static const RecordRomLayout JV880_RECORDS = {
     // or 83 - and on those the note sweeps a full octave. Preset B 87 is the
     // only note of its kit exercising this, and it measured a semitone flat
     // over its body with the block unread.
-    0x09, 0x08, 0x07, 0x05
+    0x09, 0x08, 0x07, 0x05,
+
+    // Random Pitch Depth: the HIGH nibble of +0x05 (descriptor 0x08, clear
+    // mask 0x0f, shift 4); a patch tone keeps the same index in the low nibble
+    // of its +0x27. On the reference, twelve dry hits of Preset B key 56
+    // (index 8, 100 cents) span 137 cents and twelve of key 38 (index 6, 50
+    // cents) span 73, so the draw covers the full +/- r and not half of it.
+    0x05, 4
   }
 };
 

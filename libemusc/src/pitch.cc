@@ -942,6 +942,24 @@ void Pitch::_jv_init(uint8_t velocity)
     return;                             // not this device
   _jv = true;
 
+  // Random Pitch Depth: the index picks a cents value r from the manual's
+  // list and one draw per voice sets the offset, uniform over +/- r cents: a
+  // 16-bit magnitude word's high-word product with r, and a sign bit
+  // (07_synthesis/pitch.md: cents +/- (draw * r) >> 16, drawn once at note-on,
+  // kept in @0x995A[v]). The full +/- r is measured, not assumed: twelve dry
+  // hits of Preset B key 56 (r = 100) span 137 cents on the reference and
+  // twelve of key 38 (r = 50) span 73, both beyond what +/- r/2 allows. The
+  // engine's own seeded rand() is the source, as for the Sound Canvas random
+  // pitch and random pan.
+  _jvRandCents10 = 0;
+  if (_instPartial.JVRandomPitchIdx && _LUT.hasJVRandomPitch) {
+    const int idx = std::min<int>(_instPartial.JVRandomPitchIdx, 15);
+    const int r = _LUT.JVRandomPitch[idx - 1];
+    const int d = std::rand() & 0x1ffff;
+    const int mag = ((d & 0xffff) * r) >> 16;
+    _jvRandCents10 = ((d & 0x10000) ? -mag : mag) * 10;
+  }
+
   // LFO pitch depths: |d| indexes ROM2 0x6C8A and the sign is restored
   // (ROM1 0x47A4 / 0x47C7). Without the table the term stays at 0.
   if (_LUT.hasJVLfoPitchDepth) {
@@ -1052,7 +1070,7 @@ int Pitch::_jv_cents10(void)
     cents += ((_jvLfoDepth[l] < 0) != (lfo[l] < 0)) ? -m : m;
   }
 
-  return cents * 10;
+  return cents * 10 + _jvRandCents10;
 }
 
 }

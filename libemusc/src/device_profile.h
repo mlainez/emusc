@@ -311,6 +311,11 @@ struct RhythmLayout
   int      pitchEnvDepth;               // signed -12..+12
   int      pitchEnvVelSens;             // signed -63..+63
   int      pitchTimeVelocity;           // low nibble, 0-14, 7 neutral
+
+  // Random Pitch Depth, an index 0-15 into RomLookup::JVRandomPitch. The
+  // rhythm note keeps it in the HIGH nibble of the time-velocity byte where a
+  // patch tone keeps it in a low nibble, hence the shift.
+  int      randomPitch, randomPitchShift;
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which
@@ -384,7 +389,13 @@ enum class RomLookup
   JVLfoRate,                            // 128 u16 phase increments per 16 ms tick
   JVLfoOffset,                          // 8 s8 offsets added to the waveform sample
   JVLfoWaves,                           // 4 x 256 s8 waveform tables
-  JVLfoPitchDepth                       // 64 u16: |depth| -> cents/4 at full swing
+  JVLfoPitchDepth,                      // 64 u16: |depth| -> cents/4 at full swing
+
+  // The manual's Random Pitch Depth list in cents, indices 1..15 (ROM2 0x57A0;
+  // the word before it is not entry 0 - the firmware never indexes 0). A voice
+  // draws once at note-on and adds (draw * cents) >> 16 to its base pitch
+  // (scdb devices/jv880/07_synthesis/pitch.md).
+  JVRandomPitch
 };
 
 // Which way a curve must go for the reading to be trusted. Four JV tables have

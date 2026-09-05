@@ -119,6 +119,7 @@ private:
   int  _jvDepthWord = 0;                // @0x910A[v]
   int  _jvVelAtten = 0;                 // @0x8FBA[v]
   int  _jvLfoDepth[2] = { 0, 0 };       // @0x9452[v], @0x948A[v]
+  int  _jvRandCents10 = 0;              // @0x995A[v], the random-pitch draw
   int  _jvLevel[5] = { 0, 0, 0, 0, 0 }; // 0, L1..L4 as L << 8
   int  _jvTime[4] = { 0, 0, 0, 0 };
   int  _jvSeg = 5;                      // 0..2 ramps, 3 hold L3, 4 release, 5 hold L4

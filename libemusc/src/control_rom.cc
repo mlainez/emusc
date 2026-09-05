@@ -1994,6 +1994,9 @@ void ControlRom::_init_device_lookup_tables(void)
       case RomLookup::JVLfoPitchDepth:
         t.hasJVLfoPitchDepth = rom16(rtOffset, rt.entries, t.JVLfoPitchDepth);
         break;
+      case RomLookup::JVRandomPitch:
+        t.hasJVRandomPitch = rom16(rtOffset, rt.entries, t.JVRandomPitch);
+        break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
       }
@@ -2413,6 +2416,12 @@ int ControlRom::_read_device_rhythm(void)
         ip.PitchJVL[i] = (int8_t) r[R.pitchEnv + 2 * i + 1];
       }
     }
+
+    // Random Pitch Depth, the index into the manual's cents list. 12 of the
+    // 183 factory notes carry one, all in Preset B: 30, 50 or 100 cents on
+    // its snares, hi-hats and toms.
+    if (R.randomPitch)
+      ip.JVRandomPitchIdx = (r[R.randomPitch] >> R.randomPitchShift) & 0x0f;
 
     const int key = R.firstKey + k;
     ds.key[key]    = r[R.playKey] & 0x7f;

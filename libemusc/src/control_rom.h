@@ -220,6 +220,10 @@ public:
     uint8_t JVLfoRate[2], JVLfoDelay[2], JVLfoDelayKeyOff[2], JVLfoFade[2];
     int8_t  JVLfoPitchDepth[2];
     uint8_t hasJVLfo;
+
+    // Random Pitch Depth, 0-15, an index into LookupTables::JVRandomPitch;
+    // 0 = none. Drawn once per voice in Pitch::_jv_init().
+    uint8_t JVRandomPitchIdx;
   };
 
   // A Sound Canvas instrument has two partials; a JV patch has four tones,
@@ -431,6 +435,12 @@ public:
     std::array<int, 64>       JVLfoPitchDepth = {};
     bool                      hasJVLfo = false;
     bool                      hasJVLfoPitchDepth = false;
+
+    // The JV's Random Pitch Depth list, ROM2 0x57A0: 15 words, the manual's
+    // 5 10 20 30 40 50 70 100 200 300 400 500 600 800 1200 cents for indices
+    // 1..15 (entry i - 1 here). Without it a random pitch index adds nothing.
+    std::array<int, 15>       JVRandomPitch = {};
+    bool                      hasJVRandomPitch = false;
 
     // The JV-880's eight reverb type records in full: words 0..27 of each,
     // big-endian, laid end to end, so entry 28*type + w is word w of type
