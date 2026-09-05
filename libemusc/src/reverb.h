@@ -172,6 +172,11 @@ private:
   // from the blocks above, read once from the profile.
   const bool _jvRecords;
 
+  // The post-load hold (ReverbLaw::loadHoldMs): samples of silence left, and
+  // the performance load it was armed by (Settings::device_performance_loads).
+  int      _jvHold;
+  unsigned _jvLoadSeen;
+
   void _set_character(int character);
   void _set_jv_character(int character);
   void _set_reverb_time(int reverbTime);

@@ -47,7 +47,9 @@ Reverb::Reverb(Settings *settings, const struct ControlRom::LookupTables &LUT)
     _reverbTime(-1),
     _delayFeedback(-1),
     _jvRecords(settings->device()->reverb.network ==
-               ReverbNetworkKind::JVRecordProgram)
+               ReverbNetworkKind::JVRecordProgram),
+    _jvHold(0),
+    _jvLoadSeen(0)
 {
   _rBuffer.fill(0.0f);
 
@@ -94,6 +96,26 @@ void Reverb::update(void)
     _set_delay_feedback(delayFeedback);
 
   _set_level(_settings->get_param(PatchParam::ReverbLevel));
+
+  // After a performance load the machine's effect drivers rebuild reverb and
+  // chorus in sequence, and the reverb return stays silent until they are done
+  // (ReverbLaw::loadHoldMs; ROM2 0x71A4-0x71C0, 0x6F9D, 0x73F3; scdb
+  // devices/jv880 M-082, D-73). The reverb arm zeroes the pre-LPF pair with the
+  // rest of slot 0x1E for the 300 ticks before the record is streamed, so the
+  // line is empty when the return opens: it is cleared here and left unwritten
+  // for the hold. Not modelled: the old return stays open, with its loop gain
+  // slewing to zero, for the arm's first 200 ticks. A device whose profile has
+  // no hold (every Sound Canvas) never arms this.
+  const unsigned loads = _settings->device_performance_loads();
+  if (loads != _jvLoadSeen) {
+    _jvLoadSeen = loads;
+    _jvHold = _settings->device()->reverb.loadHoldMs * 32;   // 32 kHz
+    if (_jvHold > 0) {
+      std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
+      _dampA = _dampB = 0.0f;
+      _preLpfState = 0.0f;
+    }
+  }
 }
 
 
@@ -118,6 +140,18 @@ void Reverb::process_sample(float input, float output[2])
       _delayFeedback = -1;
       update();                        // reverb time and level for the new one
     }
+    if (_jvHold > 0)
+      _jvHold--;
+    output[0] = output[1] = 0;
+    return;
+  }
+
+  // The post-load hold: nothing is written and nothing comes back, the pointer
+  // keeps moving and a pending type change keeps its own timing (update()).
+  if (_jvHold > 0) {
+    _jvHold--;
+    _sweepIndex = (_sweepIndex - 1) & rBufferMask;
+    _fade_step();
     output[0] = output[1] = 0;
     return;
   }

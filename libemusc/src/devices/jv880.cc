@@ -883,7 +883,15 @@ const DeviceProfile JV880_PROFILE = {
     // device_profile.h for the measurement and the reason: a 0-127 parameter
     // feeding a 64-is-unity byte field is written shifted down by one, which
     // is what this law already does to the chorus level.
-    128.0f
+    128.0f,
+
+    // loadHoldMs. The reverb return is silent for the effect drivers' whole
+    // post-load sequence, the same 550 ms as the chorus (ChorusJvLaw below):
+    // measured on the reference at ROM2 v1.0.0, a kick 200 ms after the
+    // performance select renders bit-identically with reverb level 80 and 0
+    // until 0.55 s after the select (scdb devices/jv880 M-082, D-73). Without
+    // this the return opened at 0.47 s, the Sound Canvas type-change silence.
+    550
   },
 
   { true,  0x3f, 0x7f },

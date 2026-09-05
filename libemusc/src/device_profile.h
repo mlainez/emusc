@@ -790,6 +790,15 @@ struct ReverbLaw
   // mean +4.3, and the reference's implied coefficient tracked send/128 to
   // within a factor 1.07-1.47. scdb D-60.
   float chorusSendDivisor = 0.0f;
+
+  // How long after a performance load the return stays silent and the line
+  // empty, in milliseconds; 0 for a device with no such sequence. The JV's
+  // effect drivers rebuild reverb and chorus in sequence with waits between
+  // their register writes - 200 and 300 ticks in the reverb arm, with slot
+  // 0x1E's F012-F01E zeroed for the second wait, then 50 in the chorus arm -
+  // and the reverb return opens when they are done, at the same moment as the
+  // chorus's (ChorusJvLaw::loadHoldMs).
+  int loadHoldMs = 0;
 };
 
 
