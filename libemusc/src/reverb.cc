@@ -483,8 +483,16 @@ void Reverb::_set_jv_character(int character)
   // Words 28 and 29 are byte coefficients, not addresses: their low halves are
   // zero and their high halves are 28/29 on HALL1-2 and 31 on ROOM1, which is
   // the shape of this chip's damping pair on the Sound Canvas side (c7/c8).
-  _jvDampPole = (rec[28] >> 8) / 64.0f;
-  _jvDampGain = (rec[29] >> 8) / 64.0f;
+  // The damping coefficient is word 29's HIGH byte - 31, 29, 31, 29, 29, 29 on
+  // ROOM1..PLATE - and NOT word 28's, which is byte +0x38, the reverb RETURN
+  // coefficient this profile already reads as JVReverbReturnCoeff (31, 29, 31,
+  // 28, 28, 28, 0, 61). The two differ only on HALL1-2 and PLATE, which is
+  // exactly why using the wrong one measured almost as well and looked right.
+  // w29 is the only byte of a reverb record that nothing else claims.
+  //
+  // The DELAY records are 0x38 bytes and do not own words 28-29 at all; theirs
+  // read out of the record that follows, so only characters 0-5 use this.
+  _jvDampPole = _jvDampGain = (rec[29] >> 8) / 64.0f;
 
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
