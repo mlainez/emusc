@@ -90,6 +90,9 @@ TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
     _jvRes(0),
     _jvWord(0),
     _jvWordPrev(0),
+    _jvChipTarget(0),
+    _jvRampStep(0),
+    _jvLastTarget(-1),
     _jvQ1(1.0f),
     _jvRampPos(0)
 {
@@ -888,6 +891,7 @@ void TVF::_jv_init(uint8_t velocity)
   _jv_next_phase();                          // -> Attack1
   _jv_iterate();                             // the coefficient the note starts on
   _jvWordPrev = _jvWord;                     // and so nothing to ramp from
+  _jvRampStep = 0;
 }
 
 
@@ -1006,51 +1010,105 @@ void TVF::_jv_iterate(void)
     damp = hard ? _LUT.JVTvfDampHard[_jvRes] : _LUT.JVTvfDampSoft[_jvRes];
   }
 
-  // Only the HIGH BYTE of each 16-bit control word reaches the chip: the CPU
-  // sends `(target & 0xFF00) | slew_rate` and the chip interpolates from there
-  // (the differential write of D-15). Both words are therefore quantised to
-  // 1/256 of full scale, and the low bytes of the ROM's own tables never leave
-  // the CPU. Measured on the reference at ROM2 v1.0.0, rhythm key 51 with the
-  // filter driven over DT1: resonance 40 and 41 differ in DAMP_SOFT
-  // (0x297f / 0x290d) and in LIMIT_SOFT (0x9036 / 0x9090) but share both high
-  // bytes, and the two renders come out byte-identical - at cutoff 40, where
-  // only the damping is live, and again at cutoff 127, where the limit is what
-  // the cutoff word becomes. Without the mask this engine rendered them apart.
-  _jvWordPrev = _jvWord;
-  _jvWord = word & 0xff00;
+  // The damping is a plain high byte: ROM1 0x224E stores `damp >> 8` and the
+  // writer at 0x2A6B hands that one byte to F01C. Resonance 40 and 41 differ in
+  // DAMP_SOFT (0x297f / 0x290d) but share the high byte, and the reference
+  // renders them byte-identically.
   _jvQ1 = (float) (damp & 0xff00) / (float) _jvLaw->dampUnity;
+
+  // The cutoff word does NOT reach the chip as a value. The write is
+  // differential (D-15): ROM1 0x224C reads the chip's current coefficient back
+  // through F03A / F036, then sends `(target & 0xFF00) | compand(current -
+  // target)` - the target's HIGH BYTE and a companded slew rate. So the chip is
+  // told the distance to the full-precision target and is told to stop at the
+  // high byte. The low byte is spent in the ramp rather than discarded, and
+  // three behaviours follow, each of them measured on the reference:
+  //
+  //   - A word that never moves settles on its high byte, because a note starts
+  //     the chip at zero and the first write walks it UP into the stop. Word
+  //     0x02ff settles where 0x0200 does - the reference separates that pair by
+  //     37.9 dB below the render, this engine by 38.0, where the unquantised
+  //     word separated them by 4.1 - and 0x00ff / 0x00c0 / 0x0080 settle at
+  //     zero, a filter closed to digital silence.
+  //   - A FALLING word is tracked at the full 16 bits: the commanded distance
+  //     puts the coefficient on the target, which is always above the high byte
+  //     the chip stops at, so the stop never bites. It then KEEPS that value
+  //     when the word stops falling, because the CPU only writes when its
+  //     target changes (ROM1 0x2256 returns 0 and the leaf writer skips it).
+  //   - A RISING word climbs in 8-bit steps: the stop is in the way.
+  //
+  // The commanded distance is taken as one tick's worth of movement, which is
+  // the scale that makes the read-back-and-resend loop a tracker rather than a
+  // lag; the compand's exact reconstruction weight is not established (scdb
+  // tvf.md open item 6) and would quantise it to about 4 bits of mantissa.
+  const int targetHi = word & 0xff00;
+
+  _jvWordPrev = _jvWord;
+  _jvRampStep = 0;
+
+  // ROM1 0x2256: when the target has not changed the routine returns 0 and the
+  // leaf writer skips it, so NOTHING is sent and the coefficient stays where
+  // the last ramp left it. That is why a word that stops moving keeps its low
+  // byte, while a word that never moved - the note starts the chip at zero and
+  // walks up - is stopped at its high byte and keeps none of it.
+  if (word != _jvLastTarget) {
+    const bool rising  = word > _jvLastTarget;
+    const bool towards = rising ? (word > _jvWord) : (word < _jvWord);
+    _jvLastTarget = word;
+
+    // ROM1 0x220F: when the coefficient sits on the far side of the new target
+    // but inside its high byte, the CPU sends 0xff00 - a rate of zero - and
+    // leaves it alone rather than steering it.
+    if (towards || (_jvWord & 0xff00) != targetHi) {
+      _jvChipTarget = targetHi;
+      _jvRampStep = word - _jvWord;            // ROM1 0x21DC compands this
+      const int end = _jvWord + _jvRampStep;
+      if (_jvRampStep > 0 && _jvWord <= targetHi)
+        _jvWord = std::min(end, targetHi);
+      else if (_jvRampStep < 0 && _jvWord >= targetHi)
+        _jvWord = std::max(end, targetHi);
+      else
+        _jvWord = end;
+    }
+  }
 
   static const bool dbg = getenv("EMUSC_DEBUG_TVF") != nullptr;
   if (dbg)
     std::cerr << "JV TVF: env=" << std::dec << (_jvEnvLevel >> 8)
               << " x=" << x << " word=0x" << std::hex << word
+              << " chip=0x" << _jvWord
               << " damp=0x" << damp << std::dec << " res=" << _jvRes
-              << " F1=" << ((float) word / 32768.0f)
+              << " F1=" << ((float) _jvWord / 32768.0f)
               << " Q1=" << _jvQ1
               << std::endl;
 }
 
 
-// The coefficient moves across the tick rather than stepping at its boundary.
-// On the hardware the CPU writes the target's high byte together with a slew
-// rate and the chip walks the coefficient there itself; the reconstruction of
-// that rate byte is not established, so the move is taken as linear across the
-// tick, landing exactly on the target. That is the same simplification
-// _smooth_cutoff() and TVA::_smooth() already make, and for the same reason:
-// the settled value is what the reference measures at, and the shape inside one
-// tick is finer than the measurement resolves.
+// The coefficient moves across the tick rather than stepping at its boundary:
+// the chip walks it at the rate the CPU sent and stops when it reaches the
+// transmitted high byte, which can happen part way through the tick. Taking
+// the walk as linear over the tick is the same simplification _smooth_cutoff()
+// and TVA::_smooth() already make - the shape inside 16 ms is finer than the
+// measurement resolves - but the stop is not a simplification and is applied
+// where it falls.
 void TVF::_jv_apply_sample_set(std::array<float, 256> &dryBus)
 {
   const float unity = (float) _jvLaw->cutoffUnity;
-  const float from = _jvWordPrev / unity;
-  const float to   = _jvWord / unity;
-  const float span = (float) (256 * _jvLaw->envTickPeriods);
+  const float from  = _jvWordPrev / unity;
+  const float step  = _jvRampStep / unity;
+  const float stop  = _jvChipTarget / unity;
+  const float span  = (float) (256 * _jvLaw->envTickPeriods);
 
   for (int i = 0; i < 256; i++) {
     float t = (_jvRampPos + i + 1) / span;
     if (t > 1.0f)
       t = 1.0f;
-    _svf->set_coefficients(from + (to - from) * t, _jvQ1);
+    float f1 = from + step * t;
+    if (step > 0.0f)
+      f1 = std::min(f1, stop);
+    else if (step < 0.0f)
+      f1 = std::max(f1, stop);
+    _svf->set_coefficients(f1, _jvQ1);
     dryBus[i] = _svf->process_sample(dryBus[i]);
   }
 

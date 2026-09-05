@@ -133,8 +133,11 @@ private:
   int _jvCutoff;           // the tone's base cutoff, 0..127
   int _jvResTarget;        // the resonance the tone asks for
   int _jvRes;              // the resonance after the per-tick slew
-  int _jvWord;             // cutoff coefficient word, and the one before it,
-  int _jvWordPrev;         // between which the coefficient moves
+  int _jvWord;             // the chip's cutoff coefficient at this tick's end,
+  int _jvWordPrev;         // and at its start, between which it moves
+  int _jvChipTarget;       // the high byte the CPU transmitted, where it stops
+  int _jvRampStep;         // this tick's signed movement before that stop
+  int _jvLastTarget;       // the CPU's last transmitted target, -1 before any
   float _jvQ1;             // damping, already in the filter's own units
   int _jvRampPos;          // samples into the move between the two words
 
