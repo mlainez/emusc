@@ -275,6 +275,27 @@ float Reverb::_fade_step(void)
 //    It is read and kept in _jvPreDelay so it is visible rather than dropped,
 //    and it is NOT inserted into the path - inventing a position for it would
 //    move every tap by 9.4 to 29 ms on a guess.
+//
+//    MEASURED 2026-09-05, and it says the taps are in the wrong place. Feeding
+//    one short drum hit through HALL1 at Reverb Time 64 and taking the wet as
+//    the difference between a reverb-open and reverb-closed render, the
+//    reference's wet begins at 18 ms and peaks at 228 ms. Ours begins at 40 ms,
+//    which is tap P1 exactly where the record puts it (1307 samples = 40.8 ms),
+//    and peaks at 310. So the reference produces output 22 ms BEFORE our first
+//    tap and before the record's own 926-sample pre-delay.
+//
+//    Subtracting an offset from every tap was swept: 700 samples puts the onset
+//    at 18 ms, matching to the resolution of the measurement, and takes the
+//    envelope error's standard deviation from 15.6 to 5.8 dB. But 700 is not
+//    the pre-delay and nothing in the record is 700, and NO offset reconciles
+//    the onset with the build-up - the peak lands at 124 to 140 ms against the
+//    reference's 228 whatever value is used. A constant offset is therefore the
+//    wrong shape of answer, and none is applied.
+//
+//    What this does establish: the residual is a TIMING error, not a spectral
+//    one. It is why the narrowband comb is misplaced by up to 27 dB at 209 Hz
+//    while the octave-band mean reads 2.5 dB, and why no damping or gain
+//    constant has ever fixed what the owner keeps hearing.
 // FIDELITY OF THIS NETWORK -- read before trusting it, and before extending it.
 //
 // The firmware is the ground truth here, and by that standard this network is
@@ -458,8 +479,10 @@ void Reverb::_process_sample_jv(float input, float output[2])
     // this network at all.
     _jvLoopLpf = _jvDampPole * _jvLoopLpf + (1.0f - _jvDampPole) * fb;
     const float fbd = _jvLoopLpf;
-    const float wv = _preLpfState * _jvInGain + _gLoop * fbd;
-    float v = wv;
+    // The pre-LPF stays on the fresh INPUT. Putting the record's own pair on
+    // the whole write instead kills the line outright - measured at -200 dB,
+    // i.e. silence - so that structure is refuted, not merely worse.
+    float v = _preLpfState * _jvInGain + _gLoop * fbd;
     if (q > 0.0f)
       v = q * truncf(v / q);
     _rBuffer[_sweepIndex] = v;
