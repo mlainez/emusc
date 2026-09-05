@@ -762,6 +762,23 @@ struct ReverbLaw
   // within a factor 1.07-1.47. scdb D-60.
   float chorusSendDivisor = 0.0f;
 
+  // The record's tap words are BYTE addresses into the effect memory on a
+  // device that says so here; the sample delay is the word over this. 0 and 1
+  // both mean "already samples".
+  int tapAddressBytesPerSample = 0;
+
+  // What the damping byte is divided by, and what the firmware's loop-gain
+  // byte is multiplied by. Both are properties of the recovered network rather
+  // than of the chip, and both are FITTED - see reverb.cc. Zero keeps the
+  // values the network was first written with.
+  float dampPoleDivisor = 0.0f;
+  float loopGainScale = 0.0f;
+
+  // Close the recirculation from the single loop tap rather than from the wet
+  // sum. scdb's own reading of the network says the loop is closed from a
+  // TENTH tap; false keeps the wet-sum form.
+  bool loopTapFeedback = false;
+
   // One LSB of the effect memory's word, for a device whose reverb line is
   // fixed point. It decides where a tail STOPS: below one LSB the recirculating
   // signal truncates to zero and the line goes silent, where a float line

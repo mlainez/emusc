@@ -858,6 +858,10 @@ const DeviceProfile JV880_PROFILE = {
     // (IC24, service notes p.3), so the line truncates below 1/32768.
     // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
     // (IC24, service notes p.3), so the line truncates below 1/32768.
+2,                     // tap words are BYTE addresses into 16-bit memory
+    512.0f,                // the damping byte is over 512, not 256
+    1.8f,                  // FITTED scale on the firmware's loop-gain byte
+    true,                  // close the loop from the single tap, not the wet sum
     1.0f / 32768.0f
   },
 

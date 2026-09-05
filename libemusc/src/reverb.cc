@@ -455,7 +455,14 @@ void Reverb::_process_sample_jv(float input, float output[2])
   // 2.5 s - and the mean error over the whole decay goes 3.3 dB at 1.0 to
   // 10.9 dB at 0.80. The two interact: less feedback reaches the line's one-LSB
   // floor sooner, so a gain fitted on slope alone truncates the end.
-  const float fb = 0.5f * (wetL + wetR);
+  // The loop is closed from the single loop tap on a device that says so.
+  // The wet sum was adopted because a w20 feedback produced an audible stutter
+  // at that tap's lag - but that was measured with the tap read as SAMPLES,
+  // where w20 is 403 ms. Read as bytes it is 224 ms and a different structure
+  // entirely, and the objection does not carry over.
+  const float fb = _settings->device()->reverb.loopTapFeedback
+    ? _rBuffer[(_jvLoopTap + _sweepIndex) & rBufferMask]
+    : 0.5f * (wetL + wetR);
   // The delay line is the chip's, and the chip's is FIXED POINT. Writing a
   // float here means the recirculating signal halves forever and never reaches
   // zero; the hardware's underflows to silence once it falls below one LSB,
@@ -577,7 +584,12 @@ void Reverb::_set_jv_character(int character)
     return;
 
   _jvPreDelay  = (uint16_t) rec[1];
-  _jvLoopTap   = (uint16_t) rec[20];
+  // Tap words are BYTE addresses on a device that declares a byte-per-sample:
+  // the effect memory is 16-bit, which is the same fact the line's own 1/32768
+  // truncation rests on. Measured, it is what puts the wet onset at 20 ms
+  // against the reference's 18 where reading them as samples gives 40.
+  const int bps = std::max(1, _settings->device()->reverb.tapAddressBytesPerSample);
+  _jvLoopTap   = (uint16_t) (rec[20] / bps);
   _jvTapBase   = (uint16_t) (rec[13] + 1);   // word +0x1A plus one
   _jvInGain    = sByte((uint16_t) rec[22], true);
   _jvTimeScale = rec[27] >> 8;               // record[+0x36]
@@ -598,7 +610,10 @@ void Reverb::_set_jv_character(int character)
   //
   // The DELAY records are 0x38 bytes and do not own words 28-29 at all; theirs
   // read out of the record that follows, so only characters 0-5 use this.
-  _jvDampPole = (rec[27] & 0xff) / 256.0f;
+  {
+    const float d = _settings->device()->reverb.dampPoleDivisor;
+    _jvDampPole = (rec[27] & 0xff) / (d > 0.0f ? d : 256.0f);
+  }
 
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
@@ -612,8 +627,8 @@ void Reverb::_set_jv_character(int character)
   };
 
   for (int k = 0; k < _jvTaps; k++) {
-    _jvTapL[k] = (uint16_t) rec[2 * (k + 1)];
-    _jvTapR[k] = (uint16_t) rec[2 * (k + 1) + 1];
+    _jvTapL[k] = (uint16_t) (rec[2 * (k + 1)] / bps);
+    _jvTapR[k] = (uint16_t) (rec[2 * (k + 1) + 1] / bps);
     const int raw = gainByte[k].hi ? (rec[gainByte[k].word] >> 8)
                                    : (rec[gainByte[k].word] & 0xff);
     // k == 1 is P2, whose byte is 0x00 in every record on both devices. It is
@@ -799,7 +814,11 @@ float Reverb::_jv_loop_gain(int expandedTime) const
     return std::min(powf(10.0f, dB / 20.0f), 0.99f);
   }
 
-  return (float) ((expandedTime * _jvTimeScale) >> 8) / 256.0f;
+  {
+    const float k = law.loopGainScale > 0.0f ? law.loopGainScale : 1.0f;
+    return std::min(k * (float) ((expandedTime * _jvTimeScale) >> 8) / 256.0f,
+                    0.995f);
+  }
 }
 
 
