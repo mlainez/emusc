@@ -21,6 +21,7 @@
 #define __SYNTH_H__
 
 
+#include "analog_stage.h"
 #include "control_rom.h"
 #include "params.h"
 #include "resampler.h"
@@ -218,6 +219,11 @@ private:
 
   SystemEffects *_systemEffects;
   Resampler *_resampler;
+
+  // The device's analog board, after the converter. See analog_stage.h: the
+  // single place for what a module does to the finished mix that its chip did
+  // not, and a no-op for every device whose board has not been measured.
+  AnalogStage *_analogStage;
 
   // MIDI message types
   static const uint8_t midi_NoteOff         = 0x80;

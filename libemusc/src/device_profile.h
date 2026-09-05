@@ -880,6 +880,51 @@ struct PitchJvLaw
 // Everything the engine needs to know about one device. Exactly one of the two
 // layout pointers is set: it says which family the ROM belongs to, and so which
 // reader can walk it.
+// ---------------------------------------------------------------------------
+// THE ANALOG STAGE: what the device does to the finished mix, after the chip.
+//
+// Everything above this line is the digital machine. A real module then puts
+// the samples through a converter and an analog board, and that board is part
+// of the instrument's sound. This is the single place it is declared, as data,
+// so that adding the next module's output stage is a few numbers in
+// devices/<model>.cc and nothing at all in the engine. The code that runs it is
+// analog_stage.cc and it never learns which device it is serving.
+//
+// It is measured, not assumed. A device whose board nobody has measured leaves
+// this default-constructed and its mix is passed through bit for bit - which is
+// where every Sound Canvas profile stands, and where it must stay until someone
+// measures one. The JV-880's response is emphatically NOT the SC-55's: they are
+// different boards, and the temptation to reuse a curve that "sounds more like
+// hardware" is exactly what the evidence classes exist to stop.
+
+struct OutputSection
+{
+  enum Kind { LowShelf, Peaking, HighShelf };
+
+  Kind  kind;
+  float freq;                   // Hz: the shelf corner, or the peak's centre
+  float gainDb;
+  float q;                      // shelf slope, or the peak's width
+};
+
+struct AnalogStageProfile
+{
+  // A cascade of RBJ cookbook biquads, applied to the finished stereo mix at
+  // the host sample rate. The forms matter as much as the numbers: these were
+  // fitted WITH the cookbook equations, so another realisation of "a low shelf
+  // at 118 Hz" would be a different curve from the measured one.
+  const OutputSection *response = nullptr;
+  int                  sections = 0;
+
+  // Flat make-up gain applied with the response, for a board whose absolute
+  // gain is known. Zero is not "no opinion", it is the convention the JV's
+  // response is stated in: the curve is referenced to the 250-500 Hz bands and
+  // is unity there, because a long-term spectrum measured off a recording of
+  // unknown gain can fix a SHAPE and cannot fix a level.
+  float trimDb = 0.0f;
+};
+
+
 struct DeviceProfile
 {
   const char *name;
@@ -924,6 +969,9 @@ struct DeviceProfile
 
   // And for the pitch: omitted, the scale is 0 and the JV pitch path is off.
   PitchJvLaw     pitchJv;
+
+  // And for the analog board: omitted, no sections, and the mix is untouched.
+  AnalogStageProfile analog;
 };
 
 extern const RomSignature SC55_SIGNATURE;

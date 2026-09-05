@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.8...3.30)
 configure_file(config.h.in config.h)
 
 add_library(emusc
+  analog_stage.cc
+  analog_stage.h
   chorus.cc
   chorus.h
   control_rom.cc

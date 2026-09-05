@@ -73,6 +73,7 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
 
   _systemEffects = new SystemEffects(_settings, _ctrlRom);
   _resampler = new Resampler();
+  _analogStage = new AnalogStage(_ctrlRom.device()->analog);
 }
 
 
@@ -82,6 +83,7 @@ Synth::~Synth()
   delete _settings;
   delete _systemEffects;
   delete _resampler;
+  delete _analogStage;
 }
 
 
@@ -833,6 +835,13 @@ void Synth::_process_samples(void)
     }
   }
 
+  // The analog board, on the samples this period just produced. It runs at the
+  // HOST rate and after the resampler because that is where the board is: the
+  // engine's own 32 kHz puts 16 kHz at Nyquist, and the JV's response is still
+  // climbing there.
+  _analogStage->process(_hostSampleBufL.data(), _hostSampleBufR.data(),
+                        _hostSampleBufWIndex);
+
   midiMutex.unlock();
 
   _blockStart += 256;
@@ -854,6 +863,7 @@ std::array<int, 16> Synth::get_parts_last_peak_sample(void)
 void Synth::set_audio_format(uint32_t sampleRate, uint8_t channels)
 {
   _resampler->set_sample_rate(sampleRate);
+  _analogStage->set_sample_rate(sampleRate);
   _settings->set_sample_rate(sampleRate);
   _settings->set_channels(channels);
 

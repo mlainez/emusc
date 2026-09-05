@@ -693,6 +693,16 @@ static const RecordRomLayout JV880_RECORDS = {
 };
 
 
+// The JV-880's output response, as the cascade analog_stage.cc realises. See
+// the AnalogStageProfile initialiser at the end of JV880_PROFILE for where it
+// comes from and what class of evidence it is.
+static const OutputSection JV880_OUTPUT_RESPONSE[] = {
+  { OutputSection::LowShelf,   118.8f, +3.400f, 0.724f },
+  { OutputSection::Peaking,   1050.5f, -0.488f, 0.719f },
+  { OutputSection::HighShelf, 9846.2f, +5.107f, 0.591f },
+};
+
+
 const DeviceProfile JV880_PROFILE = {
   "JV-880",
 
@@ -874,7 +884,47 @@ const DeviceProfile JV880_PROFILE = {
   // The pitch envelope's depth scale (scdb D-37, ROM1 0x48CC): the TVF's
   // 0x9994 has a pitch twin, 0xCB2C, and with it depth +12 at level +63 comes
   // out at 0x3F00 * 4876 >> 16 = 1200 cents, one octave exactly.
-  { 0xcb2c }
+  { 0xcb2c },
+
+  // The analog output stage (scdb devices/jv880 D-65, M-065, M-067).
+  //
+  // THIS IS A MEASURED DIVERGENCE OF THE CHIP-LEVEL REFERENCE FROM THE
+  // HARDWARE, not a taste control. Every real JV-880 recording carries the
+  // same shape: about +3 dB below 100 Hz, a few tenths down through the
+  // midrange and +4 dB above 10 kHz, referenced to 250-500 Hz. It was held
+  // back for a day as possibly the capture chain of one recording of unknown
+  // provenance, and settled by finding recordings that could not share a
+  // chain - four of them, tested for a common digital ancestor by CLOCK DRIFT
+  // at sample resolution, three independent at 566, 1101 and 1249 ppm. The
+  // three that are not a bad chain agree within 0.1 to 1.0 dB in every octave
+  // band, across different people, decades and formats. Unrelated capture
+  // chains do not converge on +3.1 / +3.4 / +3.2 dB at 31-63 Hz by accident.
+  //
+  // The numbers below are `FIT`, not `MEASURED`: the SHAPE is the device's and
+  // its attribution is settled, but these three sections were fitted so that
+  // THIS engine's output lands on the hardware, and they therefore carry our
+  // own remaining error with them. Fitted against the chip-level reference
+  // instead they come out +2.4 dB / -0.7 / +3.4 at 149 / 1284 / 8631 Hz, and
+  // the gap between the two fits is the measure of that. Weighted rms 0.22 dB
+  // over 35-14500 Hz, from five located sources; re-derive them with
+  // scdb devices/jv880/tools/analysis/output_response_fit.py if the engine
+  // moves. What does NOT fit a smooth cascade has been left in the residual on
+  // purpose - the sub-126 Hz ripple in the reference's own bass is a per-note
+  // synthesis difference, and an output stage that flattened it would be
+  // curve-fitting one emulator's errors into another's analog board.
+  //
+  // The TRIM is -1.74 dB and it is not a taste correction either. A long-term
+  // spectrum taken off a peak-normalised recording fixes a shape and cannot
+  // fix a level, so the stage's absolute gain is the one thing the measurement
+  // leaves open - and the sections above, stated as unity at 250-500 Hz, would
+  // raise the total energy of the JV's own seven demo songs by exactly this
+  // much. The engine's absolute level was established separately, against the
+  // firmware's own level law (D-28) and measured on the reference; letting a
+  // shape correction move it by 1.7 dB would break that agreement to no
+  // purpose. So the stage changes the shape and leaves the level where it was.
+  { JV880_OUTPUT_RESPONSE,
+    (int) (sizeof JV880_OUTPUT_RESPONSE / sizeof JV880_OUTPUT_RESPONSE[0]),
+    -1.74f }
 };
 
 }
