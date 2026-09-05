@@ -176,6 +176,7 @@ private:
   void _initialize_patch_params(enum Mode = Mode::GS);
   void _initialize_drumSet_params();
   void _apply_device_performance();
+  bool _chorus_macro_sets_parameters(void);
   int  _copy_drum_set(uint8_t map, int index);
 
   // Counts device performance loads, so an effect can tell a load from a

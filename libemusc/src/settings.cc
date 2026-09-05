@@ -247,7 +247,8 @@ void Settings::set_param(enum PatchParam pp, uint8_t value, int8_t part)
   }
 
   if (pp == EmuSC::PatchParam::ChorusMacro) {
-    _run_macro_chorus(value);
+    if (_chorus_macro_sets_parameters())
+      _run_macro_chorus(value);
   } else if (pp == EmuSC::PatchParam::ReverbMacro) {
     _run_macro_reverb(value);
 
@@ -323,7 +324,8 @@ void Settings::set_patch_param(uint16_t address, uint8_t *data, uint8_t size)
     _patchParams[address + i] = data[i];
 
   if (address == 0x138 && size >= 1) {
-    _run_macro_chorus(data[0]);
+    if (_chorus_macro_sets_parameters())
+      _run_macro_chorus(data[0]);
   } else if (address == 0x130 && size >= 1) {
     _run_macro_reverb(data[0]);
   }
@@ -901,6 +903,19 @@ uint32_t Settings::_to_native_endian_uint32(uint8_t *ptr)
     return (ptr[0] << 24 | ptr[1] << 16 | ptr [2] << 8 | ptr[3]);
 
   return (ptr[3] << 24 | ptr[2] << 16 | ptr[1] << 8 | ptr[0]);
+}
+
+
+// On a Sound Canvas the chorus macro is a preset: selecting one also writes the
+// feedback, delay, rate and depth it stands for. On the JV-880 the same
+// parameter slot carries Chorus Type, which selects a ROM record and touches
+// nothing else - CHORUS3 with Depth 80 and Rate 60 sweeps 0.25-8.6 ms in 0.43 s
+// on the machine, and the macro table would have made it Depth 19 and Rate 3,
+// a 5.5 ms window in 0.75 s (scdb devices/jv880 D-20, M-083).
+bool Settings::_chorus_macro_sets_parameters(void)
+{
+  const DeviceProfile *dev = device();
+  return !dev || dev->chorusLawKind != ChorusLawKind::JVSweptPointer;
 }
 
 
