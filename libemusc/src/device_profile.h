@@ -392,6 +392,18 @@ struct RomLookupTable
   int       entries;
   int       width;                      // bytes per entry, 1 or 2
   Monotonic shape;
+
+  // A second address for devices whose firmware revisions move their tables.
+  // `offset` is the address in the EARLIER revision and this the LATER one; 0
+  // means the table does not move and `offset` is used for both. Appended last
+  // on purpose: a five-field initialiser still compiles and reads 0 here.
+  //
+  // The JV-880 needs it. Its v1.0.1 grows the page-3 code image by 318 bytes,
+  // which carries every table above the insertions with it, and three of ours
+  // live up there. Mixing the two revisions' addresses is not a subtle error:
+  // at the wrong revision TVAPanKeyFollow reads ASCII string data as a pan
+  // curve, and its shape check is Unchecked, so nothing stops it.
+  uint32_t  offsetAlt;
 };
 
 

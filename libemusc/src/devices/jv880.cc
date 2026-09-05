@@ -30,6 +30,15 @@ namespace EmuSC
 // curves that must be monotonic. They keep their fitted SC-55 shape instead of a
 // wrong reading.
 static const RomLookupTable JV880_LOOKUP_TABLES[] = {
+  // Three of these live above 0x311BC, where v1.0.1 inserts 318 bytes of code,
+  // so they carry both addresses: `offset` is v1.0.0 and the trailing one
+  // v1.0.1 (the three blocks are byte-identical at exactly +318). Getting this
+  // wrong is not subtle. At v1.0.1, 0x3e931 is ASCII string data, and since
+  // TVAPanKeyFollow is Unchecked it was applied as a pan curve regardless -
+  // the stereo image came out wholesale different. At v1.0.0, 0x3ff49 is
+  // inside the 0xFF pad the later image spends, so EnvTimeKeyFollowSens read
+  // 21 bytes of 0xFF. scdb D-70, M-073.
+
   // 0x3e9c4 is the wrong data and the check now says so. The SC-55's own
   // TVFResonanceFreq, in its CPU ROM at 0x7714, is flat 127 across the first
   // ninety entries and then strictly falling to 0 - 115 falls, 0 rises. This
@@ -39,7 +48,8 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // a guess but a guess of the right shape. The JV's own table is not identified:
   // the best strictly non-increasing 256-byte candidate is 0x05290 at deviation
   // 0.1782, not good enough to claim.
-  { RomLookup::TVFResonanceFreq,     0x3e9c4, 256, 1, Monotonic::Falling },
+  { RomLookup::TVFResonanceFreq,     0x3e886, 256, 1, Monotonic::Falling,
+                                                                  0x3e9c4 },
   // Was 0x054be, which is 46 bytes INSIDE the table that starts at 0x05490 -
   // entered with the shape check off. The region maps cleanly by its own
   // boundaries, every table starting at 255 and ending at 0: 128-byte tables at
@@ -49,9 +59,11 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // a resonance of 0..127.
   { RomLookup::TVFResonance,         0x05510, 128, 1, Monotonic::Falling },
   { RomLookup::EnvSegmentCurve,      0x055f5,   9, 1, Monotonic::Unchecked },
-  { RomLookup::TVAPanKeyFollow,      0x3e931, 128, 1, Monotonic::Unchecked },
+  { RomLookup::TVAPanKeyFollow,      0x3e931, 128, 1, Monotonic::Unchecked,
+                                                                  0x3ea6f },
   { RomLookup::TVALevelIndex,        0x05590, 128, 1, Monotonic::Falling },
-  { RomLookup::EnvTimeKeyFollowSens, 0x3ff49,  21, 1, Monotonic::Rising },
+  { RomLookup::EnvTimeKeyFollowSens, 0x3fe0b,  21, 1, Monotonic::Rising,
+                                                                  0x3ff49 },
   { RomLookup::LFOSine,              0x04edf, 130, 1, Monotonic::Unchecked },
 
   // The LFO rate table, ROM2 0x4C58: 128 big-endian words rising 128 to 16127

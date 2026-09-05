@@ -42,6 +42,13 @@
 #include <iostream>
 #include <iomanip>
 
+// The banner of the LATER firmware revision of a device whose ROM tables move
+// between revisions. Only the JV-880 has two revisions here: v1.0.0 prints
+// "VERSION 1.00  92/07/08" and v1.0.1 "VERSION 1.01  92/12/14", each exactly
+// once in its own image. A Sound Canvas ROM contains neither, so it takes the
+// earlier-revision path and nothing about it changes.
+static const char LATER_REVISION_BANNER[] = "VERSION 1.01";
+
 
 namespace EmuSC {
 
@@ -1890,89 +1897,102 @@ void ControlRom::_init_device_lookup_tables(void)
       return inversions == 0;
     };
 
+  // Which firmware revision this image is, for the tables that move with it.
+  // The banner is the device's own and appears exactly once, so searching for
+  // it beats trusting a file name or a fixed address - the banner itself moved
+  // between the two JV-880 revisions.
+  const bool laterRevision =
+    _deviceRom.size() > 0 &&
+    std::search(_deviceRom.begin(), _deviceRom.end(),
+                LATER_REVISION_BANNER,
+                LATER_REVISION_BANNER + sizeof(LATER_REVISION_BANNER) - 1)
+      != _deviceRom.end();
+
   if (haveRom) {
     for (int i = 0; i < _profile->lookupTableCount; i++) {
       const RomLookupTable &rt = _profile->lookupTables[i];
-      if ((size_t) rt.offset + (size_t) rt.entries * rt.width > _deviceRom.size())
+      const uint32_t rtOffset =
+        (laterRevision && rt.offsetAlt) ? rt.offsetAlt : rt.offset;
+      if ((size_t) rtOffset + (size_t) rt.entries * rt.width > _deviceRom.size())
         continue;
       if (rt.shape != Monotonic::Unchecked &&
-          !shape_ok(&_deviceRom[rt.offset], rt.entries, rt.width, rt.shape))
+          !shape_ok(&_deviceRom[rtOffset], rt.entries, rt.width, rt.shape))
         continue;
 
       switch (rt.id) {
       case RomLookup::TVFResonanceFreq:
-        rom8(rt.offset, rt.entries, t.TVFResonanceFreq);     break;
+        rom8(rtOffset, rt.entries, t.TVFResonanceFreq);     break;
       case RomLookup::TVFResonance:
-        rom8(rt.offset, rt.entries, t.TVFResonance);         break;
+        rom8(rtOffset, rt.entries, t.TVFResonance);         break;
       case RomLookup::EnvSegmentCurve:
-        rom8(rt.offset, rt.entries, t.EnvSegmentCurve);      break;
+        rom8(rtOffset, rt.entries, t.EnvSegmentCurve);      break;
       case RomLookup::TVAPanKeyFollow:
-        rom8(rt.offset, rt.entries, t.TVAPanKeyFollow);      break;
+        rom8(rtOffset, rt.entries, t.TVAPanKeyFollow);      break;
       case RomLookup::TVALevelIndex:
-        rom8(rt.offset, rt.entries, t.TVALevelIndex);        break;
+        rom8(rtOffset, rt.entries, t.TVALevelIndex);        break;
       case RomLookup::EnvTimeKeyFollowSens:
-        rom8(rt.offset, rt.entries, t.EnvTimeKeyFollowSens); break;
+        rom8(rtOffset, rt.entries, t.EnvTimeKeyFollowSens); break;
       case RomLookup::LFOSine:
-        rom8(rt.offset, rt.entries, t.LFOSine);              break;
+        rom8(rtOffset, rt.entries, t.LFOSine);              break;
       case RomLookup::PitchCoarseExp:
-        rom16(rt.offset, rt.entries, t.PitchCoarseExp);      break;
+        rom16(rtOffset, rt.entries, t.PitchCoarseExp);      break;
       case RomLookup::JVLevel:
-        rom16(rt.offset, rt.entries, t.JVLevel);             break;
+        rom16(rtOffset, rt.entries, t.JVLevel);             break;
       case RomLookup::JVLevelEnv:
-        rom16(rt.offset, rt.entries, t.JVLevelEnv);          break;
+        rom16(rtOffset, rt.entries, t.JVLevelEnv);          break;
       case RomLookup::JVLevelEnvSlope:
-        rom16(rt.offset, rt.entries, t.JVLevelEnvSlope);     break;
+        rom16(rtOffset, rt.entries, t.JVLevelEnvSlope);     break;
       case RomLookup::JVVelCurves:
-        rom8(rt.offset, rt.entries, t.JVVelCurves);          break;
+        rom8(rtOffset, rt.entries, t.JVVelCurves);          break;
       case RomLookup::JVTvfExpCoarse:
-        rom16(rt.offset, rt.entries, t.JVTvfExpCoarse);      break;
+        rom16(rtOffset, rt.entries, t.JVTvfExpCoarse);      break;
       case RomLookup::JVTvfExpFine:
-        rom16(rt.offset, rt.entries, t.JVTvfExpFine);        break;
+        rom16(rtOffset, rt.entries, t.JVTvfExpFine);        break;
       case RomLookup::JVTvfLimitSoft:
-        rom16(rt.offset, rt.entries, t.JVTvfLimitSoft);      break;
+        rom16(rtOffset, rt.entries, t.JVTvfLimitSoft);      break;
       case RomLookup::JVTvfDampSoft:
-        rom16(rt.offset, rt.entries, t.JVTvfDampSoft);       break;
+        rom16(rtOffset, rt.entries, t.JVTvfDampSoft);       break;
       case RomLookup::JVTvfLimitHard:
-        rom16(rt.offset, rt.entries, t.JVTvfLimitHard);      break;
+        rom16(rtOffset, rt.entries, t.JVTvfLimitHard);      break;
       case RomLookup::JVTvfDampHard:
-        rom16(rt.offset, rt.entries, t.JVTvfDampHard);       break;
+        rom16(rtOffset, rt.entries, t.JVTvfDampHard);       break;
       case RomLookup::JVTvfBase:
-        rom16(rt.offset, rt.entries, t.JVTvfBase);           break;
+        rom16(rtOffset, rt.entries, t.JVTvfBase);           break;
       case RomLookup::LFORateTable:
-        rom16(rt.offset, rt.entries, t.LFORate);             break;
+        rom16(rtOffset, rt.entries, t.LFORate);             break;
       case RomLookup::JVPanLaw:
         // Packed big-endian (L << 8) | R, split into two independent channels.
         // Verified against jv880_rom2 at 0x6B8A: W[0] = 0x7f00 (hard left),
         // W[64] = 0x585a = (88, 90) - the asymmetric centre that rules out a
         // mirrored single table - and W[127] = 0x007f (hard right).
         for (int e = 0; e < rt.entries && e < 128; e++) {
-          t.JVPanLawL[e] = _deviceRom[rt.offset + 2 * e];
-          t.JVPanLawR[e] = _deviceRom[rt.offset + 2 * e + 1];
+          t.JVPanLawL[e] = _deviceRom[rtOffset + 2 * e];
+          t.JVPanLawR[e] = _deviceRom[rtOffset + 2 * e + 1];
         }
         t.hasJVPanLaw = true;
         break;
       case RomLookup::JVTvfCutoffKF:
-        rom16s(rt.offset, rt.entries, t.JVTvfCutoffKF);      break;
+        rom16s(rtOffset, rt.entries, t.JVTvfCutoffKF);      break;
       case RomLookup::JVChorusRecords:
-        rom16(rt.offset, rt.entries, t.JVChorusRecords);     break;
+        rom16(rtOffset, rt.entries, t.JVChorusRecords);     break;
       case RomLookup::JVEnvTimeVelDepth:
-        jvTimeVelDepth = rom16s(rt.offset, rt.entries, t.JVEnvTimeVelDepth);
+        jvTimeVelDepth = rom16s(rtOffset, rt.entries, t.JVEnvTimeVelDepth);
         break;
       case RomLookup::JVEnvTimeKeyFollow:
-        jvTimeKeyFollow = rom8s(rt.offset, rt.entries, t.JVEnvTimeKeyFollow);
+        jvTimeKeyFollow = rom8s(rtOffset, rt.entries, t.JVEnvTimeKeyFollow);
         break;
       case RomLookup::JVTvaAttackCurve:
-        rom8(rt.offset, rt.entries, t.JVTvaAttackCurve);
+        rom8(rtOffset, rt.entries, t.JVTvaAttackCurve);
         t.hasJVTvaAttackCurve = true;
         break;
       case RomLookup::JVLfoRate:
-        jvLfoRate = rom16(rt.offset, rt.entries, t.JVLfoRate);      break;
+        jvLfoRate = rom16(rtOffset, rt.entries, t.JVLfoRate);      break;
       case RomLookup::JVLfoOffset:
-        jvLfoOffset = rom8s(rt.offset, rt.entries, t.JVLfoOffset);  break;
+        jvLfoOffset = rom8s(rtOffset, rt.entries, t.JVLfoOffset);  break;
       case RomLookup::JVLfoWaves:
-        jvLfoWaves = rom8s(rt.offset, rt.entries, t.JVLfoWaves);    break;
+        jvLfoWaves = rom8s(rtOffset, rt.entries, t.JVLfoWaves);    break;
       case RomLookup::JVLfoPitchDepth:
-        t.hasJVLfoPitchDepth = rom16(rt.offset, rt.entries, t.JVLfoPitchDepth);
+        t.hasJVLfoPitchDepth = rom16(rtOffset, rt.entries, t.JVLfoPitchDepth);
         break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array
