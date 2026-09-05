@@ -395,7 +395,38 @@ void Reverb::_process_sample_jv(float input, float output[2])
   // same measurement is made on one.
   {
     const float q = _settings->device()->reverb.rBufferQuantum;
-    float v = _preLpfState * _jvInGain + _gLoop * fb;
+    // HF DAMPING IN THE LOOP, from two record words that were never read.
+    //
+    // Without it the tail stays bright and the error is monotonic in
+    // frequency: measured against the reference on a drum hit at 1.2-1.8 s,
+    // +0.2 dB at 60-250 Hz rising to +29.8 dB at 6-12 kHz. The bass was always
+    // right; every decibel of the excess was treble. That is a damping
+    // failure, and no loop-gain constant can fix it - fitting one is what
+    // nearly shipped a tail that stopped a second early.
+    //
+    // The coefficients are words 28 and 29 of the type's own record. They were
+    // outside the 28 words the loader read, which is why the JV's loop had no
+    // damping at all. They are coefficients and not addresses: their low
+    // halves are zero and their high halves are 28/29 on HALL1-2 and 31 twice
+    // on ROOM1 - the shape of this chip's damping pair on the Sound Canvas
+    // side, where the same two registers are c7 and c8.
+    //
+    // Two cascaded one-poles, each with unity DC gain, is a FIT and not a
+    // trace: the words are the device's, the topology is inferred from what
+    // measures. Against the reference it takes the mean band error at
+    // 1.2-1.8 s from 14.0 to 4.0 dB on one drum and 14.3 to 6.5 on another,
+    // and it leaves the bass alone. The alternative reading, y = w28*y + w29*x
+    // in the Sound Canvas's own form, fixes the midrange better but its
+    // coefficients sum to 0.89 and it loses 1.1 dB a pass broadband, pulling
+    // 60-250 Hz down 7.5 to 9.4 dB where the reference has it exact.
+    //
+    // What is still open: 600 Hz to 3 kHz remains +10 to +15 dB on the second
+    // drum. The damping is right in kind and not yet right in detail.
+    _jvLoopLpf  = _jvDampPole * _jvLoopLpf  + (1.0f - _jvDampPole) * fb;
+    _jvLoopLpf2 = _jvDampGain * _jvLoopLpf2 + (1.0f - _jvDampGain) * _jvLoopLpf;
+    const float fbd = _jvLoopLpf2;
+
+    float v = _preLpfState * _jvInGain + _gLoop * fbd;
     if (q > 0.0f)
       v = q * truncf(v / q);
     _rBuffer[_sweepIndex] = v;
@@ -441,6 +472,12 @@ void Reverb::_set_jv_character(int character)
   // which comes from the SC-55 mk1, which drives the same chip register from its
   // GS Reverb Pre-LPF parameter: "off" is 0x003F there, so the LOW byte is the
   // input. The JV has no such parameter and bakes a pair per type.
+  // Words 28 and 29 are byte coefficients, not addresses: their low halves are
+  // zero and their high halves are 28/29 on HALL1-2 and 31 on ROOM1, which is
+  // the shape of this chip's damping pair on the Sound Canvas side (c7/c8).
+  _jvDampPole = (rec[28] >> 8) / 64.0f;
+  _jvDampGain = (rec[29] >> 8) / 64.0f;
+
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
 
@@ -488,6 +525,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
+    _jvLoopLpf = _jvLoopLpf2 = 0.0f;
 
   // Delay, Panning Delay
   } else if (character == 6 || character == 7) {
@@ -495,6 +533,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
+    _jvLoopLpf = _jvLoopLpf2 = 0.0f;
   }
 }
 

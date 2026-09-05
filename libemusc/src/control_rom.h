@@ -454,7 +454,13 @@ public:
     // Read here rather than in reverb.cc so the ROM stays in the ROM reader,
     // the same way JVReverbReturnCoeff and JVReverbTapScale are. Zero when the
     // device has no such records.
-    static constexpr int JVReverbRecordWords = 28;
+    // 30, not 28. The six REVERB records are 0x3C bytes and their last two
+    // words are byte coefficients - 0x1C00/0x1D00 on HALL1, 0x1F00 twice on
+    // ROOM1 - with zero low halves, which is what a coefficient looks like and
+    // not an address. The two DELAY records are 0x38 and stop at word 28, so
+    // theirs are read out of the record that follows and must not be used;
+    // reverb.cc only reads them for characters 0-5.
+    static constexpr int JVReverbRecordWords = 30;
     std::array<int, 8 * JVReverbRecordWords> JVReverbRecord;
 
     std::array<int, 256> PitchFineExp;
