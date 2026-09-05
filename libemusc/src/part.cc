@@ -1016,13 +1016,33 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
       // of the song - the reference's spectral centroid is 70 Hz and ours was
       // 1796, which is the whole of the 27 dB deficit the 40-80 Hz band showed
       // across every window of that channel. scdb D-61.
+      // A part the loaded Performance does not define must not touch the
+      // rhythm kit. The JV-880 has EIGHT parts and the Performance maps them
+      // onto MIDI channels; this engine keeps sixteen, so a channel the
+      // Performance points at part 8 is also received by the leftover part of
+      // the same number - channel 10 reaches both part 7, which the
+      // Performance defines, and part 9, which it does not.
+      //
+      // Both then drive update_drum_set_bank() on the SAME shared map, and the
+      // second write wins. Part 9 has no Performance patch to take a bank flag
+      // from, so it fell through to 0x00 = Internal and overwrote the kit part
+      // 7 had just loaded correctly. Song 1 is where it shows: part 7 selects
+      // Preset A with 0x80 | PC 0 and part 9 immediately reloads Internal, so
+      // the whole kit - pan, level, sends, choke groups - came from the wrong
+      // bank. Song 4 escaped only by accident: its PC 64 makes part 9's
+      // selector 0x40, the CARD bank, which the machine rejects, so nothing
+      // was overwritten.
+      //
+      // Returning here rather than guessing a flag is the device's own
+      // behaviour: a channel outside the Performance's map addresses no part.
+      if (_id >= (int) _ctrlRom.device_parts().size())
+        return 0;
+
       int flag;
       if (_pendingBank >= 0)
         flag = (_pendingBank == PL.midiBankPresets) ? 0x80 : 0x00;
-      else if (_id < (int) _ctrlRom.device_parts().size())
-        flag = (_ctrlRom.device_parts()[_id].patch >= PL.perBank) ? 0x80 : 0x00;
       else
-        flag = 0x00;
+        flag = (_ctrlRom.device_parts()[_id].patch >= PL.perBank) ? 0x80 : 0x00;
       dsIndex = _settings->update_drum_set_bank(rhythm - 1, flag | index);
       if (dsIndex < 0)
         return 0;                    // absent bank: the part keeps its kit
