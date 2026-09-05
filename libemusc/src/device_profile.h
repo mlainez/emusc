@@ -767,13 +767,6 @@ struct ReverbLaw
   // both mean "already samples".
   int tapAddressBytesPerSample = 0;
 
-  // What the damping byte is divided by, and what the firmware's loop-gain
-  // byte is multiplied by. Both are properties of the recovered network rather
-  // than of the chip, and both are FITTED - see reverb.cc. Zero keeps the
-  // values the network was first written with.
-  float dampPoleDivisor = 0.0f;
-  float loopGainScale = 0.0f;
-
   // Close the recirculation from the single loop tap rather than from the wet
   // sum. scdb's own reading of the network says the loop is closed from a
   // TENTH tap; false keeps the wet-sum form.

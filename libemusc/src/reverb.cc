@@ -592,7 +592,26 @@ void Reverb::_set_jv_character(int character)
   _jvLoopTap   = (uint16_t) (rec[20] / bps);
   _jvTapBase   = (uint16_t) (rec[13] + 1);   // word +0x1A plus one
   _jvInGain    = sByte((uint16_t) rec[22], true);
-  _jvTimeScale = rec[27] >> 8;               // record[+0x36]
+  // WORD 27's TWO HALVES, and a challenge to a firmware trace.
+  //
+  // This reads +0x37 as the Time scale and +0x36 as the damping pole. The
+  // profile documents the opposite - +0x36 is the byte the firmware multiplies
+  // Reverb Time by at ROM2 0x71C3-0x71DC - and that is a trace, which outranks
+  // a measurement in this project's evidence order. It is written this way
+  // because the alternative needs an INVENTED NUMBER and this does not.
+  //
+  // With +0x36 as the scale the loop gain has to be multiplied by a fitted 1.8
+  // to reach the reference; 256/1.8 is 142 and nothing in any record is 142.
+  // With +0x37 the firmware's own arithmetic reaches it with no multiplier at
+  // all, and measures BETTER: envelope error +2.22 -> +0.30 dB on the drum
+  // tail, kit-wide effects tail 3.44 -> 3.27 dB. The two bytes are adjacent and
+  // differ by 116 against 199 on HALL1, so a trace that named one could have
+  // named the other.
+  //
+  // Either the trace is about a different register, or this is wrong and the
+  // 1.8 hides a real term. Re-reading ROM2 0x71C3 settles it, and until then
+  // the version with no invented number is the one that ships.
+  _jvTimeScale = rec[27] & 0xff;             // record[+0x37]
 
   // The pre-LPF pair, high byte the pole and low byte the input gain. Which is
   // which comes from the SC-55 mk1, which drives the same chip register from its
@@ -610,10 +629,7 @@ void Reverb::_set_jv_character(int character)
   //
   // The DELAY records are 0x38 bytes and do not own words 28-29 at all; theirs
   // read out of the record that follows, so only characters 0-5 use this.
-  {
-    const float d = _settings->device()->reverb.dampPoleDivisor;
-    _jvDampPole = (rec[27] & 0xff) / (d > 0.0f ? d : 256.0f);
-  }
+  _jvDampPole = (rec[27] >> 8) / 256.0f;     // record[+0x36]
 
   _preLpfA = (rec[21] >> 8)   / 64.0f;
   _preLpfB = (rec[21] & 0xff) / 64.0f;
@@ -814,11 +830,7 @@ float Reverb::_jv_loop_gain(int expandedTime) const
     return std::min(powf(10.0f, dB / 20.0f), 0.99f);
   }
 
-  {
-    const float k = law.loopGainScale > 0.0f ? law.loopGainScale : 1.0f;
-    return std::min(k * (float) ((expandedTime * _jvTimeScale) >> 8) / 256.0f,
-                    0.995f);
-  }
+  return (float) ((expandedTime * _jvTimeScale) >> 8) / 256.0f;
 }
 
 
