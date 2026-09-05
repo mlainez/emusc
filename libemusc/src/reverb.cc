@@ -310,6 +310,23 @@ float Reverb::_fade_step(void)
 //    of work and not a one-line change, and shipping half of it is worse than
 //    shipping neither.
 //
+//    AND WHY EVERY GAIN FIT IN THAT DIRECTION FAILED. In this topology the
+//    feedback is the wet SUM, so the path already carries the nine tap gains:
+//    their absolute sum over 64 is 3.19 to 3.81 across the six reverbs. The
+//    per-pass ratio a decay measures is therefore gLoop TIMES that factor, not
+//    gLoop. The firmware's own value lands the product near unity - 0.57, 1.12,
+//    0.86, 1.04, 1.07, 1.33 at Time 80 - which is what a reverb on the edge of
+//    sustaining looks like and is why it works at all. Every gain fitted here
+//    from a measured decay was the RATIO, so feeding it back in overshot by
+//    about 3.7x and the loop ran away: with byte-addressed taps and a gain
+//    refitted to 0.39 dB rms on the sweep, the tail pinned at full scale and
+//    measured +105 dB against the reference.
+//
+//    So the tap scale, the loop gain and the tap-sum feedback are ONE system
+//    and have to be solved together. Fitting any of them alone will keep
+//    producing numbers that measure beautifully on the axis they were fitted
+//    on and destroy the others.
+//
 //    What this does establish: the residual is a TIMING error, not a spectral
 //    one. It is why the narrowband comb is misplaced by up to 27 dB at 209 Hz
 //    while the octave-band mean reads 2.5 dB, and why no damping or gain
