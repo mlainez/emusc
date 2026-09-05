@@ -422,11 +422,19 @@ void Reverb::_process_sample_jv(float input, float output[2])
     //
     // What is still open: 600 Hz to 3 kHz remains +10 to +15 dB on the second
     // drum. The damping is right in kind and not yet right in detail.
+    // Two cascaded one-poles on the RETURN, and the same first pole again on
+    // what is written to the line. Damping the write as well as the return
+    // costs no new constant and measures better - mean band error at
+    // 1.2-1.8 s 5.2 -> 4.2 dB - which is weak evidence that the filter sits on
+    // the line's write port rather than in the return alone. Filtering ONLY
+    // the write port measures 4.7, so it is not simply that either.
     _jvLoopLpf  = _jvDampPole * _jvLoopLpf  + (1.0f - _jvDampPole) * fb;
     _jvLoopLpf2 = _jvDampGain * _jvLoopLpf2 + (1.0f - _jvDampGain) * _jvLoopLpf;
     const float fbd = _jvLoopLpf2;
+    _jvLoopLpf3 = _jvDampPole * _jvLoopLpf3
+                + (1.0f - _jvDampPole) * (_preLpfState * _jvInGain + _gLoop * fbd);
 
-    float v = _preLpfState * _jvInGain + _gLoop * fbd;
+    float v = _jvLoopLpf3;
     if (q > 0.0f)
       v = q * truncf(v / q);
     _rBuffer[_sweepIndex] = v;
@@ -525,7 +533,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
-    _jvLoopLpf = _jvLoopLpf2 = 0.0f;
+    _jvLoopLpf = _jvLoopLpf2 = _jvLoopLpf3 = 0.0f;
 
   // Delay, Panning Delay
   } else if (character == 6 || character == 7) {
@@ -533,7 +541,7 @@ void Reverb::_set_character(int character)
     std::fill(_rBuffer.begin(), _rBuffer.end(), 0.0f);
     _dampA = _dampB = 0.0f;
     _preLpfState = 0.0f;
-    _jvLoopLpf = _jvLoopLpf2 = 0.0f;
+    _jvLoopLpf = _jvLoopLpf2 = _jvLoopLpf3 = 0.0f;
   }
 }
 

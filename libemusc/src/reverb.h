@@ -158,6 +158,7 @@ private:
   float _jvDampPole = 0.0f;
   float _jvDampGain = 0.0f;
   float _jvLoopLpf2 = 0.0f;
+  float _jvLoopLpf3 = 0.0f;
   float _preLpfA, _preLpfB;
   float _dampA, _dampB;          // 1-pole damping states (per branch)
   float _gLoop;                  // Loop gain (signed hi byte of 30][9] / 64)
