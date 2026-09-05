@@ -147,9 +147,11 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
   if (finished) {
     _delayDrained = true;
   } else {
-    _waveOscillator->get_sample_set(_pitch,
-                                    _settings->get_pitchBend_factor(_partId),
-                                    partialBuf[0]);
+    // A JV rhythm note bends by its own Pitch Bend Range, not the part's.
+    const float pitchBend = _instPartial.hasJVBendRange
+      ? _settings->get_pitchBend_factor(_partId, _instPartial.JVBendRange)
+      : _settings->get_pitchBend_factor(_partId);
+    _waveOscillator->get_sample_set(_pitch, pitchBend, partialBuf[0]);
 
     _tvf->apply_sample_set(partialBuf[0]);
     _tva->apply_sample_set(partialBuf, partialSend);

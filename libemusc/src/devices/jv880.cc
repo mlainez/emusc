@@ -724,7 +724,14 @@ static const RecordRomLayout JV880_RECORDS = {
     // of its +0x27. On the reference, twelve dry hits of Preset B key 56
     // (index 8, 100 cents) span 137 cents and twelve of key 38 (index 6, 50
     // cents) span 73, so the draw covers the full +/- r and not half of it.
-    0x05, 4
+    0x05, 4,
+
+    // Pitch Bend Range, +0x06 bits 0-3 (descriptor 0x09, max 12). Seven
+    // factory notes carry 12 - Internal 88-92 and 94, Preset B 87 - and the
+    // rest 0. On the reference a full bend moves Internal 88 and 89 by +1200
+    // cents and Internal 87 (range 0) by nothing, where the part's own range
+    // would have moved all three by 200.
+    0x06
   }
 };
 

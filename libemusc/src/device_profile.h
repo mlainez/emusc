@@ -316,6 +316,12 @@ struct RhythmLayout
   // rhythm note keeps it in the HIGH nibble of the time-velocity byte where a
   // patch tone keeps it in a low nibble, hence the shift.
   int      randomPitch, randomPitchShift;
+
+  // Pitch Bend Range, 0-12 semitones in the low nibble, per NOTE: a rhythm
+  // note bends by its own range and not the part's, and the factory kits
+  // leave it at 0 on 176 of 183 notes, so a bend on the rhythm channel moves
+  // only the seven that ask for it.
+  int      bendRange;
 };
 
 // Curves the synthesis engine reads straight out of the ROM. The id says which

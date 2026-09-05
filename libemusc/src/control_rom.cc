@@ -2247,24 +2247,10 @@ int ControlRom::_load_performance(uint32_t base, int index)
 // What is still NOT read, and why, so the next session inherits a decision
 // rather than an omission:
 //
-//   pitch envelope (+0x07..+0x10)  the engine's pitch-envelope path is the
-//                                  Sound Canvas's and indexes CPU-EPROM tables
-//                                  the JV family does not have. 180 of 183
-//                                  factory notes carry depth 0, so the gap is
-//                                  three notes wide.
-//   random pitch depth (+5 bits 4-7)  an index into the manual's cents list
-//                                  (0,5,10,20,...,1200); the engine's randPitch
-//                                  is a raw multiplier on a different scale and
-//                                  the conversion is not established. 12 of 183.
-//   pitch bend range (+6 bits 0-3)  per-key on the device, per-part in this
-//                                  engine. 7 of 183 carry 12, the rest 0.
-//   the three velocity TIME senses  the JV branch of TVA::_init_envelope
-//     (+5, +0x14, +0x21 low nibbles) returns before the engine's
-//                                  set_time_velocity_sensitivity, so there is
-//                                  no consumer to feed.
 //   envelope mode (+2 bit 7)       NO-SUSTAIN on all 183 notes, and a rhythm
 //                                  key here accepts note on only, so the
-//                                  envelope already plays out. Nothing to do.
+//                                  envelope already plays out. A user kit's
+//                                  SUSTAIN note would need the note off.
 //   output select (+0 bit 4)       MAIN on all 183; this engine has no second
 //                                  output pair.
 //   wave group (+0 bits 0-1)       INT on all 183; the other pools are card and
@@ -2422,6 +2408,13 @@ int ControlRom::_read_device_rhythm(void)
     // its snares, hi-hats and toms.
     if (R.randomPitch)
       ip.JVRandomPitchIdx = (r[R.randomPitch] >> R.randomPitchShift) & 0x0f;
+
+    // Pitch Bend Range, per note. The part's range does not apply to a rhythm
+    // note at all: 176 of the 183 factory notes carry 0 and do not bend.
+    if (R.bendRange) {
+      ip.JVBendRange    = r[R.bendRange] & 0x0f;
+      ip.hasJVBendRange = 1;
+    }
 
     const int key = R.firstKey + k;
     ds.key[key]    = r[R.playKey] & 0x7f;

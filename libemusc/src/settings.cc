@@ -401,6 +401,16 @@ void Settings::update_pitchBend_factor(int8_t part)
 }
 
 
+float Settings::get_pitchBend_factor(int8_t part, int semitones)
+{
+  if (part < 0 || part > 15 || semitones <= 0)
+    return 1.0f;
+
+  uint16_t pbIn = get_param_uint16(PatchParam::PitchBend, part);
+  return exp(((pbIn - 8192) / 8192.0) * semitones * (log(2) / 12));
+}
+
+
 void Settings::_initialize_system_params(enum Mode m)
 {
   // SysEx messages

@@ -224,6 +224,11 @@ public:
     // Random Pitch Depth, 0-15, an index into LookupTables::JVRandomPitch;
     // 0 = none. Drawn once per voice in Pitch::_jv_init().
     uint8_t JVRandomPitchIdx;
+
+    // A per-NOTE pitch bend range in semitones, 0-12, which the JV's rhythm
+    // notes carry in place of the part's. hasJVBendRange 0 (every Sound Canvas
+    // partial and every JV patch tone) keeps the part's own range.
+    uint8_t JVBendRange, hasJVBendRange;
   };
 
   // A Sound Canvas instrument has two partials; a JV patch has four tones,

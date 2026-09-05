@@ -125,6 +125,10 @@ public:
   void update_pitchBend_factor(int8_t part);
   float get_pitchBend_factor(int8_t part) { return _PBController[part]; }
 
+  // The same factor for a voice whose bend range is its own rather than the
+  // part's - the JV's rhythm notes - from the part's current 14-bit bend.
+  float get_pitchBend_factor(int8_t part, int semitones);
+
   static int8_t convert_from_roland_part_id(int8_t part);
 
   void set_sample_rate(int sampleRate) { _sampleRate = sampleRate; }
