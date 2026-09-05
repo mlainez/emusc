@@ -837,6 +837,14 @@ struct ChorusJvLaw
   int   levelShift;         // wet gain = ((level & 0x7f) >> this) / coeffUnity
   int   feedbackShift;      // feedback  = (feedback >> this) / coeffUnity
   float coeffUnity;         // the byte coefficient that means 1.0
+
+  // How long after a performance load the return stays silent and the read
+  // pointer parked at its start address, in milliseconds. The effect drivers
+  // rebuild both effects in sequence with waits between the register writes,
+  // and the sweep only begins when they are done; so the PHASE of the sweep at
+  // every later note is set by this, and a phase that is off makes a wet copy
+  // at 18-20 ms of delay add where the machine's cancels, partial by partial.
+  int   loadHoldMs;
 };
 
 

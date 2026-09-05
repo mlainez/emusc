@@ -1241,6 +1241,8 @@ void Settings::_apply_device_performance(void)
   if (_ctrlRom.generation() != ControlRom::SynthGen::JV880)
     return;
 
+  _devicePerformanceLoads++;
+
   // The performance's effect settings, applied before the parts.
   const auto &fx = _ctrlRom.device_effects();
   _patchParams[(int) PatchParam::ReverbCharacter]     = fx.reverbType;

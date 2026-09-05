@@ -937,7 +937,19 @@ const DeviceProfile JV880_PROFILE = {
     0xf1,       // g = 1 - (2 * Rate * 241) / 65536
     1,          // wet gain = ((level & 0x7f) >> 1) / 64, so at most 63/64
     2,          // feedback  = (feedback >> 2) / 64,      so at most 31/64
-    64.0f       // 64 = unity for every byte coefficient this chip takes
+    64.0f,      // 64 = unity for every byte coefficient this chip takes
+
+    // After a performance load the chorus return opens, and its sweep starts,
+    // 550 ms later: the reverb driver's 200 and 300 tick waits and the chorus
+    // driver's 50 (ROM2 0x71A4-0x71C0, 0x73F3). Measured on the reference at
+    // ROM2 v1.0.0: a hit 200 ms after the load has no chorus or reverb return
+    // until 547 ms, and at Chorus Rate 30, 60 and 100 the sweep's L tap is at
+    // its maximum delay at 0.55 s + k * period, the position it starts from
+    // (scdb devices/jv880 M-081, M-082). The kit's hits fall 1.6 s apart, two
+    // periods at Rate 60, so without this every chorused drum met the sweep
+    // half a period from where the machine had it, and a 500-1000 Hz octave
+    // that the machine's wet reinforces was cancelled instead.
+    550
   },
 
   // The pitch envelope's depth scale (scdb D-37, ROM1 0x48CC): the TVF's

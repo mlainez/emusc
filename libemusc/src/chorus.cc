@@ -31,6 +31,8 @@ Chorus::Chorus(Settings *settings, const struct ControlRom::LookupTables &LUT)
     _jv(false),
     _jvLaw(nullptr),
     _jvType(-1),
+    _jvLoadSeen(0),
+    _jvHold(0),
     _sweepIndex(0),
     _pIn(0x3800),
     _pTap1(0x3800 + 0x1e1 + 200), _pTap2(0x3800 + 0x1e1),
@@ -131,10 +133,17 @@ void Chorus::_update_jv(void)
   }
 
   // A new record restarts the sweep at the position the driver writes, w2 + 1.
-  // The machine also mutes its return for ~50 ms across a type change; that is
-  // not modelled.
-  if (type != _jvType) {
+  // A performance load does the same whether or not the type changes, and
+  // then holds: the effect drivers rebuild reverb and chorus with waits
+  // between their register writes, and the return is silent and the pointer
+  // parked until they finish (ChorusJvLaw::loadHoldMs). The ~50 ms mute across
+  // a type change alone is not modelled.
+  const unsigned loads = _settings->device_performance_loads();
+  if (type != _jvType || loads != _jvLoadSeen) {
+    if (loads != _jvLoadSeen)
+      _jvHold = law.loadHoldMs * 32;           // the automaton runs at 32 kHz
     _jvType = type;
+    _jvLoadSeen = loads;
     _sAddress = _loopOfs + 1;
     _dir = false;
     _subPhase = 0;
@@ -244,6 +253,20 @@ void Chorus::process_sample(float input, float output[2], float *reverbSend)
   auto write = [&](uint16_t base, float v) {
     _rBuffer[(base + _sweepIndex) & rBufferMask] = v;
   };
+
+  // The JV's post-load hold: the driver has cleared the input coefficient, the
+  // read-rate increment and the return bytes, so the line is written with
+  // silence, the pointer stays where it was parked and nothing comes back.
+  if (_jvHold > 0) {
+    _jvHold--;
+    _preLpfState = 0.0f;
+    _fbSample = 0.0f;
+    write(_pIn, 0.0f);
+    output[0] = output[1] = 0.0f;
+    *reverbSend = 0.0f;
+    _sweepIndex = (_sweepIndex - 1) & rBufferMask;
+    return;
+  }
 
   // loop and end are offsets from the write head, so _sAaddress is an offset
   // too, and the taps come out as delays in [0..span]

@@ -80,6 +80,8 @@ class Chorus
   bool _jv;
   const struct ChorusJvLaw *_jvLaw;
   int _jvType;                // the record currently loaded, -1 if none
+  unsigned _jvLoadSeen;       // the performance load the sweep was started by
+  int _jvHold;                // samples left of the post-load silence
 
   static constexpr int rBufferSize = 16384;
   static constexpr int rBufferMask = rBufferSize - 1;

@@ -177,7 +177,13 @@ private:
   void _initialize_drumSet_params();
   void _apply_device_performance();
   int  _copy_drum_set(uint8_t map, int index);
+
+  // Counts device performance loads, so an effect can tell a load from a
+  // parameter that happens to hold the same value afterwards.
+  unsigned _devicePerformanceLoads = 0;
 public:
+  unsigned device_performance_loads(void) const { return _devicePerformanceLoads; }
+
   // A control-channel program change selected a Performance (D-46): reload it
   // and re-apply every part. False when the selection was rejected.
   bool select_performance(int selector);
