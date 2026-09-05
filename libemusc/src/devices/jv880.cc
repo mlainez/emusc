@@ -458,7 +458,21 @@ static const RecordRomLayout JV880_RECORDS = {
 
       // LFO-1 / LFO-2 Pitch Depth, signed, through ROM2 0x6C8A (ROM1 0x47A4 /
       // 0x47C7). Non-zero on 115 / 80 of the 539 factory tones.
-      0x1f, 0x22
+      0x1f, 0x22,
+
+      // The Tone VOLUME switch (bit 7) and HOLD-1 switch (bit 6), both in
+      // +0x47 - the byte that also holds the TVA velocity curve in bits 0-2,
+      // which is why reading it whole is wrong. The Patch Tone descriptor
+      // table gives SysEx 0x08 shift 7 keep-mask 0x7F and 0x09 shift 6
+      // keep-mask 0xBF, and the manual's 1-3-2 table names them.
+      //
+      // Not one of the 539 enabled FACTORY tones clears either bit, so no
+      // factory material can exercise this and no corpus figure moves. It is
+      // read because a user patch is where it bites and because the level
+      // path already had the gate traced (ROM1 0x49ff -> @0x9bfe bit 5,
+      // consumed at 0x44be-0x44e6). Measured on the reference with the bit
+      // cleared in a ROM copy: CC7 stops reaching the tone entirely. D-30.
+      0x47, 0x47
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named

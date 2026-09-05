@@ -1362,6 +1362,10 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.TVFJVVelT1 = ip.TVFJVVelT4 = ip.TVFJVTimeKF = 7;
   ip.PitchJVVelT1 = ip.PitchJVVelT4 = ip.PitchJVTimeKF = 7;
   ip.JVDelayKeyOff   = 0;
+
+  // Neither switch exists outside a patch tone, and "no switch" is ON.
+  ip.JVVolumeSwitch  = 1;
+  ip.JVHold1Switch   = 1;
 }
 
 
@@ -1480,6 +1484,16 @@ int ControlRom::_read_device_patches(void)
         // so no audible claim is made for it (D-09).
         ip.TVALvlVSens  = (uint8_t) (int8_t) tb[F.tvaVelLevelSens];
         ip.TVALvlVelCur = tb[F.tvaVelCurve] & 0x07;
+
+        // The other two fields of that same byte, which the 0x07 mask above
+        // used to throw away: bit 7 the manual's Tone VOLUME switch and bit 6
+        // its HOLD-1 switch (scdb D-30). Every one of the 539 enabled factory
+        // tones sets both, so this changes no factory sound; it is a user
+        // patch, or a DT1, that can clear them.
+        if (F.toneVolumeSwitch)
+          ip.JVVolumeSwitch = (tb[F.toneVolumeSwitch] >> 7) & 0x01;
+        if (F.toneHold1Switch)
+          ip.JVHold1Switch  = (tb[F.toneHold1Switch] >> 6) & 0x01;
 
         // The envelope TIME-sense triple (scdb D-27, FW-EXACT): "T1 velocity"
         // in bits 0-3 and "T4 velocity" in bits 4-7 of one byte, "time KF" in

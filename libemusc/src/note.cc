@@ -82,8 +82,10 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
     _settings(settings),
     _partId(partId)
 {
-  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++) {
     _partial[p] = NULL;
+    _partialHolds[p] = true;
+  }
 
   // Every drum instrument carries its own effect depths in the drum set, and
   // the part's send is scaled by them. Measured on the SC-55mkII (emusc-match
@@ -161,6 +163,11 @@ Note::Note(uint8_t key, uint8_t velocity, ControlRom &ctrlRom, WaveRom &waveRom,
       if (velocity < low || velocity > high)
         continue;
     }
+    // The tone's own HOLD-1 switch (scdb D-30). Off means the hold pedal does
+    // not keep THIS tone sounding, while the rest of the patch's tones are
+    // still held - so the release is per tone and not per note.
+    _partialHolds[p] = (instPartial.JVHold1Switch != 0);
+
     if (instPartial.revSend >= 0 && instSend.first > 0)
       _partialRevShare[p] = instPartial.revSend / (float) instSend.first;
     if (instPartial.choSend >= 0 && instSend.second > 0)
@@ -185,18 +192,42 @@ Note::~Note()
 }
 
 
+// Release what the pedal is not holding.
+//
+// The pedal is a per-TONE setting on the JV - the Tone HOLD-1 switch, patch
+// tone +0x47 bit 6 (scdb D-30) - so one tone of a patch can release on the
+// note off while its neighbours are held. On every other device, and on every
+// rhythm note, _partialHolds is all true and both branches below are the old
+// all-or-nothing ones exactly.
+//
+// `heldOnly` is the pedal coming UP: the tones that do not hold were released
+// at the note off already and must not be released a second time.
+void Note::_release_unheld(bool heldOnly)
+{
+  bool held = false;
+
+  for (int p = 0; p < ControlRom::MAX_PARTIALS; p++) {
+    if (!_partial[p])
+      continue;
+    if (_sustain && _partialHolds[p]) {
+      held = true;
+      continue;
+    }
+    if (heldOnly && !_partialHolds[p])
+      continue;
+    _partial[p]->stop(_releaseVelocity);
+  }
+
+  if (held)
+    _stopped = true;
+  else
+    _releasing = true;
+}
+
+
 void Note::stop(void)
 {
-  if (_sustain) {                       // Hold pedal (hold1) or Sostenuto
-    _stopped = true;
-
-  } else {
-    _releasing = true;
-
-    for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
-      if (_partial[p])
-        _partial[p]->stop(_releaseVelocity);
-  }
+  _release_unheld(false);
 }
 
 
@@ -221,16 +252,7 @@ void Note::stop(uint8_t key, uint8_t releaseVelocity)
     // 16.86 s with the pedal down since 16.55 s, and our render of that
     // channel went 22.2 dB quiet there and to DIGITAL SILENCE from 24 s while
     // the reference kept sounding. scdb D-62.
-    if (_sustain) {                     // Hold pedal (hold1) or Sostenuto
-      _stopped = true;
-
-    } else {
-      _releasing = true;
-
-      for (int p = 0; p < ControlRom::MAX_PARTIALS; p++)
-        if (_partial[p])
-          _partial[p]->stop(_releaseVelocity);
-    }
+    _release_unheld(false);
   }
 }
 
@@ -267,7 +289,7 @@ void Note::sustain(bool state)
   _sustain = state;
 
   if (state == false && _stopped == true)
-    stop(_key, _releaseVelocity);
+    _release_unheld(true);
 }
 
 

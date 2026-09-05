@@ -94,6 +94,14 @@ private:
   bool _sustain;
   bool _stopped;
   bool _releasing;           // Note off has released the partials
+
+  // Per tone: does the hold pedal keep this one sounding? The JV's Tone
+  // HOLD-1 switch (patch tone +0x47 bit 6, scdb D-30) can clear it for one
+  // tone of a patch while its neighbours are held. True everywhere else -
+  // no Sound Canvas partial and no rhythm note carries the field.
+  bool _partialHolds[ControlRom::MAX_PARTIALS];
+
+  void _release_unheld(bool heldOnly);
   bool _damped;              // Partials handed over to another note
   uint8_t _releaseVelocity = 64;  // From the note off; 64 is neutral
 

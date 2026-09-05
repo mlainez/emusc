@@ -111,6 +111,15 @@ struct ToneFieldMap
   int lfo1Params, lfo1Rate, lfo1Delay, lfo1Fade;   // form b0-2, offset b3-5, sync b6, fade OUT b7; rate; delay (b7 KEY-OFF); fade time
   int lfo2Params, lfo2Rate, lfo2Delay, lfo2Fade;
   int lfo1PitchDepth, lfo2PitchDepth;   // signed; |d| indexes RomLookup::JVLfoPitchDepth
+  // The two per-tone CC enables the manual calls the VOLUME switch and the
+  // HOLD-1 switch (1-3-2, SysEx 0x08 and 0x09), both bits of the tone byte the
+  // TVA velocity curve also lives in: bit 7 and bit 6 of +0x47. Volume off
+  // takes the tone out of CC7's reach; Hold-1 off takes it out of the hold
+  // pedal's. Both name a BYTE offset; the bits are fixed. 0 means the device
+  // has no such switch and both are always on, which is the Sound Canvas.
+  // scdb D-30.
+  int      toneVolumeSwitch;            // bit 7
+  int      toneHold1Switch;             // bit 6
 };
 
 // A bank of patches, and the tone records inside each patch.

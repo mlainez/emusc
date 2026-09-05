@@ -771,7 +771,17 @@ void TVA::_compose_static_level(void)
   // Note this is a /127.5 scale, not /127: at CC7 = 127 the index still lands
   // one or two steps under `composed`, so full volume is not unity here. The
   // measurements say the same, and the ROM is why.
-  if (L.volumeIndexShift) {
+  //
+  // The whole stage is GATED by the tone's own Volume switch (@0x9bfe bit 5,
+  // loaded at ROM1 0x49ff from patch tone +0x47 bit 7): with it off the index
+  // stays at `composed` and CC7 does not reach this tone at all. Measured on
+  // the reference with the bit cleared in a ROM copy of Preset A 29
+  // `Jazz Organ 1`: its level is flat to 0.01 dB over CC7 127/100/80/64/40/20,
+  // where the same tone with the bit set falls 31.5 dB across that range, and
+  // the flat level sits +0.22 dB above the switched-on CC7 = 127 one - the
+  // single JVLevel step between index `composed` and the /127.5 product.
+  // scdb D-30.
+  if (L.volumeIndexShift && _instPartial.JVVolumeSwitch) {
     const int vol = _settings->get_param(PatchParam::PartVolume, _partId) & 0x7f;
     composed = ((2 * composed + (composed >= 64 ? 1 : 0)) * vol)
                >> L.volumeIndexShift;

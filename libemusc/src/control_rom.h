@@ -229,6 +229,13 @@ public:
     // notes carry in place of the part's. hasJVBendRange 0 (every Sound Canvas
     // partial and every JV patch tone) keeps the part's own range.
     uint8_t JVBendRange, hasJVBendRange;
+
+    // The JV's two per-tone CC enables, patch tone +0x47 bits 7 and 6 (scdb
+    // D-30). Volume off takes the tone out of CC7's reach; Hold-1 off takes it
+    // out of the hold pedal's. 1 is "responds", which is what every Sound
+    // Canvas partial and every rhythm note is - neither carries the field.
+    uint8_t JVVolumeSwitch = 1;
+    uint8_t JVHold1Switch  = 1;
   };
 
   // A Sound Canvas instrument has two partials; a JV patch has four tones,
