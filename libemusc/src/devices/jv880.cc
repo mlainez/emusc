@@ -481,7 +481,14 @@ static const RecordRomLayout JV880_RECORDS = {
       // the curve rather than out of the depth. Off-neutral on 36 and 47 of
       // the 539 enabled factory tones; `61 Arctic Winds` holds -32 on three of
       // its four. scdb D-75, 07_synthesis/lfo.md "LFO -> TVA".
-      0x21, 0x24
+      0x21, 0x24,
+
+      // Random Pitch Depth, the LOW nibble of +0x27 (SysEx 0x3A) - the same
+      // 0-15 index into ROM2 0x579E the rhythm note's +0x05 high nibble
+      // carries, and the same once-per-voice draw. Non-zero on 18 of the 539
+      // enabled factory tones, among them `61 Arctic Winds` tone 4 at index 3
+      // (20 cents). scdb D-76.
+      0x27
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named

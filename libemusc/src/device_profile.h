@@ -128,6 +128,12 @@ struct ToneFieldMap
   // Sound Canvas's sign-and-magnitude - which is why they cannot share
   // TVALFO1Depth / TVALFO2Depth with the Sound Canvas path. scdb D-75.
   int      lfo1TvaDepth, lfo2TvaDepth;
+
+  // Random Pitch Depth, an index 0-15 into RomLookup::JVRandomPitch, drawn
+  // once per voice. A rhythm note has had this since D-71; a patch tone keeps
+  // the same index in the LOW nibble of +0x27, and the port read it for the
+  // kit and not for the patches. 0 means the device has no such field.
+  int      toneRandomPitch;             // bits 0-3
 };
 
 // A bank of patches, and the tone records inside each patch.

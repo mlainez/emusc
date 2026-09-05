@@ -1518,6 +1518,12 @@ int ControlRom::_read_device_patches(void)
         if (F.tvaDelayTime)
           ip.JVDelayKeyOff = (tb[F.tvaDelayTime] >> 7) & 0x01;
 
+        // Random Pitch Depth, the low nibble of +0x27 (scdb D-76). The same
+        // index the rhythm note has carried since D-71, into the same table
+        // and the same per-voice draw in Pitch::_jv_init.
+        if (F.toneRandomPitch)
+          ip.JVRandomPitchIdx = tb[F.toneRandomPitch] & 0x0f;
+
         // The filter. It was read but left DISABLED until now, because the
         // cutoff is assembled from fields this path did not fill and a filter
         // right in colour and 35 dB wrong in level is worse than none. All of
