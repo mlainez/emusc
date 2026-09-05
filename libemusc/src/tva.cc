@@ -318,6 +318,7 @@ void TVA::_update_dynamic_level()
   // Level instead. CC11 and master volume are therefore a NAMED GAP on this
   // device rather than an approximation.
   if (_settings->device()->levelLawKind == LevelLawKind::JVCurveProduct) {
+    _compose_static_level();
     _dynLevel = _staticLevel8 << 8;
     return;
   }
@@ -730,6 +731,64 @@ int TVA::_get_level_velocity(int cVelocity)
 }
 
 
+// The part side of the level law, recomputed every control period.
+//
+// It has to be every period rather than once at note-on, because Part Level and
+// CC7 Volume both move under a sounding note and the device follows them: the
+// firmware recomputes @0x9a1e and rewrites the chip's F016 register on its own
+// service tick. Caching this at note-on froze the level for the life of the
+// voice, and the demo songs are where that shows - "Lost Weekend" does not end
+// on note-offs, it ends on an eleven-second CC7 fade under notes that are
+// already ringing. Frozen, channel 3 finished 17.8 dB above the reference and
+// channel 7 - whose four notes are struck three MILLISECONDS before the CC7
+// swell that is meant to bring them in - never sounded at all.
+//
+// The tone side (_toneGain) is genuinely fixed for the voice and is not redone.
+void TVA::_compose_static_level(void)
+{
+  const auto &T = _LUT.JVLevel;
+  const LevelLaw &L = _settings->device()->level;
+
+  // The level index, formed the way the firmware forms @0x9a1e and then reads
+  // it back (scdb D-28, FW-EXACT throughout).
+  //
+  // A PATCH part multiplies the Performance part level by the patch's own level
+  // byte and shifts down 7 (ROM1 0x4641-0x4648). The RHYTHM part - part 8 of a
+  // Performance, manual p.2-14 - does NOT: it stores the part level raw (ROM1
+  // 0x4c2a), because a Rhythm Set has no patch level and the per-key level is
+  // applied separately. Worth 0.23 dB at part level 127, since the patch-part
+  // product would give 126 where the device keeps 127.
+  const int part = _settings->get_param(PatchParam::PartLevel, _partId) & 0x7f;
+  int composed = _drumSet ? part : ((part * _patchLevel) >> L.dynamicsShift);
+
+  // Then CC7 Volume, on a device that keeps it apart from the part level.
+  // ROM1 0x44c8-0x44d4: the byte is widened 0..127 -> 0..255 by the firmware's
+  // usual gain-byte expansion and multiplied by the raw controller value,
+  // shifted down by volumeIndexShift. The multiply is what the port was
+  // missing, and letting CC7 overwrite the part level instead is what made the
+  // demo's channel 1 +2.7 dB hot.
+  //
+  // Note this is a /127.5 scale, not /127: at CC7 = 127 the index still lands
+  // one or two steps under `composed`, so full volume is not unity here. The
+  // measurements say the same, and the ROM is why.
+  if (L.volumeIndexShift) {
+    const int vol = _settings->get_param(PatchParam::PartVolume, _partId) & 0x7f;
+    composed = ((2 * composed + (composed >= 64 ? 1 : 0)) * vol)
+               >> L.volumeIndexShift;
+  }
+
+  const int dyn = T[std::clamp(composed, 0, 127)];
+
+  // The static level byte, exactly as the firmware stores it: the high byte of
+  // high16(T[a] * T[b]), written to @0x8dc2 at ROM1 0x3d4c and from there to the
+  // chip's F016 register at ROM1 0x38a4. It is the DYNAMIC register on this
+  // engine, so _update_dynamic_level() reads it; it must not be multiplied into
+  // the envelope target as well.
+  _staticLevel8 =
+    std::clamp((int) (((int64_t) _toneGain * dyn) >> L.staticShift), 0, 255);
+}
+
+
 void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
                          int instrumentIndex, uint8_t cVelocityLvl,
                          uint8_t cVelocity)
@@ -788,46 +847,13 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
       index -= (int) (((int64_t) index * w) >> 16);
     }
 
-    const int gain = T[std::clamp(index >> L.toneIndexShift, 0, 127)];
-
-    // The level index, formed the way the firmware forms @0x9a1e and then reads
-    // it back (scdb D-28, FW-EXACT throughout).
-    //
-    // A PATCH part multiplies the Performance part level by the patch's own
-    // level byte and shifts down 7 (ROM1 0x4641-0x4648). The RHYTHM part - part
-    // 8 of a Performance, manual p.2-14 - does NOT: it stores the part level
-    // raw (ROM1 0x4c2a), because a Rhythm Set has no patch level and the per-key
-    // level is applied separately. Worth 0.23 dB at part level 127, since the
-    // patch-part product would give 126 where the device keeps 127.
-    const int part  = _settings->get_param(PatchParam::PartLevel, _partId) & 0x7f;
-    const int patch = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
-    int composed = _drumSet ? part : ((part * patch) >> L.dynamicsShift);
-
-    // Then CC7 Volume, on a device that keeps it apart from the part level.
-    // ROM1 0x44c8-0x44d4: the byte is widened 0..127 -> 0..255 by the firmware's
-    // usual gain-byte expansion and multiplied by the raw controller value,
-    // shifted down by volumeIndexShift. The multiply is what the port was
-    // missing, and letting CC7 overwrite the part level instead is what made
-    // the demo's channel 1 +2.7 dB hot.
-    //
-    // Note this is a /127.5 scale, not /127: at CC7 = 127 the index still lands
-    // one or two steps under `composed`, so full volume is not unity here. The
-    // measurements say the same, and the ROM is why.
-    if (L.volumeIndexShift) {
-      const int vol = _settings->get_param(PatchParam::PartVolume, _partId) & 0x7f;
-      composed = ((2 * composed + (composed >= 64 ? 1 : 0)) * vol)
-                 >> L.volumeIndexShift;
-    }
-
-    const int dyn = T[std::clamp(composed, 0, 127)];
-
-    // The static level byte, exactly as the firmware stores it: the high byte
-    // of high16(T[a] * T[b]), written to @0x8dc2 at ROM1 0x3d4c and from there
-    // to the chip's F016 register at ROM1 0x38a4. It is the DYNAMIC register on
-    // this engine, so _update_dynamic_level() reads it; it must not be
-    // multiplied into the envelope target as well.
-    _staticLevel8 =
-      std::clamp((int) (((int64_t) gain * dyn) >> L.staticShift), 0, 255);
+    // The TONE side is fixed for the life of the voice: tone level, sample
+    // level and the velocity the key was struck with cannot change under a
+    // sounding note. The PART side can, so it is composed separately, every
+    // control period, in _compose_static_level().
+    _toneGain   = T[std::clamp(index >> L.toneIndexShift, 0, 127)];
+    _patchLevel = ctrlRom.instrument(instrumentIndex).volume & 0x7f;
+    _compose_static_level();
 
     // The envelope walks in the device's PRE-CURVE domain, so the segment
     // levels go in RAW. The envelope register's byte is not a linear fraction

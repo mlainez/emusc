@@ -69,6 +69,12 @@ private:
   // part level and system volume instead.
   int _staticLevel8 = 0;
 
+  // The tone side of the level law, fixed for the life of the voice, and the
+  // patch's own level byte. The part side is recomposed every control period -
+  // see _compose_static_level().
+  int _toneGain = 0;
+  int _patchLevel = 0x7f;
+
   // True on a device whose envelope register carries its OWN curve, so the
   // envelope walks in the PRE-curve domain and is converted at every emit.
   bool _envThroughCurve = false;
@@ -110,6 +116,7 @@ private:
   void _init_update(void);
   void _set_panpot_gains(void);
 
+  void _compose_static_level(void);
   void _init_envelope(ControlRom &ctrlRom, int sampleIndex, int instrumentIndex,
                       uint8_t cVelocityLvl,
                       uint8_t cVelocity);
