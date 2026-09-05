@@ -793,48 +793,26 @@ const DeviceProfile JV880_PROFILE = {
     0x16, 112,
     ReverbDelayTapLaw::JVRecordScale,
 
-    // THE NETWORK. This device does not run the Sound Canvas reverb program:
-    // its TC6116AF reverb is one mono recirculating delay line read by nine
-    // independent stereo tap pairs, and every number in it - the taps, their Q6
-    // gains, the input gain, the loop tap, the pre-LPF pair - is in this
-    // device's own ROM2 records, read through
-    // ControlRom::LookupTables::JVReverbRecord (P-0399).
+    // THE REGISTERS. This device runs the chip's reverb program with its own
+    // numbers: every reverb type's 30-word ROM2 record is streamed by its
+    // firmware into the same 21 pointer and 5 coefficient registers the Sound
+    // Canvas blocks in reverb.h fill, and reverb.cc loads it from
+    // ControlRom::LookupTables::JVReverbRecord (P-0399, scdb devices/jv880/
+    // 08_effects/dsp_program.md). Three of the six records are Sound Canvas
+    // blocks under other names (ROOM2 = Plate, HALL2 = Room2, STAGE2 = Hall2).
     //
-    // So under JVMultiTapLine the three ReverbLaw constants above that belong
-    // to the Sound Canvas program are DEAD on this device: timeSlope/timeOffset/
-    // timeCap (the loop gain comes from the record and the Time law below), the
+    // So under JVRecordProgram the three ReverbLaw constants above that belong
+    // to the reverb.h blocks are DEAD on this device: timeSlope/timeOffset/
+    // timeCap (the Time scale is in the record and the law is below), the
     // pre-LPF triple (the record carries a fixed pair per type; the JV has no
     // Pre-LPF parameter at all) and delayTapBase (the record's own word +0x1A
     // plus one). They are left at their values rather than zeroed so the
-    // Sound Canvas path stays meaningful if the network is ever switched back,
+    // Sound Canvas path stays meaningful if the source is ever switched back,
     // exactly as delayTapPerTime already is.
-    ReverbNetworkKind::JVMultiTapLine,
-    // The loop-gain fit, RE-FITTED against the reference's own decay.
-    //
-    //   20*log10(g) = 30.954*log10(expand(Time)) + 17.673*log10(loopTap) - 152.24
-    //
-    // Measured 2026-09-05 over a 6 type x 6 Time sweep, one drum hit per cell
-    // with 8 s of gap, the decay taken as a log-linear fit of the tail and
-    // converted to a per-pass gain through that type's own loop length,
-    // g = 10^(rate * loopTap / 32000 / 20). 31 of the 36 cells clear the noise
-    // floor. Error on the gain: 1.50 dB rms, 4.41 dB worst, with no trend in
-    // Time (per-Time means -0.54 to +0.76 dB) and a worst per-type offset of
-    // -2.73 dB on PLATE.
-    //
-    // What it replaces matters more than the numbers. The engine ran
-    // JVFirmwareRegister, which IS the firmware's own arithmetic, traced
-    // instruction by instruction at ROM2 0x71C3-0x71DC. But the firmware only
-    // computes a BYTE and writes it to the chip; turning that byte into a
-    // per-pass gain by dividing by 256 was this engine's own assumption, and
-    // that assumption is falsified - ROOM1 at Time 127 and STAGE2 at Time 81
-    // compute the identical byte 73 and decay 2.7 dB apart, so no function of
-    // the byte alone can fit both. Measured here it is 3.98 dB rms and 9.22 dB
-    // worst, which on a drum hit is a tail decaying at -18.8 dB/s where the
-    // reference decays at -27.7: audible as a wash over every percussion hit.
-    //
-    // The fit's ORIGINAL coefficients (40 / 20 / -184.6) measure 1.88 dB rms
-    // and 11.44 dB worst on the same data. The form was right; the exponents
-    // were not.
+    ReverbNetworkKind::JVRecordProgram,
+    // The firmware's own register arithmetic, (expand(Time) * record[+0x36])
+    // >> 8 into slot 0x1E F010, read by the program as byte / 128 like every
+    // other writer of that register. See ReverbFeedbackLaw.
     ReverbFeedbackLaw::JVFirmwareRegister,
 
     // sendDivisor. A byte-sized coefficient on this chip has 64 = unity,
@@ -850,16 +828,7 @@ const DeviceProfile JV880_PROFILE = {
     // device_profile.h for the measurement and the reason: a 0-127 parameter
     // feeding a 64-is-unity byte field is written shifted down by one, which
     // is what this law already does to the chorus level.
-    128.0f,
-
-    // The re-fitted loop-gain coefficients, in the order the struct declares
-    // them: the expand(Time) term, the loop-length term, and the offset in dB.
-    // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
-    // (IC24, service notes p.3), so the line truncates below 1/32768.
-    // One LSB of the effect memory's word. The JV's effects PSRAM is 16-bit
-    // (IC24, service notes p.3), so the line truncates below 1/32768.
-true,     // close the loop from w20, not from the wet sum
-    1.0f / 32768.0f
+    128.0f
   },
 
   { true,  0x3f, 0x7f },

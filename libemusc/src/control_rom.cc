@@ -2009,11 +2009,11 @@ void ControlRom::_init_device_lookup_tables(void)
           break;
         t.JVReverbReturnCoeff[type] = _deviceRom[rec + V.reverbReturnCoeff];
 
-        // ...and the whole record, words 0..29, which is the reverb NETWORK
-        // itself: the nine stereo tap pairs, their Q6 gains, the input gain,
-        // the loop tap, the pre-LPF pair and the Time scale (P-0399). The
-        // network in reverb.cc is driven from these words on a device whose
-        // ReverbNetworkKind is JVMultiTapLine; nothing is embedded there.
+        // ...and the whole record, words 0..29: the reverb program's 21
+        // pointer words, its five coefficient words, the pre-LPF pair and the
+        // Time scale (P-0399). reverb.cc loads these into the chip program's
+        // registers on a device whose ReverbNetworkKind is JVRecordProgram;
+        // nothing is embedded there.
         {
           const int nw = LookupTables::JVReverbRecordWords;
           if ((size_t) rec + 2 * nw <= _deviceRom.size()) {

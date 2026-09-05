@@ -610,66 +610,56 @@ enum class ReverbDelayTapLaw
 };
 
 
-// WHICH NETWORK the reverb unit runs.
+// WHERE the reverb program's registers come from. The program itself - the
+// chip's twelve-writer diffuser-and-tank network in reverb.cc - is the same on
+// every device in the family.
 //
-// SoundCanvasProgram is the twelve-writer diffuser-and-tank program reverb.cc
-// has always run, uploaded from a per-character register block.
+// SoundCanvasProgram: the per-character register blocks in reverb.h.
 //
-// JVMultiTapLine is the JV-880's, recovered in full from its own ROM records
-// (scdb devices/jv880/08_effects/reverb.md "THE NETWORK", P-0399): ONE mono
-// recirculating delay line, read by nine independent stereo tap pairs, with the
-// loop closed from a tenth tap. There is no comb bank, no allpass section and
-// no diffuser anywhere in it, so it is not the Sound Canvas program with other
-// numbers - it is a different network, and that is why this is a KIND.
-//
-// What made it necessary: driving the JV through the Sound Canvas program left
-// the per-type return offsets spanning 21.3 dB (ROOM1 +13.4 dB, HALL2 +11.0,
-// four types near +5.5, the two delay types -5 to -8) - constant in Level to
-// within 1.2 dB and systematic in TYPE, i.e. the SC-55's own per-character
-// network gains showing through a device whose eight types do not line up with
-// the SC's eight characters (P-0395 §2).
+// JVRecordProgram: the device's own ROM records, one 30-word record per reverb
+// type, streamed by its firmware into the same registers (scdb devices/jv880/
+// 08_effects/dsp_program.md). The JV-880's eight types do not line up with the
+// Sound Canvas's eight characters - three of its records ARE Sound Canvas
+// blocks under other names (ROOM2 = Plate, HALL2 = Room2, STAGE2 = Hall2) and
+// the rest are its own - which is why an earlier attempt to drive the JV from
+// the reverb.h blocks by type index left per-type offsets spanning 21 dB
+// (P-0395 §2), and why a later attempt to explain those records as a different
+// network altogether ("one line, nine stereo tap pairs", 2026-09-03/04) had to
+// be retracted once its onset, polarity and loop-mode predictions were tested
+// against the reference (scdb notes/track_reverb_program_2026-09-05.md).
 enum class ReverbNetworkKind
 {
   SoundCanvasProgram,
-  JVMultiTapLine
+  JVRecordProgram
 };
 
 
-// How the Reverb Time parameter becomes the recirculation gain on the loop tap,
-// for the six reverb types. (The two delay types take it from Delay Feedback on
+// How the Reverb Time parameter becomes the program's recirculation gain, for
+// the six reverb types. (The two delay types take it from Delay Feedback on
 // every device: one register, two parameter names, one role.)
 //
 // SoundCanvasTimeLine is the rounded straight line into the loop gain that
 // reverb.cc has always used, inverted from this project's own measured
 // T60(gLoop) curve against each machine's T60 (P-0296, P-0300, P-0303).
 //
-// The JV has two candidate laws and they disagree, which is why both are named
-// here rather than one being quietly chosen:
+// JVFirmwareRegister is the JV-880 firmware's own arithmetic, confirmed
+// instruction by instruction at ROM2 0x71C3-0x71DC (an unsigned mulxu.b, no
+// sign extension, the >>8 falling out of overwriting the product's low byte):
 //
-// JVFirmwareRegister is the firmware's own arithmetic, confirmed instruction by
-// instruction at ROM2 0x71C3-0x71DC (an unsigned mulxu.b, no sign extension,
-// the >>8 falling out of overwriting the product's low byte):
+//     F010.hi = (expand(Time) * record[+0x36]) >> 8
 //
-//     g = ((expand(Time) * record[+0x36]) >> 8) / 256
-//
-// JVLoopLengthFit is the empirical replacement scdb reports for it, fitted to a
-// 28-cell (type x Time) measurement of the per-pass loss on the reference:
-//
-//     20*log10(g) = 20*log10(w20) + 40*log10(expand(Time)) - 184.6
-//
-// i.e. the loop gain tracks the LOOP LENGTH and the square of the expanded Time
-// byte, with record[+0x36] contributing nothing detectable once w20 is in the
-// model. That is a `FIT`, not firmware: held-out error 0.30 to 3.15 dB across
-// the six types, no mechanism, and it directly contradicts the register the
-// firmware demonstrably writes. It is offered because the register law is
-// FALSIFIED by contradiction rather than merely imprecise - ROOM1 at Time 127
-// and STAGE2 at Time 81 compute the identical byte 73 and measure 2.7 dB apart,
-// so no function of that byte alone can fit both.
+// and the program reads that register as byte / 128, exactly as it reads the
+// Sound Canvas's own time byte and the delay arm's Feedback in the same
+// register (reverb.cc). An earlier "falsification" of this law - two types
+// computing the identical byte and decaying 2.7 dB apart per loop - was an
+// artefact of the network it was measured under: with two tank loops of
+// different lengths per type there is no single per-pass gain to compare, and
+// the FIT law that replaced it for a day (loop length times Time squared) was
+// removed with that network (scdb notes/track_reverb_program_2026-09-05.md).
 enum class ReverbFeedbackLaw
 {
   SoundCanvasTimeLine,
-  JVFirmwareRegister,
-  JVLoopLengthFit
+  JVFirmwareRegister
 };
 
 
@@ -730,12 +720,12 @@ struct ReverbLaw
   int delayTapBase, delayTapPerTime;
   ReverbDelayTapLaw delayTapLaw;
 
-  // Which network, and which Time -> loop-gain law. See the two enums above.
-  // Under JVMultiTapLine the whole network comes out of
+  // Where the registers come from, and which Time -> loop-gain law. See the two
+  // enums above. Under JVRecordProgram the registers come out of
   // ControlRom::LookupTables::JVReverbRecord and NONE of the constants above
   // apply except levelDivisor and returnLaw: timeSlope/timeOffset/timeCap, the
-  // pre-LPF triple and delayTapBase are all Sound Canvas program properties,
-  // because the JV's pre-LPF, tap base and loop gain are all in its records.
+  // pre-LPF triple and delayTapBase are all properties of the reverb.h blocks,
+  // because the JV's pre-LPF, tap base and Time scale are all in its records.
   ReverbNetworkKind network;
   ReverbFeedbackLaw feedbackLaw;
 
@@ -761,17 +751,6 @@ struct ReverbLaw
   // mean +4.3, and the reference's implied coefficient tracked send/128 to
   // within a factor 1.07-1.47. scdb D-60.
   float chorusSendDivisor = 0.0f;
-
-  // Close the recirculation from the single loop tap rather than from the wet
-  // sum. False keeps the wet-sum form, which is what the network was written
-  // with before the loop period was measured.
-  bool loopTapFeedback = false;
-
-  // One LSB of the effect memory's word, for a device whose reverb line is
-  // fixed point. It decides where a tail STOPS: below one LSB the recirculating
-  // signal truncates to zero and the line goes silent, where a float line
-  // decays forever. Zero keeps the float behaviour.
-  float rBufferQuantum = 0.0f;
 };
 
 
