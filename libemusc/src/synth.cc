@@ -783,6 +783,11 @@ void Synth::_process_samples(void)
   // always used, now with the events sorted onto the period they belong to.
   _dispatch_events();
 
+  // The control-period clock, published before the parts update so a voice
+  // that starts this period reads the time it starts at (D-26, the JV's
+  // free-running LFO phase).
+  _settings->set_block_start(_blockStart);
+
   // Start all samples processings with a control updates
   for (auto &p : _parts)
     p.update();

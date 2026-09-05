@@ -365,8 +365,28 @@ WaveGenerator::WaveGenerator(struct ControlRom::InstPartial &ip,
   _jvDelayKeyOff = ip.JVLfoDelayKeyOff[l];
 
   _jvRng = 0x9E3779B9u * ++seedCounter + 0x7F4A7C15u;
+
   // Synchro ON: the note-on request zeroes the phase at the next task-13 wake.
-  _jvPhase = _jvSync ? 0 : (uint16_t) (_jvRng >> 8);
+  // Synchro OFF: nothing zeroes it, and the accumulator was never stopped.
+  // Task 13 steps all 28 of them (ROM1 0x0FA9-0x1181, a plain 27-down-to-0
+  // loop with no test for a sounding voice), so the phase a note inherits is
+  // the one its slot has reached by the time the note starts. Measured on the
+  // reference (scdb D-26, M-088): two identical notes on `61 Arctic Winds`
+  // differ in level by an amount that is a SINUSOID in the gap between them,
+  // period 3.77 s against the 3.83 s the ROM's own rate table gives that
+  // patch's free-running tones, amplitude 1.9 dB, 77 % of the variance over a
+  // 5.0-12.5 s sweep. It is not a per-note draw.
+  //
+  // Taken here as one free-running oscillator per RATE rather than per slot:
+  // phase = increment * (16 ms ticks since reset), which is exactly the slot's
+  // accumulator whenever the slot has held this rate since then. What it
+  // cannot know is a slot's history under a different patch, and it makes two
+  // tones of one note that share a rate share a phase - which is what the
+  // device does when their slots have run together.
+  const int startInc = _LUT.JVLfoRate[std::clamp(_jvRate, 0, 127)]
+                       << (_jvForm >= 4 ? 1 : 0);
+  const uint64_t lfoTicks = _settings ? _settings->block_start() / 512 : 0;
+  _jvPhase = _jvSync ? 0 : (uint16_t) (startInc * lfoTicks);
 
   // Delay and fade times in milliseconds from the shared time table; a byte of
   // 0 is table entry 0, and the stage completes on its first tick.

@@ -154,7 +154,18 @@ public:
   void set_part_callback(std::function<void(const int)> cb);
   void clear_part_callback(void);
 
+  // The engine's control-period clock, in samples of the internal 32 kHz rate,
+  // advanced once per period by Synth. A voice that starts needs to know what
+  // TIME it starts at, because the JV's LFO phase accumulators run whether a
+  // note is sounding or not (scdb devices/jv880 D-26): a tone with Synchro OFF
+  // inherits the phase its slot has reached, so two identical notes are not
+  // identical. Nothing else reads it.
+  inline void set_block_start(uint64_t s) { _blockStart = s; }
+  inline uint64_t block_start(void) const { return _blockStart; }
+
 private:
+  uint64_t _blockStart = 0;
+
   std::array<uint8_t, 0x0100> _systemParams;  // Both SysEx and non-SysEx data
   std::array<uint8_t, 0x4000> _patchParams;
   std::array<uint8_t, 0x2000> _drumParams;
