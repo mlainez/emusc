@@ -110,6 +110,23 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     _lvlVSensEff = (uint8_t) std::min(sum, 127);
   }
 
+  // Pan Key Follow, ROM1 0x4B62-0x4BBC (scdb D-77). The same signed table the
+  // level key follow reads, indexed by the tone's other nibble: the voice's
+  // pan moves by ((|T| x |60 - key|) & 0xffff) >> 8, positive values panning
+  // higher keys right. The firmware adds it AFTER the part's own pan offset
+  // (0x4B5E adds @0x9A3A first) and before the 0..0x7f clamp, so it is carried
+  // as a delta and applied at that point in _update_panpot_level().
+  // Off-neutral on 93 of the 539 factory tones.
+  if (ctrlRom.lookupTables.hasJVKeyFollowPct) {
+    const int T = ctrlRom.lookupTables
+                    .JVKeyFollowPct[_instPartial.JVPanKeyFollowIdx & 0x0f];
+    const int dk = (int) key - 60;
+    if (T && dk) {
+      const int d = (int) ((((int64_t) std::abs(T) * std::abs(dk)) & 0xffff) >> 8);
+      _jvPanKeyFollow = ((T > 0) == (dk > 0)) ? d : -d;
+    }
+  }
+
   int cVelocity = _get_velocity_from_vcurve(velocity);
   int cVelocityLvl = _get_velocity_from_vcurve((uint8_t) lvlVelocity);
   _init_envelope(ctrlRom, sampleIndex, instrumentIndex,
@@ -422,7 +439,8 @@ void TVA::_update_panpot_level(bool reset)
   // P-0124).
   int newPanpot = _panpotBase +
     _settings->get_param(PatchParam::PartPanpot, _partId) +
-    _settings->get_param(SystemParam::Pan) - 0x80;
+    _settings->get_param(SystemParam::Pan) - 0x80 +
+    _jvPanKeyFollow;                     // 0 on every device but the JV
 
   if (_drumSet)
     newPanpot +=
@@ -908,6 +926,26 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     const int smpl8 = 2 * sv + (sv >= 64 ? 1 : 0);
 
     int index = (_instPartial.volume & 0x7f) * smpl8;
+
+    // TVA Level Key Follow, ROM1 0x4A16-0x4A6E (scdb D-77). The tone's index
+    // is scaled by |key - 60| through the signed percentage table at ROM2
+    // 0x57FE, the sign being sign(table) x sign(key - 60), before it is stored
+    // to @0x90D2 - so the decibels come out of the 0x6260 curve the index then
+    // enters. The firmware's own overflow behaviour is kept: a product that
+    // does not fit 16 bits contributes the whole index (0x4A4D), a positive
+    // result that overflows clamps at 0x7fff (0x4A59) and a negative one
+    // clamps at 0 (0x4A6C). Off-neutral on 85 of the 539 factory tones.
+    if (_LUT.hasJVKeyFollowPct) {
+      const int T = _LUT.JVKeyFollowPct[_instPartial.JVLevelKeyFollowIdx & 0x0f];
+      const int dk = (int) _key - 60;
+      if (T && dk) {
+        const int64_t p = (int64_t) 2 * std::abs(T) * std::abs(dk);
+        const int delta = (p >> 16) ? index
+                                    : (int) ((index * (p & 0xffff)) >> 16);
+        index = ((T > 0) == (dk > 0)) ? std::min(index + delta, 0x7fff)
+                                      : std::max(index - delta, 0);
+      }
+    }
 
     // Velocity, through the tone's own curve out of the bank, applied
     // multiplicatively: ROM1 0x48b6 calls the shared velocity helper with the

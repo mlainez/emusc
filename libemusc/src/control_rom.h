@@ -227,6 +227,9 @@ public:
     // Random Pitch Depth, 0-15, an index into LookupTables::JVRandomPitch;
     // 0 = none. Drawn once per voice in Pitch::_jv_init().
     uint8_t JVRandomPitchIdx;
+    // TVA Level Key Follow and Pan Key Follow, 0-14 with 7 neutral (D-77).
+    uint8_t JVLevelKeyFollowIdx;
+    uint8_t JVPanKeyFollowIdx;
 
     // A per-NOTE pitch bend range in semitones, 0-12, which the JV's rhythm
     // notes carry in place of the part's. hasJVBendRange 0 (every Sound Canvas
@@ -378,6 +381,7 @@ public:
     std::array<int, 128> JVTvfDampHard;
     std::array<int, 128> JVTvfBase;
     std::array<int,  16> JVTvfCutoffKF;   // signed, cents per semitone
+    std::array<int,  16> JVKeyFollowPct; // signed, 9.1 per displayed percent
 
     // The JV's three chorus type records (P-0394): five big-endian words each,
     // laid end to end - w0 the input write pointer, w1 unassigned, w2 and w3 the
@@ -456,6 +460,7 @@ public:
     // 1..15 (entry i - 1 here). Without it a random pitch index adds nothing.
     std::array<int, 15>       JVRandomPitch = {};
     bool                      hasJVRandomPitch = false;
+    bool                      hasJVKeyFollowPct = false;
 
     // The JV-880's eight reverb type records in full: words 0..27 of each,
     // big-endian, laid end to end, so entry 28*type + w is word w of type

@@ -1359,6 +1359,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   // The JV's envelope time-sense nibbles: 7 is the neutral index (both of its
   // tables hold 0 there), and no tone is a KEY-OFF delay tone.
   ip.TVAJVVelT1 = ip.TVAJVVelT4 = ip.TVAJVTimeKF = 7;
+  ip.JVLevelKeyFollowIdx = ip.JVPanKeyFollowIdx = 7;
   ip.TVFJVVelT1 = ip.TVFJVVelT4 = ip.TVFJVTimeKF = 7;
   ip.PitchJVVelT1 = ip.PitchJVVelT4 = ip.PitchJVTimeKF = 7;
   ip.JVDelayKeyOff   = 0;
@@ -1523,6 +1524,17 @@ int ControlRom::_read_device_patches(void)
         // and the same per-voice draw in Pitch::_jv_init.
         if (F.toneRandomPitch)
           ip.JVRandomPitchIdx = tb[F.toneRandomPitch] & 0x0f;
+
+        // TVA Level Key Follow and Pan Key Follow (scdb D-77). Both index the
+        // same signed table and both are 0-14 with 7 neutral, but the JV puts
+        // one in a low nibble and the other in a high one, so the shift is
+        // data. Off-neutral on 85 and 93 of the 539 enabled factory tones.
+        if (F.levelKeyFollow)
+          ip.JVLevelKeyFollowIdx =
+            (tb[F.levelKeyFollow] >> F.levelKeyFollowShift) & 0x0f;
+        if (F.panKeyFollow)
+          ip.JVPanKeyFollowIdx =
+            (tb[F.panKeyFollow] >> F.panKeyFollowShift) & 0x0f;
 
         // The filter. It was read but left DISABLED until now, because the
         // cutoff is assembled from fields this path did not fill and a filter
@@ -1999,6 +2011,9 @@ void ControlRom::_init_device_lookup_tables(void)
         break;
       case RomLookup::JVTvfCutoffKF:
         rom16s(rtOffset, rt.entries, t.JVTvfCutoffKF);      break;
+      case RomLookup::JVKeyFollowPct:
+        t.hasJVKeyFollowPct = rom16s(rtOffset, rt.entries, t.JVKeyFollowPct);
+        break;
       case RomLookup::JVChorusRecords:
         rom16(rtOffset, rt.entries, t.JVChorusRecords);     break;
       case RomLookup::JVEnvTimeVelDepth:

@@ -179,6 +179,11 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // The check it passes instead is the strongest available: it IS the manual's
   // published list, entry for entry.
   { RomLookup::JVTvfCutoffKF,        0x057be,  16, 2, Monotonic::Unchecked },
+  // The tone key-follow percentage list, ROM2 0x57FE: the manual's
+  // -100..+100 in fifteen steps at 9.1 units per percent, entry 7 = 0.
+  // Read by TVA Level Key Follow (ROM1 0x4A28) and Pan Key Follow
+  // (ROM1 0x4B75). scdb D-77.
+  { RomLookup::JVKeyFollowPct,       0x057fe,  16, 2, Monotonic::Unchecked },
   // The pan law: 128 big-endian words at ROM2 0x6B8A, packed (L << 8) | R.
   // The candidate at 0x3e946 named above was rejected for failing a RISE
   // check, but that check was the wrong test: this is not a mirrored single
@@ -488,7 +493,17 @@ static const RecordRomLayout JV880_RECORDS = {
       // carries, and the same once-per-voice draw. Non-zero on 18 of the 539
       // enabled factory tones, among them `61 Arctic Winds` tone 4 at index 3
       // (20 cents). scdb D-76.
-      0x27
+      0x27,
+
+      // TVA Level Key Follow, the LOW nibble of +0x46 (SysEx 0x5D), and Pan
+      // Key Follow, the HIGH nibble of +0x27 (SysEx 0x60). Both index ROM2
+      // 0x57FE. ROM1 0x4A16-0x4A6E scales the static level index by the first
+      // before storing it to @0x90D2; ROM1 0x4B62-0x4BBC shifts the voice pan
+      // by the second before @0x9BE2. Off-neutral on 85 and 93 of the 539
+      // enabled factory tones - the two largest unread fields outside the
+      // controller matrix. scdb D-77.
+      0x46, 0,
+      0x27, 4
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named

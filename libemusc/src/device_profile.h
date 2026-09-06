@@ -134,6 +134,13 @@ struct ToneFieldMap
   // the same index in the LOW nibble of +0x27, and the port read it for the
   // kit and not for the patches. 0 means the device has no such field.
   int      toneRandomPitch;             // bits 0-3
+
+  // TVA Level Key Follow and Pan Key Follow, each a 0-14 index into
+  // RomLookup::JVKeyFollowPct with 7 neutral. Both name a BYTE and a
+  // SHIFT because the JV puts one in a low nibble and the other in a
+  // high one. 0 means the device has no such field. scdb D-77.
+  int      levelKeyFollow, levelKeyFollowShift;
+  int      panKeyFollow,   panKeyFollowShift;
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -399,6 +406,10 @@ enum class RomLookup
   JVTvfDampHard,
   JVTvfBase,
   JVTvfCutoffKF,
+  // The tone key-follow percentage list, ROM2 0x57FE: 16 signed words,
+  // -910..+910 at 9.1 units per displayed percent, index 7 neutral. Shared
+  // by TVA Level Key Follow and Pan Key Follow (scdb D-77).
+  JVKeyFollowPct,
 
   // The JV's PAN law: 128 big-endian words, packed (L << 8) | R, one per pan
   // position. The Sound Canvas keeps a single 129-byte ramp read through its CPU

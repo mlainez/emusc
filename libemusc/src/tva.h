@@ -88,6 +88,8 @@ private:
   // recomputed every control period, and the previous period's is kept so the
   // block's gain ramp is between two consistent pairs.
   int  _jvTvaLfoDepth[2] = { 0, 0 };
+  // Pan Key Follow's contribution for this note, in pan units (scdb D-77).
+  int  _jvPanKeyFollow = 0;
   int  _jvTremolo = 0;
   int  _jvTremoloPrev = 0;
   bool _hasJvTremolo = false;
