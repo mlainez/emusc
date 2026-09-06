@@ -171,8 +171,8 @@ void TVA::apply_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
           _firstBlock);
   _firstBlock = false;
 
-  float panL = _panpotL / 127.0f;
-  float panR = _panpotR / 127.0f;
+  float panL = _panpotL / _panScale;
+  float panR = _panpotR / _panScale;
 
   // The amplified sample before the panner is the signal the effect sends are
   // taken from, so it is handed back separately. Measured on the SC-55mkII
@@ -931,7 +931,10 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
   // machine mutes.
   {
     const int d = _instPartial.dryLevel & 0x7f;
-    _dryGain = (d > 1) ? (d - 1) / 126.0f : 0.0f;
+    // On a device whose pan register already carries the dry gain (the JV,
+    // scdb D-82) this must stay at unity, or the attenuation is applied twice.
+    _dryGain = _LUT.hasJVPanLaw ? 1.0f
+                                : ((d > 1) ? (d - 1) / 126.0f : 0.0f);
   }
 
   // The JV family computes level multiplicatively in the linear domain and
@@ -1357,6 +1360,28 @@ void TVA::_set_panpot_gains(void)
 {
   if (_LUT.hasJVPanLaw) {
     int p = _panpot < 0 ? 0 : (_panpot > 127 ? 127 : _panpot);
+    // The chip does not receive the pan table's byte. ROM1 0x21A2-0x21B2
+    // multiplies each channel of the packed word by the voice's dry-level gain
+    // byte and keeps the HIGH BYTE of the product, so what reaches F012 is
+    // `(pan * g) >> 8` with `g = 2*dry + (dry >= 64)`. That single truncation
+    // is both halves of the pan residual M-091 registered:
+    //
+    //   - pan 1 is SILENT in the opposite channel. (1 * 255) >> 8 = 0, so the
+    //     table's R = 1 never reaches the chip; the machine's pan 1 and pan 0
+    //     render identically and ours leaked 1/127 = -42.07 dB.
+    //   - every off-centre entry is about 0.2 dB WIDER than the raw table.
+    //     At full dry the register is exactly `pan - 1`, so entry 22 gives
+    //     20*log10(126/30) = +12.46 dB where the table alone gives +12.25, and
+    //     entry 106 -13.06 against -12.83 - the two figures M-091 measured on
+    //     the machine, to the digit.
+    //
+    // Folding the dry level in here is not a second place to apply it: at pan
+    // 127 the register is `(127 * (2d + (d >= 64))) >> 8`, which is `d - 1` for
+    // every d from 1 to 127, so the (d-1)/126 law measured under D-28 is this
+    // expression's own pan-127 case and is unchanged. scdb D-82.
+    const int d = _instPartial.dryLevel & 0x7f;
+    const int g = 2 * d + (d >= 64 ? 1 : 0);
+    _panScale = 126.0f;
     // NOTE THE SWAP, and that it is not a bug here. `_panpotL` does not carry
     // the left channel: the Sound Canvas path below assigns it TVAPanpot[_panpot]
     // from a table that RISES 0..127, so pan 0 gives _panpotL = 0 and the sound
@@ -1366,8 +1391,8 @@ void TVA::_set_panpot_gains(void)
     // (0x7f00 at index 0), so it exposes the misnomer immediately: assigned by
     // name, Closed HAT 1 came out +30 dB right where the reference puts it 27 dB
     // LEFT. Reading the high byte into _panpotR restores the reference's side.
-    _panpotR = _LUT.JVPanLawL[p];
-    _panpotL = _LUT.JVPanLawR[p];
+    _panpotR = ((int) _LUT.JVPanLawL[p] * g) >> 8;
+    _panpotL = ((int) _LUT.JVPanLawR[p] * g) >> 8;
   } else {
     _panpotL = _LUT.TVAPanpot[_panpot];
     _panpotR = _LUT.TVAPanpot[0x80 - _panpot];

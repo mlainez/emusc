@@ -116,6 +116,10 @@ private:
   int _panpot;
   int _panpotL;
   int _panpotR;
+  // What full scale is for the two above: 127 where they are the device's own
+  // pan-table bytes, and 126 on the JV, where they are the CHIP REGISTER value
+  // (pan x dry gain) >> 8 whose maximum is (127 x 255) >> 8 = 126. scdb D-82.
+  float _panScale = 127.0f;
   bool _panpotLocked;
 
   Settings *_settings;
