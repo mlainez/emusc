@@ -25,6 +25,7 @@
 
 
 #include "pitch.h"
+#include "jv_ctrl_matrix.h"
 #include "jv_velocity.h"
 
 #include <algorithm>
@@ -60,8 +61,10 @@ int Pitch::_pbpIndex = -1;
 
 Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
              uint8_t key, uint8_t velocity, WaveGenerator *LFO1,
-             WaveGenerator *LFO2, Settings *settings, int8_t partId)
+             WaveGenerator *LFO2, Settings *settings, int8_t partId,
+             const int *jvCtrlAcc)
   : Envelope(ctrlRom.lookupTables),
+    _jvCtrlAcc(jvCtrlAcc),
     _firstUpdate(true),
     _key(key),
     _drumSet(settings->get_param(PatchParam::UseForRhythm, partId)),
@@ -1059,15 +1062,26 @@ int Pitch::_jv_cents10(void)
     cents += ((env < 0) != (_jvDepthWord < 0)) ? -m : m;
   }
 
-  // 0x41AC-0x41FA: the tone's LFO depth words against the faded LFO words,
-  // through the signed high-word multiply at 0x3843. The controller-matrix
-  // half of each term (raw word x PITCH LFO sum) is not modelled here.
+  // 0x41AC-0x41FA: the tone's LFO depth words against the FADED LFO words,
+  // through the signed high-word multiply at 0x3843.
   const int lfo[2] = { _LFO1->value(), _LFO2->value() };
   for (int l = 0; l < 2; l++) {
     if (!_jvLfoDepth[l] || !lfo[l])
       continue;
     const int m = (int) (((int64_t) std::abs(_jvLfoDepth[l]) * std::abs(lfo[l])) >> 16);
     cents += ((_jvLfoDepth[l] < 0) != (lfo[l] < 0)) ? -m : m;
+  }
+
+  // The other half of the same three terms: the controller matrix's PITCH LFO1
+  // and PITCH LFO2 accumulators against the RAW LFO words (before the delay and
+  // fade), and its PITCH accumulator straight onto the pitch at 0x41FC. The raw
+  // word is what the firmware reads there - @0x93E2 and @0x941A, not the faded
+  // @0x9372 and @0x93AA - so a wheel-driven vibrato is at full depth from the
+  // note on even under a tone whose own LFO is still fading in. scdb D-79.
+  if (_jvCtrlAcc) {
+    cents += _jvCtrlAcc[(int) JvCtrlDest::Pitch];
+    cents += jv_mul_hi(_jvCtrlAcc[(int) JvCtrlDest::PitchLfo1], _LFO1->jv_raw());
+    cents += jv_mul_hi(_jvCtrlAcc[(int) JvCtrlDest::PitchLfo2], _LFO2->jv_raw());
   }
 
   return cents * 10 + _jvRandCents10;

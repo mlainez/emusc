@@ -1365,6 +1365,11 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.JVDelayKeyOff   = 0;
   ip.JVToneDelay     = 0;
   ip.JVToneDelayMode = 0;
+  ip.hasJVCtrlMatrix = 0;
+  for (int c = 0; c < 3; c++)
+    for (int i = 0; i < 4; i++) {
+      ip.JVCtrlDest[c][i] = 0; ip.JVCtrlSense[c][i] = 0;
+    }
 
   // Neither switch exists outside a patch tone, and "no switch" is ON.
   ip.JVVolumeSwitch  = 1;
@@ -1531,6 +1536,26 @@ int ControlRom::_read_device_patches(void)
         }
         if (F.toneDelayMode)
           ip.JVToneDelayMode = (tb[F.toneDelayMode] >> 4) & 0x03;
+
+        // The controller matrix (scdb D-79). Four destination nibbles in two
+        // bytes and four signed sense bytes, per controller. The senses are
+        // -64-biased like every other signed tone field, so the record byte IS
+        // the value once it is read as an int8_t. 393 of the 539 enabled
+        // factory tones route at least one slot, and PITCH LFO1 alone is the
+        // destination of 521 of them.
+        if (F.ctrlMatrix[0][0]) {
+          for (int c = 0; c < 3; c++) {
+            const uint8_t *d = &tb[F.ctrlMatrix[c][0]];
+            const uint8_t *v = &tb[F.ctrlMatrix[c][1]];
+            ip.JVCtrlDest[c][0] =  d[0]       & 0x0f;
+            ip.JVCtrlDest[c][1] = (d[0] >> 4) & 0x0f;
+            ip.JVCtrlDest[c][2] =  d[1]       & 0x0f;
+            ip.JVCtrlDest[c][3] = (d[1] >> 4) & 0x0f;
+            for (int i = 0; i < 4; i++)
+              ip.JVCtrlSense[c][i] = (int8_t) v[i];
+          }
+          ip.hasJVCtrlMatrix = 1;
+        }
 
         // Random Pitch Depth, the low nibble of +0x27 (scdb D-76). The same
         // index the rhythm note has carried since D-71, into the same table

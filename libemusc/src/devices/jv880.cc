@@ -508,7 +508,13 @@ static const RecordRomLayout JV880_RECORDS = {
       // Tone Delay Mode, +0x47 bits 4-5 (SysEx 0x61): NORMAL, HOLD,
       // PLAY-MATE. Read at ROM1 0x3A06 right after the delay time byte, and
       // the third field of +0x47 after the two CC switches. scdb D-78.
-      0x47
+      0x47,
+
+      // The controller matrix, SysEx 0x0A-0x21 (scdb D-79): Modulation,
+      // Aftertouch and Expression, each four destination nibbles in two bytes
+      // followed by four signed sense bytes. Off-modal on up to 318 of the 539
+      // enabled factory tones, and 393 of them route at least one slot.
+      { { 0x05, 0x07 }, { 0x0b, 0x0d }, { 0x11, 0x13 } }
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named
@@ -1063,7 +1069,24 @@ const DeviceProfile JV880_PROFILE = {
   // purpose. So the stage changes the shape and leaves the level where it was.
   { JV880_OUTPUT_RESPONSE,
     (int) (sizeof JV880_OUTPUT_RESPONSE / sizeof JV880_OUTPUT_RESPONSE[0]),
-    -1.74f }
+    -1.74f },
+
+  // The per-tone controller matrix (scdb D-79). The twelve scale/clamp pairs
+  // are the immediates the ten per-voice updaters at ROM1 0x4FEB-0x562D and the
+  // note-on builder at ROM1 0x5792-0x6153 hand to the scaler at ROM1 0x620E,
+  // in destination order. Each clamp is the full-scale value of the parameter
+  // the accumulator reaches: 1200 cents for PITCH, 2418 for a pitch LFO depth
+  // (the last entry of ROM2 0x6C8A), 9675 for a TVF LFO depth (63 x 0x99) and
+  // 0x7fff for everything that lands in a 16-bit index.
+  //
+  // Expression rests at 0 here, not at 127: on this machine CC11 is a
+  // modulation source and not a part volume, and with no CC11 at all the
+  // reference renders exactly its CC11 = 0 render.
+  { 1, 0,
+    {     0,  2418, 65535, 65535, 65535,  4874,  4874,
+      19502, 19502, 65535, 65535, 65535, 65535 },
+    {     0,  1200, 32767, 32767, 32767,  2418,  2418,
+       9675,  9675, 32767, 32767, 32767, 32767 } }
 };
 
 }

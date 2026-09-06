@@ -773,7 +773,8 @@ int Part::control_change(uint8_t msgId, uint8_t value)
     _settings->set_param(PatchParam::PolyKeyPressure, 0, (int8_t) _id);
     _settings->set_param(PatchParam::ChannelPressure, 0, (int8_t) _id);
     _settings->set_param(PatchParam::Modulation, 0, (int8_t) _id);
-    _settings->set_param(PatchParam::Expression, 127, (int8_t) _id);
+    _settings->set_param(PatchParam::Expression,
+                         (uint8_t) _settings->expression_reset(), (int8_t) _id);
     _settings->set_param(PatchParam::Hold1, 0, (int8_t) _id);
     _settings->set_param(PatchParam::Portamento, 0, (int8_t) _id);
     _settings->set_param(PatchParam::Sostenuto, 0, (int8_t) _id);

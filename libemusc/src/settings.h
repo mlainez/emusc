@@ -147,6 +147,12 @@ public:
   inline const DeviceProfile *device(void)
   { return _ctrlRom.device(); }
 
+  // What Expression resets to on this device: 127 where it is a part volume,
+  // 0 where it is a modulation source that rests at nothing (scdb D-79).
+  inline int expression_reset(void)
+  { const DeviceProfile *d = _ctrlRom.device();
+    return (d && d->ctrlJv.enabled) ? d->ctrlJv.expressionRest : 0x7f; }
+
   int get_acc_control_param(enum ControllerParam cp, int part)
   { part = std::clamp(part, 0, 15);
     return _accControlParams[part][static_cast<int>(cp)]; }

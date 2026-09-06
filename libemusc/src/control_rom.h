@@ -220,6 +220,15 @@ public:
     uint8_t JVToneDelay = 0;      // 0-127 units of 16 ms; 0 = no delay
     uint8_t JVToneDelayMode = 0;  // 0 NORMAL, 1 HOLD, 2 PLAY-MATE
 
+    // The per-tone controller matrix (scdb D-79): three controllers -
+    // modulation wheel, channel aftertouch, expression - each with four
+    // destination/sense slots. The destination is 0-12 and the sense is signed
+    // -63..+63. hasJVCtrlMatrix is 0 on every device without one, and on a
+    // rhythm note.
+    uint8_t JVCtrlDest[3][4] = {};
+    int8_t  JVCtrlSense[3][4] = {};
+    uint8_t hasJVCtrlMatrix = 0;
+
     // The JV's pitch envelope (scdb D-37). Its levels are SIGNED, its depth is
     // -12..+12 and its velocity sensitivity always uses curve 0, none of which
     // the Sound Canvas pitch fields above can carry. PitchJVDepth 0 = none.

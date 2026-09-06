@@ -37,9 +37,11 @@ namespace EmuSC {
 class Pitch : public Envelope
 {
 public:
+  // jvCtrlAcc: the per-tone controller matrix's accumulators (scdb D-79),
+  // owned by Partial. Null where the device has no matrix.
   Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
         uint8_t key, uint8_t velocity, WaveGenerator *LFO1, WaveGenerator *LFO2,
-        Settings *settings, int8_t partId);
+        Settings *settings, int8_t partId, const int *jvCtrlAcc = nullptr);
   ~Pitch();
 
   void update(void);
@@ -52,6 +54,7 @@ public:
   inline uint16_t get_sample_id(void) { return _sampleIndex; }
 
   void first_sample_run_complete(void);
+
 
 
 private:
@@ -119,6 +122,11 @@ private:
   int  _jvDepthWord = 0;                // @0x910A[v]
   int  _jvVelAtten = 0;                 // @0x8FBA[v]
   int  _jvLfoDepth[2] = { 0, 0 };       // @0x9452[v], @0x948A[v]
+
+  // The per-tone controller matrix's PITCH, PITCH LFO1 and PITCH LFO2
+  // accumulators, owned by Partial and rebuilt every control period. Null on
+  // every device without a matrix. scdb D-79.
+  const int *_jvCtrlAcc = nullptr;
   int  _jvRandCents10 = 0;              // @0x995A[v], the random-pitch draw
   int  _jvLevel[5] = { 0, 0, 0, 0, 0 }; // 0, L1..L4 as L << 8
   int  _jvTime[4] = { 0, 0, 0, 0 };

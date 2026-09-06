@@ -41,6 +41,7 @@
 
 
 #include "partial.h"
+#include "jv_ctrl_matrix.h"
 
 #include <iostream>
 #include <cmath>
@@ -101,15 +102,30 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
     _LFO2 = new WaveGenerator(_instPartial, ctrlRom.lookupTables,settings,partId);
   }
 
+  // The controller matrix is built here and read there, so every consumer is
+  // handed the array rather than recomputing it (scdb D-79).
+  _jvCtrlMatrix = _instPartial.hasJVCtrlMatrix &&
+                  settings->device()->ctrlJv.enabled;
+  if (_jvCtrlMatrix) {
+    _update_jv_ctrl_matrix();
+    if (_LFO1own)
+      _LFO1own->set_jv_rate_offset(_jvCtrlAcc[(int) JvCtrlDest::Lfo1Rate] >> 8);
+    if (_LFO2)
+      _LFO2->set_jv_rate_offset(_jvCtrlAcc[(int) JvCtrlDest::Lfo2Rate] >> 8);
+  }
+
   _pitch = new Pitch(ctrlRom, instrumentIndex, partialId, key, velocity, LFO1,
-                     _LFO2, settings, partId);
+                     _LFO2, settings, partId,
+                     _jvCtrlMatrix ? _jvCtrlAcc : nullptr);
 
   _tvf = new TVF(_instPartial, key, velocity, LFO1, _LFO2,
-                 ctrlRom.lookupTables, settings, partId);
+                 ctrlRom.lookupTables, settings, partId,
+                 _jvCtrlMatrix ? _jvCtrlAcc : nullptr);
 
   int sampleIndex = _pitch->get_sample_id();
   _tva = new TVA(ctrlRom, key, velocity, sampleIndex, LFO1, _LFO2, settings,
-                 partId, instrumentIndex, partialId);
+                 partId, instrumentIndex, partialId,
+                 _jvCtrlMatrix ? _jvCtrlAcc : nullptr);
 
   _ctrlSample = &ctrlRom.sample(sampleIndex);
   _pcmSamples = &waveRom.samples(sampleIndex).samplesF;
@@ -317,10 +333,38 @@ void Partial::damp(float dBPerMillisecond)
 
 
 // Update parameters every 256th sample @32k
+// The three controller values, in the firmware's own order - modulation
+// (@0x6136), aftertouch (@0x6106), expression (@0x6156) - into the twelve
+// destination accumulators. Rebuilt every control period, which is what the
+// machine does when a controller moves: measured on the reference, a note
+// already sounding follows the wheel, including the LFO RATE destination that
+// has no per-voice updater of its own.
+void Partial::_update_jv_ctrl_matrix(void)
+{
+  const CtrlMatrixJvLaw &law = _settings->device()->ctrlJv;
+  const int ctrl[3] = {
+    _settings->get_param(PatchParam::Modulation, _partId) & 0x7f,
+    _settings->get_param(PatchParam::ChannelPressure, _partId) & 0x7f,
+    _settings->get_param(PatchParam::Expression, _partId) & 0x7f
+  };
+  jv_ctrl_accumulate(law, _instPartial.JVCtrlDest, _instPartial.JVCtrlSense,
+                     ctrl, _jvCtrlAcc);
+}
+
+
 void Partial::update(void)
 {
   if (_toneWait != 0 || _toneCancelled)  // the tone's delay has not run out
     return;
+
+  // Before every consumer, and before the LFOs, whose RATE this can move.
+  if (_jvCtrlMatrix) {
+    _update_jv_ctrl_matrix();
+    if (_LFO1own)
+      _LFO1own->set_jv_rate_offset(_jvCtrlAcc[(int) JvCtrlDest::Lfo1Rate] >> 8);
+    if (_LFO2)
+      _LFO2->set_jv_rate_offset(_jvCtrlAcc[(int) JvCtrlDest::Lfo2Rate] >> 8);
+  }
 
   if (_LFO1own) _LFO1own->update();     // before its consumers, as LFO2 below is not (unchanged order for the SC-55)
   if (_pitch) _pitch->update();

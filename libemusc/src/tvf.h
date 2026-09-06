@@ -38,9 +38,15 @@ namespace EmuSC {
 class TVF : public Envelope
 {
 public:
+  // jvCtrlAcc is the per-tone controller matrix's twelve destination
+  // accumulators (scdb D-79), owned by Partial and rebuilt every control
+  // period. Null on every device without a matrix, and the whole matrix is
+  // then inert. It is a CONSTRUCTOR argument and not a setter because the
+  // note's first filter coefficient is computed here, with the controller
+  // already in it.
   TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
       WaveGenerator *LFO1, WaveGenerator *LFO2, ControlRom::LookupTables &LUT,
-      Settings *settings, int8_t partId);
+      Settings *settings, int8_t partId, const int *jvCtrlAcc = nullptr);
   ~TVF();
 
   void apply(float *sample);
@@ -50,6 +56,8 @@ public:
   void note_off(uint8_t releaseVelocity = 64);
 
 private:
+  const int *_jvCtrlAcc = nullptr;
+
   // A segment this short or shorter snaps instantly. The Sound Canvas's value;
   // the JV's filter chain does not use it - it takes its segment durations from
   // the device's own millisecond table and a duration of 0 there IS the skip.

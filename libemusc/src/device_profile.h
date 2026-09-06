@@ -147,6 +147,44 @@ struct ToneFieldMap
   // used, so a device with a delay time but no mode byte leaves this 0 and
   // gets NORMAL. scdb D-78.
   int      toneDelayMode;               // bits 4-5
+
+  // The per-TONE controller matrix (scdb D-79). Three controllers - the
+  // modulation wheel, channel aftertouch and expression - each with FOUR
+  // destination/sense slots. Per controller this names the first of TWO
+  // consecutive bytes holding the four destination nibbles (slot 1 low, slot 2
+  // high of the first byte; slots 3 and 4 of the second) and the first of FOUR
+  // consecutive signed sense bytes. Rows of zero mean the device has no such
+  // matrix. On the JV they are +0x05/+0x07, +0x0B/+0x0D and +0x11/+0x13.
+  int      ctrlMatrix[3][2];            // {first destination byte, first sense byte}
+};
+
+// The per-tone controller matrix's arithmetic (scdb D-79, FW-EXACT: the
+// contribution helper at ROM1 0x617F, the scale at ROM1 0x620E and the twelve
+// destination accumulators the note-on builder at ROM1 0x56B0-0x617C fills).
+//
+// Each of the three controllers contributes once per destination: the senses of
+// every slot pointing at that destination are SUMMED, the sum is clamped to
+// +-63 and expanded to a 0-255 gain, and the controller's 0-127 value is scaled
+// by it. The three contributions are then summed and scaled again, this time
+// by a per-destination full-scale word with a per-destination clamp - which is
+// what puts each accumulator in the units of the parameter it reaches.
+//
+// Destination order is the manual's: 1 PITCH, 2 CUTOFF, 3 RESONANCE, 4 LEVEL,
+// 5/6 PITCH LFO1/2, 7/8 TVF LFO1/2, 9/10 TVA LFO1/2, 11/12 LFO1/2 RATE.
+// Index 0 is OFF and is never scaled.
+struct CtrlMatrixJvLaw
+{
+  int enabled;                          // 0 = the device has no such matrix
+
+  // What the expression controller rests at before any CC11 arrives. The JV
+  // treats CC11 as a modulation SOURCE and not as a part volume, so it rests
+  // at 0 where a Sound Canvas rests at 127 - measured: with no CC11 at all the
+  // machine renders exactly its CC11 = 0 render, and a tone routing expression
+  // to LEVEL at -63 is SILENCED by CC11 = 127.
+  int expressionRest;
+
+  int full[13];                         // the 0x620E scale word, per destination
+  int clamp[13];                        // and its clamp
 };
 
 // A bank of patches, and the tone records inside each patch.
@@ -1070,6 +1108,10 @@ struct DeviceProfile
 
   // And for the analog board: omitted, no sections, and the mix is untouched.
   AnalogStageProfile analog;
+
+  // And for the per-tone controller matrix: omitted, enabled is 0 and the
+  // matrix is not built. scdb D-79.
+  CtrlMatrixJvLaw ctrlJv;
 };
 
 extern const RomSignature SC55_SIGNATURE;

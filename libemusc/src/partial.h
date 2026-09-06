@@ -121,6 +121,14 @@ private:
   bool     _toneCancelled;              // HOLD released before the delay ran out
 
   void _release_now(uint8_t releaseVelocity);
+
+  // The per-tone controller matrix (scdb D-79). Twelve destination
+  // accumulators, rebuilt from the part's three controller values once per
+  // control period and read by Pitch, TVF, TVA and the two LFOs, each of which
+  // holds a pointer to this array. All zero on a device without a matrix.
+  int  _jvCtrlAcc[13] = {};
+  bool _jvCtrlMatrix = false;
+  void _update_jv_ctrl_matrix(void);
   std::array<float, 256> _delayL;
   std::array<float, 256> _delayR;
   std::array<float, 256> _delayS;

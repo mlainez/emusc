@@ -70,6 +70,13 @@ public:
                 Settings *settings, int partId, int jvLfoIndex);
   inline bool is_jv(void) { return _jv; }
   inline int jv_raw(void) { return _jvRaw; }
+
+  // The controller matrix's LFO RATE destination (scdb D-79). The accumulator's
+  // HIGH BYTE is added to the tone's own rate index before the rate table is
+  // read, and the sum is clamped to 0-127 - ROM1 0x1256 for LFO1, 0x1405 for
+  // LFO2. It is live: the reference changes a sounding note's vibrato rate as
+  // the wheel moves.
+  inline void set_jv_rate_offset(int steps) { _jvRateOffset = steps; }
   void note_off(void);                  // arms a KEY-OFF delay
 
 private:
@@ -111,6 +118,7 @@ private:
   bool     _jv = false;
   int      _jvForm = 0, _jvOffsetIdx = 2, _jvSync = 1, _jvFadeOut = 0;
   int      _jvRate = 0, _jvDelayKeyOff = 0;
+  int      _jvRateOffset = 0;           // controller matrix LFO RATE, in index steps
   int      _jvDelayInc = 0x10000, _jvFadeInc = 0x10000;
   uint16_t _jvPhase = 0;
   int      _jvTick = 0;

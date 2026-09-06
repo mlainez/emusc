@@ -19,6 +19,7 @@
 
 #include "tva.h"
 #include "jv_velocity.h"
+#include "jv_ctrl_matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -51,8 +52,10 @@ static int jv_tone_pan(uint8_t stored)
 
 TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
          WaveGenerator *LFO1, WaveGenerator *LFO2, Settings *settings,
-         int8_t partId, uint16_t instrumentIndex, int partialId)
+         int8_t partId, uint16_t instrumentIndex, int partialId,
+         const int *jvCtrlAcc)
   : Envelope(ctrlRom.lookupTables),
+    _jvCtrlAcc(jvCtrlAcc),
     _initRunComplete(false),
     _firstBlock(true),
     _dynLevel(0),
@@ -741,7 +744,9 @@ void TVA::_update_jv_tremolo(void)
 {
   _jvTremoloPrev = _jvTremolo;
 
-  if (!_hasJvTremolo) {
+  const bool ctrlTremolo = _jvCtrlAcc &&
+    (_jvCtrlAcc[(int) JvCtrlDest::TvaLfo1] || _jvCtrlAcc[(int) JvCtrlDest::TvaLfo2]);
+  if (!_hasJvTremolo && !ctrlTremolo) {
     _jvTremolo = 0;
     return;
   }
@@ -756,7 +761,22 @@ void TVA::_update_jv_tremolo(void)
   const int m1 = term(_jvTvaLfoDepth[0], _LFO1 ? _LFO1->value() : 0);
   const int m2 = term(_jvTvaLfoDepth[1], _LFO2 ? _LFO2->value() : 0);
 
-  _jvTremolo = (int) std::clamp(m1 + m2, -0x7fff, 0x7fff);
+  // The controller matrix's TVA LFO1 and TVA LFO2 accumulators are the other
+  // half of the same two terms, against the RAW LFO words rather than the faded
+  // ones (ROM1 0x4504 / 0x453C). Each LFO's pair is summed with 16-bit
+  // saturation before the two LFOs are summed, which is the order the firmware
+  // pushes and pops them in. scdb D-79.
+  int t1 = m1, t2 = m2;
+  if (_jvCtrlAcc) {
+    t1 = (int) std::clamp(m1 + term(_jvCtrlAcc[(int) JvCtrlDest::TvaLfo1],
+                                    _LFO1 ? _LFO1->jv_raw() : 0),
+                          -0x7fff, 0x7fff);
+    t2 = (int) std::clamp(m2 + term(_jvCtrlAcc[(int) JvCtrlDest::TvaLfo2],
+                                    _LFO2 ? _LFO2->jv_raw() : 0),
+                          -0x7fff, 0x7fff);
+  }
+
+  _jvTremolo = (int) std::clamp(t1 + t2, -0x7fff, 0x7fff);
 }
 
 
@@ -865,13 +885,23 @@ void TVA::_compose_static_level(void)
 
   const int dyn = T[std::clamp(composed, 0, 127)];
 
+  // The controller matrix's LEVEL accumulator, onto the TONE gain word and
+  // before the part's own: ROM1 0x44AF-0x44BC halves the gain, adds the
+  // accumulator signed, saturates at 0x7fff on a positive overflow and
+  // SILENCES the voice on a negative one, then doubles it back. scdb D-79.
+  int toneGain = _toneGain;
+  if (_jvCtrlAcc && _jvCtrlAcc[(int) JvCtrlDest::Level]) {
+    const int g = (toneGain >> 1) + _jvCtrlAcc[(int) JvCtrlDest::Level];
+    toneGain = (g > 0x7fff) ? 0xfffe : (g < 0) ? 0 : (g << 1);
+  }
+
   // The static level byte, exactly as the firmware stores it: the high byte of
   // high16(T[a] * T[b]), written to @0x8dc2 at ROM1 0x3d4c and from there to the
   // chip's F016 register at ROM1 0x38a4. It is the DYNAMIC register on this
   // engine, so _update_dynamic_level() reads it; it must not be multiplied into
   // the envelope target as well.
   _staticLevel8 =
-    std::clamp((int) (((int64_t) _toneGain * dyn) >> L.staticShift), 0, 255);
+    std::clamp((int) (((int64_t) toneGain * dyn) >> L.staticShift), 0, 255);
 }
 
 

@@ -639,7 +639,13 @@ void Settings::_initialize_patch_params(enum Mode m)
     _patchParams[(int) PatchParam::Hold1           | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::Sostenuto       | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::Soft            | (partAddr << 8)] = 0x00;
-    _patchParams[(int) PatchParam::Expression      | (partAddr << 8)] = 0x7f;
+    // Expression rests at 127 on a Sound Canvas, where it IS a part volume, and
+    // at 0 on the JV, where it is one of the three sources of the per-tone
+    // controller matrix and reaches nothing else. Measured: with no CC11 at all
+    // the machine renders exactly its CC11 = 0 render, and a tone routing
+    // expression to LEVEL at -63 is silenced by CC11 = 127. scdb D-79.
+    _patchParams[(int) PatchParam::Expression      | (partAddr << 8)] =
+      expression_reset();
     _patchParams[(int) PatchParam::Portamento      | (partAddr << 8)] = 0x00;
     _patchParams[(int) PatchParam::PortamentoTime  | (partAddr << 8)] = 0x00;
 

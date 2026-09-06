@@ -42,6 +42,7 @@
 
 #include "tvf.h"
 #include "jv_velocity.h"
+#include "jv_ctrl_matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -54,8 +55,9 @@ namespace EmuSC {
 
 TVF::TVF(ControlRom::InstPartial &instPartial, uint8_t key, uint8_t velocity,
          WaveGenerator *LFO1, WaveGenerator *LFO2,ControlRom::LookupTables &LUT,
-         Settings *settings, int8_t partId)
+         Settings *settings, int8_t partId, const int *jvCtrlAcc)
   : Envelope(LUT),
+    _jvCtrlAcc(jvCtrlAcc),
     _sampleRate(settings->sample_rate()),
     _LFO1(LFO1),
     _LFO2(LFO2),
@@ -869,6 +871,9 @@ void TVF::_jv_init(uint8_t velocity)
   // alternative, starting from zero, would invent an eight-tick sweep on every
   // note. A resonance change during the note still slews.
   _jvRes = _jvResTarget;
+  if (_jvCtrlAcc && _jvCtrlAcc[(int) JvCtrlDest::Resonance])
+    _jvRes = std::clamp(_jvRes + (_jvCtrlAcc[(int) JvCtrlDest::Resonance] >> 8),
+                        0, 127);
 
   // The envelope: three time/level segments and a release, all levels 0..127.
   // Level 0 is where a note on starts, which is the firmware's own segment 0
@@ -973,6 +978,14 @@ void TVF::_jv_iterate(void)
   x += _jvKeyFollow;
   x += ((int) _LFO1->value() * _jvLfo1Depth) >> 16;
   x += ((int) _LFO2->value() * _jvLfo2Depth) >> 16;
+
+  // The controller matrix's TVF LFO1 and TVF LFO2 accumulators, against the
+  // RAW LFO words, into the same cents accumulator the tone's own depths reach
+  // (ROM1 0x434D / 0x4375). scdb D-79.
+  if (_jvCtrlAcc) {
+    x += jv_mul_hi(_jvCtrlAcc[(int) JvCtrlDest::TvfLfo1], _LFO1->jv_raw());
+    x += jv_mul_hi(_jvCtrlAcc[(int) JvCtrlDest::TvfLfo2], _LFO2->jv_raw());
+  }
   x = (int16_t) x;
 
   const int coarse = _LUT.JVTvfExpCoarse[(x >> 8) & 0xff];
@@ -988,14 +1001,37 @@ void TVF::_jv_iterate(void)
   // exponentially to inf and to NaN, which the render clamped to the negative
   // rail - 427496 non-finite samples on one demo channel, sounding as a 6.68 s
   // full-scale blast. scdb D-51.
+  // The cutoff index is a WORD, not a byte: ROM1 0x43AD-0x43D2 shifts the
+  // tone's 0-127 cutoff up eight bits, adds the controller matrix's CUTOFF
+  // accumulator to it and indexes the base table with the high byte alone. A
+  // sum that goes negative bottoms the base at 0x100 and one that overflows a
+  // signed word tops it at 0xffff, both bypassing the table. scdb D-79.
+  int cutoffBase;
+  if (_jvCtrlAcc && _jvCtrlAcc[(int) JvCtrlDest::Cutoff]) {
+    const int cw = (_jvCutoff << 8) + _jvCtrlAcc[(int) JvCtrlDest::Cutoff];
+    cutoffBase = (cw > 0x7fff) ? 0xffff
+               : (cw < 0)      ? 0x100
+                               : _LUT.JVTvfBase[std::min(cw >> 8, 127)];
+  } else {
+    cutoffBase = _LUT.JVTvfBase[_jvCutoff];
+  }
+
   int word = (int) std::min<int64_t>(
-      ((int64_t) E * (int64_t) _LUT.JVTvfBase[_jvCutoff]) >> 8, 0xffff);
+      ((int64_t) E * (int64_t) cutoffBase) >> 8, 0xffff);
 
   // Resonance moves at most one slew step per tick, and decides both the cutoff
   // ceiling and the damping. Resonance 0 is not a table row but a rule of its
   // own, whose boundary agrees with the tables exactly.
-  if (_jvRes != _jvResTarget)
-    _jvRes += std::clamp(_jvResTarget - _jvRes,
+  // The controller matrix's RESONANCE accumulator moves the target by its HIGH
+  // byte, and the sum is clamped to 0-127 before the slew (ROM1 0x43E4-0x43FF).
+  int resTarget = _jvResTarget;
+  if (_jvCtrlAcc && _jvCtrlAcc[(int) JvCtrlDest::Resonance])
+    resTarget = std::clamp(resTarget +
+                           (_jvCtrlAcc[(int) JvCtrlDest::Resonance] >> 8),
+                           0, 127);
+
+  if (_jvRes != resTarget)
+    _jvRes += std::clamp(resTarget - _jvRes,
                          -_jvLaw->resSlewPerTick, _jvLaw->resSlewPerTick);
 
   int damp;

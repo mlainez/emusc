@@ -417,7 +417,7 @@ void WaveGenerator::_jv_update(void)
   if (++_jvTick & 1)                    // 16 ms task on an 8 ms control period
     return;
 
-  int inc = _LUT.JVLfoRate[std::clamp(_jvRate, 0, 127)];
+  int inc = _LUT.JVLfoRate[std::clamp(_jvRate + _jvRateOffset, 0, 127)];
   if (_jvForm >= 4)
     inc <<= 1;
 

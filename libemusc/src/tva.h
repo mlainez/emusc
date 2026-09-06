@@ -37,9 +37,11 @@ namespace EmuSC {
 class TVA : public Envelope
 {
 public:
+  // jvCtrlAcc: the per-tone controller matrix's accumulators (scdb D-79),
+  // owned by Partial. Null where the device has no matrix.
   TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
       WaveGenerator *LFO1, WaveGenerator *LFO2, Settings *settings,
-      int8_t partId, uint16_t instrumentIndex, int partialId);
+      int8_t partId, uint16_t instrumentIndex, int partialId, const int *jvCtrlAcc = nullptr);
 
   void update(bool reset = false);
   void apply(double *sample);
@@ -52,6 +54,7 @@ public:
   void note_off(uint8_t releaseVelocity = 64);
 
 private:
+  const int *_jvCtrlAcc = nullptr;   // the controller matrix (scdb D-79)
   // From the device profile: a segment this short or shorter snaps instantly.
   int _instantTicks = 8;
 
