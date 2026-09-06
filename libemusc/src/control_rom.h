@@ -202,7 +202,23 @@ public:
     uint8_t TVFJVVelT1;     // "F-ENV T1 velocity"
     uint8_t TVFJVVelT4;     // "F-ENV T4 velocity"
     uint8_t TVFJVTimeKF;    // "F-ENV time KF"
-    uint8_t JVDelayKeyOff;  // 1: TVA Delay Time is KEY-OFF, T4 reads note-on velocity
+    // A default member initialiser, not a style choice: _read_instruments()
+    // declares its Instrument without one and assigns only the Sound Canvas
+    // fields, so every JV member of a Sound Canvas partial holds whatever the
+    // stack held. That was harmless while only the JV code paths read them;
+    // Partial's constructor now reads the three delay fields unconditionally.
+    uint8_t JVDelayKeyOff = 0;  // 1: Tone Delay Time is KEY-OFF
+
+    // Tone Delay (scdb D-78). The tone does not sound for JVToneDelay units of
+    // 16 ms after the note on - two of the engine's 8 ms control periods each -
+    // and JVToneDelayMode says what happens to the note off meanwhile:
+    // 0 NORMAL, the note off is delayed by the same amount; 1 HOLD, the note
+    // off is immediate and cancels the tone outright if it arrives first;
+    // 2 PLAY-MATE, whose time comes from the interval since the previous note
+    // and is not modelled (no factory tone uses it). JVDelayKeyOff beside it is
+    // the delay byte's 128: the tone sounds at the note OFF instead.
+    uint8_t JVToneDelay = 0;      // 0-127 units of 16 ms; 0 = no delay
+    uint8_t JVToneDelayMode = 0;  // 0 NORMAL, 1 HOLD, 2 PLAY-MATE
 
     // The JV's pitch envelope (scdb D-37). Its levels are SIGNED, its depth is
     // -12..+12 and its velocity sensitivity always uses curve 0, none of which

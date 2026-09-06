@@ -141,6 +141,12 @@ struct ToneFieldMap
   // high one. 0 means the device has no such field. scdb D-77.
   int      levelKeyFollow, levelKeyFollowShift;
   int      panKeyFollow,   panKeyFollowShift;
+
+  // Tone Delay Mode, bits 4-5 of the byte named here: 0 NORMAL, 1 HOLD,
+  // 2 PLAY-MATE. It selects how the Tone Delay Time at `tvaDelayTime` is
+  // used, so a device with a delay time but no mode byte leaves this 0 and
+  // gets NORMAL. scdb D-78.
+  int      toneDelayMode;               // bits 4-5
 };
 
 // A bank of patches, and the tone records inside each patch.

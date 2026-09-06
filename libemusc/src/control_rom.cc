@@ -1363,6 +1363,8 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.TVFJVVelT1 = ip.TVFJVVelT4 = ip.TVFJVTimeKF = 7;
   ip.PitchJVVelT1 = ip.PitchJVVelT4 = ip.PitchJVTimeKF = 7;
   ip.JVDelayKeyOff   = 0;
+  ip.JVToneDelay     = 0;
+  ip.JVToneDelayMode = 0;
 
   // Neither switch exists outside a patch tone, and "no switch" is ON.
   ip.JVVolumeSwitch  = 1;
@@ -1516,8 +1518,19 @@ int ControlRom::_read_device_patches(void)
           ip.TVFJVVelT4  = (tb[F.tvfTimeVelocity] >> 4) & 0x0f;
           ip.TVFJVTimeKF = (tb[F.tvfTimeKeyFollow] >> 4) & 0x0f;
         }
-        if (F.tvaDelayTime)
+        // Tone Delay Time and Tone Delay Mode (scdb D-78). Bit 7 of the time
+        // byte is the nibble pair's 128 = KEY-OFF and has been read since
+        // D-27; the 0-127 time under it, and the mode that says what to do
+        // with it, had not been. 34 of the 539 enabled factory tones set a
+        // delay and 4 of them ask for HOLD - among them `8 DooWah Diddy`,
+        // whose tones 2, 3 and 4 enter 80, 720 and 944 ms after the note.
+        if (F.tvaDelayTime) {
           ip.JVDelayKeyOff = (tb[F.tvaDelayTime] >> 7) & 0x01;
+          ip.JVToneDelay   = ip.JVDelayKeyOff ? 0
+                                              : (tb[F.tvaDelayTime] & 0x7f);
+        }
+        if (F.toneDelayMode)
+          ip.JVToneDelayMode = (tb[F.toneDelayMode] >> 4) & 0x03;
 
         // Random Pitch Depth, the low nibble of +0x27 (scdb D-76). The same
         // index the rhythm note has carried since D-71, into the same table

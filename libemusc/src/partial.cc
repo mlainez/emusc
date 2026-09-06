@@ -59,6 +59,18 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
     _sampleRunComplete(false),
     _startDelay((startDelay < 0) ? 0 : ((startDelay > 255) ? 255 : startDelay)),
     _delayDrained(false),
+    _toneDelay(2 * ctrlRom.instrument(instrumentIndex)
+                     .partials[partialId].JVToneDelay),
+    _toneWait(ctrlRom.instrument(instrumentIndex)
+                .partials[partialId].JVDelayKeyOff
+              ? -1
+              : 2 * ctrlRom.instrument(instrumentIndex)
+                      .partials[partialId].JVToneDelay),
+    _toneGate(0),
+    _toneGateVel(64),
+    _toneDelayMode(ctrlRom.instrument(instrumentIndex)
+                     .partials[partialId].JVToneDelayMode),
+    _toneCancelled(false),
     _damping(false),
     _dampComplete(false),
     _dampGain(1),
@@ -133,6 +145,24 @@ Partial::~Partial()
 bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			     std::array<float, 256> &sendBus)
 {
+  // The Tone Delay's two counters, both in control periods (scdb D-78). The
+  // queued note off runs whether or not the voice has started sounding: with a
+  // NORMAL delay the machine postpones the whole gate, so a key held for 0.8 s
+  // under a 1.02 s delay still sounds for 0.8 s, an second later.
+  if (_toneGate > 0 && --_toneGate == 0)
+    _release_now(_toneGateVel);
+
+  if (_toneCancelled)                    // HOLD, released inside the delay
+    return 1;
+
+  if (_toneWait != 0) {
+    if (_damping)                        // its voice was taken while it waited
+      return 1;
+    if (_toneWait > 0)
+      _toneWait--;
+    return 0;
+  }
+
   const bool finished = (_tva->finished() || _dampComplete);
 
   // A finished voice generates nothing, but one that started inside a control
@@ -220,7 +250,7 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 }
 
 
-void Partial::stop(uint8_t releaseVelocity)
+void Partial::_release_now(uint8_t releaseVelocity)
 {
   // Ignore note off for uninterruptible drums (set by drum set flag)
   if (!(_drumSet && !_drumRxNoteOff)) {
@@ -230,6 +260,39 @@ void Partial::stop(uint8_t releaseVelocity)
     if (_tva) _tva->note_off(releaseVelocity);
     if (_LFO1own) _LFO1own->note_off();
     if (_LFO2) _LFO2->note_off();
+  }
+}
+
+
+// A tone with no delay releases here and now, which is every Sound Canvas
+// partial, every rhythm note and 505 of the JV's 539 enabled factory tones.
+// The other three paths are the JV's Tone Delay (scdb D-78), measured on the
+// reference: a KEY-OFF tone is STARTED by the note off and releases one
+// control period later; a HOLD tone released before its delay expires never
+// sounds at all, and after it releases at once; a NORMAL tone's note off is
+// postponed by the delay, exactly as its note on was.
+void Partial::stop(uint8_t releaseVelocity)
+{
+  if (_toneWait < 0) {                   // KEY-OFF: the note off starts it
+    _toneWait = 0;
+    _toneGate = 1;
+    _toneGateVel = releaseVelocity;
+    return;
+  }
+
+  if (_toneDelay == 0 || _toneDelayMode == 1) {
+    if (_toneWait > 0) {                 // HOLD, and the key came up first
+      _toneCancelled = true;
+      _released = true;
+      return;
+    }
+    _release_now(releaseVelocity);
+    return;
+  }
+
+  if (_toneGate <= 0) {
+    _toneGate = _toneDelay;
+    _toneGateVel = releaseVelocity;
   }
 }
 
@@ -256,6 +319,9 @@ void Partial::damp(float dBPerMillisecond)
 // Update parameters every 256th sample @32k
 void Partial::update(void)
 {
+  if (_toneWait != 0 || _toneCancelled)  // the tone's delay has not run out
+    return;
+
   if (_LFO1own) _LFO1own->update();     // before its consumers, as LFO2 below is not (unchanged order for the SC-55)
   if (_pitch) _pitch->update();
   if (_tvf) _tvf->update();

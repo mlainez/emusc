@@ -58,6 +58,9 @@ public:
 		      std::array<float, 256> &sendBus);
 
   void stop(uint8_t releaseVelocity = 64);
+
+  // Whether the tone's own delay is still holding this voice silent.
+  inline bool tone_delayed(void) const { return _toneWait != 0; }
   void damp(float dBPerMillisecond);
   void update(void);
 
@@ -102,6 +105,22 @@ private:
   // why the first period a voice ever plays is a partial one.
   const int _startDelay;
   bool _delayDrained;      // the held tail has been emitted; the voice is done
+
+  // The JV's Tone Delay (scdb D-78), counted in whole control periods because
+  // the machine's own delay counter is: it ticks twice per unit of the tone's
+  // 0-127 Delay Time byte on the same 8 ms service pass the engine's control
+  // period already is.  _toneWait > 0 is a voice still waiting, -1 a KEY-OFF
+  // tone waiting for the note off that starts it, 0 a voice that sounds.
+  // _toneGate is the note off that a NORMAL delay postpones by the same
+  // amount, and by one period for a KEY-OFF tone.
+  int      _toneDelay;                  // periods, 2 per unit; 0 = no delay
+  int      _toneWait;
+  int      _toneGate;                   // periods until a queued note off; <=0 none
+  uint8_t  _toneGateVel;
+  uint8_t  _toneDelayMode;              // 0 NORMAL, 1 HOLD, 2 PLAY-MATE
+  bool     _toneCancelled;              // HOLD released before the delay ran out
+
+  void _release_now(uint8_t releaseVelocity);
   std::array<float, 256> _delayL;
   std::array<float, 256> _delayR;
   std::array<float, 256> _delayS;

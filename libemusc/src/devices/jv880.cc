@@ -503,7 +503,12 @@ static const RecordRomLayout JV880_RECORDS = {
       // enabled factory tones - the two largest unread fields outside the
       // controller matrix. scdb D-77.
       0x46, 0,
-      0x27, 4
+      0x27, 4,
+
+      // Tone Delay Mode, +0x47 bits 4-5 (SysEx 0x61): NORMAL, HOLD,
+      // PLAY-MATE. Read at ROM1 0x3A06 right after the delay time byte, and
+      // the third field of +0x47 after the two CC switches. scdb D-78.
+      0x47
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named
