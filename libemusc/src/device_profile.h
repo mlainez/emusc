@@ -156,6 +156,10 @@ struct ToneFieldMap
   // consecutive signed sense bytes. Rows of zero mean the device has no such
   // matrix. On the JV they are +0x05/+0x07, +0x0B/+0x0D and +0x11/+0x13.
   int      ctrlMatrix[3][2];            // {first destination byte, first sense byte}
+
+  // FXM: the byte whose bit 7 is the switch and bits 0-3 the depth. 0 = the
+  // device has no such field. scdb D-80.
+  int      fxm;
 };
 
 // The per-tone controller matrix's arithmetic (scdb D-79, FW-EXACT: the
@@ -486,6 +490,7 @@ enum class RomLookup
   JVLfoOffset,                          // 8 s8 offsets added to the waveform sample
   JVLfoWaves,                           // 4 x 256 s8 waveform tables
   JVLfoPitchDepth,                      // 64 u16: |depth| -> cents/4 at full swing
+  JVFxmRatio,                           // 17 u16: 65536 * 2^(-n/16), n = 1..16
 
   // The manual's Random Pitch Depth list in cents, indices 1..15 (ROM2 0x57A0;
   // the word before it is not entry 0 - the firmware never indexes 0). A voice

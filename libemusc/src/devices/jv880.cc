@@ -262,7 +262,12 @@ static const RomLookupTable JV880_LOOKUP_TABLES[] = {
   // 1..15, at 0x57A0 (scdb 07_synthesis/pitch.md, TM-036n). The word before
   // it at 0x579E is not an entry - the firmware skips the whole term at index
   // 0 - so the table starts at index 1 and is read as 15 rising words.
-  { RomLookup::JVRandomPitch,        0x057a0,  15, 2, Monotonic::Rising }
+  { RomLookup::JVRandomPitch,        0x057a0,  15, 2, Monotonic::Rising },
+
+  // FXM: 17 words at ROM2 0x581C, entries 1..16 being 65536 * 2^(-n/16) to the
+  // unit - the rate the oscillator alternates onto. Entry 0 is never indexed,
+  // so the run is not monotonic as a whole. scdb D-80.
+  { RomLookup::JVFxmRatio,           0x0581c,  17, 2, Monotonic::Unchecked }
 };
 
 static const RecordRomLayout JV880_RECORDS = {
@@ -514,7 +519,11 @@ static const RecordRomLayout JV880_RECORDS = {
       // Aftertouch and Expression, each four destination nibbles in two bytes
       // followed by four signed sense bytes. Off-modal on up to 318 of the 539
       // enabled factory tones, and 393 of them route at least one slot.
-      { { 0x05, 0x07 }, { 0x0b, 0x0d }, { 0x11, 0x13 } }
+      { { 0x05, 0x07 }, { 0x0b, 0x0d }, { 0x11, 0x13 } },
+
+      // FXM, +0x02: bit 7 the switch, bits 0-3 the depth (SysEx 0x04 / 0x05).
+      // ROM1 0x3984 turns the pair into the per-voice byte 2*(depth+1). D-80.
+      0x02
     },
 
     // Analog Feel, patch common +0x14 - the manual's "1/f fluctuation". Named

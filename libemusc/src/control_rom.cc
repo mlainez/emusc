@@ -1366,6 +1366,7 @@ void ControlRom::_init_neutral_partial(struct InstPartial &ip)
   ip.JVToneDelay     = 0;
   ip.JVToneDelayMode = 0;
   ip.hasJVCtrlMatrix = 0;
+  ip.JVFxmDepth = ip.JVFxmSwitch = 0;
   for (int c = 0; c < 3; c++)
     for (int i = 0; i < 4; i++) {
       ip.JVCtrlDest[c][i] = 0; ip.JVCtrlSense[c][i] = 0;
@@ -1543,6 +1544,13 @@ int ControlRom::_read_device_patches(void)
         // the value once it is read as an int8_t. 393 of the 539 enabled
         // factory tones route at least one slot, and PITCH LFO1 alone is the
         // destination of 521 of them.
+        // FXM, one byte: bit 7 the switch and bits 0-3 the depth (scdb D-80).
+        // On for 21 of the 539 enabled factory tones, 18 of them at depth 0.
+        if (F.fxm) {
+          ip.JVFxmSwitch = (tb[F.fxm] >> 7) & 1;
+          ip.JVFxmDepth  =  tb[F.fxm] & 0x0f;
+        }
+
         if (F.ctrlMatrix[0][0]) {
           for (int c = 0; c < 3; c++) {
             const uint8_t *d = &tb[F.ctrlMatrix[c][0]];
@@ -2075,6 +2083,9 @@ void ControlRom::_init_device_lookup_tables(void)
         break;
       case RomLookup::JVRandomPitch:
         t.hasJVRandomPitch = rom16(rtOffset, rt.entries, t.JVRandomPitch);
+        break;
+      case RomLookup::JVFxmRatio:
+        t.hasJVFxmRatio = rom16(rtOffset, rt.entries, t.JVFxmRatio);
         break;
       case RomLookup::EnvelopeTime:
         break;                       // read separately, into a fixed-size array

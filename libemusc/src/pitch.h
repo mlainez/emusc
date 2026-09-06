@@ -48,8 +48,20 @@ public:
 
   void note_off();
 
+  // FXM (scdb D-80): the JV's cross-modulation is a SQUARE-wave modulation of
+  // the oscillator RATE, not an audio-rate one. ROM1 0x660F alternates the
+  // voice's rate register between the pitch the engine computed and that pitch
+  // times 2^(-(depth+1)/16), one pass of its writer loop each. The reference
+  // puts the sidebands at exactly +-125.00 Hz of every partial, so a half
+  // period is 4 ms - HALF this engine's control period, which is why the
+  // multiplier is chosen per sample and not per block.
   inline float get_phase_increment(void) {
-    _currentInc += _deltaInc; return _currentInc; }
+    _currentInc += _deltaInc;
+    if (!_jvFxm)
+      return _currentInc;
+    const float m = ((_jvFxmTick++ >> 7) & 1) ? _jvFxmLo : _jvFxmHi;
+    return _currentInc * m;
+  }
 
   inline uint16_t get_sample_id(void) { return _sampleIndex; }
 
@@ -127,6 +139,17 @@ private:
   // accumulators, owned by Partial and rebuilt every control period. Null on
   // every device without a matrix. scdb D-79.
   const int *_jvCtrlAcc = nullptr;
+
+  // The two rates the voice alternates between, as multipliers of the pitch it
+  // would otherwise play. They straddle it: their ARITHMETIC mean is 1, which
+  // is why an FXM note keeps its pitch. Measured - the mean instantaneous
+  // frequency of an FXM note is its unmodulated one to 4 cents at every depth,
+  // where an uncompensated (1, k) pair would put depth 15 a fourth flat and a
+  // geometric pair a semitone sharp.
+  bool     _jvFxm     = false;
+  float    _jvFxmHi   = 1.0f;
+  float    _jvFxmLo   = 1.0f;
+  unsigned _jvFxmTick = 0;              // voice samples; bit 7 selects the half
   int  _jvRandCents10 = 0;              // @0x995A[v], the random-pitch draw
   int  _jvLevel[5] = { 0, 0, 0, 0, 0 }; // 0, L1..L4 as L << 8
   int  _jvTime[4] = { 0, 0, 0, 0 };

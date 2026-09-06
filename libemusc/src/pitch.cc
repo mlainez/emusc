@@ -321,6 +321,7 @@ int Pitch::_af_drift_cents10(void)
 
 void Pitch::update(void)
 {
+
   // Update LFO depth parameters based on fade-in status
   int index = std::clamp((_instPartial.TVPLFO1Depth & 0x7f) - 0x80 + 2 *
                          _settings->get_param(PatchParam::VibratoDepth,_partId),
@@ -954,6 +955,19 @@ void Pitch::_jv_init(uint8_t velocity)
   // twelve of key 38 (r = 50) span 73, both beyond what +/- r/2 allows. The
   // engine's own seeded rand() is the source, as for the Sound Canvas random
   // pitch and random pan.
+  // FXM: the rate the oscillator alternates onto, from ROM2 0x581C indexed by
+  // depth + 1 (scdb D-80). Off, or without the table, the multiplier is unity
+  // and get_phase_increment() is what it was.
+  if (_instPartial.JVFxmSwitch && _LUT.hasJVFxmRatio) {
+    const int r = _LUT.JVFxmRatio[std::min<int>(_instPartial.JVFxmDepth + 1, 16)];
+    if (r > 0) {
+      const float k = (float) r / 65536.0f;
+      _jvFxmHi = 2.0f / (1.0f + k);
+      _jvFxmLo = _jvFxmHi * k;
+      _jvFxm   = true;
+    }
+  }
+
   _jvRandCents10 = 0;
   if (_instPartial.JVRandomPitchIdx && _LUT.hasJVRandomPitch) {
     const int idx = std::min<int>(_instPartial.JVRandomPitchIdx, 15);

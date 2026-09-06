@@ -225,6 +225,12 @@ public:
     // destination/sense slots. The destination is 0-12 and the sense is signed
     // -63..+63. hasJVCtrlMatrix is 0 on every device without one, and on a
     // rhythm note.
+    // FXM: a switch and a 0-15 depth in one byte (scdb D-80). The oscillator's
+    // rate alternates between its own and 2^(-(depth+1)/16) of it, one control
+    // period each - a 62.5 Hz square-wave cross-modulation.
+    uint8_t JVFxmDepth = 0;               // 0-15
+    uint8_t JVFxmSwitch = 0;              // 0 = off, and the depth is not used
+
     uint8_t JVCtrlDest[3][4] = {};
     int8_t  JVCtrlSense[3][4] = {};
     uint8_t hasJVCtrlMatrix = 0;
@@ -485,6 +491,13 @@ public:
     // 1..15 (entry i - 1 here). Without it a random pitch index adds nothing.
     std::array<int, 15>       JVRandomPitch = {};
     bool                      hasJVRandomPitch = false;
+
+    // The JV's FXM ratio list, ROM2 0x581C: 17 words of which entries 1..16 are
+    // 65536 x 2^(-n/16), the rate the oscillator alternates ONTO while FXM is on
+    // (scdb D-80). Entry 0 is never indexed - the firmware's index is
+    // 2*(depth+1) taken as a byte offset, so it starts at word 1.
+    std::array<int, 17>       JVFxmRatio = {};
+    bool                      hasJVFxmRatio = false;
     bool                      hasJVKeyFollowPct = false;
 
     // The JV-880's eight reverb type records in full: words 0..27 of each,
