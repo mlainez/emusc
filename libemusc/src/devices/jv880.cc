@@ -1,5 +1,8 @@
 /*
- *  This file is part of libEmuSC, a Sound Canvas emulator library
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * This file consists entirely of AI-generated code without direct human
+ * authorship and is dedicated to the public domain under CC0 1.0.
  *
  *  Roland JV-880 device profile.
  *
@@ -7,7 +10,6 @@
  *  provenance is a guess, and a guess that happens to be in range is the most
  *  expensive kind. See device_profile.h for what each field means.
  */
-
 #include "../device_profile.h"
 
 namespace EmuSC

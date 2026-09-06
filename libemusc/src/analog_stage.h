@@ -1,5 +1,8 @@
 /*
- *  This file is part of libEmuSC, a Sound Canvas emulator library
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * This file consists entirely of AI-generated code without direct human
+ * authorship and is dedicated to the public domain under CC0 1.0.
  *
  *  The analog stage: what a device does to the finished mix after the chip.
  *
@@ -28,7 +31,6 @@
  *  EMUSC_NO_ANALOG_STAGE=1 in the environment defeats it, so the raw digital
  *  output can still be rendered for measurement.
  */
-
 #ifndef ANALOG_STAGE_H
 #define ANALOG_STAGE_H
 

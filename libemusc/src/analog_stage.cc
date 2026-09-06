@@ -1,9 +1,11 @@
 /*
- *  This file is part of libEmuSC, a Sound Canvas emulator library
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * This file consists entirely of AI-generated code without direct human
+ * authorship and is dedicated to the public domain under CC0 1.0.
  *
  *  See analog_stage.h for what this is and why it is not device-specific code.
  */
-
 #include "analog_stage.h"
 
 #include <cmath>
