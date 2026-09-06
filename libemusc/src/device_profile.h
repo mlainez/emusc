@@ -1015,6 +1015,16 @@ struct TvfJvLaw
 struct PitchJvLaw
 {
   int envDepthScale;
+
+  // The wave key-zone search: a zone whose breakpoint is B is the LAST key that
+  // uses it (scdb devices/jv880 D-83, M-100). "The first breakpoint at or above
+  // the note" already says that - what does not is the value handed to it.
+  // Pitch::_basePitchC is not the note's semitone: for a key below C4 the
+  // key-follow branch leaves the whole missing semitone in _basePitchF as a full
+  // 1000, so the search reads one semitone low and every zone keeps its
+  // breakpoint key plus one. Set on a device whose boundary has been measured
+  // against the machine; the Sound Canvas family's has not.
+  bool zoneBreakIsLastKey;
 };
 
 

@@ -1038,7 +1038,12 @@ const DeviceProfile JV880_PROFILE = {
   // The pitch envelope's depth scale (scdb D-37, ROM1 0x48CC): the TVF's
   // 0x9994 has a pitch twin, 0xCB2C, and with it depth +12 at level +63 comes
   // out at 0x3F00 * 4876 >> 16 = 1200 cents, one octave exactly.
-  { 0xcb2c },
+  //
+  // Then the wave key-zone boundary (scdb D-83, M-100): measured one tone at a
+  // time with Analog Feel and the random pan taken out, `Synth Saw 1` steps
+  // between keys 45/46, 51/52 and 57/58 on the machine and `Synth Pulse1`
+  // between 55/56, so the breakpoint is the last key of its zone.
+  { 0xcb2c, true },
 
   // The analog output stage (scdb devices/jv880 D-65, M-065, M-067).
   //

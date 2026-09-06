@@ -124,6 +124,17 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
   uint16_t pIndex = _instPartial.partialIndex;
   int breakPitch = _basePitchC - _instPartial.rootKeyOffset + 0x40;
 
+  // _basePitchC alone is not the note's semitone. Below C4 the key-follow
+  // branch of _apply_key_follow_bp() puts the missing semitone in _basePitchF
+  // as a full 1000 rather than carrying it, so the zone search compares one
+  // semitone low and a zone goes on sounding for its breakpoint key plus one.
+  // Carrying it is the JV's measured boundary (scdb D-83); the JV's rhythm
+  // notes are unaffected, every one of the 23 factory notes on a multi-zone
+  // waveform having a play key of 60 or above.
+  const DeviceProfile *zoneDev = _settings->device();
+  if (zoneDev && zoneDev->pitchJv.zoneBreakIsLastKey)
+    breakPitch += _basePitchF / 1000;
+
   for (int j = 0; j < 16; j ++) {
     if (_ctrlRom.partial(pIndex).breaks[j] >= breakPitch ||
 	_ctrlRom.partial(pIndex).breaks[j] == 0x7f) {
