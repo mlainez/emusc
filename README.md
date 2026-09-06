@@ -36,3 +36,42 @@ Interested in C++ programming, reverse engineering, audio synthesis or synthesiz
 EmuSC is free software and released under the GNU general public license:
 * EmuSC is released under the GPLv3+ license.
 * libEmuSC is released under the LGPLv2.1+ license.
+
+### Copyright in this fork
+
+Those licences stand, and the combined work keeps them. What follows describes
+only the files this fork added, so a reader can tell whose work is whose.
+
+**Files carried over from upstream, and files that relocate upstream code,
+keep their original notice** — `Copyright (C) 2022-2026  Håkon Skjelten`,
+LGPL-2.1-or-later. Modifying a file does not change who wrote it, and neither
+does moving its contents into a new filename. That includes
+`libemusc/src/device_profile.h`, `libemusc/src/devices/sc55.cc`,
+`devices/sc55mkii.cc` and `devices/sound_canvas_default.cc`, which exist
+because device constants were lifted out of the engine into per-device
+profiles.
+
+**Files written from scratch here are dedicated to the public domain** under
+CC0 1.0 and carry `SPDX-License-Identifier: CC0-1.0`:
+
+* `libemusc/src/analog_stage.cc` and `.h` — the post-chip output stage
+* `libemusc/src/devices/jv880.cc` — the JV-880 device profile
+* `libemusc/src/jv_velocity.h`, `libemusc/src/jv_ctrl_matrix.h` — JV tables
+  read out of ROM
+
+CC0 is compatible with the GNU licences. It grants no patent rights, which the
+FSF notes as a reason to prefer a permissive software licence instead; that is
+an accepted trade here rather than an oversight.
+
+Two of those files are largely Roland ROM content tabulated. CC0 there waives
+whatever rights might attach to the tabulation — it asserts no authorship of
+Roland's data.
+
+**AI involvement is disclosed, not credited as authorship.** Much of this
+fork's work was produced by an AI assistant under human direction. Commits
+carry a single `Assisted-by:` trailer, following the kernel's
+coding-assistants convention; the human contributor is the author of record
+and takes responsibility. `Co-Authored-By:` is deliberately not used.
+
+The research behind these changes — ROM maps, measurements, and the divergence
+register that drove them — is a separate repository under CC0.
