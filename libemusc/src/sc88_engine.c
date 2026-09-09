@@ -80,8 +80,19 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].levels.secondary = 127;
     engine->parts[i].levels.part = 127;
     engine->parts[i].levels.expression = 127;
+    engine->parts[i].pan.master = 64;
+    engine->parts[i].pan.part = 64;
   }
   return true;
+}
+
+void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
+                              const struct sc88_pan_controls *pan)
+{
+  if (!engine || !pan || part >= SC88_ENGINE_PART_COUNT ||
+      pan->master < 1 || pan->master > 127 || pan->part > 127)
+    return;
+  engine->parts[part].pan = *pan;
 }
 
 static void sc88_engine_free_note_if_empty(struct sc88_engine *engine,
@@ -255,9 +266,10 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
 
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
-      !sc88_renderer_note_on_with_levels(
+      !sc88_renderer_note_on_with_controls(
         engine->renderer, &voice, variation, program, key, velocity,
-        provisional_gain, &engine->parts[part].levels))
+        provisional_gain, &engine->parts[part].levels,
+        &engine->parts[part].pan))
     return false;
   sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
   if (engine->free_slot_count < voice.component_count)
@@ -400,7 +412,8 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
   if (!engine || !engine->renderer || !stereo)
     return;
   for (frame = 0; frame < frames; ++frame) {
-    float mixed = 0.0f;
+    float left = 0.0f;
+    float right = 0.0f;
     unsigned i;
     sc88_engine_run_scheduler(engine);
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
@@ -410,15 +423,18 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
         continue;
       if (slot->component.active &&
           sc88_oscillator_next(&slot->component.oscillator, &sample)) {
-        mixed += sample * (slot->component.static_gain_q17 / 131072.0f) *
+        float gained = sample *
+          (slot->component.static_gain_q17 / 131072.0f) *
           engine->notes[slot->note].provisional_gain;
+        left += gained * (slot->component.left_gain_q15 / 32768.0f);
+        right += gained * (slot->component.right_gain_q15 / 32768.0f);
         if (slot->component.oscillator.ended)
           slot->component.active = false;
       } else {
         sc88_engine_free_slot(engine, (uint8_t)i, false);
       }
     }
-    stereo[frame * 2] = mixed;
-    stereo[frame * 2 + 1] = mixed;
+    stereo[frame * 2] = left;
+    stereo[frame * 2 + 1] = right;
   }
 }

@@ -93,12 +93,14 @@ int main(int argc, char **argv)
   control[0x40000 + 30] = 1;
   control[0x40000 + 32] = 3;
   control[0x40000 + 33] = 2;
+  put16(control + 0x40000 + 0x0e, 0xbad0);
   put16(control + 0x40000 + 0x10, 0xb6d0);
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x10, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
+  put16(control + 0x15db6 + 63 * 2, 0x4c00);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -133,13 +135,23 @@ int main(int argc, char **argv)
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
   assert(sc88_renderer_voice_active(&voice));
   assert(sc88_renderer_render(&voice, output, 2) == 2);
-  assert(fabs(output[0] - (64.0 / 8388608.0) * (32767.0 / 32768.0)) <
-         1e-9);
+  assert(fabs(output[0] - (64.0 / 8388608.0) *
+         (32767.0 / 32768.0) * (0x4c00 / 32768.0)) < 1e-9);
   assert(output[0] == output[1]);
   assert(output[2] > output[0]);
   assert(output[2] == output[3]);
   assert(!sc88_renderer_voice_active(&voice));
   sc88_renderer_voice_destroy(&voice);
+
+  {
+    const struct sc88_pan_controls hard_left = {64, 1};
+    put16(control + 0x15db6 + 126 * 2, 0x8000);
+    sc88_renderer_set_pan(&renderer, &hard_left);
+    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+    assert(sc88_renderer_render(&voice, output, 1) == 1);
+    assert(output[0] > 0.0f && output[1] == 0.0f);
+    sc88_renderer_voice_destroy(&voice);
+  }
 
   {
     const struct sc88_tva_levels muted = {0, 127, 127, 127};

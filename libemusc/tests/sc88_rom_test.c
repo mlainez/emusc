@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_rom.h"
+#include "sc88_pan.h"
 #include "sc88_tva.h"
 
 #include <assert.h>
@@ -26,6 +27,7 @@ static void test_held_rom(const char *path)
   unsigned tone_count = 0;
   unsigned component_count = 0;
   const struct sc88_tva_levels levels = {127, 127, 127, 127};
+  const struct sc88_pan_controls pan = {64, 64};
 
   assert(file && bytes);
   assert(fread(bytes, 1, SC88_CONTROL_ROM_SIZE, file) ==
@@ -61,7 +63,10 @@ static void test_held_rom(const char *path)
           struct sc88_zone_selection zone;
           enum sc88_wave_loop_type mode;
           uint16_t attenuation;
+          uint16_t left_q15;
+          uint16_t right_q15;
           uint32_t gain_q17;
+          uint8_t pan_position;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
@@ -73,6 +78,10 @@ static void test_held_rom(const char *path)
             assert(false);
           }
           assert(gain_q17 <= 0x1fffcu);
+          assert(sc88_pan_static_q15(
+            &rom, &tone, &component, (uint8_t)key, &pan, &pan_position,
+            &left_q15, &right_q15));
+          assert(pan_position >= 1 && pan_position <= 127);
           ++selected;
         }
         assert(selected > 0);

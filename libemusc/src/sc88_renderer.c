@@ -130,7 +130,18 @@ bool sc88_renderer_init(struct sc88_renderer *renderer,
   renderer->levels.secondary = 127;
   renderer->levels.part = 127;
   renderer->levels.expression = 127;
+  renderer->pan.master = 64;
+  renderer->pan.part = 64;
   return true;
+}
+
+void sc88_renderer_set_pan(struct sc88_renderer *renderer,
+                           const struct sc88_pan_controls *pan)
+{
+  if (!renderer || !pan || pan->master < 1 || pan->master > 127 ||
+      pan->part > 127)
+    return;
+  renderer->pan = *pan;
 }
 
 void sc88_renderer_set_levels(struct sc88_renderer *renderer,
@@ -178,11 +189,24 @@ bool sc88_renderer_note_on_with_levels(
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels)
 {
+  if (!renderer)
+    return false;
+  return sc88_renderer_note_on_with_controls(
+    renderer, voice, variation, program, key, velocity, provisional_gain,
+    levels, &renderer->pan);
+}
+
+bool sc88_renderer_note_on_with_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan)
+{
   struct sc88_tone tone;
   uint32_t tone_offset;
   unsigned i;
 
-  if (!renderer || !voice || !levels || levels->master > 127 ||
+  if (!renderer || !voice || !levels || !pan || levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
       levels->expression > 127 || key > 127 || velocity > 127 ||
       provisional_gain < 0.0f ||
@@ -223,7 +247,12 @@ bool sc88_renderer_note_on_with_levels(
                                   (uint8_t)selector_key, velocity,
                                   levels,
                                   &render_component->static_attenuation,
-                                  &render_component->static_gain_q17))
+                                  &render_component->static_gain_q17) ||
+        !sc88_pan_static_q15(&renderer->rom, &tone, &component,
+                             (uint8_t)selector_key, pan,
+                             &render_component->pan_position,
+                             &render_component->left_gain_q15,
+                             &render_component->right_gain_q15))
       goto fail;
     bank = sc88_renderer_find_bank(renderer, zone.descriptor.bank_select);
     if (!bank)
@@ -272,7 +301,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
   if (!voice || !stereo)
     return 0;
   for (frame = 0; frame < frames; ++frame) {
-    float mixed = 0.0f;
+    float left = 0.0f;
+    float right = 0.0f;
     unsigned i;
     bool active = false;
     for (i = 0; i < voice->component_count; ++i) {
@@ -280,7 +310,9 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
       float sample;
       if (component->active &&
           sc88_oscillator_next(&component->oscillator, &sample)) {
-        mixed += sample * (component->static_gain_q17 / 131072.0f);
+        float gained = sample * (component->static_gain_q17 / 131072.0f);
+        left += gained * (component->left_gain_q15 / 32768.0f);
+        right += gained * (component->right_gain_q15 / 32768.0f);
         active = true;
         if (component->oscillator.ended)
           component->active = false;
@@ -290,8 +322,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
     }
     if (!active)
       break;
-    stereo[frame * 2] = mixed * voice->provisional_gain;
-    stereo[frame * 2 + 1] = mixed * voice->provisional_gain;
+    stereo[frame * 2] = left * voice->provisional_gain;
+    stereo[frame * 2 + 1] = right * voice->provisional_gain;
   }
   return frame;
 }

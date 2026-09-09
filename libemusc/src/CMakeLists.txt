@@ -32,6 +32,8 @@ add_library(emusc
   sc88_engine.h
   sc88_oscillator.c
   sc88_oscillator.h
+  sc88_pan.c
+  sc88_pan.h
   sc88_renderer.c
   sc88_renderer.h
   sc88_rom.c
@@ -71,8 +73,8 @@ if(BUILD_TESTING)
   set_target_properties(sc88_wave_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_wave_test COMMAND sc88_wave_test)
 
-  add_executable(sc88_rom_test ../tests/sc88_rom_test.c sc88_rom.c sc88_tva.c
-                                 sc88_wave.c)
+  add_executable(sc88_rom_test ../tests/sc88_rom_test.c sc88_pan.c sc88_rom.c
+                                 sc88_tva.c sc88_wave.c)
   target_include_directories(sc88_rom_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set_target_properties(sc88_rom_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_rom_test COMMAND sc88_rom_test)
@@ -86,7 +88,8 @@ if(BUILD_TESTING)
 
   add_executable(sc88_renderer_test ../tests/sc88_renderer_test.c
                                      sc88_renderer.c sc88_oscillator.c
-                                     sc88_rom.c sc88_tva.c sc88_wave.c)
+                                     sc88_pan.c sc88_rom.c sc88_tva.c
+                                     sc88_wave.c)
   target_include_directories(sc88_renderer_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(sc88_renderer_test PRIVATE m)
   set_target_properties(sc88_renderer_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
@@ -94,7 +97,8 @@ if(BUILD_TESTING)
 
   add_executable(sc88_engine_test ../tests/sc88_engine_test.c sc88_engine.c
                                    sc88_renderer.c sc88_oscillator.c
-                                   sc88_rom.c sc88_tva.c sc88_wave.c)
+                                   sc88_pan.c sc88_rom.c sc88_tva.c
+                                   sc88_wave.c)
   target_include_directories(sc88_engine_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(sc88_engine_test PRIVATE m)
   set_target_properties(sc88_engine_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)

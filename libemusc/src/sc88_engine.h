@@ -49,6 +49,7 @@ struct sc88_engine_slot {
 
 struct sc88_engine_part {
   struct sc88_tva_levels levels;
+  struct sc88_pan_controls pan;
   bool hold;
   bool sostenuto;
   uint8_t sostenuto_keys[16];
@@ -82,6 +83,8 @@ void sc88_engine_set_control_service(struct sc88_engine *engine,
                                      void *user);
 void sc88_engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
                                  const struct sc88_tva_levels *levels);
+void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
+                              const struct sc88_pan_controls *pan);
 
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
                          uint8_t variation, uint8_t program,
