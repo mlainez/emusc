@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_rom.h"
+#include "sc88_tva.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ static void test_held_rom(const char *path)
   unsigned selection_count = 0;
   unsigned tone_count = 0;
   unsigned component_count = 0;
+  const struct sc88_tva_levels levels = {127, 127, 127, 127};
 
   assert(file && bytes);
   assert(fread(bytes, 1, SC88_CONTROL_ROM_SIZE, file) ==
@@ -58,9 +60,19 @@ static void test_held_rom(const char *path)
         for (key = 0; key < 128; ++key) {
           struct sc88_zone_selection zone;
           enum sc88_wave_loop_type mode;
+          uint16_t attenuation;
+          uint32_t gain_q17;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
+          if (!sc88_tva_static_gain_q17(
+                &rom, &tone, &component, &zone, (uint8_t)key, 100, &levels,
+                &attenuation, &gain_q17)) {
+            fprintf(stderr, "TVA failed tone=%#x component=%#x key=%u\n",
+                    tone.offset, component.offset, key);
+            assert(false);
+          }
+          assert(gain_q17 <= 0x1fffcu);
           ++selected;
         }
         assert(selected > 0);

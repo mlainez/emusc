@@ -75,6 +75,12 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->slots[i].next_free = i + 1 < SC88_ENGINE_SLOT_COUNT
       ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
   }
+  for (i = 0; i < SC88_ENGINE_PART_COUNT; ++i) {
+    engine->parts[i].levels.master = 127;
+    engine->parts[i].levels.secondary = 127;
+    engine->parts[i].levels.part = 127;
+    engine->parts[i].levels.expression = 127;
+  }
   return true;
 }
 
@@ -142,6 +148,16 @@ void sc88_engine_set_control_service(struct sc88_engine *engine,
     return;
   engine->control_service = service;
   engine->control_user = user;
+}
+
+void sc88_engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
+                                 const struct sc88_tva_levels *levels)
+{
+  if (!engine || !levels || part >= SC88_ENGINE_PART_COUNT ||
+      levels->master > 127 || levels->secondary > 127 ||
+      levels->part > 127 || levels->expression > 127)
+    return;
+  engine->parts[part].levels = *levels;
 }
 
 static uint8_t sc88_engine_oldest_slot(const struct sc88_engine *engine,
@@ -239,8 +255,9 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
 
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
-      !sc88_renderer_note_on(engine->renderer, &voice, variation, program,
-                             key, velocity, provisional_gain))
+      !sc88_renderer_note_on_with_levels(
+        engine->renderer, &voice, variation, program, key, velocity,
+        provisional_gain, &engine->parts[part].levels))
     return false;
   sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
   if (engine->free_slot_count < voice.component_count)
@@ -393,7 +410,8 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
         continue;
       if (slot->component.active &&
           sc88_oscillator_next(&slot->component.oscillator, &sample)) {
-        mixed += sample * engine->notes[slot->note].provisional_gain;
+        mixed += sample * (slot->component.static_gain_q17 / 131072.0f) *
+          engine->notes[slot->note].provisional_gain;
         if (slot->component.oscillator.ended)
           slot->component.active = false;
       } else {

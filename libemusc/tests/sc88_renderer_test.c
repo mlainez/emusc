@@ -57,6 +57,7 @@ static void test_held_rom(char **paths)
                             banks, SC88_WAVE_BANK_COUNT, 48000.0,
                             SC88_WRAP_FULL_CARRY));
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.25f));
+  assert(voice.components[0].static_gain_q17 > 0);
   assert(sc88_renderer_render(&voice, output, 16) == 16);
   assert(sc88_renderer_voice_active(&voice));
   sc88_renderer_voice_destroy(&voice);
@@ -96,6 +97,8 @@ int main(int argc, char **argv)
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x10, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  put16(control + 0x1503e + 255 * 2, 0xffff);
+  put16(control + 0x1523e + 255 * 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -130,12 +133,22 @@ int main(int argc, char **argv)
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
   assert(sc88_renderer_voice_active(&voice));
   assert(sc88_renderer_render(&voice, output, 2) == 2);
-  assert(fabs(output[0] - (64.0 / 8388608.0)) < 1e-9);
+  assert(fabs(output[0] - (64.0 / 8388608.0) * (32767.0 / 32768.0)) <
+         1e-9);
   assert(output[0] == output[1]);
   assert(output[2] > output[0]);
   assert(output[2] == output[3]);
   assert(!sc88_renderer_voice_active(&voice));
   sc88_renderer_voice_destroy(&voice);
+
+  {
+    const struct sc88_tva_levels muted = {0, 127, 127, 127};
+    put16(control + 0x14f3e, 0xffff);
+    sc88_renderer_set_levels(&renderer, &muted);
+    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+    assert(voice.components[0].static_gain_q17 == 0);
+    sc88_renderer_voice_destroy(&voice);
+  }
   free(wave);
   free(control);
   if (argc == 6)

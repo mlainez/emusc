@@ -40,6 +40,8 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x40000 + 0x10, 0xb6d0);
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  put16(control + 0x1503e + 255 * 2, 0xffff);
+  put16(control + 0x1523e + 255 * 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -101,6 +103,23 @@ int main(void)
   assert(sc88_engine_released_slots(&engine) == 2);
   sc88_engine_hold(&engine, 0, false);
   assert(sc88_engine_released_slots(&engine) == 2);
+
+  {
+    const struct sc88_tva_levels muted = {0, 127, 127, 127};
+    bool found_muted = false;
+    put16(control + 0x14f3e, 0xffff);
+    sc88_engine_set_part_levels(&engine, 1, &muted);
+    assert(sc88_engine_note_on(&engine, 1, 0, 0, 62, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+      if (engine.slots[i].allocated &&
+          engine.notes[engine.slots[i].note].part == 1) {
+        assert(engine.slots[i].component.static_gain_q17 == 0);
+        found_muted = true;
+      }
+    assert(found_muted);
+    put16(control + 0x14f3e, 0);
+  }
 
   sc88_engine_set_control_service(&engine, count_service, &count);
   sc88_engine_render(&engine, stereo, 257);
