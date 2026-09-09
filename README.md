@@ -61,11 +61,12 @@ CC0 1.0 and carry `SPDX-License-Identifier: CC0-1.0`:
 * `libemusc/src/sc88_wave.c` / `.h`, `libemusc/src/sc88_rom.c` / `.h`,
   `libemusc/src/sc88_oscillator.c` / `.h`, `libemusc/src/sc88_renderer.c` /
   `.h`, `libemusc/src/sc88_tva.c` / `.h`, `libemusc/src/sc88_pan.c` / `.h`,
-  `libemusc/src/sc88_engine.c` / `.h`, and their tests — the SC-88 immutable
+  `libemusc/src/sc88_engine.c` / `.h`, `libemusc/src/sc88_device.c` / `.h`,
+  and their tests — the SC-88 immutable
   ROM graph, descriptor, FCE-DPCM, parameterized oscillator, first dry-render
   path, ROM-table static TVA/pan gains, four-stage TVA targets/rates/curve
   words with a replaceable XP interpolation seam, release countdown, and the
-  64-slot note/voice engine
+  64-slot note/voice engine and owned-ROM MIDI device frontend
 
 CC0 is compatible with the GNU licences. It grants no patent rights, which the
 FSF notes as a reason to prefer a permissive software licence instead; that is

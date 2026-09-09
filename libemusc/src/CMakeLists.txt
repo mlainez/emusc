@@ -28,6 +28,8 @@ add_library(emusc
   resampler.h
   reverb.cc
   reverb.h
+  sc88_device.c
+  sc88_device.h
   sc88_engine.c
   sc88_engine.h
   sc88_oscillator.c
@@ -103,4 +105,13 @@ if(BUILD_TESTING)
   target_link_libraries(sc88_engine_test PRIVATE m)
   set_target_properties(sc88_engine_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_engine_test COMMAND sc88_engine_test)
+
+  add_executable(sc88_device_test ../tests/sc88_device_test.c sc88_device.c
+                                   sc88_engine.c sc88_renderer.c
+                                   sc88_oscillator.c sc88_pan.c sc88_rom.c
+                                   sc88_tva.c sc88_wave.c)
+  target_include_directories(sc88_device_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(sc88_device_test PRIVATE m)
+  set_target_properties(sc88_device_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+  add_test(NAME sc88_device_test COMMAND sc88_device_test)
 endif()

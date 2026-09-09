@@ -23,6 +23,7 @@ install(FILES AUTHORS ChangeLog COPYING COPYING.LESSER NEWS README.md DESTINATIO
 install(FILES
   src/control_rom.h
   src/params.h
+  src/sc88_device.h
   src/sc88_engine.h
   src/sc88_oscillator.h
   src/sc88_pan.h
