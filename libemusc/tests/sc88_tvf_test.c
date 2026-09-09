@@ -84,6 +84,7 @@ int main(void)
   component_bytes[0x56] = 1;
   component_bytes[0x57] = 1;
   put16(component_bytes + 0x5a, 0x1100);
+  put16(component_bytes + 0x5c, 0x1100);
   put16(component_bytes + 0x40, 0x1200);
   put16(component_bytes + 0x42, 0x4000);
   put16(bytes + 0x1200 + 60 * 2, 0x4000);
@@ -123,6 +124,23 @@ int main(void)
       filtered = sc88_tvf_audio_process_provisional(
         NULL, &audio, &registers, 0.5, 1.0f);
       assert(filtered > 0.0f && filtered < 1.0f);
+    }
+    {
+      struct sc88_tvf_release release;
+      component_bytes[0x58] = 1;
+      put16(component_bytes + 0x52, 0xc000);
+      assert(sc88_tvf_release_prepare(
+        &rom, &tone, &component, 60, envelope.depth, &release));
+      assert(release.target == -0x1000);
+      assert(release.increment == 0x4000);
+      assert(sc88_tvf_release_set_pedal(
+        &rom, 0, false, false, false, &release));
+      assert(!release.scale_enabled && release.active);
+      assert(sc88_tvf_release_advance(&release, 1));
+      assert(release.phase == 0x4000);
+      assert(release.current == -0x0400);
+      assert(sc88_tvf_release_advance(&release, 3));
+      assert(release.current == release.target && !release.active);
     }
   }
 

@@ -209,6 +209,11 @@ static void sc88_engine_start_release(struct sc88_engine *engine,
         component->continuous_hold_release,
         component->keep_release_scale_at_zero, false,
         &component->release);
+      (void)sc88_tvf_release_set_pedal(
+        &engine->renderer->rom, engine->parts[note->part].hold_value,
+        component->continuous_hold_release,
+        component->keep_release_scale_at_zero, false,
+        &component->tvf_release);
     }
   }
 }
@@ -531,12 +536,19 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                             &slot->component.right_gain_q15);
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
-    if (slot->component.tvf_envelope.active) {
+    if (slot->component.tvf_envelope.active ||
+        slot->component.tvf_release.active) {
       sc88_tvf_latch_frequency(&slot->component.tvf);
-      (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
-                                      elapsed);
+      if (slot->component.tvf_envelope.active)
+        (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
+                                        elapsed);
+      if (slot->component.tvf_release.active)
+        (void)sc88_tvf_release_advance(&slot->component.tvf_release,
+                                       elapsed);
       (void)sc88_tvf_update_frequency(
-        &engine->renderer->rom, slot->component.tvf_envelope.current,
+        &engine->renderer->rom,
+        (int16_t)((uint16_t)slot->component.tvf_envelope.current +
+                  (uint16_t)slot->component.tvf_release.current),
         &slot->component.tvf);
     }
     if (!slot->component.release.active)

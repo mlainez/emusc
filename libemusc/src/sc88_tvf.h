@@ -49,6 +49,16 @@ struct sc88_tvf_envelope {
   bool active;
 };
 
+struct sc88_tvf_release {
+  int16_t target;
+  int16_t current;
+  uint16_t phase;
+  uint16_t increment;
+  uint16_t scale;
+  bool scale_enabled;
+  bool active;
+};
+
 /* Replaceable audio-side interpretation of the still-undecoded XP words.
  * This state-variable topology is intentionally separate from the exact CPU
  * state above. */
@@ -89,6 +99,18 @@ bool sc88_tvf_envelope_prepare(const struct sc88_rom *rom,
                                struct sc88_tvf_envelope *envelope);
 bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
                                unsigned elapsed_periods);
+bool sc88_tvf_release_prepare(const struct sc88_rom *rom,
+                              const struct sc88_tone *tone,
+                              const struct sc88_component *component,
+                              uint8_t selector_key, uint16_t envelope_depth,
+                              struct sc88_tvf_release *release);
+bool sc88_tvf_release_set_pedal(const struct sc88_rom *rom,
+                                uint8_t hold1, bool continuous_hold,
+                                bool keep_scale_at_zero,
+                                bool sostenuto_retained,
+                                struct sc88_tvf_release *release);
+bool sc88_tvf_release_advance(struct sc88_tvf_release *release,
+                              unsigned elapsed_periods);
 
 /* Recompose TVF-F from an already prepared accumulator while retaining the
  * note-start Q/type tuple. Fixed negative-mode tuples remain unchanged. */

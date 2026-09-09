@@ -9,6 +9,7 @@
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 #define SC88_ENVELOPE_RATE_TABLE 0x1543eu
 #define SC88_RATE_SCALE_TABLE 0x1573eu
+#define SC88_RELEASE_PEDAL_TABLE 0x78a02u
 
 static uint16_t sc88_tvf_be16(const uint8_t *p)
 {
@@ -351,6 +352,91 @@ bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
   envelope->current = sc88_tvf_s16((uint16_t)(
     (uint16_t)envelope->base + (uint16_t)sc88_tvf_floor_div_pow2(
       (int32_t)envelope->delta * working, 16)));
+  return true;
+}
+
+bool sc88_tvf_release_prepare(const struct sc88_rom *rom,
+                              const struct sc88_tone *tone,
+                              const struct sc88_component *component,
+                              uint8_t selector_key, uint16_t envelope_depth,
+                              struct sc88_tvf_release *release)
+{
+  uint16_t key_scale;
+  uint16_t table_rate;
+  uint16_t initial_phase;
+  if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
+      !release || selector_key > 127 ||
+      SC88_ENVELOPE_RATE_TABLE + 128u * 2 > rom->size)
+    return false;
+  memset(release, 0, sizeof *release);
+  release->scale = UINT16_MAX;
+  if (envelope_depth == 0)
+    return true;
+  if (!sc88_tvf_key_rate_scale(rom, tone, component, selector_key,
+                                0x5c, 0x5f, &key_scale))
+    return false;
+  table_rate = sc88_tvf_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
+                             (uint32_t)component->bytes[0x58] * 2);
+  sc88_tvf_prepare_increment(table_rate, key_scale, &initial_phase,
+                             &release->increment);
+  release->phase = initial_phase;
+  release->target = sc88_tvf_scale_target(
+    sc88_tvf_s16(sc88_tvf_be16(component->bytes + 0x52)), envelope_depth);
+  return true;
+}
+
+bool sc88_tvf_release_set_pedal(const struct sc88_rom *rom,
+                                uint8_t hold1, bool continuous_hold,
+                                bool keep_scale_at_zero,
+                                bool sostenuto_retained,
+                                struct sc88_tvf_release *release)
+{
+  unsigned effective;
+  uint32_t offset;
+  if (!rom || !rom->bytes || !release || hold1 > 127)
+    return false;
+  release->scale_enabled = true;
+  if (sostenuto_retained) {
+    release->scale = 0;
+  } else {
+    release->scale = UINT16_MAX;
+    effective = continuous_hold ? hold1 : (hold1 >= 64 ? 127u : 0u);
+    if (effective == 0) {
+      if (!keep_scale_at_zero)
+        release->scale_enabled = false;
+    } else {
+      offset = SC88_RELEASE_PEDAL_TABLE + (127u - effective) * 2;
+      if (offset + 2 > rom->size)
+        return false;
+      release->scale = sc88_tvf_be16(rom->bytes + offset);
+    }
+  }
+  release->active = true;
+  return true;
+}
+
+bool sc88_tvf_release_advance(struct sc88_tvf_release *release,
+                              unsigned elapsed_periods)
+{
+  uint16_t step;
+  uint8_t periods;
+  uint32_t product;
+  uint16_t next;
+  if (!release || !release->active || elapsed_periods == 0)
+    return false;
+  step = release->scale_enabled
+    ? (uint16_t)(((uint32_t)release->increment * release->scale) >> 16)
+    : release->increment;
+  periods = (uint8_t)elapsed_periods;
+  product = (uint32_t)step * periods;
+  next = (uint16_t)(release->phase + (uint16_t)product);
+  if ((product >> 16) != 0 || next < release->phase) {
+    release->current = release->target;
+    release->active = false;
+  } else {
+    release->phase = next;
+    release->current = sc88_tvf_scale_target(release->target, next);
+  }
   return true;
 }
 

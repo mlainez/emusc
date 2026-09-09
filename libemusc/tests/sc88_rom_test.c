@@ -73,6 +73,7 @@ static void test_held_rom(const char *path)
           struct sc88_tva_envelope envelope;
           struct sc88_tvf_registers tvf;
           struct sc88_tvf_envelope tvf_envelope;
+          struct sc88_tvf_release tvf_release;
           int16_t tvf_key_modulation;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
@@ -112,6 +113,9 @@ static void test_held_rom(const char *path)
           assert(sc88_tvf_key_modulation(
             &rom, &tone, &component, (uint8_t)key,
             &tvf_key_modulation));
+          assert(sc88_tvf_release_prepare(
+            &rom, &tone, &component, (uint8_t)key, tvf_envelope.depth,
+            &tvf_release));
           ++selected;
         }
         assert(selected > 0);

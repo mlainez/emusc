@@ -282,6 +282,10 @@ bool sc88_renderer_note_on_with_controls(
         !sc88_tvf_envelope_prepare(&renderer->rom, &tone, &component,
                                     (uint8_t)selector_key, velocity, false,
                                     &render_component->tvf_envelope) ||
+        !sc88_tvf_release_prepare(
+          &renderer->rom, &tone, &component, (uint8_t)selector_key,
+          render_component->tvf_envelope.depth,
+          &render_component->tvf_release) ||
         !sc88_tvf_prepare_registers(
                                     &renderer->rom, &component,
                                     tvf_key_modulation,
