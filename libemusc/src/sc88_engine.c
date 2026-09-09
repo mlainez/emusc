@@ -89,10 +89,27 @@ bool sc88_engine_init(struct sc88_engine *engine,
 void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
                               const struct sc88_pan_controls *pan)
 {
+  unsigned i;
   if (!engine || !pan || part >= SC88_ENGINE_PART_COUNT ||
       pan->master < 1 || pan->master > 127 || pan->part > 127)
     return;
   engine->parts[part].pan = *pan;
+  if (pan->part == 0)
+    return;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    struct sc88_engine_slot *slot = engine->slots + i;
+    int target;
+    if (!slot->allocated || slot->note >= SC88_ENGINE_NOTE_COUNT ||
+        engine->notes[slot->note].part != part)
+      continue;
+    target = pan->part + ((int)pan->master - 64) +
+      slot->component.pan_component_offset;
+    if (target < 1)
+      target = 1;
+    else if (target > 127)
+      target = 127;
+    slot->component.pan_target_position = (uint8_t)target;
+  }
 }
 
 static uint32_t sc88_engine_pitch_word(uint32_t base, int32_t offset)
@@ -503,6 +520,15 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     struct sc88_engine_note *note;
     if (!slot->allocated)
       continue;
+    if (slot->component.pan_position < slot->component.pan_target_position)
+      ++slot->component.pan_position;
+    else if (slot->component.pan_position >
+             slot->component.pan_target_position)
+      --slot->component.pan_position;
+    (void)sc88_pan_pair_q15(&engine->renderer->rom,
+                            slot->component.pan_position,
+                            &slot->component.left_gain_q15,
+                            &slot->component.right_gain_q15);
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
     if (!slot->component.release.active)

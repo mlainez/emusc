@@ -125,7 +125,10 @@ int main(int argc, char **argv)
     assert(fabs(device.engine.slots[0].component.oscillator.step -
                 unity_step) < 1e-12);
   }
+  assert(sc88_device_midi(&device, 0, 0xb0, 10, 1));
+  assert(device.engine.slots[0].component.pan_target_position == 1);
   sc88_device_render(&device, output, 257);
+  assert(device.engine.slots[0].component.pan_position == 63);
   assert(output[0] > 0.0f && output[0] == output[1]);
 
   put16(device.control_rom + 0x14f3e, 0xffff);

@@ -16,6 +16,13 @@ struct sc88_pan_controls {
   uint8_t part;
 };
 
+bool sc88_pan_component_offset(const struct sc88_rom *rom,
+                               const struct sc88_tone *tone,
+                               const struct sc88_component *component,
+                               uint8_t selector_key, int16_t *offset);
+bool sc88_pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
+                       uint16_t *left_q15, uint16_t *right_q15);
+
 /* Fixed melodic pan only. Part pan zero requests XP-derived random pan and
  * returns false until that sound-chip random source is implemented. */
 bool sc88_pan_static_q15(const struct sc88_rom *rom,

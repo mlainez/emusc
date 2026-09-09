@@ -44,7 +44,9 @@ struct sc88_render_component {
   struct sc88_tva_release release;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;
+  int16_t pan_component_offset;
   uint8_t pan_position;
+  uint8_t pan_target_position;
   uint16_t left_gain_q15;
   uint16_t right_gain_q15;
   bool active;

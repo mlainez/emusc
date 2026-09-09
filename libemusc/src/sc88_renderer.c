@@ -253,6 +253,9 @@ bool sc88_renderer_note_on_with_controls(
                              &render_component->pan_position,
                              &render_component->left_gain_q15,
                              &render_component->right_gain_q15) ||
+        !sc88_pan_component_offset(&renderer->rom, &tone, &component,
+                                   (uint8_t)selector_key,
+                                   &render_component->pan_component_offset) ||
         !sc88_tva_release_prepare(&renderer->rom, &tone, &component,
                                   (uint8_t)selector_key,
                                   &render_component->release) ||
@@ -260,6 +263,7 @@ bool sc88_renderer_note_on_with_controls(
                                    (uint8_t)selector_key, velocity,
                                    &render_component->envelope))
       goto fail;
+    render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
