@@ -101,6 +101,7 @@ int main(int argc, char **argv)
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
+  put16(control + 0x1573e + 64 * 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);

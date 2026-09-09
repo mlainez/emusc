@@ -140,6 +140,29 @@ static void sc88_engine_free_slot(struct sc88_engine *engine,
     sc88_engine_free_note_if_empty(engine, note_index);
 }
 
+static void sc88_engine_start_release(struct sc88_engine *engine,
+                                      uint8_t note_index)
+{
+  struct sc88_engine_note *note = engine->notes + note_index;
+  unsigned i;
+  if (!note->allocated || note->key_down || note->hold_retained ||
+      note->sostenuto_retained)
+    return;
+  for (i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
+    uint8_t slot_index = note->slots[i];
+    struct sc88_render_component *component;
+    if (slot_index == SC88_ENGINE_NONE)
+      continue;
+    component = &engine->slots[slot_index].component;
+    if (!component->release.active)
+      (void)sc88_tva_release_set_pedal(
+        &engine->renderer->rom, engine->parts[note->part].hold_value,
+        component->continuous_hold_release,
+        component->keep_release_scale_at_zero, false,
+        &component->release);
+  }
+}
+
 void sc88_engine_destroy(struct sc88_engine *engine)
 {
   unsigned i;
@@ -164,11 +187,30 @@ void sc88_engine_set_control_service(struct sc88_engine *engine,
 void sc88_engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
                                  const struct sc88_tva_levels *levels)
 {
+  unsigned i;
   if (!engine || !levels || part >= SC88_ENGINE_PART_COUNT ||
       levels->master > 127 || levels->secondary > 127 ||
       levels->part > 127 || levels->expression > 127)
     return;
   engine->parts[part].levels = *levels;
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    struct sc88_engine_note *note = engine->notes + i;
+    unsigned component_index;
+    if (!note->allocated || note->part != part)
+      continue;
+    note->levels = *levels;
+    for (component_index = 0;
+         component_index < SC88_MAX_TONE_COMPONENTS; ++component_index) {
+      uint8_t slot_index = note->slots[component_index];
+      struct sc88_render_component *component;
+      if (slot_index == SC88_ENGINE_NONE)
+        continue;
+      component = &engine->slots[slot_index].component;
+      (void)sc88_tva_gain_from_headroom_q17(
+        &engine->renderer->rom, component->release.current, levels,
+        component->static_attenuation, &component->static_gain_q17);
+    }
+  }
 }
 
 static uint8_t sc88_engine_oldest_slot(const struct sc88_engine *engine,
@@ -292,6 +334,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
   note->tone_offset = voice.tone_offset;
   note->serial = engine->next_serial++;
   note->provisional_gain = provisional_gain;
+  note->levels = engine->parts[part].levels;
   for (i = 0; i < voice.component_count; ++i) {
     uint8_t slot_index = sc88_engine_pop_slot(engine);
     struct sc88_engine_slot *slot = engine->slots + slot_index;
@@ -335,20 +378,33 @@ bool sc88_engine_note_off(struct sc88_engine *engine, uint8_t part,
     engine->parts[part].sostenuto &&
     (engine->parts[part].sostenuto_keys[key >> 3] &
      (uint8_t)(1u << (key & 7))) != 0;
+  sc88_engine_start_release(engine, candidate);
   return true;
 }
 
 void sc88_engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled)
 {
+  sc88_engine_hold_value(engine, part, enabled ? 127 : 0);
+}
+
+void sc88_engine_hold_value(struct sc88_engine *engine, uint8_t part,
+                            uint8_t value)
+{
   unsigned i;
-  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+  bool enabled;
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || value > 127)
     return;
+  enabled = value >= 64;
   engine->parts[part].hold = enabled;
+  engine->parts[part].hold_value = value;
   if (enabled)
     return;
-  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
-    if (engine->notes[i].allocated && engine->notes[i].part == part)
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    if (engine->notes[i].allocated && engine->notes[i].part == part) {
       engine->notes[i].hold_retained = false;
+      sc88_engine_start_release(engine, (uint8_t)i);
+    }
+  }
 }
 
 void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
@@ -368,9 +424,12 @@ void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
           (uint8_t)(1u << (note->key & 7));
     }
   } else {
-    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
-      if (engine->notes[i].allocated && engine->notes[i].part == part)
+    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+      if (engine->notes[i].allocated && engine->notes[i].part == part) {
         engine->notes[i].sostenuto_retained = false;
+        sc88_engine_start_release(engine, (uint8_t)i);
+      }
+    }
   }
 }
 
@@ -395,12 +454,28 @@ unsigned sc88_engine_released_slots(const struct sc88_engine *engine)
 static void sc88_engine_run_scheduler(struct sc88_engine *engine)
 {
   unsigned elapsed;
+  unsigned i;
   engine->scheduler_clocks +=
     SC88_CONTROL_TIMER_HZ / engine->renderer->output_rate;
   elapsed = (unsigned)(engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
   if (!elapsed)
     return;
   engine->scheduler_clocks -= elapsed * SC88_CONTROL_PERIOD_CLOCKS;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    struct sc88_engine_slot *slot = engine->slots + i;
+    struct sc88_engine_note *note;
+    if (!slot->allocated || !slot->component.release.active)
+      continue;
+    note = engine->notes + slot->note;
+    if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
+        !sc88_tva_gain_from_headroom_q17(
+          &engine->renderer->rom, slot->component.release.current,
+          &note->levels, slot->component.static_attenuation,
+          &slot->component.static_gain_q17) ||
+        slot->component.static_gain_q17 == 0) {
+      sc88_engine_free_slot(engine, (uint8_t)i, false);
+    }
+  }
   if (engine->control_service)
     engine->control_service(engine->control_user, elapsed);
 }

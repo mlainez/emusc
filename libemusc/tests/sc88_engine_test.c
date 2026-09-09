@@ -44,6 +44,7 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
+  put16(control + 0x1573e + 64 * 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -110,12 +111,16 @@ int main(void)
     const struct sc88_tva_levels muted = {0, 127, 127, 127};
     bool found_muted = false;
     put16(control + 0x14f3e, 0xffff);
+    assert(sc88_engine_note_on(&engine, 2, 0, 0, 63, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+    sc88_engine_set_part_levels(&engine, 2, &muted);
     sc88_engine_set_part_levels(&engine, 1, &muted);
     assert(sc88_engine_note_on(&engine, 1, 0, 0, 62, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 0.25f));
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
-          engine.notes[engine.slots[i].note].part == 1) {
+          (engine.notes[engine.slots[i].note].part == 1 ||
+           engine.notes[engine.slots[i].note].part == 2)) {
         assert(engine.slots[i].component.static_gain_q17 == 0);
         found_muted = true;
       }
@@ -126,6 +131,7 @@ int main(void)
   sc88_engine_set_control_service(&engine, count_service, &count);
   sc88_engine_render(&engine, stereo, 257);
   assert(count.calls == 1 && count.periods == 1);
+  assert(sc88_engine_active_slots(&engine) == 2);
   engine.scheduler_clocks = 2.0 * 10001.0;
   sc88_engine_render(&engine, stereo, 1);
   assert(count.calls == 2 && count.periods == 3);
@@ -142,6 +148,18 @@ int main(void)
                              SC88_SAME_NOTE_FULL_MULTI, 0.25f));
   assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
   assert(sc88_engine_released_slots(&engine) == 0);
+  sc88_engine_destroy(&engine);
+
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_hold(&engine, 0, true);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+  assert(sc88_engine_note_off(&engine, 0, 60));
+  sc88_engine_render(&engine, stereo, 257);
+  assert(sc88_engine_active_slots(&engine) == 1);
+  sc88_engine_hold(&engine, 0, false);
+  sc88_engine_render(&engine, stereo, 257);
+  assert(sc88_engine_active_slots(&engine) == 0);
   sc88_engine_destroy(&engine);
   free(wave);
   free(control);

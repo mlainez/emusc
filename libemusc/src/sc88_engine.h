@@ -33,6 +33,7 @@ struct sc88_engine_note {
   uint32_t tone_offset;
   uint64_t serial;
   float provisional_gain;
+  struct sc88_tva_levels levels;
   bool allocated;
   bool key_down;
   bool hold_retained;
@@ -53,6 +54,7 @@ struct sc88_engine_part {
   bool hold;
   bool sostenuto;
   uint8_t sostenuto_keys[16];
+  uint8_t hold_value;
 };
 
 typedef void (*sc88_control_service_fn)(void *user,
@@ -94,6 +96,8 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
 bool sc88_engine_note_off(struct sc88_engine *engine, uint8_t part,
                           uint8_t key);
 void sc88_engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled);
+void sc88_engine_hold_value(struct sc88_engine *engine, uint8_t part,
+                            uint8_t value);
 void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
                            bool enabled);
 

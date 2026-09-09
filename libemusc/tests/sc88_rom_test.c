@@ -67,6 +67,7 @@ static void test_held_rom(const char *path)
           uint16_t right_q15;
           uint32_t gain_q17;
           uint8_t pan_position;
+          struct sc88_tva_release release;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
@@ -82,6 +83,13 @@ static void test_held_rom(const char *path)
             &rom, &tone, &component, (uint8_t)key, &pan, &pan_position,
             &left_q15, &right_q15));
           assert(pan_position >= 1 && pan_position <= 127);
+          assert(sc88_tva_release_prepare(
+            &rom, &tone, &component, (uint8_t)key, &release));
+          assert(release.current == 0xffff && !release.active);
+          assert(sc88_tva_release_set_pedal(
+            &rom, 0, tone.common[0x15] != 0, tone.common[0x14] != 0,
+            false, &release));
+          assert(release.active);
           ++selected;
         }
         assert(selected > 0);

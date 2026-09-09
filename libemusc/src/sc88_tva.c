@@ -6,6 +6,9 @@
 #define SC88_LEVEL_TABLE 0x14f3eu
 #define SC88_COARSE_GAIN_TABLE 0x1503eu
 #define SC88_FINE_GAIN_TABLE 0x1523eu
+#define SC88_ENVELOPE_RATE_TABLE 0x1543eu
+#define SC88_RATE_SCALE_TABLE 0x1573eu
+#define SC88_RELEASE_PEDAL_TABLE 0x78a02u
 
 static uint16_t sc88_tva_be16(const uint8_t *p)
 {
@@ -127,19 +130,33 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
                               uint16_t *static_attenuation,
                               uint32_t *gain_q17)
 {
-  uint8_t sources[4];
-  uint16_t remaining = UINT16_MAX;
   uint16_t component_attenuation;
+
+  if (!levels || !static_attenuation || !gain_q17 ||
+      !sc88_tva_component_attenuation(rom, tone, component, zone,
+                                      selector_key, velocity,
+                                      &component_attenuation))
+    return false;
+  *static_attenuation = component_attenuation;
+  return sc88_tva_gain_from_headroom_q17(
+    rom, UINT16_MAX, levels, component_attenuation, gain_q17);
+}
+
+bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
+                                     uint16_t headroom,
+                                     const struct sc88_tva_levels *levels,
+                                     uint16_t static_attenuation,
+                                     uint32_t *gain_q17)
+{
+  uint8_t sources[4];
+  uint16_t remaining = headroom;
   uint16_t reduction;
   uint16_t coarse;
   uint16_t fine;
   uint16_t gain_q15;
   unsigned i;
 
-  if (!levels || !static_attenuation || !gain_q17 ||
-      !sc88_tva_component_attenuation(rom, tone, component, zone,
-                                      selector_key, velocity,
-                                      &component_attenuation))
+  if (!rom || !rom->bytes || !levels || !gain_q17)
     return false;
   sources[0] = levels->master;
   sources[1] = levels->secondary;
@@ -150,14 +167,13 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
         !sc88_tva_level_word(rom, sources[i], &reduction))
       return false;
     if (remaining <= reduction) {
-      *static_attenuation = component_attenuation;
       *gain_q17 = 0;
       return true;
     }
     remaining = (uint16_t)(remaining - reduction);
   }
-  remaining = remaining <= component_attenuation
-    ? 1 : (uint16_t)(remaining - component_attenuation);
+  remaining = remaining <= static_attenuation
+    ? 1 : (uint16_t)(remaining - static_attenuation);
   if (SC88_FINE_GAIN_TABLE + (uint32_t)(remaining & 0xff) * 2 + 2 >
         rom->size)
     return false;
@@ -166,7 +182,104 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
   fine = sc88_tva_be16(rom->bytes + SC88_FINE_GAIN_TABLE +
                        (uint32_t)(remaining & 0xff) * 2);
   gain_q15 = (uint16_t)(((uint32_t)coarse * fine) >> 17);
-  *static_attenuation = component_attenuation;
   *gain_q17 = (uint32_t)gain_q15 << 2;
+  return true;
+}
+
+bool sc88_tva_release_prepare(const struct sc88_rom *rom,
+                              const struct sc88_tone *tone,
+                              const struct sc88_component *component,
+                              uint8_t selector_key,
+                              struct sc88_tva_release *release)
+{
+  uint32_t page;
+  uint32_t key_curve;
+  int key_value;
+  int factor;
+  int product_high;
+  unsigned scale_index;
+  uint16_t scale;
+  uint16_t rate;
+  uint32_t product;
+
+  if (!rom || !rom->bytes || !tone || !tone->common || !component ||
+      !component->bytes || !release || selector_key > 127)
+    return false;
+  page = (uint32_t)tone->common[0x21] << 16;
+  key_curve = page | sc88_tva_be16(component->bytes + 0x8c);
+  if (key_curve + selector_key >= rom->size ||
+      SC88_RATE_SCALE_TABLE + 129u * 2 > rom->size ||
+      SC88_ENVELOPE_RATE_TABLE + 128u * 2 > rom->size)
+    return false;
+  key_value = sc88_tva_s8(rom->bytes[key_curve + selector_key]);
+  factor = sc88_tva_s8((uint8_t)(0u - component->bytes[0x8f]));
+  product_high = sc88_tva_floor_div_pow2(key_value * factor, 8);
+  scale_index = (unsigned)(product_high + 64);
+  if (scale_index > 128)
+    return false;
+  scale = sc88_tva_be16(rom->bytes + SC88_RATE_SCALE_TABLE + scale_index * 2);
+  rate = sc88_tva_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
+                       (uint32_t)component->bytes[0x84] * 2);
+  if (rate < 16)
+    rate = UINT16_MAX;
+  product = (uint32_t)rate * scale;
+  release->current = UINT16_MAX;
+  release->increment = product >= UINT32_C(0x01000000)
+    ? UINT16_MAX : (uint16_t)(product >> 8);
+  release->scale = UINT16_MAX;
+  release->scale_enabled = false;
+  release->active = false;
+  return true;
+}
+
+bool sc88_tva_release_set_pedal(const struct sc88_rom *rom,
+                                uint8_t hold1, bool continuous_hold,
+                                bool keep_scale_at_zero,
+                                bool sostenuto_retained,
+                                struct sc88_tva_release *release)
+{
+  unsigned effective;
+  uint32_t offset;
+  if (!rom || !rom->bytes || !release || hold1 > 127)
+    return false;
+  release->scale_enabled = true;
+  if (sostenuto_retained) {
+    release->scale = 0;
+  } else {
+    release->scale = UINT16_MAX;
+    effective = continuous_hold ? hold1 : (hold1 >= 64 ? 127u : 0u);
+    if (effective == 0) {
+      if (!keep_scale_at_zero)
+        release->scale_enabled = false;
+    } else {
+      offset = SC88_RELEASE_PEDAL_TABLE + (127u - effective) * 2;
+      if (offset + 2 > rom->size)
+        return false;
+      release->scale = sc88_tva_be16(rom->bytes + offset);
+    }
+  }
+  release->active = true;
+  return true;
+}
+
+bool sc88_tva_release_advance(struct sc88_tva_release *release,
+                              unsigned elapsed_periods)
+{
+  uint16_t step;
+  uint8_t periods;
+  uint32_t product;
+  if (!release || !release->active || elapsed_periods == 0)
+    return false;
+  step = release->scale_enabled
+    ? (uint16_t)(((uint32_t)release->increment * release->scale) >> 16)
+    : release->increment;
+  periods = (uint8_t)elapsed_periods;
+  product = (uint32_t)step * periods;
+  if ((product >> 16) != 0 || release->current <= (uint16_t)product) {
+    release->current = 0;
+    release->active = false;
+  } else {
+    release->current = (uint16_t)(release->current - (uint16_t)product);
+  }
   return true;
 }

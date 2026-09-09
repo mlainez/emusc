@@ -39,6 +39,9 @@ struct sc88_render_component {
   struct sc88_oscillator oscillator;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
+  struct sc88_tva_release release;
+  bool continuous_hold_release;
+  bool keep_release_scale_at_zero;
   uint8_t pan_position;
   uint16_t left_gain_q15;
   uint16_t right_gain_q15;
@@ -75,9 +78,8 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
 void sc88_renderer_set_pan(struct sc88_renderer *renderer,
                            const struct sc88_pan_controls *pan);
 
-/* This first vertical path deliberately accepts an explicit dry gain. It does
- * not claim to replace the pending TVA, pan, filter, allocator or effects.
- * A gain of 1.0 passes one component at decoded full scale. */
+/* The explicit gain is the temporary envelope-Amp seam. Static TVA, release
+ * headroom and pan are native ROM paths; filter/effects remain separate. */
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
@@ -95,8 +97,8 @@ bool sc88_renderer_note_on_with_controls(
 void sc88_renderer_voice_destroy(struct sc88_render_voice *voice);
 bool sc88_renderer_voice_active(const struct sc88_render_voice *voice);
 
-/* Interleaved stereo dry output. Components are summed equally to both
- * channels; no clipping is applied because XP summing precision is open. */
+/* Interleaved stereo dry output. No clipping is applied because XP summing
+ * precision is open. */
 size_t sc88_renderer_render(struct sc88_render_voice *voice,
                             float *stereo, size_t frames);
 
