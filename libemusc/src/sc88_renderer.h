@@ -39,6 +39,7 @@ struct sc88_render_component {
   struct sc88_oscillator oscillator;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
+  struct sc88_tva_envelope envelope;
   struct sc88_tva_release release;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;

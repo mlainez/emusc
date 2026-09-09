@@ -154,12 +154,16 @@ static void sc88_engine_start_release(struct sc88_engine *engine,
     if (slot_index == SC88_ENGINE_NONE)
       continue;
     component = &engine->slots[slot_index].component;
-    if (!component->release.active)
+    if (!component->release.active) {
+      sc88_tva_envelope_freeze(
+        &component->envelope,
+        engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
       (void)sc88_tva_release_set_pedal(
         &engine->renderer->rom, engine->parts[note->part].hold_value,
         component->continuous_hold_release,
         component->keep_release_scale_at_zero, false,
         &component->release);
+    }
   }
 }
 
@@ -464,7 +468,11 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     struct sc88_engine_note *note;
-    if (!slot->allocated || !slot->component.release.active)
+    if (!slot->allocated)
+      continue;
+    if (slot->component.envelope.active)
+      (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
+    if (!slot->component.release.active)
       continue;
     note = engine->notes + slot->note;
     if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
@@ -498,8 +506,12 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
         continue;
       if (slot->component.active &&
           sc88_oscillator_next(&slot->component.oscillator, &sample)) {
+        uint32_t envelope_gain = sc88_tva_envelope_linear_q17(
+          &slot->component.envelope,
+          engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
         float gained = sample *
           (slot->component.static_gain_q17 / 131072.0f) *
+          (envelope_gain / 131072.0f) *
           engine->notes[slot->note].provisional_gain;
         left += gained * (slot->component.left_gain_q15 / 32768.0f);
         right += gained * (slot->component.right_gain_q15 / 32768.0f);

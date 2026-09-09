@@ -9,6 +9,8 @@
 #define SC88_ENVELOPE_RATE_TABLE 0x1543eu
 #define SC88_RATE_SCALE_TABLE 0x1573eu
 #define SC88_RELEASE_PEDAL_TABLE 0x78a02u
+#define SC88_AMP_CURVE_1_TABLE 0x1553eu
+#define SC88_AMP_CURVE_0_TABLE 0x1563eu
 
 static uint16_t sc88_tva_be16(const uint8_t *p)
 {
@@ -282,4 +284,256 @@ bool sc88_tva_release_advance(struct sc88_tva_release *release,
     release->current = (uint16_t)(release->current - (uint16_t)product);
   }
   return true;
+}
+
+static bool sc88_tva_envelope_target_q17(const struct sc88_rom *rom,
+                                         uint16_t level,
+                                         uint32_t *gain_q17)
+{
+  uint16_t coarse;
+  uint16_t fine;
+  uint16_t gain_q16;
+  if (!rom || !rom->bytes || !gain_q17 ||
+      SC88_FINE_GAIN_TABLE + (uint32_t)(level & 0xff) * 2 + 2 > rom->size)
+    return false;
+  coarse = sc88_tva_be16(rom->bytes + SC88_COARSE_GAIN_TABLE +
+                         (uint32_t)(level >> 8) * 2);
+  fine = sc88_tva_be16(rom->bytes + SC88_FINE_GAIN_TABLE +
+                       (uint32_t)(level & 0xff) * 2);
+  gain_q16 = (uint16_t)(((uint32_t)coarse * fine) >> 16);
+  *gain_q17 = (uint32_t)gain_q16 << 1;
+  return true;
+}
+
+static bool sc88_tva_key_rate_scale(const struct sc88_rom *rom,
+                                    const struct sc88_tone *tone,
+                                    const struct sc88_component *component,
+                                    uint8_t selector_key, uint16_t pointer_at,
+                                    uint8_t factor_at, uint16_t *scale)
+{
+  uint32_t curve;
+  int key_value;
+  int factor;
+  int index;
+  if (!rom || !rom->bytes || !tone || !tone->common || !component ||
+      !component->bytes || !scale)
+    return false;
+  curve = ((uint32_t)tone->common[0x21] << 16) |
+    sc88_tva_be16(component->bytes + pointer_at);
+  if (curve + selector_key >= rom->size)
+    return false;
+  key_value = sc88_tva_s8(rom->bytes[curve + selector_key]);
+  factor = sc88_tva_s8((uint8_t)(0u - component->bytes[factor_at]));
+  index = sc88_tva_floor_div_pow2(key_value * factor, 8) + 64;
+  if (index < 0 || index > 128)
+    return false;
+  *scale = sc88_tva_be16(rom->bytes + SC88_RATE_SCALE_TABLE +
+                         (uint32_t)index * 2);
+  return true;
+}
+
+static bool sc88_tva_velocity_rate_scale(const struct sc88_rom *rom,
+                                         uint8_t velocity, int factor,
+                                         uint16_t *scale)
+{
+  int index;
+  if (!rom || !rom->bytes || !scale || velocity > 127 ||
+      factor < -128 || factor > 127)
+    return false;
+  index = sc88_tva_floor_div_pow2(
+    (2 * ((int)velocity - 64)) * factor, 8) + 64;
+  if (index < 0 || index > 128)
+    return false;
+  *scale = sc88_tva_be16(rom->bytes + SC88_RATE_SCALE_TABLE +
+                         (uint32_t)index * 2);
+  return true;
+}
+
+static uint16_t sc88_tva_curve_pack(uint16_t curve_entry, uint16_t scale)
+{
+  uint32_t product = (uint32_t)(curve_entry & 0x0fff) * scale;
+  uint16_t exponent = (uint16_t)(curve_entry & 0xf000);
+  uint8_t exponent_byte;
+  uint16_t mantissa;
+
+  exponent = (uint16_t)(exponent << 8) | (uint16_t)(exponent >> 8);
+  exponent = (uint16_t)(exponent << 2);
+  exponent_byte = (uint8_t)exponent;
+  if ((product >> 16) != 0) {
+    if (exponent_byte != 0) {
+      for (;;) {
+        product >>= 2;
+        exponent_byte = (uint8_t)(exponent_byte - 0x40);
+        exponent = (uint16_t)((exponent & 0xff00) | exponent_byte);
+        if (exponent_byte == 0) {
+          product >>= 1;
+          break;
+        }
+        if ((product >> 16) == 0)
+          break;
+      }
+    }
+    mantissa = exponent_byte == 0 && (product >> 16) >= 16
+      ? 0x0fff : (uint16_t)(product >> 8);
+  } else {
+    while (exponent_byte != 0xc0 && (product >> 16) == 0 &&
+           (uint16_t)product < 0x2000) {
+      product <<= 2;
+      if (exponent_byte == 0)
+        product <<= 1;
+      exponent_byte = (uint8_t)(exponent_byte + 0x40);
+      exponent = (uint16_t)((exponent & 0xff00) | exponent_byte);
+    }
+    mantissa = (uint16_t)(product >> 8);
+  }
+  exponent >>= 2;
+  exponent = (uint16_t)(exponent << 8) | (uint16_t)(exponent >> 8);
+  return (uint16_t)(exponent | mantissa);
+}
+
+bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
+                               const struct sc88_tone *tone,
+                               const struct sc88_component *component,
+                               uint8_t selector_key, uint8_t velocity,
+                               struct sc88_tva_envelope *envelope)
+{
+  uint16_t key_scale;
+  unsigned stage;
+  if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
+      !envelope || selector_key > 127 || velocity > 127 ||
+      SC88_RATE_SCALE_TABLE + 129u * 2 > rom->size ||
+      SC88_ENVELOPE_RATE_TABLE + 128u * 2 > rom->size ||
+      !sc88_tva_key_rate_scale(rom, tone, component, selector_key,
+                               0x8a, 0x8e, &key_scale))
+    return false;
+  for (stage = 0; stage < 4; ++stage) {
+    uint16_t velocity_scale;
+    uint16_t final_scale;
+    uint16_t rate;
+    uint16_t curve_entry;
+    uint32_t product;
+    uint32_t curve_table;
+    int factor = sc88_tva_s8(component->bytes[stage < 2 ? 0x90 : 0x91]);
+    if (!sc88_tva_envelope_target_q17(
+          rom, sc88_tva_be16(component->bytes + 0x78 + stage * 2),
+          envelope->targets_q17 + stage) ||
+        !sc88_tva_velocity_rate_scale(rom, velocity, factor,
+                                      &velocity_scale))
+      return false;
+    final_scale = (uint16_t)(((uint32_t)key_scale * velocity_scale) >> 8);
+    curve_table = component->bytes[0x85 + stage] == 0
+      ? SC88_AMP_CURVE_0_TABLE : SC88_AMP_CURVE_1_TABLE;
+    if (curve_table + (uint32_t)component->bytes[0x80 + stage] * 2 + 2 >
+        rom->size)
+      return false;
+    curve_entry = sc88_tva_be16(rom->bytes + curve_table +
+      (uint32_t)component->bytes[0x80 + stage] * 2);
+    if (component->bytes[0x85 + stage] != 0)
+      curve_entry |= 0x4000;
+    envelope->curve_words[stage] = sc88_tva_curve_pack(
+      curve_entry, final_scale);
+    rate = sc88_tva_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
+                         (uint32_t)component->bytes[0x80 + stage] * 2);
+    if (rate < 16)
+      rate = UINT16_MAX;
+    product = (uint32_t)rate * final_scale;
+    if (product >= UINT32_C(0x01000000)) {
+      envelope->initial_phases[stage] = UINT16_MAX;
+      envelope->increments[stage] = UINT16_MAX;
+    } else {
+      envelope->initial_phases[stage] = 0;
+      envelope->increments[stage] = (uint16_t)(product >> 8);
+    }
+  }
+  envelope->stage = component->bytes[0x80] == 0 ? 1 : 0;
+  envelope->saved_count = 0;
+  envelope->phase = envelope->initial_phases[envelope->stage];
+  envelope->start_q17 = 0;
+  envelope->current_q17 = 0;
+  envelope->active = true;
+  return true;
+}
+
+static uint32_t sc88_tva_linear_between(uint32_t start, uint32_t target,
+                                        double fraction)
+{
+  double value;
+  if (fraction <= 0.0)
+    return start;
+  if (fraction >= 1.0)
+    return target;
+  value = start + fraction * ((double)target - start);
+  return (uint32_t)(value < 0.0 ? 0.0 : value + 0.5);
+}
+
+uint32_t sc88_tva_envelope_linear_q17(
+  const struct sc88_tva_envelope *envelope, double period_fraction)
+{
+  double phase;
+  if (!envelope)
+    return 0;
+  if (!envelope->active || envelope->stage >= 4)
+    return envelope->current_q17;
+  if (period_fraction < 0.0)
+    period_fraction = 0.0;
+  else if (period_fraction > 1.0)
+    period_fraction = 1.0;
+  phase = envelope->phase +
+    period_fraction * envelope->increments[envelope->stage];
+  if (phase > 65535.0)
+    phase = 65535.0;
+  return sc88_tva_linear_between(
+    envelope->start_q17, envelope->targets_q17[envelope->stage],
+    phase / 65536.0);
+}
+
+bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
+                               unsigned elapsed_periods)
+{
+  uint8_t catchup;
+  uint16_t remaining;
+  uint16_t working;
+  uint16_t increment;
+  if (!envelope || !envelope->active || envelope->stage >= 4 ||
+      elapsed_periods == 0)
+    return false;
+  catchup = (uint8_t)(elapsed_periods - 1);
+  remaining = (uint16_t)(envelope->saved_count +
+    (catchup <= 127 ? (int)catchup : (int)catchup - 256));
+  working = envelope->phase;
+  increment = envelope->increments[envelope->stage];
+  for (;;) {
+    uint16_t next = (uint16_t)(working + increment);
+    if (next < working) {
+      envelope->saved_count = (uint8_t)remaining;
+      envelope->current_q17 = envelope->targets_q17[envelope->stage];
+      envelope->start_q17 = envelope->current_q17;
+      ++envelope->stage;
+      envelope->phase = envelope->stage < 4
+        ? envelope->initial_phases[envelope->stage] : 0;
+      if (envelope->stage == 4)
+        envelope->active = false;
+      return true;
+    }
+    working = next;
+    --remaining;
+    if (remaining == UINT16_MAX)
+      break;
+  }
+  envelope->phase = working;
+  envelope->saved_count = 0;
+  envelope->current_q17 = sc88_tva_linear_between(
+    envelope->start_q17, envelope->targets_q17[envelope->stage],
+    working / 65536.0);
+  return true;
+}
+
+void sc88_tva_envelope_freeze(struct sc88_tva_envelope *envelope,
+                              double period_fraction)
+{
+  if (!envelope)
+    return;
+  envelope->current_q17 = sc88_tva_envelope_linear_q17(
+    envelope, period_fraction);
+  envelope->active = false;
 }

@@ -26,6 +26,19 @@ struct sc88_tva_release {
   bool active;
 };
 
+struct sc88_tva_envelope {
+  uint32_t targets_q17[4];
+  uint16_t curve_words[4];
+  uint16_t initial_phases[4];
+  uint16_t increments[4];
+  uint8_t stage;
+  uint8_t saved_count;
+  uint16_t phase;
+  uint32_t start_q17;
+  uint32_t current_q17;
+  bool active;
+};
+
 /* Exact CPU-side note-on AmpM path. The returned linear XP gain is Q17 with
  * 0x20000 as unity. Envelope Amp, modulation and XP ramp precision are
  * separate stages and are deliberately not folded into this value. */
@@ -54,6 +67,22 @@ bool sc88_tva_release_set_pedal(const struct sc88_rom *rom,
                                 struct sc88_tva_release *release);
 bool sc88_tva_release_advance(struct sc88_tva_release *release,
                               unsigned elapsed_periods);
+
+/* Four-stage firmware clock, target gains, rate scaling and packed XP curve
+ * words. Attack/decay modifiers are neutral in this entry point. The
+ * continuous curve between service points is an XP operation and is exposed
+ * separately as a provisional linear transfer. */
+bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
+                               const struct sc88_tone *tone,
+                               const struct sc88_component *component,
+                               uint8_t selector_key, uint8_t velocity,
+                               struct sc88_tva_envelope *envelope);
+bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
+                               unsigned elapsed_periods);
+uint32_t sc88_tva_envelope_linear_q17(
+  const struct sc88_tva_envelope *envelope, double period_fraction);
+void sc88_tva_envelope_freeze(struct sc88_tva_envelope *envelope,
+                              double period_fraction);
 
 #ifdef __cplusplus
 }

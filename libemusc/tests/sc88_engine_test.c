@@ -41,10 +41,13 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x40000 + 0x10, 0xb6d0);
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  put16(control + 0x40000 + 34 + 0x78, 0xffff);
+  control[0x40000 + 34 + 0x80] = 1;
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   put16(control + 0x1573e + 64 * 2, 0xffff);
+  put16(control + 0x1543e + 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);

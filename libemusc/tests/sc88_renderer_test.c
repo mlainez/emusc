@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_renderer.h"
+#include "sc88_engine.h"
 
 #include <assert.h>
 #include <math.h>
@@ -39,9 +40,12 @@ static void test_held_rom(char **paths)
   struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_render_voice voice = {0};
+  struct sc88_engine engine;
   uint8_t *control = read_exact(paths[0], SC88_CONTROL_ROM_SIZE);
   uint8_t *chips[4];
   float output[32];
+  float engine_output[8192];
+  double energy = 0.0;
   size_t i;
 
   for (i = 0; i < 4; ++i) {
@@ -61,6 +65,15 @@ static void test_held_rom(char **paths)
   assert(sc88_renderer_render(&voice, output, 16) == 16);
   assert(sc88_renderer_voice_active(&voice));
   sc88_renderer_voice_destroy(&voice);
+  assert(sc88_engine_init(&engine, &renderer));
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  sc88_engine_render(&engine, engine_output, 4096);
+  for (i = 0; i < 8192; ++i)
+    energy += fabs(engine_output[i]);
+  assert(energy > 0.0);
+  assert(sc88_engine_note_off(&engine, 0, 60));
+  sc88_engine_destroy(&engine);
   for (i = 0; i < 4; ++i)
     free(chips[i]);
   free(control);
@@ -98,10 +111,13 @@ int main(int argc, char **argv)
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x10, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  put16(control + 0x40000 + 34 + 0x78, 0xffff);
+  control[0x40000 + 34 + 0x80] = 1;
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   put16(control + 0x1573e + 64 * 2, 0xffff);
+  put16(control + 0x1543e + 2, 0xffff);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -135,6 +151,15 @@ int main(int argc, char **argv)
   memset(&voice, 0, sizeof voice);
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
   assert(sc88_renderer_voice_active(&voice));
+  assert(voice.components[0].envelope.stage == 0);
+  assert(voice.components[0].envelope.increments[0] == 0xffff);
+  assert(voice.components[0].envelope.phase == 0xffff);
+  assert(voice.components[0].envelope.targets_q17[0] == 0x1fffcu);
+  assert(sc88_tva_envelope_linear_q17(
+           &voice.components[0].envelope, 0.5) > 0);
+  assert(sc88_tva_envelope_advance(&voice.components[0].envelope, 1));
+  assert(voice.components[0].envelope.stage == 1);
+  assert(voice.components[0].envelope.current_q17 == 0x1fffcu);
   assert(sc88_renderer_render(&voice, output, 2) == 2);
   assert(fabs(output[0] - (64.0 / 8388608.0) *
          (32767.0 / 32768.0) * (0x4c00 / 32768.0)) < 1e-9);

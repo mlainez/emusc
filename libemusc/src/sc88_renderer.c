@@ -255,7 +255,10 @@ bool sc88_renderer_note_on_with_controls(
                              &render_component->right_gain_q15) ||
         !sc88_tva_release_prepare(&renderer->rom, &tone, &component,
                                   (uint8_t)selector_key,
-                                  &render_component->release))
+                                  &render_component->release) ||
+        !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
+                                   (uint8_t)selector_key, velocity,
+                                   &render_component->envelope))
       goto fail;
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
