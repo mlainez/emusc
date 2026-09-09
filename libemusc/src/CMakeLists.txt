@@ -28,6 +28,8 @@ add_library(emusc
   resampler.h
   reverb.cc
   reverb.h
+  sc88_rom.c
+  sc88_rom.h
   sc88_wave.c
   sc88_wave.h
   settings.cc
@@ -60,4 +62,9 @@ if(BUILD_TESTING)
   target_include_directories(sc88_wave_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set_target_properties(sc88_wave_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_wave_test COMMAND sc88_wave_test)
+
+  add_executable(sc88_rom_test ../tests/sc88_rom_test.c sc88_rom.c sc88_wave.c)
+  target_include_directories(sc88_rom_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_target_properties(sc88_rom_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+  add_test(NAME sc88_rom_test COMMAND sc88_rom_test)
 endif()

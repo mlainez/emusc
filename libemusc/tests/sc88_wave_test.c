@@ -2,6 +2,7 @@
 #include "sc88_wave.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -58,6 +59,53 @@ static void test_decoder(void)
   free(bank);
 }
 
+static void test_descramble(void)
+{
+  uint8_t *raw = (uint8_t *)calloc(SC88_WAVE_CHIP_SIZE, 1);
+  uint8_t *decoded = (uint8_t *)calloc(SC88_WAVE_CHIP_SIZE, 1);
+
+  assert(raw && decoded);
+  raw[0] = 0x5a;
+  raw[0x20] = 0x01;
+  raw[SC88_WAVE_BANK_SIZE] = 0xa5;
+  assert(sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
+                                    SC88_WAVE_CHIP_SIZE));
+  assert(decoded[0] == 0x5a);
+  assert(decoded[0x100] == 0x02);
+  assert(decoded[SC88_WAVE_BANK_SIZE] == 0xa5);
+  assert(!sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, raw,
+                                     SC88_WAVE_CHIP_SIZE));
+  free(decoded);
+  free(raw);
+}
+
+static void test_held_chip(const char *raw_path, const char *decoded_path)
+{
+  FILE *file;
+  uint8_t *raw = (uint8_t *)malloc(SC88_WAVE_CHIP_SIZE);
+  uint8_t *decoded = (uint8_t *)malloc(SC88_WAVE_CHIP_SIZE);
+  uint8_t *expected = (uint8_t *)malloc(SC88_WAVE_CHIP_SIZE);
+
+  assert(raw && decoded && expected);
+  file = fopen(raw_path, "rb");
+  assert(file);
+  assert(fread(raw, 1, SC88_WAVE_CHIP_SIZE, file) == SC88_WAVE_CHIP_SIZE);
+  assert(fgetc(file) == EOF);
+  fclose(file);
+  file = fopen(decoded_path, "rb");
+  assert(file);
+  assert(fread(expected, 1, SC88_WAVE_CHIP_SIZE, file) ==
+         SC88_WAVE_CHIP_SIZE);
+  assert(fgetc(file) == EOF);
+  fclose(file);
+  assert(sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
+                                    SC88_WAVE_CHIP_SIZE));
+  assert(memcmp(decoded, expected, SC88_WAVE_CHIP_SIZE) == 0);
+  free(expected);
+  free(decoded);
+  free(raw);
+}
+
 static void expect_cursor(struct sc88_wave_cursor *cursor,
                           const uint32_t *expected, size_t count)
 {
@@ -97,10 +145,13 @@ static void test_cursors(void)
                                 SC88_WAVE_REVERSE_ONE_SHOT));
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
   test_descriptor();
+  test_descramble();
   test_decoder();
   test_cursors();
+  if (argc == 3)
+    test_held_chip(argv[1], argv[2]);
   return 0;
 }

@@ -20,6 +20,47 @@ static int16_t sc88_s16(uint16_t value)
     : (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
 }
 
+static uint8_t sc88_wave_descramble_byte(uint8_t value)
+{
+  static const uint8_t input_bit[8] = {2, 0, 4, 5, 7, 6, 3, 1};
+  uint8_t result = 0;
+  unsigned bit;
+  for (bit = 0; bit < 8; ++bit)
+    result |= (uint8_t)(((value >> input_bit[bit]) & 1u) << bit);
+  return result;
+}
+
+static uint32_t sc88_wave_descramble_address(uint32_t value)
+{
+  static const uint8_t input_bit[21] = {
+    0, 4, 2, 3, 1, 13, 7, 12, 5, 10, 16,
+    9, 6, 8, 14, 17, 11, 15, 18, 19, 20
+  };
+  uint32_t result = 0;
+  unsigned bit;
+  for (bit = 0; bit < 21; ++bit)
+    result |= ((value >> input_bit[bit]) & 1u) << bit;
+  return result;
+}
+
+bool sc88_wave_descramble_chip(const uint8_t *raw, size_t raw_size,
+                               uint8_t *decoded, size_t decoded_size)
+{
+  uint32_t source;
+
+  if (!raw || !decoded || raw == decoded || raw_size != SC88_WAVE_CHIP_SIZE ||
+      decoded_size < SC88_WAVE_CHIP_SIZE)
+    return false;
+  for (source = 0; source < SC88_WAVE_CHIP_SIZE; ++source) {
+    const bool header = source < 0x20 ||
+      (source >= SC88_WAVE_BANK_SIZE &&
+       source < SC88_WAVE_BANK_SIZE + 0x20);
+    decoded[header ? source : sc88_wave_descramble_address(source)] =
+      header ? raw[source] : sc88_wave_descramble_byte(raw[source]);
+  }
+  return true;
+}
+
 bool sc88_wave_descriptor_parse(const uint8_t *raw, size_t size,
                                 struct sc88_wave_descriptor *out)
 {

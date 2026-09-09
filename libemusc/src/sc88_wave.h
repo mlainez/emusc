@@ -12,6 +12,7 @@ extern "C" {
 
 #define SC88_WAVE_DESCRIPTOR_SIZE 20u
 #define SC88_WAVE_BANK_SIZE 0x100000u
+#define SC88_WAVE_CHIP_SIZE 0x200000u
 #define SC88_WAVE_SAMPLE_RATE 32000u
 
 enum sc88_wave_loop_type {
@@ -66,6 +67,12 @@ int16_t sc88_wave_pitch_correction(const struct sc88_wave_descriptor *desc,
 bool sc88_wave_prepare_registers(const struct sc88_wave_descriptor *desc,
                                  bool suppress_start_offset,
                                  struct sc88_wave_registers *out);
+
+/* Undo the SC-88 board's 21 address-line and eight data-line permutations.
+ * One physical dump contains two logical one-MiB banks. Source and destination
+ * must not overlap. The two 32-byte plaintext headers pass through unchanged. */
+bool sc88_wave_descramble_chip(const uint8_t *raw, size_t raw_size,
+                               uint8_t *decoded, size_t decoded_size);
 
 bool sc88_fce_decoder_reset(struct sc88_fce_decoder *decoder,
                             uint32_t sample_start);
