@@ -532,6 +532,7 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
     if (slot->component.tvf_envelope.active) {
+      sc88_tvf_latch_frequency(&slot->component.tvf);
       (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
                                       elapsed);
       (void)sc88_tvf_update_frequency(
@@ -572,6 +573,11 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
         continue;
       if (slot->component.active &&
           sc88_oscillator_next(&slot->component.oscillator, &sample)) {
+        if (engine->renderer->tvf_audio_transfer)
+          sample = engine->renderer->tvf_audio_transfer(
+            engine->renderer->tvf_audio_user, &slot->component.tvf_audio,
+            &slot->component.tvf,
+            engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS, sample);
         uint32_t envelope_gain = sc88_tva_envelope_linear_q17(
           &slot->component.envelope,
           engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);

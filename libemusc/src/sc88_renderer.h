@@ -32,6 +32,8 @@ struct sc88_renderer {
   enum sc88_fractional_wrap wrap;
   struct sc88_tva_levels levels;
   struct sc88_pan_controls pan;
+  sc88_tvf_audio_transfer_fn tvf_audio_transfer;
+  void *tvf_audio_user;
 };
 
 struct sc88_render_component {
@@ -45,6 +47,7 @@ struct sc88_render_component {
   struct sc88_tva_release release;
   struct sc88_tvf_registers tvf;
   struct sc88_tvf_envelope tvf_envelope;
+  struct sc88_tvf_audio_state tvf_audio;
   int16_t tvf_key_modulation;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;
@@ -63,6 +66,8 @@ struct sc88_render_voice {
   uint8_t key;
   uint8_t velocity;
   float provisional_gain;
+  sc88_tvf_audio_transfer_fn tvf_audio_transfer;
+  void *tvf_audio_user;
 };
 
 /* Firmware key transform at SC88-CTL 0x60c7..0x6123. */
@@ -85,9 +90,13 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
                               const struct sc88_tva_levels *levels);
 void sc88_renderer_set_pan(struct sc88_renderer *renderer,
                            const struct sc88_pan_controls *pan);
+void sc88_renderer_set_tvf_audio_transfer(
+  struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
+  void *user);
 
-/* The explicit gain is the temporary envelope-Amp seam. Static TVA, release
- * headroom and pan are native ROM paths; filter/effects remain separate. */
+/* The explicit gain is temporary output trim. Static TVA, release, pan and
+ * exact TVF control state are native ROM paths; the audio-side TVF callback
+ * and effects remain explicit seams. */
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,

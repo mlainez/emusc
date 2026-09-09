@@ -49,6 +49,7 @@ static void make_control(uint8_t *control)
   put16(control + 0x40000 + 0x10, 0xb6d0);
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  control[0x40000 + 34 + 0x3e] = 0xff;
   put16(control + 0x40000 + 34 + 0x78, 0xffff);
   control[0x40000 + 34 + 0x80] = 1;
   control[0x30010] = 127;

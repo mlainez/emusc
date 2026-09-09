@@ -63,6 +63,14 @@ int main(void)
   assert(registers.resonance_target == 0x80000);
   assert(registers.filter_select == 0x0800);
   assert(registers.fixed_tuple);
+  {
+    struct sc88_tvf_audio_state audio;
+    float sample;
+    sc88_tvf_audio_reset(&audio);
+    sample = sc88_tvf_audio_process_provisional(
+      NULL, &audio, &registers, 1.0, 0.25f);
+    assert(sample == 0.25f);
+  }
 
   component_bytes[0x3e] = 0;
   put16(component_bytes + 0x3a, 0x1000);
@@ -108,6 +116,14 @@ int main(void)
                                       &registers));
     assert(sc88_tvf_update_frequency(&rom, envelope.current, &registers));
     assert(registers.frequency_target != registers.frequency_current);
+    {
+      struct sc88_tvf_audio_state audio;
+      float filtered;
+      sc88_tvf_audio_reset(&audio);
+      filtered = sc88_tvf_audio_process_provisional(
+        NULL, &audio, &registers, 0.5, 1.0f);
+      assert(filtered > 0.0f && filtered < 1.0f);
+    }
   }
 
   free(bytes);

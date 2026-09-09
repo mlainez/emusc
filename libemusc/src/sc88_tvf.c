@@ -2,6 +2,7 @@
 #include "sc88_tvf.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 #define SC88_TVF_BASE_TABLE 0x78702u
@@ -380,4 +381,65 @@ void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
 {
   if (registers)
     registers->frequency_current = registers->frequency_target;
+}
+
+void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state)
+{
+  if (state)
+    memset(state, 0, sizeof *state);
+}
+
+float sc88_tvf_audio_process_provisional(
+  void *user, struct sc88_tvf_audio_state *state,
+  const struct sc88_tvf_registers *registers,
+  double period_fraction, float input)
+{
+  double word;
+  double f1;
+  double sine;
+  double g;
+  double damping;
+  double denominator;
+  double high;
+  double band;
+  double low;
+  unsigned mode;
+
+  (void)user;
+  if (!state || !registers)
+    return input;
+  if (period_fraction < 0.0)
+    period_fraction = 0.0;
+  else if (period_fraction > 1.0)
+    period_fraction = 1.0;
+  word = registers->frequency_current + period_fraction *
+    ((double)registers->frequency_target - registers->frequency_current);
+  f1 = word / 262144.0;
+  if (f1 < 0.0)
+    f1 = 0.0;
+  else if (f1 > 1.0)
+    f1 = 1.0;
+
+  /* Provisional interpretation: the 15-bit value before the firmware's
+   * three-bit XP expansion is Chamberlin F1 = 2*sin(pi*fc/fs). Convert it
+   * to the equivalent stable topology-preserving integrator coefficient. */
+  sine = f1 * 0.5;
+  g = sine / sqrt(1.0 - sine * sine);
+  damping = 2.0 - 1.9 * (registers->resonance_index / 127.0);
+  denominator = 1.0 + damping * g + g * g;
+  high = (input - (damping + g) * state->integrator_band -
+          state->integrator_low) / denominator;
+  band = g * high + state->integrator_band;
+  low = g * band + state->integrator_low;
+  state->integrator_band = (float)(2.0 * band - state->integrator_band);
+  state->integrator_low = (float)(2.0 * low - state->integrator_low);
+
+  mode = (registers->filter_select >> 10) & 3u;
+  if (mode == 0)
+    return (float)low;
+  if (mode == 1)
+    return (float)band;
+  if (mode == 2)
+    return (float)high;
+  return input;
 }

@@ -49,6 +49,19 @@ struct sc88_tvf_envelope {
   bool active;
 };
 
+/* Replaceable audio-side interpretation of the still-undecoded XP words.
+ * This state-variable topology is intentionally separate from the exact CPU
+ * state above. */
+struct sc88_tvf_audio_state {
+  float integrator_band;
+  float integrator_low;
+};
+
+typedef float (*sc88_tvf_audio_transfer_fn)(
+  void *user, struct sc88_tvf_audio_state *state,
+  const struct sc88_tvf_registers *registers,
+  double period_fraction, float input);
+
 /* pre_base_modulation is the wrapped key/dynamic word prepared before the
  * base-table lookup. Envelope and release modulation are added afterward by
  * sc88_tvf_update_frequency. */
@@ -83,6 +96,12 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
                                int16_t post_base_modulation,
                                struct sc88_tvf_registers *registers);
 void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers);
+
+void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state);
+float sc88_tvf_audio_process_provisional(
+  void *user, struct sc88_tvf_audio_state *state,
+  const struct sc88_tvf_registers *registers,
+  double period_fraction, float input);
 
 #ifdef __cplusplus
 }

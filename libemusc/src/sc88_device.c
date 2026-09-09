@@ -73,8 +73,11 @@ static bool sc88_device_init_common(
   }
   if (!sc88_renderer_init(&device->renderer, device->control_rom,
                           SC88_CONTROL_ROM_SIZE, device->banks,
-                          SC88_WAVE_BANK_COUNT, output_rate, wrap) ||
-      !sc88_engine_init(&device->engine, &device->renderer))
+                          SC88_WAVE_BANK_COUNT, output_rate, wrap))
+    goto fail;
+  sc88_renderer_set_tvf_audio_transfer(
+    &device->renderer, sc88_tvf_audio_process_provisional, NULL);
+  if (!sc88_engine_init(&device->engine, &device->renderer))
     goto fail;
   device->initialized = true;
   sc88_device_reset_controllers(device);

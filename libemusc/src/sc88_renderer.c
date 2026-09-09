@@ -154,6 +154,16 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
   renderer->levels = *levels;
 }
 
+void sc88_renderer_set_tvf_audio_transfer(
+  struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
+  void *user)
+{
+  if (!renderer)
+    return;
+  renderer->tvf_audio_transfer = transfer;
+  renderer->tvf_audio_user = user;
+}
+
 static const struct sc88_wave_bank *sc88_renderer_find_bank(
   const struct sc88_renderer *renderer, uint8_t selector)
 {
@@ -221,6 +231,8 @@ bool sc88_renderer_note_on_with_controls(
   voice->key = key;
   voice->velocity = velocity;
   voice->provisional_gain = provisional_gain;
+  voice->tvf_audio_transfer = renderer->tvf_audio_transfer;
+  voice->tvf_audio_user = renderer->tvf_audio_user;
 
   for (i = 0; i < tone.component_count; ++i) {
     struct sc88_render_component *render_component = voice->components + i;
@@ -280,6 +292,7 @@ bool sc88_renderer_note_on_with_controls(
           &render_component->tvf))
       goto fail;
     sc88_tvf_latch_frequency(&render_component->tvf);
+    sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
@@ -341,6 +354,10 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
       float sample;
       if (component->active &&
           sc88_oscillator_next(&component->oscillator, &sample)) {
+        if (voice->tvf_audio_transfer)
+          sample = voice->tvf_audio_transfer(
+            voice->tvf_audio_user, &component->tvf_audio, &component->tvf,
+            1.0, sample);
         float gained = sample * (component->static_gain_q17 / 131072.0f);
         left += gained * (component->left_gain_q15 / 32768.0f);
         right += gained * (component->right_gain_q15 / 32768.0f);

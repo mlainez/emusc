@@ -75,6 +75,7 @@ if(BUILD_TESTING)
   add_executable(sc88_tvf_test ../tests/sc88_tvf_test.c sc88_rom.c
                                sc88_tvf.c sc88_wave.c)
   target_include_directories(sc88_tvf_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(sc88_tvf_test PRIVATE m)
   set_target_properties(sc88_tvf_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_tvf_test COMMAND sc88_tvf_test)
 
@@ -86,6 +87,7 @@ if(BUILD_TESTING)
   add_executable(sc88_rom_test ../tests/sc88_rom_test.c sc88_pan.c sc88_rom.c
                                  sc88_tva.c sc88_tvf.c sc88_wave.c)
   target_include_directories(sc88_rom_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(sc88_rom_test PRIVATE m)
   set_target_properties(sc88_rom_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
   add_test(NAME sc88_rom_test COMMAND sc88_rom_test)
 
