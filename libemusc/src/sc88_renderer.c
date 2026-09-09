@@ -233,6 +233,7 @@ bool sc88_renderer_note_on_with_controls(
     uint32_t pitch_word;
     uint32_t pcm_base;
     size_t capacity;
+    int16_t tvf_key_modulation;
 
     if (!sc88_rom_open_component(&renderer->rom, &tone, i, &component))
       goto fail;
@@ -263,15 +264,23 @@ bool sc88_renderer_note_on_with_controls(
         !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
                                    (uint8_t)selector_key, velocity,
                                    &render_component->envelope) ||
+        !sc88_tvf_key_modulation(&renderer->rom, &tone, &component,
+                                 (uint8_t)selector_key,
+                                 &tvf_key_modulation) ||
         !sc88_tvf_envelope_prepare(&renderer->rom, &tone, &component,
                                     (uint8_t)selector_key, velocity, false,
                                     &render_component->tvf_envelope) ||
         !sc88_tvf_prepare_registers(
                                     &renderer->rom, &component,
-                                    render_component->tvf_envelope.current,
+                                    tvf_key_modulation,
                                     &tvf_controls,
-                                    &render_component->tvf))
+                                    &render_component->tvf) ||
+        !sc88_tvf_update_frequency(
+          &renderer->rom, render_component->tvf_envelope.current,
+          &render_component->tvf))
       goto fail;
+    sc88_tvf_latch_frequency(&render_component->tvf);
+    render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;

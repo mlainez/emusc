@@ -45,6 +45,7 @@ struct sc88_render_component {
   struct sc88_tva_release release;
   struct sc88_tvf_registers tvf;
   struct sc88_tvf_envelope tvf_envelope;
+  int16_t tvf_key_modulation;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;
   int16_t pan_component_offset;

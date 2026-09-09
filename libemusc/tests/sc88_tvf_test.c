@@ -76,11 +76,22 @@ int main(void)
   component_bytes[0x56] = 1;
   component_bytes[0x57] = 1;
   put16(component_bytes + 0x5a, 0x1100);
+  put16(component_bytes + 0x40, 0x1200);
+  put16(component_bytes + 0x42, 0x4000);
+  put16(bytes + 0x1200 + 60 * 2, 0x4000);
   put16(bytes + 0x1543e + 2, 0x4000);
   put16(bytes + 0x1573e + 64 * 2, 0x0100);
   put16(bytes + 0x78802 + 12 * 2, 0xffff);
   {
     struct sc88_tvf_envelope envelope;
+    int16_t key_modulation;
+    assert(sc88_tvf_key_modulation(&rom, &tone, &component, 60,
+                                    &key_modulation));
+    assert(key_modulation == 0x2000);
+    put16(bytes + 0x1200 + 60 * 2, 0xc000);
+    assert(sc88_tvf_key_modulation(&rom, &tone, &component, 60,
+                                    &key_modulation));
+    assert(key_modulation == -0x2000);
     assert(sc88_tvf_envelope_prepare(&rom, &tone, &component, 60, 100,
                                       false, &envelope));
     assert(envelope.depth == 0x3fff);

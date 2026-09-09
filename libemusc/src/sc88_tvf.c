@@ -47,7 +47,7 @@ static int sc88_tvf_clamp_index(int value)
 
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 const struct sc88_component *component,
-                                int16_t accumulated_modulation,
+                                int16_t pre_base_modulation,
                                 const struct sc88_tvf_controls *controls,
                                 struct sc88_tvf_registers *registers)
 {
@@ -90,12 +90,13 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
 
   combined = sc88_tvf_be16(rom->bytes + SC88_TVF_BASE_TABLE +
                            (unsigned)cutoff_index * 2u);
-  combined += accumulated_modulation;
+  combined += pre_base_modulation;
   if (combined < 0)
     combined = 0;
   else if (combined > UINT16_MAX)
     combined = UINT16_MAX;
   combined >>= 1;
+  registers->base_value = (uint16_t)combined;
   limit = (uint16_t)(sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE + (unsigned)resonance_index * 2u) >> 1);
   if (combined > limit)
@@ -109,6 +110,30 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
   registers->resonance_current = (uint32_t)resonance_index << 11;
   registers->resonance_target = (uint32_t)resonance_index << 13;
   registers->filter_select = (uint16_t)((unsigned)mode << 8);
+  return true;
+}
+
+bool sc88_tvf_key_modulation(const struct sc88_rom *rom,
+                             const struct sc88_tone *tone,
+                             const struct sc88_component *component,
+                             uint8_t selector_key, int16_t *modulation)
+{
+  uint32_t table;
+  int16_t key_value;
+  int16_t factor;
+  int32_t high;
+  if (!rom || !rom->bytes || !tone || !tone->common || !component ||
+      !component->bytes || !modulation || selector_key > 127)
+    return false;
+  table = ((uint32_t)tone->common[0x21] << 16) |
+    sc88_tvf_be16(component->bytes + 0x40);
+  if (table + (uint32_t)selector_key * 2 + 2 > rom->size)
+    return false;
+  key_value = sc88_tvf_s16(sc88_tvf_be16(
+    rom->bytes + table + (uint32_t)selector_key * 2));
+  factor = sc88_tvf_s16(sc88_tvf_be16(component->bytes + 0x42));
+  high = sc88_tvf_floor_div_pow2((int32_t)key_value * factor, 16);
+  *modulation = sc88_tvf_s16((uint16_t)((uint16_t)high << 1));
   return true;
 }
 
@@ -329,30 +354,30 @@ bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
 }
 
 bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
-                               int16_t accumulated_modulation,
+                               int16_t post_base_modulation,
                                struct sc88_tvf_registers *registers)
 {
-  int32_t combined;
+  uint16_t combined;
   uint16_t limit;
   if (!rom || !rom->bytes || !registers ||
       rom->size < SC88_TVF_LIMIT_TABLE + 256u)
     return false;
   if (registers->fixed_tuple)
     return true;
-  combined = sc88_tvf_be16(rom->bytes + SC88_TVF_BASE_TABLE +
-                           (uint32_t)registers->cutoff_index * 2);
-  combined += accumulated_modulation;
-  if (combined < 0)
-    combined = 0;
-  else if (combined > UINT16_MAX)
-    combined = UINT16_MAX;
-  combined >>= 1;
+  combined = (uint16_t)(registers->base_value +
+                        (uint16_t)post_base_modulation);
   limit = (uint16_t)(sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE +
     (uint32_t)registers->resonance_index * 2) >> 1);
   if (combined > limit)
     combined = limit;
-  registers->combined = (uint16_t)combined;
+  registers->combined = combined;
   registers->frequency_target = (uint32_t)combined << 3;
   return true;
+}
+
+void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
+{
+  if (registers)
+    registers->frequency_current = registers->frequency_target;
 }
