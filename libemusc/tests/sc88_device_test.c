@@ -121,6 +121,12 @@ int main(int argc, char **argv)
     double unity_step = device.engine.slots[0].component.oscillator.step;
     assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
     assert(device.engine.slots[0].component.oscillator.step > unity_step);
+    assert(sc88_device_midi(&device, 0, 0xb0, 101, 0));
+    assert(sc88_device_midi(&device, 0, 0xb0, 100, 0));
+    assert(sc88_device_midi(&device, 0, 0xb0, 6, 12));
+    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
+    assert(fabs(device.engine.slots[0].component.oscillator.step /
+                unity_step - 1.9998) < 0.001);
     assert(sc88_device_midi(&device, 0, 0xb0, 121, 0));
     assert(fabs(device.engine.slots[0].component.oscillator.step -
                 unity_step) < 1e-12);
