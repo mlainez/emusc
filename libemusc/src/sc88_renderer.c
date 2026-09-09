@@ -263,7 +263,12 @@ bool sc88_renderer_note_on_with_controls(
         !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
                                    (uint8_t)selector_key, velocity,
                                    &render_component->envelope) ||
-        !sc88_tvf_prepare_registers(&renderer->rom, &component, 0,
+        !sc88_tvf_envelope_prepare(&renderer->rom, &tone, &component,
+                                    (uint8_t)selector_key, velocity, false,
+                                    &render_component->tvf_envelope) ||
+        !sc88_tvf_prepare_registers(
+                                    &renderer->rom, &component,
+                                    render_component->tvf_envelope.current,
                                     &tvf_controls,
                                     &render_component->tvf))
       goto fail;

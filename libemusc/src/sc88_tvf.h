@@ -34,6 +34,20 @@ struct sc88_tvf_registers {
   bool fixed_tuple;
 };
 
+struct sc88_tvf_envelope {
+  int16_t targets[4];
+  uint16_t initial_phases[4];
+  uint16_t increments[4];
+  uint16_t depth;
+  uint8_t stage;
+  uint8_t saved_count;
+  uint16_t phase;
+  int16_t base;
+  int16_t delta;
+  int16_t current;
+  bool active;
+};
+
 /* accumulated_modulation is the signed word prepared before the base-table
  * lookup (key, envelope and dynamic modulation). Supplying zero preserves an
  * explicit seam while those producers are integrated. */
@@ -42,6 +56,24 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 int16_t accumulated_modulation,
                                 const struct sc88_tvf_controls *controls,
                                 struct sc88_tvf_registers *registers);
+
+/* Exact note-on depth, key/velocity rate scaling, targets and CPU clock.
+ * Attack/decay controller modifiers are neutral; soft_pedal selects the
+ * recovered velocity reduction before the depth curve lookup. */
+bool sc88_tvf_envelope_prepare(const struct sc88_rom *rom,
+                               const struct sc88_tone *tone,
+                               const struct sc88_component *component,
+                               uint8_t selector_key, uint8_t velocity,
+                               bool soft_pedal,
+                               struct sc88_tvf_envelope *envelope);
+bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
+                               unsigned elapsed_periods);
+
+/* Recompose TVF-F from an already prepared accumulator while retaining the
+ * note-start Q/type tuple. Fixed negative-mode tuples remain unchanged. */
+bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
+                               int16_t accumulated_modulation,
+                               struct sc88_tvf_registers *registers);
 
 #ifdef __cplusplus
 }

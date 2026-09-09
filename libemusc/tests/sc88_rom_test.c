@@ -72,6 +72,7 @@ static void test_held_rom(const char *path)
           struct sc88_tva_release release;
           struct sc88_tva_envelope envelope;
           struct sc88_tvf_registers tvf;
+          struct sc88_tvf_envelope tvf_envelope;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
@@ -103,6 +104,10 @@ static void test_held_rom(const char *path)
           assert(tvf.resonance_interpolation == 0x095f);
           assert(tvf.frequency_target == tvf.frequency_current);
           assert(tvf.resonance_target >> 2 == tvf.resonance_current);
+          assert(sc88_tvf_envelope_prepare(
+            &rom, &tone, &component, (uint8_t)key, 100, false,
+            &tvf_envelope));
+          assert(tvf_envelope.depth == 0 || tvf_envelope.stage <= 1);
           ++selected;
         }
         assert(selected > 0);

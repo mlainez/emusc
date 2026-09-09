@@ -25,6 +25,8 @@ int main(void)
   uint8_t component_bytes[SC88_COMPONENT_SIZE] = {0};
   struct sc88_rom rom;
   struct sc88_component component = {component_bytes, 0, 0};
+  uint8_t tone_common[SC88_TONE_COMMON_SIZE] = {0};
+  struct sc88_tone tone = {tone_common, 0x40000, 1};
   const struct sc88_tvf_controls neutral = {64, 64, 64, 64};
   struct sc88_tvf_registers registers;
 
@@ -61,6 +63,41 @@ int main(void)
   assert(registers.resonance_target == 0x80000);
   assert(registers.filter_select == 0x0800);
   assert(registers.fixed_tuple);
+
+  component_bytes[0x3e] = 0;
+  put16(component_bytes + 0x3a, 0x1000);
+  put16(component_bytes + 0x48, 0x4000);
+  put16(component_bytes + 0x4a, 0x4000);
+  put16(component_bytes + 0x4c, 0x2000);
+  put16(component_bytes + 0x4e, 0xe000);
+  put16(component_bytes + 0x50, 0);
+  component_bytes[0x54] = 0;
+  component_bytes[0x55] = 1;
+  component_bytes[0x56] = 1;
+  component_bytes[0x57] = 1;
+  put16(component_bytes + 0x5a, 0x1100);
+  put16(bytes + 0x1543e + 2, 0x4000);
+  put16(bytes + 0x1573e + 64 * 2, 0x0100);
+  put16(bytes + 0x78802 + 12 * 2, 0xffff);
+  {
+    struct sc88_tvf_envelope envelope;
+    assert(sc88_tvf_envelope_prepare(&rom, &tone, &component, 60, 100,
+                                      false, &envelope));
+    assert(envelope.depth == 0x3fff);
+    assert(envelope.targets[0] == 0x0fff);
+    assert(envelope.targets[1] == 0x07ff);
+    assert(envelope.targets[2] == -0x0800);
+    assert(envelope.stage == 1);
+    assert(envelope.base == envelope.targets[0]);
+    assert(envelope.current == envelope.targets[0]);
+    assert(envelope.increments[1] == 0x4000);
+    assert(sc88_tvf_envelope_advance(&envelope, 1));
+    assert(envelope.current < envelope.targets[0]);
+    assert(sc88_tvf_prepare_registers(&rom, &component, 0, &neutral,
+                                      &registers));
+    assert(sc88_tvf_update_frequency(&rom, envelope.current, &registers));
+    assert(registers.frequency_target != registers.frequency_current);
+  }
 
   free(bytes);
   return 0;

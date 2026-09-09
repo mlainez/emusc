@@ -531,6 +531,13 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                             &slot->component.right_gain_q15);
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
+    if (slot->component.tvf_envelope.active) {
+      (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
+                                      elapsed);
+      (void)sc88_tvf_update_frequency(
+        &engine->renderer->rom, slot->component.tvf_envelope.current,
+        &slot->component.tvf);
+    }
     if (!slot->component.release.active)
       continue;
     note = engine->notes + slot->note;
