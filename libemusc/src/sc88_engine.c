@@ -1,0 +1,406 @@
+/* SPDX-License-Identifier: CC0-1.0 */
+#include "sc88_engine.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#define SC88_CONTROL_TIMER_HZ 1250000.0
+#define SC88_CONTROL_PERIOD_CLOCKS 10001.0
+
+static void sc88_engine_queue_note(struct sc88_engine *engine, uint8_t note)
+{
+  engine->note_next_free[note] = SC88_ENGINE_NONE;
+  if (engine->free_note_tail == SC88_ENGINE_NONE)
+    engine->free_note_head = note;
+  else
+    engine->note_next_free[engine->free_note_tail] = note;
+  engine->free_note_tail = note;
+}
+
+static uint8_t sc88_engine_pop_note(struct sc88_engine *engine)
+{
+  uint8_t note = engine->free_note_head;
+  if (note == SC88_ENGINE_NONE)
+    return note;
+  engine->free_note_head = engine->note_next_free[note];
+  if (engine->free_note_head == SC88_ENGINE_NONE)
+    engine->free_note_tail = SC88_ENGINE_NONE;
+  engine->note_next_free[note] = SC88_ENGINE_NONE;
+  return note;
+}
+
+static void sc88_engine_queue_slot(struct sc88_engine *engine, uint8_t slot)
+{
+  engine->slots[slot].next_free = SC88_ENGINE_NONE;
+  if (engine->free_slot_tail == SC88_ENGINE_NONE)
+    engine->free_slot_head = slot;
+  else
+    engine->slots[engine->free_slot_tail].next_free = slot;
+  engine->free_slot_tail = slot;
+  ++engine->free_slot_count;
+}
+
+static uint8_t sc88_engine_pop_slot(struct sc88_engine *engine)
+{
+  uint8_t slot = engine->free_slot_head;
+  if (slot == SC88_ENGINE_NONE)
+    return slot;
+  engine->free_slot_head = engine->slots[slot].next_free;
+  if (engine->free_slot_head == SC88_ENGINE_NONE)
+    engine->free_slot_tail = SC88_ENGINE_NONE;
+  engine->slots[slot].next_free = SC88_ENGINE_NONE;
+  --engine->free_slot_count;
+  return slot;
+}
+
+bool sc88_engine_init(struct sc88_engine *engine,
+                      const struct sc88_renderer *renderer)
+{
+  unsigned i;
+  if (!engine || !renderer || renderer->output_rate <= 0.0)
+    return false;
+  memset(engine, 0, sizeof *engine);
+  engine->renderer = renderer;
+  engine->free_note_head = 0;
+  engine->free_note_tail = SC88_ENGINE_NOTE_COUNT - 1;
+  engine->free_slot_head = 0;
+  engine->free_slot_tail = SC88_ENGINE_SLOT_COUNT - 1;
+  engine->free_slot_count = SC88_ENGINE_SLOT_COUNT;
+  engine->next_serial = 1;
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+    engine->note_next_free[i] = i + 1 < SC88_ENGINE_NOTE_COUNT
+      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    engine->slots[i].note = SC88_ENGINE_NONE;
+    engine->slots[i].next_free = i + 1 < SC88_ENGINE_SLOT_COUNT
+      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
+  }
+  return true;
+}
+
+static void sc88_engine_free_note_if_empty(struct sc88_engine *engine,
+                                           uint8_t note_index)
+{
+  struct sc88_engine_note *note = engine->notes + note_index;
+  if (!note->allocated || note->slot_count)
+    return;
+  memset(note, 0, sizeof *note);
+  sc88_engine_queue_note(engine, note_index);
+}
+
+static void sc88_engine_free_slot(struct sc88_engine *engine,
+                                  uint8_t slot_index, bool prepend)
+{
+  struct sc88_engine_slot *slot = engine->slots + slot_index;
+  uint8_t note_index;
+  unsigned i;
+  if (!slot->allocated)
+    return;
+  note_index = slot->note;
+  if (note_index < SC88_ENGINE_NOTE_COUNT) {
+    struct sc88_engine_note *note = engine->notes + note_index;
+    for (i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
+      if (note->slots[i] == slot_index) {
+        note->slots[i] = SC88_ENGINE_NONE;
+        --note->slot_count;
+        break;
+      }
+    }
+  }
+  free(slot->component.pcm24);
+  memset(slot, 0, sizeof *slot);
+  slot->note = SC88_ENGINE_NONE;
+  if (prepend) {
+    slot->next_free = engine->free_slot_head;
+    engine->free_slot_head = slot_index;
+    if (engine->free_slot_tail == SC88_ENGINE_NONE)
+      engine->free_slot_tail = slot_index;
+    ++engine->free_slot_count;
+  } else {
+    sc88_engine_queue_slot(engine, slot_index);
+  }
+  if (note_index < SC88_ENGINE_NOTE_COUNT)
+    sc88_engine_free_note_if_empty(engine, note_index);
+}
+
+void sc88_engine_destroy(struct sc88_engine *engine)
+{
+  unsigned i;
+  if (!engine)
+    return;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+    if (engine->slots[i].allocated)
+      free(engine->slots[i].component.pcm24);
+  memset(engine, 0, sizeof *engine);
+}
+
+void sc88_engine_set_control_service(struct sc88_engine *engine,
+                                     sc88_control_service_fn service,
+                                     void *user)
+{
+  if (!engine)
+    return;
+  engine->control_service = service;
+  engine->control_user = user;
+}
+
+static uint8_t sc88_engine_oldest_slot(const struct sc88_engine *engine,
+                                       bool released_only)
+{
+  uint8_t candidate = SC88_ENGINE_NONE;
+  uint64_t serial = UINT64_MAX;
+  unsigned i;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    const struct sc88_engine_slot *slot = engine->slots + i;
+    const struct sc88_engine_note *note;
+    if (!slot->allocated || slot->note >= SC88_ENGINE_NOTE_COUNT)
+      continue;
+    note = engine->notes + slot->note;
+    if (released_only && note->key_down)
+      continue;
+    if (slot->serial < serial) {
+      candidate = (uint8_t)i;
+      serial = slot->serial;
+    }
+  }
+  return candidate;
+}
+
+static void sc88_engine_reclaim_slots(struct sc88_engine *engine,
+                                      unsigned count)
+{
+  while (count--) {
+    uint8_t slot = sc88_engine_oldest_slot(engine, true);
+    if (slot == SC88_ENGINE_NONE)
+      slot = sc88_engine_oldest_slot(engine, false);
+    if (slot == SC88_ENGINE_NONE)
+      return;
+    sc88_engine_free_slot(engine, slot, false);
+  }
+}
+
+static bool sc88_engine_note_matches(const struct sc88_engine_note *note,
+                                     uint8_t part, uint8_t key,
+                                     uint32_t tone_offset, uint8_t context)
+{
+  return note->allocated && note->part == part && note->key == key &&
+    note->tone_offset == tone_offset && note->context == context;
+}
+
+static void sc88_engine_recycle_note(struct sc88_engine *engine,
+                                     uint8_t note_index)
+{
+  uint8_t slots[SC88_MAX_TONE_COMPONENTS];
+  unsigned i;
+  memcpy(slots, engine->notes[note_index].slots, sizeof slots);
+  for (i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
+    uint8_t slot = slots[SC88_MAX_TONE_COMPONENTS - 1 - i];
+    if (slot != SC88_ENGINE_NONE)
+      sc88_engine_free_slot(engine, slot, true);
+  }
+}
+
+static void sc88_engine_apply_same_note_mode(
+  struct sc88_engine *engine, const struct sc88_render_voice *voice,
+  uint8_t part, uint8_t key, uint8_t context, enum sc88_same_note_mode mode)
+{
+  uint8_t oldest = SC88_ENGINE_NONE;
+  uint64_t oldest_serial = UINT64_MAX;
+  unsigned matches = 0;
+  unsigned i;
+  if (mode == SC88_SAME_NOTE_FULL_MULTI)
+    return;
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    const struct sc88_engine_note *note = engine->notes + i;
+    if (!sc88_engine_note_matches(note, part, key, voice->tone_offset,
+                                  context))
+      continue;
+    ++matches;
+    if (note->serial < oldest_serial) {
+      oldest = (uint8_t)i;
+      oldest_serial = note->serial;
+    }
+  }
+  if (oldest != SC88_ENGINE_NONE &&
+      (mode == SC88_SAME_NOTE_SINGLE || matches >= 2))
+    sc88_engine_recycle_note(engine, oldest);
+}
+
+bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
+                         uint8_t variation, uint8_t program,
+                         uint8_t key, uint8_t velocity, uint8_t context,
+                         enum sc88_same_note_mode mode,
+                         float provisional_gain)
+{
+  struct sc88_render_voice voice = {0};
+  struct sc88_engine_note *note;
+  uint8_t note_index;
+  unsigned i;
+
+  if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
+      mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
+      !sc88_renderer_note_on(engine->renderer, &voice, variation, program,
+                             key, velocity, provisional_gain))
+    return false;
+  sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
+  if (engine->free_slot_count < voice.component_count)
+    sc88_engine_reclaim_slots(engine,
+      voice.component_count - engine->free_slot_count);
+  note_index = sc88_engine_pop_note(engine);
+  if (note_index == SC88_ENGINE_NONE ||
+      engine->free_slot_count < voice.component_count)
+    goto fail;
+  note = engine->notes + note_index;
+  memset(note, 0, sizeof *note);
+  note->slots[0] = SC88_ENGINE_NONE;
+  note->slots[1] = SC88_ENGINE_NONE;
+  note->allocated = true;
+  note->key_down = true;
+  note->part = part;
+  note->key = key;
+  note->velocity = velocity;
+  note->context = context;
+  note->tone_offset = voice.tone_offset;
+  note->serial = engine->next_serial++;
+  note->provisional_gain = provisional_gain;
+  for (i = 0; i < voice.component_count; ++i) {
+    uint8_t slot_index = sc88_engine_pop_slot(engine);
+    struct sc88_engine_slot *slot = engine->slots + slot_index;
+    slot->allocated = true;
+    slot->note = note_index;
+    slot->serial = engine->next_serial++;
+    slot->component = voice.components[i];
+    voice.components[i].pcm24 = NULL;
+    voice.components[i].active = false;
+    note->slots[i] = slot_index;
+    ++note->slot_count;
+  }
+  return true;
+
+fail:
+  sc88_renderer_voice_destroy(&voice);
+  return false;
+}
+
+bool sc88_engine_note_off(struct sc88_engine *engine, uint8_t part,
+                          uint8_t key)
+{
+  uint8_t candidate = SC88_ENGINE_NONE;
+  uint64_t serial = UINT64_MAX;
+  unsigned i;
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || key > 127)
+    return false;
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    const struct sc88_engine_note *note = engine->notes + i;
+    if (note->allocated && note->key_down && note->part == part &&
+        note->key == key && note->serial < serial) {
+      candidate = (uint8_t)i;
+      serial = note->serial;
+    }
+  }
+  if (candidate == SC88_ENGINE_NONE)
+    return false;
+  engine->notes[candidate].key_down = false;
+  engine->notes[candidate].hold_retained = engine->parts[part].hold;
+  engine->notes[candidate].sostenuto_retained =
+    engine->parts[part].sostenuto &&
+    (engine->parts[part].sostenuto_keys[key >> 3] &
+     (uint8_t)(1u << (key & 7))) != 0;
+  return true;
+}
+
+void sc88_engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled)
+{
+  unsigned i;
+  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].hold = enabled;
+  if (enabled)
+    return;
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+    if (engine->notes[i].allocated && engine->notes[i].part == part)
+      engine->notes[i].hold_retained = false;
+}
+
+void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
+                           bool enabled)
+{
+  unsigned i;
+  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].sostenuto = enabled;
+  memset(engine->parts[part].sostenuto_keys, 0,
+         sizeof engine->parts[part].sostenuto_keys);
+  if (enabled) {
+    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+      const struct sc88_engine_note *note = engine->notes + i;
+      if (note->allocated && note->key_down && note->part == part)
+        engine->parts[part].sostenuto_keys[note->key >> 3] |=
+          (uint8_t)(1u << (note->key & 7));
+    }
+  } else {
+    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+      if (engine->notes[i].allocated && engine->notes[i].part == part)
+        engine->notes[i].sostenuto_retained = false;
+  }
+}
+
+unsigned sc88_engine_active_slots(const struct sc88_engine *engine)
+{
+  return engine ? SC88_ENGINE_SLOT_COUNT - engine->free_slot_count : 0;
+}
+
+unsigned sc88_engine_released_slots(const struct sc88_engine *engine)
+{
+  unsigned count = 0;
+  unsigned i;
+  if (!engine)
+    return 0;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+    if (engine->slots[i].allocated &&
+        !engine->notes[engine->slots[i].note].key_down)
+      ++count;
+  return count;
+}
+
+static void sc88_engine_run_scheduler(struct sc88_engine *engine)
+{
+  unsigned elapsed;
+  engine->scheduler_clocks +=
+    SC88_CONTROL_TIMER_HZ / engine->renderer->output_rate;
+  elapsed = (unsigned)(engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
+  if (!elapsed)
+    return;
+  engine->scheduler_clocks -= elapsed * SC88_CONTROL_PERIOD_CLOCKS;
+  if (engine->control_service)
+    engine->control_service(engine->control_user, elapsed);
+}
+
+void sc88_engine_render(struct sc88_engine *engine, float *stereo,
+                        size_t frames)
+{
+  size_t frame;
+  if (!engine || !engine->renderer || !stereo)
+    return;
+  for (frame = 0; frame < frames; ++frame) {
+    float mixed = 0.0f;
+    unsigned i;
+    sc88_engine_run_scheduler(engine);
+    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+      struct sc88_engine_slot *slot = engine->slots + i;
+      float sample;
+      if (!slot->allocated)
+        continue;
+      if (slot->component.active &&
+          sc88_oscillator_next(&slot->component.oscillator, &sample)) {
+        mixed += sample * engine->notes[slot->note].provisional_gain;
+        if (slot->component.oscillator.ended)
+          slot->component.active = false;
+      } else {
+        sc88_engine_free_slot(engine, (uint8_t)i, false);
+      }
+    }
+    stereo[frame * 2] = mixed;
+    stereo[frame * 2 + 1] = mixed;
+  }
+}
