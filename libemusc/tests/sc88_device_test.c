@@ -117,6 +117,14 @@ int main(int argc, char **argv)
   assert(device.channels[0].volume == 100);
   assert(sc88_device_midi(&device, 0, 0x90, 60, 100));
   assert(sc88_engine_active_slots(&device.engine) == 1);
+  {
+    double unity_step = device.engine.slots[0].component.oscillator.step;
+    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
+    assert(device.engine.slots[0].component.oscillator.step > unity_step);
+    assert(sc88_device_midi(&device, 0, 0xb0, 121, 0));
+    assert(fabs(device.engine.slots[0].component.oscillator.step -
+                unity_step) < 1e-12);
+  }
   sc88_device_render(&device, output, 257);
   assert(output[0] > 0.0f && output[0] == output[1]);
 

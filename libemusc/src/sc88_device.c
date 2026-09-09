@@ -23,6 +23,15 @@ static void sc88_device_sync_part(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_pan(&device->engine, part, &pan);
 }
 
+static void sc88_device_sync_pitch(struct sc88_device *device, uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  int64_t numerator = ((int32_t)channel->pitch_bend - 8192) *
+    (int32_t)channel->pitch_bend_sensitivity * 16384;
+  int32_t offset = (int32_t)(numerator / (8192 * 12));
+  sc88_engine_set_part_pitch_offset(&device->engine, part, offset);
+}
+
 static bool sc88_device_init_common(
   struct sc88_device *device, const uint8_t *control_rom,
   size_t control_rom_size,
@@ -129,10 +138,13 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->expression = 127;
     channel->pan = 64;
     channel->hold1 = 0;
+    channel->pitch_bend = 8192;
+    channel->pitch_bend_sensitivity = 2;
     channel->same_note_mode = SC88_SAME_NOTE_LIMITED_MULTI;
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
     sc88_device_sync_part(device, (uint8_t)part);
+    sc88_device_sync_pitch(device, (uint8_t)part);
   }
 }
 
@@ -204,15 +216,21 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     case 121:
       state->expression = 127;
       state->hold1 = 0;
+      state->pitch_bend = 8192;
       sc88_engine_hold_value(&device->engine, part, 0);
       sc88_engine_sostenuto(&device->engine, part, false);
       sc88_device_sync_part(device, part);
+      sc88_device_sync_pitch(device, part);
       return true;
     default:
       return false;
     }
   case 0xc0:
     state->program = data1;
+    return true;
+  case 0xe0:
+    state->pitch_bend = (uint16_t)(data1 | ((uint16_t)data2 << 7));
+    sc88_device_sync_pitch(device, part);
     return true;
   default:
     return false;

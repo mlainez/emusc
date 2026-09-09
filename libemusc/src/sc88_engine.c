@@ -95,6 +95,35 @@ void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
   engine->parts[part].pan = *pan;
 }
 
+static uint32_t sc88_engine_pitch_word(uint32_t base, int32_t offset)
+{
+  int64_t value = (int64_t)base + offset;
+  if (value < 0)
+    return 0;
+  if (value > 0x3ffff)
+    return 0x3ffff;
+  return (uint32_t)value;
+}
+
+void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
+                                       uint8_t part, int32_t pitch_offset)
+{
+  unsigned i;
+  if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].pitch_offset = pitch_offset;
+  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    struct sc88_engine_slot *slot = engine->slots + i;
+    if (slot->allocated && slot->note < SC88_ENGINE_NOTE_COUNT &&
+        engine->notes[slot->note].part == part) {
+      uint32_t word = sc88_engine_pitch_word(
+        slot->component.static_pitch_word, pitch_offset);
+      slot->component.oscillator.step = sc88_pitch_word_rate(
+        word, engine->renderer->output_rate);
+    }
+  }
+}
+
 static void sc88_engine_free_note_if_empty(struct sc88_engine *engine,
                                            uint8_t note_index)
 {
@@ -346,6 +375,10 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
     slot->note = note_index;
     slot->serial = engine->next_serial++;
     slot->component = voice.components[i];
+    slot->component.oscillator.step = sc88_pitch_word_rate(
+      sc88_engine_pitch_word(slot->component.static_pitch_word,
+                             engine->parts[part].pitch_offset),
+      engine->renderer->output_rate);
     voice.components[i].pcm24 = NULL;
     voice.components[i].active = false;
     note->slots[i] = slot_index;

@@ -260,6 +260,7 @@ bool sc88_renderer_note_on_with_controls(
                                    (uint8_t)selector_key, velocity,
                                    &render_component->envelope))
       goto fail;
+    render_component->static_pitch_word = pitch_word;
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
     bank = sc88_renderer_find_bank(renderer, zone.descriptor.bank_select);

@@ -37,6 +37,7 @@ struct sc88_render_component {
   int32_t *pcm24;
   size_t pcm_count;
   struct sc88_oscillator oscillator;
+  uint32_t static_pitch_word;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
   struct sc88_tva_envelope envelope;

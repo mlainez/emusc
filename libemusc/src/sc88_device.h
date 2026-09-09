@@ -22,6 +22,8 @@ struct sc88_channel_state {
   uint8_t expression;
   uint8_t pan;
   uint8_t hold1;
+  uint16_t pitch_bend;
+  uint8_t pitch_bend_sensitivity;
   enum sc88_same_note_mode same_note_mode;
 };
 
@@ -62,8 +64,9 @@ void sc88_device_set_master_volume(struct sc88_device *device, uint8_t value);
 void sc88_device_set_master_pan(struct sc88_device *device, uint8_t value);
 
 /* MIDI port 0 addresses parts 0..15 and port 1 addresses parts 16..31.
- * Supported channel messages: note on/off, CC0/7/10/11/64/66/121 and program
- * change. Unsupported messages return false without changing state. */
+ * Supported channel messages: note on/off, pitch bend, CC0/7/10/11/64/66/121
+ * and program change. Unsupported messages return false without changing
+ * state. */
 bool sc88_device_midi(struct sc88_device *device, uint8_t port,
                       uint8_t status, uint8_t data1, uint8_t data2);
 
