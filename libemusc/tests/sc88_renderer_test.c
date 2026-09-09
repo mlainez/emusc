@@ -62,6 +62,8 @@ static void test_held_rom(char **paths)
                             SC88_WRAP_FULL_CARRY));
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.25f));
   assert(voice.components[0].static_gain_q17 > 0);
+  assert(voice.components[0].tvf.frequency_interpolation == 0x4100);
+  assert(voice.components[0].tvf.resonance_interpolation == 0x095f);
   assert(sc88_renderer_render(&voice, output, 16) == 16);
   assert(sc88_renderer_voice_active(&voice));
   sc88_renderer_voice_destroy(&voice);

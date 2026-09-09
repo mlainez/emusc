@@ -2,6 +2,7 @@
 #include "sc88_rom.h"
 #include "sc88_pan.h"
 #include "sc88_tva.h"
+#include "sc88_tvf.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -28,6 +29,7 @@ static void test_held_rom(const char *path)
   unsigned component_count = 0;
   const struct sc88_tva_levels levels = {127, 127, 127, 127};
   const struct sc88_pan_controls pan = {64, 64};
+  const struct sc88_tvf_controls tvf_controls = {64, 64, 64, 64};
 
   assert(file && bytes);
   assert(fread(bytes, 1, SC88_CONTROL_ROM_SIZE, file) ==
@@ -69,6 +71,7 @@ static void test_held_rom(const char *path)
           uint8_t pan_position;
           struct sc88_tva_release release;
           struct sc88_tva_envelope envelope;
+          struct sc88_tvf_registers tvf;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
@@ -94,6 +97,12 @@ static void test_held_rom(const char *path)
           assert(sc88_tva_envelope_prepare(
             &rom, &tone, &component, (uint8_t)key, 100, &envelope));
           assert(envelope.stage <= 1 && envelope.active);
+          assert(sc88_tvf_prepare_registers(
+            &rom, &component, 0, &tvf_controls, &tvf));
+          assert(tvf.frequency_interpolation == 0x4100);
+          assert(tvf.resonance_interpolation == 0x095f);
+          assert(tvf.frequency_target == tvf.frequency_current);
+          assert(tvf.resonance_target >> 2 == tvf.resonance_current);
           ++selected;
         }
         assert(selected > 0);

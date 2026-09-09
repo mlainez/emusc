@@ -6,6 +6,7 @@
 #include "sc88_pan.h"
 #include "sc88_rom.h"
 #include "sc88_tva.h"
+#include "sc88_tvf.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -42,6 +43,7 @@ struct sc88_render_component {
   uint32_t static_gain_q17;
   struct sc88_tva_envelope envelope;
   struct sc88_tva_release release;
+  struct sc88_tvf_registers tvf;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;
   int16_t pan_component_offset;

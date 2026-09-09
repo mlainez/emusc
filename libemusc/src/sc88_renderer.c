@@ -205,6 +205,7 @@ bool sc88_renderer_note_on_with_controls(
   struct sc88_tone tone;
   uint32_t tone_offset;
   unsigned i;
+  const struct sc88_tvf_controls tvf_controls = {64, 64, 64, 64};
 
   if (!renderer || !voice || !levels || !pan || levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
@@ -261,7 +262,10 @@ bool sc88_renderer_note_on_with_controls(
                                   &render_component->release) ||
         !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
                                    (uint8_t)selector_key, velocity,
-                                   &render_component->envelope))
+                                   &render_component->envelope) ||
+        !sc88_tvf_prepare_registers(&renderer->rom, &component, 0,
+                                    &tvf_controls,
+                                    &render_component->tvf))
       goto fail;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
