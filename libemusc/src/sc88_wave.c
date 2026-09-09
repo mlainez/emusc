@@ -232,6 +232,36 @@ bool sc88_fce_decode_descriptor(const uint8_t *bank, size_t bank_size,
   return true;
 }
 
+bool sc88_fce_decode_storage(const uint8_t *bank, size_t bank_size,
+                             const struct sc88_wave_descriptor *desc,
+                             int32_t *output, size_t capacity,
+                             uint32_t *base_address, size_t *written)
+{
+  struct sc88_fce_decoder decoder;
+  uint32_t base;
+  size_t count;
+  size_t index;
+
+  if (base_address)
+    *base_address = 0;
+  if (written)
+    *written = 0;
+  if (!bank || !desc || !output || !base_address || !written ||
+      desc->address_a > desc->address_c ||
+      desc->address_c >= SC88_WAVE_BANK_SIZE)
+    return false;
+  base = desc->address_a & ~UINT32_C(0x0f);
+  count = (size_t)(desc->address_c - base) + 1;
+  if (capacity < count || !sc88_fce_decoder_reset(&decoder, desc->address_a))
+    return false;
+  for (index = 0; index < count; ++index)
+    if (!sc88_fce_decoder_read(&decoder, bank, bank_size, output + index))
+      return false;
+  *base_address = base;
+  *written = count;
+  return true;
+}
+
 bool sc88_wave_cursor_init(struct sc88_wave_cursor *cursor,
                            const struct sc88_wave_registers *registers,
                            enum sc88_wave_loop_type mode)

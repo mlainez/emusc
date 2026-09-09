@@ -58,9 +58,10 @@ CC0 1.0 and carry `SPDX-License-Identifier: CC0-1.0`:
 * `libemusc/src/devices/jv880.cc` — the JV-880 device profile
 * `libemusc/src/jv_velocity.h`, `libemusc/src/jv_ctrl_matrix.h` — JV tables
   read out of ROM
-* `libemusc/src/sc88_wave.c` / `.h`, `libemusc/src/sc88_rom.c` / `.h`, and
-  their tests — the SC-88 immutable ROM graph, descriptor, FCE-DPCM and
-  integer playback foundation
+* `libemusc/src/sc88_wave.c` / `.h`, `libemusc/src/sc88_rom.c` / `.h`,
+  `libemusc/src/sc88_oscillator.c` / `.h`, and their tests — the SC-88
+  immutable ROM graph, descriptor, FCE-DPCM and parameterized oscillator
+  foundation
 
 CC0 is compatible with the GNU licences. It grants no patent rights, which the
 FSF notes as a reason to prefer a permissive software licence instead; that is

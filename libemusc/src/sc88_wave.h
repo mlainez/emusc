@@ -83,6 +83,10 @@ bool sc88_fce_decode_descriptor(const uint8_t *bank, size_t bank_size,
                                 const struct sc88_wave_descriptor *desc,
                                 int32_t *output, size_t capacity,
                                 size_t *written);
+bool sc88_fce_decode_storage(const uint8_t *bank, size_t bank_size,
+                             const struct sc88_wave_descriptor *desc,
+                             int32_t *output, size_t capacity,
+                             uint32_t *base_address, size_t *written);
 
 /* Integer-address playback only. Fractional phase conversion, interpolation
  * rounding and reverse one-shot termination deliberately remain outside this
