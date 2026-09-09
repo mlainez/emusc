@@ -116,6 +116,7 @@ int main(int argc, char **argv)
                                   chips, sizes, 32000.0,
                                   SC88_WRAP_FULL_CARRY));
   assert(device.channels[0].volume == 100);
+  assert(device.channels[0].cutoff == 64);
   assert(sc88_device_midi(&device, 0, 0x90, 60, 100));
   assert(sc88_engine_active_slots(&device.engine) == 1);
   {
@@ -132,9 +133,18 @@ int main(int argc, char **argv)
     assert(fabs(device.engine.slots[0].component.oscillator.step -
                 unity_step) < 1e-12);
   }
+  assert(sc88_device_midi(&device, 0, 0xb0, 99, 1));
+  assert(sc88_device_midi(&device, 0, 0xb0, 98, 0x20));
+  assert(sc88_device_midi(&device, 0, 0xb0, 6, 127));
+  assert(device.channels[0].cutoff == 127);
+  assert(device.engine.parts[0].tvf_dirty);
+  assert(sc88_device_midi(&device, 0, 0xb0, 98, 0x21));
+  assert(sc88_device_midi(&device, 0, 0xb0, 6, 96));
+  assert(device.channels[0].resonance == 96);
   assert(sc88_device_midi(&device, 0, 0xb0, 10, 1));
   assert(device.engine.slots[0].component.pan_target_position == 1);
   sc88_device_render(&device, output, 257);
+  assert(!device.engine.parts[0].tvf_dirty);
   assert(device.engine.slots[0].component.pan_position == 63);
   assert(output[0] > 0.0f && output[0] == output[1]);
 

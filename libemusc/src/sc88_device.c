@@ -32,6 +32,17 @@ static void sc88_device_sync_pitch(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_pitch_offset(&device->engine, part, offset);
 }
 
+static void sc88_device_sync_tvf(struct sc88_device *device, uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  struct sc88_tvf_controls controls;
+  controls.part_cutoff = channel->cutoff;
+  controls.secondary_cutoff = 64;
+  controls.part_resonance = channel->resonance;
+  controls.secondary_resonance = 64;
+  sc88_engine_set_part_tvf_controls(&device->engine, part, &controls);
+}
+
 static bool sc88_device_init_common(
   struct sc88_device *device, const uint8_t *control_rom,
   size_t control_rom_size,
@@ -142,15 +153,20 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->expression = 127;
     channel->pan = 64;
     channel->hold1 = 0;
+    channel->cutoff = 64;
+    channel->resonance = 64;
     channel->pitch_bend = 8192;
     channel->pitch_bend_sensitivity = 2;
     channel->rpn_msb = 127;
     channel->rpn_lsb = 127;
+    channel->nrpn_msb = 127;
+    channel->nrpn_lsb = 127;
     channel->same_note_mode = SC88_SAME_NOTE_LIMITED_MULTI;
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
     sc88_device_sync_part(device, (uint8_t)part);
     sc88_device_sync_pitch(device, (uint8_t)part);
+    sc88_device_sync_tvf(device, (uint8_t)part);
   }
 }
 
@@ -208,6 +224,16 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
         sc88_device_sync_pitch(device, part);
         return true;
       }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x20) {
+        state->cutoff = data2;
+        sc88_device_sync_tvf(device, part);
+        return true;
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x21) {
+        state->resonance = data2;
+        sc88_device_sync_tvf(device, part);
+        return true;
+      }
       return false;
     case 7:
       state->volume = data2;
@@ -235,11 +261,25 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     case 66:
       sc88_engine_sostenuto(&device->engine, part, data2 >= 64);
       return true;
+    case 98:
+      state->nrpn_lsb = data2;
+      state->rpn_msb = 127;
+      state->rpn_lsb = 127;
+      return true;
+    case 99:
+      state->nrpn_msb = data2;
+      state->rpn_msb = 127;
+      state->rpn_lsb = 127;
+      return true;
     case 100:
       state->rpn_lsb = data2;
+      state->nrpn_msb = 127;
+      state->nrpn_lsb = 127;
       return true;
     case 101:
       state->rpn_msb = data2;
+      state->nrpn_msb = 127;
+      state->nrpn_lsb = 127;
       return true;
     case 121:
       state->expression = 127;
@@ -247,6 +287,8 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       state->pitch_bend = 8192;
       state->rpn_msb = 127;
       state->rpn_lsb = 127;
+      state->nrpn_msb = 127;
+      state->nrpn_lsb = 127;
       sc88_engine_hold_value(&device->engine, part, 0);
       sc88_engine_sostenuto(&device->engine, part, false);
       sc88_device_sync_part(device, part);

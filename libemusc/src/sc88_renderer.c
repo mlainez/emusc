@@ -132,6 +132,10 @@ bool sc88_renderer_init(struct sc88_renderer *renderer,
   renderer->levels.expression = 127;
   renderer->pan.master = 64;
   renderer->pan.part = 64;
+  renderer->tvf_controls.part_cutoff = 64;
+  renderer->tvf_controls.secondary_cutoff = 64;
+  renderer->tvf_controls.part_resonance = 64;
+  renderer->tvf_controls.secondary_resonance = 64;
   return true;
 }
 
@@ -162,6 +166,16 @@ void sc88_renderer_set_tvf_audio_transfer(
     return;
   renderer->tvf_audio_transfer = transfer;
   renderer->tvf_audio_user = user;
+}
+
+void sc88_renderer_set_tvf_controls(
+  struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls)
+{
+  if (!renderer || !controls || controls->part_cutoff > 127 ||
+      controls->secondary_cutoff > 127 || controls->part_resonance > 127 ||
+      controls->secondary_resonance > 127)
+    return;
+  renderer->tvf_controls = *controls;
 }
 
 static const struct sc88_wave_bank *sc88_renderer_find_bank(
@@ -212,12 +226,26 @@ bool sc88_renderer_note_on_with_controls(
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan)
 {
+  if (!renderer)
+    return false;
+  return sc88_renderer_note_on_with_part_controls(
+    renderer, voice, variation, program, key, velocity, provisional_gain,
+    levels, pan, &renderer->tvf_controls);
+}
+
+bool sc88_renderer_note_on_with_part_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls)
+{
   struct sc88_tone tone;
   uint32_t tone_offset;
   unsigned i;
-  const struct sc88_tvf_controls tvf_controls = {64, 64, 64, 64};
 
-  if (!renderer || !voice || !levels || !pan || levels->master > 127 ||
+  if (!renderer || !voice || !levels || !pan || !tvf_controls ||
+      levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
       levels->expression > 127 || key > 127 || velocity > 127 ||
       provisional_gain < 0.0f ||
@@ -289,7 +317,7 @@ bool sc88_renderer_note_on_with_controls(
         !sc88_tvf_prepare_registers(
                                     &renderer->rom, &component,
                                     tvf_key_modulation,
-                                    &tvf_controls,
+                                    tvf_controls,
                                     &render_component->tvf) ||
         !sc88_tvf_update_frequency(
           &renderer->rom, render_component->tvf_envelope.current,
@@ -298,6 +326,7 @@ bool sc88_renderer_note_on_with_controls(
     sc88_tvf_latch_frequency(&render_component->tvf);
     sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
+    render_component->rom_component_offset = component.offset;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;

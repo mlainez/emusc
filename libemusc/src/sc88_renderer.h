@@ -32,6 +32,7 @@ struct sc88_renderer {
   enum sc88_fractional_wrap wrap;
   struct sc88_tva_levels levels;
   struct sc88_pan_controls pan;
+  struct sc88_tvf_controls tvf_controls;
   sc88_tvf_audio_transfer_fn tvf_audio_transfer;
   void *tvf_audio_user;
 };
@@ -50,6 +51,7 @@ struct sc88_render_component {
   struct sc88_tvf_release tvf_release;
   struct sc88_tvf_audio_state tvf_audio;
   int16_t tvf_key_modulation;
+  uint32_t rom_component_offset;
   bool continuous_hold_release;
   bool keep_release_scale_at_zero;
   int16_t pan_component_offset;
@@ -94,6 +96,8 @@ void sc88_renderer_set_pan(struct sc88_renderer *renderer,
 void sc88_renderer_set_tvf_audio_transfer(
   struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
   void *user);
+void sc88_renderer_set_tvf_controls(
+  struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls);
 
 /* The explicit gain is temporary output trim. Static TVA, release, pan and
  * exact TVF control state are native ROM paths; the audio-side TVF callback
@@ -112,6 +116,12 @@ bool sc88_renderer_note_on_with_controls(
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan);
+bool sc88_renderer_note_on_with_part_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls);
 void sc88_renderer_voice_destroy(struct sc88_render_voice *voice);
 bool sc88_renderer_voice_active(const struct sc88_render_voice *voice);
 

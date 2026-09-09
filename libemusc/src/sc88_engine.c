@@ -82,6 +82,10 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].levels.expression = 127;
     engine->parts[i].pan.master = 64;
     engine->parts[i].pan.part = 64;
+    engine->parts[i].tvf_controls.part_cutoff = 64;
+    engine->parts[i].tvf_controls.secondary_cutoff = 64;
+    engine->parts[i].tvf_controls.part_resonance = 64;
+    engine->parts[i].tvf_controls.secondary_resonance = 64;
   }
   return true;
 }
@@ -139,6 +143,19 @@ void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
         word, engine->renderer->output_rate);
     }
   }
+}
+
+void sc88_engine_set_part_tvf_controls(
+  struct sc88_engine *engine, uint8_t part,
+  const struct sc88_tvf_controls *controls)
+{
+  if (!engine || !controls || part >= SC88_ENGINE_PART_COUNT ||
+      controls->part_cutoff > 127 || controls->secondary_cutoff > 127 ||
+      controls->part_resonance > 127 ||
+      controls->secondary_resonance > 127)
+    return;
+  engine->parts[part].tvf_controls = *controls;
+  engine->parts[part].tvf_dirty = true;
 }
 
 static void sc88_engine_free_note_if_empty(struct sc88_engine *engine,
@@ -363,10 +380,10 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
 
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
-      !sc88_renderer_note_on_with_controls(
+      !sc88_renderer_note_on_with_part_controls(
         engine->renderer, &voice, variation, program, key, velocity,
         provisional_gain, &engine->parts[part].levels,
-        &engine->parts[part].pan))
+        &engine->parts[part].pan, &engine->parts[part].tvf_controls))
     return false;
   sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
   if (engine->free_slot_count < voice.component_count)
@@ -523,8 +540,10 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     struct sc88_engine_note *note;
+    bool tvf_retargeted = false;
     if (!slot->allocated)
       continue;
+    note = engine->notes + slot->note;
     if (slot->component.pan_position < slot->component.pan_target_position)
       ++slot->component.pan_position;
     else if (slot->component.pan_position >
@@ -534,11 +553,33 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                             slot->component.pan_position,
                             &slot->component.left_gain_q15,
                             &slot->component.right_gain_q15);
+    if (engine->parts[note->part].tvf_dirty) {
+      struct sc88_component component;
+      uint32_t previous_target = slot->component.tvf.frequency_target;
+      component.bytes = engine->renderer->rom.bytes +
+        slot->component.rom_component_offset;
+      component.offset = slot->component.rom_component_offset;
+      component.directory_offset = 0;
+      if (sc88_tvf_prepare_registers(
+            &engine->renderer->rom, &component,
+            slot->component.tvf_key_modulation,
+            &engine->parts[note->part].tvf_controls,
+            &slot->component.tvf) &&
+          sc88_tvf_update_frequency(
+            &engine->renderer->rom,
+            (int16_t)((uint16_t)slot->component.tvf_envelope.current +
+                      (uint16_t)slot->component.tvf_release.current),
+            &slot->component.tvf)) {
+        slot->component.tvf.frequency_current = previous_target;
+        tvf_retargeted = true;
+      }
+    }
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
     if (slot->component.tvf_envelope.active ||
         slot->component.tvf_release.active) {
-      sc88_tvf_latch_frequency(&slot->component.tvf);
+      if (!tvf_retargeted)
+        sc88_tvf_latch_frequency(&slot->component.tvf);
       if (slot->component.tvf_envelope.active)
         (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
                                         elapsed);
@@ -553,7 +594,6 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     }
     if (!slot->component.release.active)
       continue;
-    note = engine->notes + slot->note;
     if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
         !sc88_tva_gain_from_headroom_q17(
           &engine->renderer->rom, slot->component.release.current,
@@ -563,6 +603,8 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       sc88_engine_free_slot(engine, (uint8_t)i, false);
     }
   }
+  for (i = 0; i < SC88_ENGINE_PART_COUNT; ++i)
+    engine->parts[i].tvf_dirty = false;
   if (engine->control_service)
     engine->control_service(engine->control_user, elapsed);
 }

@@ -131,9 +131,26 @@ int main(void)
     put16(control + 0x14f3e, 0);
   }
 
+  {
+    const struct sc88_tvf_controls tvf = {127, 64, 32, 64};
+    sc88_engine_set_part_tvf_controls(&engine, 1, &tvf);
+    assert(engine.parts[1].tvf_dirty);
+  }
   sc88_engine_set_control_service(&engine, count_service, &count);
   sc88_engine_render(&engine, stereo, 257);
   assert(count.calls == 1 && count.periods == 1);
+  assert(!engine.parts[1].tvf_dirty);
+  {
+    bool found = false;
+    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+      if (engine.slots[i].allocated &&
+          engine.notes[engine.slots[i].note].part == 1) {
+        assert(engine.slots[i].component.tvf.cutoff_index == 63);
+        assert(engine.slots[i].component.tvf.resonance_index == 64);
+        found = true;
+      }
+    assert(found);
+  }
   assert(sc88_engine_active_slots(&engine) == 2);
   engine.scheduler_clocks = 2.0 * 10001.0;
   sc88_engine_render(&engine, stereo, 1);
