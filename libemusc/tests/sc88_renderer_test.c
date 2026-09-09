@@ -1,0 +1,144 @@
+/* SPDX-License-Identifier: CC0-1.0 */
+#include "sc88_renderer.h"
+
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void put16(uint8_t *p, uint16_t value)
+{
+  p[0] = (uint8_t)(value >> 8);
+  p[1] = (uint8_t)value;
+}
+
+static void put24(uint8_t *p, uint32_t value)
+{
+  p[0] = (uint8_t)(value >> 16);
+  p[1] = (uint8_t)(value >> 8);
+  p[2] = (uint8_t)value;
+}
+
+static uint8_t *read_exact(const char *path, size_t size)
+{
+  FILE *file = fopen(path, "rb");
+  uint8_t *bytes = (uint8_t *)malloc(size);
+  assert(file && bytes);
+  assert(fread(bytes, 1, size, file) == size);
+  assert(fgetc(file) == EOF);
+  fclose(file);
+  return bytes;
+}
+
+static void test_held_rom(char **paths)
+{
+  static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
+    0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
+  };
+  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  struct sc88_renderer renderer;
+  struct sc88_render_voice voice = {0};
+  uint8_t *control = read_exact(paths[0], SC88_CONTROL_ROM_SIZE);
+  uint8_t *chips[4];
+  float output[32];
+  size_t i;
+
+  for (i = 0; i < 4; ++i) {
+    chips[i] = read_exact(paths[i + 1], SC88_WAVE_CHIP_SIZE);
+    banks[i * 2].selector = selectors[i * 2];
+    banks[i * 2].bytes = chips[i];
+    banks[i * 2].size = SC88_WAVE_BANK_SIZE;
+    banks[i * 2 + 1].selector = selectors[i * 2 + 1];
+    banks[i * 2 + 1].bytes = chips[i] + SC88_WAVE_BANK_SIZE;
+    banks[i * 2 + 1].size = SC88_WAVE_BANK_SIZE;
+  }
+  assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
+                            banks, SC88_WAVE_BANK_COUNT, 48000.0,
+                            SC88_WRAP_FULL_CARRY));
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.25f));
+  assert(sc88_renderer_render(&voice, output, 16) == 16);
+  assert(sc88_renderer_voice_active(&voice));
+  sc88_renderer_voice_destroy(&voice);
+  for (i = 0; i < 4; ++i)
+    free(chips[i]);
+  free(control);
+}
+
+int main(int argc, char **argv)
+{
+  static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
+    0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
+  };
+  static const uint8_t vectors[16] = {
+    0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0x01, 0xf4, 0x00, 0x00, 0x01, 0xf4
+  };
+  uint8_t *control = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *wave = (uint8_t *)calloc(SC88_WAVE_BANK_SIZE, 1);
+  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  struct sc88_renderer renderer;
+  struct sc88_render_voice voice;
+  struct sc88_component component;
+  float output[4];
+  size_t i;
+
+  assert(control && wave);
+  memcpy(control, vectors, sizeof vectors);
+  memcpy(control + 0x30000, "\0\0Piano 1A    \3\377", 16);
+  control[0x2fc80] = 0;
+  put24(control + 0x20000, 0x40000);
+  memcpy(control + 0x40000, "Test Tone   ", 12);
+  control[0x40000 + 30] = 1;
+  control[0x40000 + 32] = 3;
+  control[0x40000 + 33] = 2;
+  put16(control + 0x40000 + 0x10, 0xb6d0);
+  put16(control + 0x40000 + 34, 0);
+  put16(control + 0x40000 + 34 + 0x10, 0);
+  put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  control[0x30010] = 127;
+  control[0x30011] = 0xff;
+  put16(control + 0x30014, 0x6100);
+  control[0x36100] = 0;
+  put24(control + 0x36101, 0x8000);
+  control[0x36106] = 60;
+  put24(control + 0x36107, 0x8000);
+  control[0x3610a] = 0x80;
+  put24(control + 0x3610b, 0x8001);
+  wave[0x400] = 0;
+  wave[0x8000] = 1;
+  wave[0x8001] = 1;
+
+  component.bytes = control + 0x40000 + 34;
+  component.offset = 0x40000 + 34;
+  component.directory_offset = 0x30000;
+  assert(sc88_renderer_selector_key(&component, 72) == 72);
+  put16(control + 0x40000 + 34 + 0x14, 0x2000);
+  assert(sc88_renderer_selector_key(&component, 59) == 59);
+  assert(sc88_renderer_selector_key(&component, 72) == 66);
+  put16(control + 0x40000 + 34 + 0x14, 0x4000);
+
+  for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
+    banks[i].selector = selectors[i];
+    banks[i].bytes = wave;
+    banks[i].size = SC88_WAVE_BANK_SIZE;
+  }
+  assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
+                            banks, SC88_WAVE_BANK_COUNT, 32000.0,
+                            SC88_WRAP_FULL_CARRY));
+  memset(&voice, 0, sizeof voice);
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+  assert(sc88_renderer_voice_active(&voice));
+  assert(sc88_renderer_render(&voice, output, 2) == 2);
+  assert(fabs(output[0] - (64.0 / 8388608.0)) < 1e-9);
+  assert(output[0] == output[1]);
+  assert(output[2] > output[0]);
+  assert(output[2] == output[3]);
+  assert(!sc88_renderer_voice_active(&voice));
+  sc88_renderer_voice_destroy(&voice);
+  free(wave);
+  free(control);
+  if (argc == 6)
+    test_held_rom(argv + 1);
+  return 0;
+}
