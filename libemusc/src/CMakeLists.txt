@@ -28,6 +28,8 @@ add_library(emusc
   resampler.h
   reverb.cc
   reverb.h
+  sc88_wave.c
+  sc88_wave.h
   settings.cc
   settings.h
   slew_calc.h
@@ -49,5 +51,13 @@ add_library(emusc
   wave_rom.h)
 
 target_compile_features(emusc PUBLIC cxx_std_17)
+target_compile_features(emusc PRIVATE c_std_99)
 target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
+
+if(BUILD_TESTING)
+  add_executable(sc88_wave_test ../tests/sc88_wave_test.c sc88_wave.c)
+  target_include_directories(sc88_wave_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_target_properties(sc88_wave_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+  add_test(NAME sc88_wave_test COMMAND sc88_wave_test)
+endif()

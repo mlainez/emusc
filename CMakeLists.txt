@@ -10,7 +10,9 @@ project(
   emusc
   VERSION 0.7.0
   HOMEPAGE_URL "https://github.com/skjelten/emusc"
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
+
+include(CTest)
 
 option(emusc_WITH_EMUSC_CLIENT "Build GUI client application" TRUE)
 
