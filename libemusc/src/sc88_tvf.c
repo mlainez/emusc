@@ -456,9 +456,20 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
     return true;
   combined = (uint16_t)(registers->base_value +
                         (uint16_t)post_base_modulation);
-  limit = (uint16_t)(sc88_tvf_be16(
+  /* The limit table is used unshifted.
+   *
+   * `07_synthesis/tvf.md` records the firmware as capping by
+   * `filter_limit[index] >> 1`, but that reading cannot be right here:
+   * halved, the resonance-0 limit is 31744 while **108 of the 128 entries**
+   * of the base table at `0x78702` already exceed it, so every cutoff index
+   * above 20 clamps to the same number. The index is a real per-tone
+   * parameter - 93 distinct values across the held tones, median 62 - and
+   * an interpretation that collapses it to a constant leaves the filter
+   * inert: measured, it moved a tuba by 1.3 dB where the hardware moves it
+   * by 53 (`M-022`). Unshifted, the table's own 25123..65535 survives. */
+  limit = sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE +
-    (uint32_t)registers->resonance_index * 2) >> 1);
+    (uint32_t)registers->resonance_index * 2);
   if (combined > limit)
     combined = limit;
   registers->combined = combined;
@@ -505,8 +516,8 @@ float sc88_tvf_audio_process_provisional(
   f1 = word / 262144.0;
   if (f1 < 0.0)
     f1 = 0.0;
-  else if (f1 > 0.999)
-    f1 = 0.999;
+  else if (f1 > 1.998)
+    f1 = 1.998;
 
   /* The word is `sin(pi * fc / 32000)`, not twice it.
    *
@@ -522,7 +533,11 @@ float sc88_tvf_audio_process_provisional(
    * The fraction is of the sound chip's 32 kHz, so the cutoff is a real
    * frequency and the coefficient is recomputed for the output rate -
    * otherwise rendering at 48 kHz moves every cutoff up by half again. */
-  sine = f1;
+  /* With the limit unshifted the word reaches nearly twice 262144, so the
+     Chamberlin reading `F1 = 2*sin(pi*fc/fs)` is the one that fits: half
+     of `f1` is the sine, and the top of the range still lands near
+     13.4 kHz while the bottom is no longer pinned there. */
+  sine = f1 * 0.5;
   {
     double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
     double cutoff = asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
