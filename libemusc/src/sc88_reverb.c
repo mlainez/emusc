@@ -2,6 +2,7 @@
 #include "sc88_reverb.h"
 
 #include <math.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -98,6 +99,7 @@ bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
   memset(rv, 0, sizeof *rv);
   if (!sc88_reverb_read_character(rom, character, &rv->character))
     return false;
+  rv->character_index = character;
   rv->output_rate = output_rate;
   /* the lengths are in the engine's own 32 kHz samples */
   scale = output_rate / SC88_REVERB_NATIVE_RATE;
@@ -164,14 +166,48 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
   /* Level is recovered: the CPU forms 4*p, so the parameter is a linear
      level over 0..127 against a 512 full scale. */
   rv->level = (float)(4u * (unsigned)(level > 127 ? 127 : level)) / 512.0f;
-  /* Time is **not** recovered as a decay. The firmware turns it into a
+  /* Time is **not** recovered as a decay: the firmware turns it into a
      register value - min(380, floor(p*380/108)) below character 6 - whose
-     meaning inside the DSP is unknown, so the mapping to a feedback gain
-     here is provisional and chosen to span the range of reverb times the
-     manual prints. It is labelled rather than presented as a ROM fact. */
-  rv->feedback = 0.35f + 0.62f * (float)(time > 127 ? 127 : time) / 127.0f;
-  if (rv->feedback > 0.97f)
-    rv->feedback = 0.97f;
+     meaning inside the DSP is unknown, and the character blocks carry no
+     coefficient anywhere near the unity a long decay needs, so there is
+     nothing in the ROM to read it off.
+     What is available instead is the hardware itself. Each of the seven
+     demo songs sets its own reverb and then stops playing, and the decay
+     after its last note is measurable in the recordings: three songs share
+     character 4 at times 53, 80 and 100 and decay in 0.66, 1.52 and
+     2.59 s, which is `T60 = 0.1423 * exp(0.0292 * time)` to within the
+     spread of the measurement. Characters 3 and 5 each give one point and
+     sit 1.9 and 4.4 times longer at the same time value, which mean line
+     length does not explain, so those factors are carried as a per-
+     character table. Characters 0, 1 and 2 are unmeasured and take 1.0.
+     So this is a **calibration against hardware recordings** (`M-013`),
+     labelled as such, and not a decode. The previous curve was neither:
+     it put this song's decay at 1.4 s against a measured 2.5 s. */
+  {
+    static const float character_factor[10] = {
+      1.0f, 1.0f, 1.0f, 1.89f, 1.0f, 4.40f, 1.0f, 1.0f, 1.0f, 1.0f};
+    unsigned index = rv->character_index < 10u ? rv->character_index : 4u;
+    size_t longest = 0;
+    unsigned i;
+    double seconds;
+    for (i = 0; i < rv->comb_count; ++i)
+      if (rv->comb[i].len > longest)
+        longest = rv->comb[i].len;
+    rv->target_t60 = character_factor[index] * 0.1423 *
+      exp(0.0292 * (double)(time > 127 ? 127 : time));
+    /* The tail is set by the slowest line, so the gain is chosen to give
+       the longest one the decay asked for: g = 10^(-3L/T60). */
+    seconds = rv->output_rate > 0.0
+      ? (double)longest / rv->output_rate : 0.0;
+    if (seconds > 0.0 && rv->target_t60 > 0.01) {
+      double g = pow(10.0, -3.0 * seconds / rv->target_t60);
+      if (g > 0.995)
+        g = 0.995;
+      else if (g < 0.05)
+        g = 0.05;
+      rv->feedback = (float)g;
+    }
+  }
   rv->damp = 0.35f;                     /* provisional, as above */
 }
 

@@ -47,10 +47,15 @@ struct sc88_reverb {
   struct sc88_reverb_line allpass[SC88_REVERB_ALLPASS_MAX];
   struct sc88_reverb_line comb[SC88_REVERB_LINE_MAX];
   unsigned allpass_count, comb_count;
+  uint8_t character_index;
   float comb_damp_state[SC88_REVERB_LINE_MAX];
   float pre_fb, pre_in, pre_state;
-  float feedback;                /* provisional: see the note in the source */
+  /* set from a decay time measured on hardware, not from a guessed curve;
+     see the note in the source */
+  float feedback;
   float damp;                    /* provisional */
+  /* the decay the parameters ask for, in seconds, for reporting */
+  double target_t60;
   float level;
   double output_rate;
   bool active;
