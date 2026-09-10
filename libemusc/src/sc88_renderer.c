@@ -350,6 +350,12 @@ static bool sc88_renderer_note_on_tone(
     if (!sc88_lfo_common_prepare(&renderer->rom, &tone, 64, 64, 64, 64,
                                  &render_component->lfo1))
       memset(&render_component->lfo1, 0, sizeof render_component->lfo1);
+    if (!sc88_lfo_local_prepare(&renderer->rom, &component,
+                                &render_component->lfo2))
+      memset(&render_component->lfo2, 0, sizeof render_component->lfo2);
+    render_component->lfo2_pitch_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x18] << 8) |
+                component.bytes[0x19]);
     render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;

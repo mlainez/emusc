@@ -55,6 +55,11 @@ struct sc88_render_component {
      are exact; what the depth word means in cents is calibrated from
      the manual's one published figure (`M-019`). */
   struct sc88_lfo lfo1;
+  /* The component's own oscillator, and its pitch depth from `+18/+19`.
+     This is where a tone's built-in vibrato lives: the controller matrix
+     contributes nothing until a mod wheel moves (`M-020`). */
+  struct sc88_lfo lfo2;
+  int16_t lfo2_pitch_depth;
   uint8_t reverb_send;
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;

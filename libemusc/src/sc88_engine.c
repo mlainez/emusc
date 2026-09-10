@@ -140,13 +140,22 @@ static int32_t sc88_engine_lfo_pitch_offset(
   const struct sc88_engine *engine, const struct sc88_engine_slot *slot,
   uint8_t part)
 {
-  double cents;
-  uint16_t depth = engine->parts[part].lfo1_pitch_depth;
-  if (!depth)
+  double cents = 0.0;
+  uint16_t matrix = engine->parts[part].lfo1_pitch_depth;
+  int16_t local = slot->component.lfo2_pitch_depth;
+  if (matrix)
+    cents += 47.0 / 317.0 * (double)matrix *
+      ((double)slot->component.lfo1.ramp.fade / 65535.0) *
+      ((double)slot->component.lfo1.output / 32767.0);
+  /* The tone's own vibrato. Its field shares the matrix's units - both
+     saturate at exactly 4032, which is `(127 * 127) >> 2` - so the same
+     47-cents-per-317 anchor applies (`M-020`). */
+  if (local)
+    cents += 47.0 / 317.0 * (double)local *
+      ((double)slot->component.lfo2.ramp.fade / 65535.0) *
+      ((double)slot->component.lfo2.output / 32767.0);
+  if (cents == 0.0)
     return 0;
-  cents = 47.0 / 317.0 * (double)depth *
-    ((double)slot->component.lfo1.ramp.fade / 65535.0) *
-    ((double)slot->component.lfo1.output / 32767.0);
   /* 0x4000 pitch-word units to the octave */
   return (int32_t)(cents * 16384.0 / 1200.0);
 }
@@ -682,6 +691,10 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     (void)sc88_lfo_advance(&engine->renderer->rom, &slot->component.lfo1,
                            0, (uint8_t)(elapsed - 1u), &engine->lfo_seed);
     (void)sc88_lfo_ramp_advance(&slot->component.lfo1.ramp,
+                                (uint8_t)(elapsed - 1u));
+    (void)sc88_lfo_advance(&engine->renderer->rom, &slot->component.lfo2,
+                           0, (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+    (void)sc88_lfo_ramp_advance(&slot->component.lfo2.ramp,
                                 (uint8_t)(elapsed - 1u));
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&engine->renderer->rom,
