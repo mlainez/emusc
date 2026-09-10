@@ -3,6 +3,7 @@
 #define EMUSC_SC88_DEVICE_H
 
 #include "sc88_engine.h"
+#include "sc88_reverb.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,7 @@ struct sc88_channel_state {
   uint8_t expression;
   uint8_t pan;
   uint8_t hold1;
+  uint8_t reverb_send;
   uint8_t cutoff;
   uint8_t resonance;
   uint16_t pitch_bend;
@@ -43,6 +45,12 @@ struct sc88_device {
   struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_engine engine;
+  struct sc88_reverb reverb;
+  /* The reverb's own parameters. A GS reset leaves the character and its
+     level, time and pre-LPF at the values the manual prints for Hall 2. */
+  uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
+  float *send_bus;
+  size_t send_capacity;
   struct sc88_channel_state channels[SC88_ENGINE_PART_COUNT];
   uint8_t master_volume;
   uint8_t secondary_level;

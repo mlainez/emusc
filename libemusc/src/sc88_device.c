@@ -98,6 +98,13 @@ static bool sc88_device_init_common(
     &device->renderer, sc88_tvf_audio_process_provisional, NULL);
   if (!sc88_engine_init(&device->engine, &device->renderer))
     goto fail;
+  /* Hall 2 is the character a reset selects; the reverb reads its own delay
+     lines and diffuser count out of the ROM (`M-008`). A ROM that carries no
+     character records is not a reason to refuse the device: an effect is not
+     a precondition for the voice path, so the device renders dry and says so
+     through `reverb.active`. */
+  (void)sc88_reverb_init(&device->reverb, &device->renderer.rom, 4,
+                         output_rate);
   device->initialized = true;
   sc88_device_reset_controllers(device);
   return true;
@@ -138,6 +145,8 @@ void sc88_device_destroy(struct sc88_device *device)
     return;
   if (device->initialized)
     sc88_engine_destroy(&device->engine);
+  sc88_reverb_destroy(&device->reverb);
+  free(device->send_bus);
   for (chip = 0; chip < SC88_WAVE_CHIP_COUNT; ++chip)
     free(device->decoded_chips[chip]);
   free(device->control_rom);
@@ -152,6 +161,14 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->master_volume = 127;
   device->secondary_level = 127;
   device->master_pan = 64;
+  /* Hall 2 with the manual's own default level, time and pre-LPF. */
+  device->reverb_character = 4;
+  device->reverb_level = 64;
+  device->reverb_time = 64;
+  device->reverb_pre_lpf = 0;
+  sc88_reverb_set_params(&device->reverb, device->reverb_level,
+                         device->reverb_time, device->reverb_pre_lpf);
+  sc88_reverb_reset(&device->reverb);
   for (part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
     struct sc88_channel_state *channel = device->channels + part;
     channel->variation = 0;
@@ -161,6 +178,9 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->expression = 127;
     channel->pan = 64;
     channel->hold1 = 0;
+    /* GS's own default part reverb send is 40 (SC88-OM). */
+    channel->reverb_send = 40;
+    sc88_engine_set_part_reverb_send(&device->engine, (uint8_t)part, 40);
     channel->cutoff = 64;
     channel->resonance = 64;
     channel->pitch_bend = 8192;
@@ -232,6 +252,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     switch (data1) {
     case 0:
       state->variation = data2;
+      return true;
+    case 91:
+      state->reverb_send = data2;
+      sc88_engine_set_part_reverb_send(&device->engine, part, data2);
       return true;
     case 6:
       if (state->rpn_msb == 0 && state->rpn_lsb == 0) {
@@ -335,5 +359,20 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
 {
   if (!device || !device->initialized || !stereo)
     return;
-  sc88_engine_render(&device->engine, stereo, frames);
+  /* The send bus grows to whatever block the caller asks for and is kept,
+     so a render loop does not allocate per block. */
+  if (frames > device->send_capacity) {
+    float *grown = (float *)realloc(device->send_bus, frames * sizeof *grown);
+    if (!grown) {
+      sc88_engine_render(&device->engine, stereo, frames);
+      return;
+    }
+    device->send_bus = grown;
+    device->send_capacity = frames;
+  }
+  memset(device->send_bus, 0, frames * sizeof *device->send_bus);
+  sc88_engine_render_with_send(&device->engine, stereo, device->send_bus,
+                               frames);
+  if (device->reverb.active)
+    sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
 }

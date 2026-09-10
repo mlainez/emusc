@@ -42,6 +42,8 @@ add_library(emusc
   sc88_pitch.h
   sc88_renderer.c
   sc88_renderer.h
+  sc88_reverb.c
+  sc88_reverb.h
   sc88_rom.c
   sc88_rom.h
   sc88_tva.c
@@ -77,7 +79,8 @@ set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJEC
 
 set(SC88_RENDER_SOURCES
   sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
-  sc88_pitch.c sc88_renderer.c sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
+  sc88_pitch.c sc88_renderer.c sc88_reverb.c sc88_rom.c sc88_tva.c
+  sc88_tvf.c sc88_wave.c)
 
 add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
 target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -92,7 +95,7 @@ if(BUILD_TESTING)
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
     sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c sc88_pitch.c
-  sc88_renderer.c
+    sc88_renderer.c sc88_reverb.c
     sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
 
   function(sc88_test name)
@@ -110,6 +113,7 @@ if(BUILD_TESTING)
 
   sc88_test(sc88_wave_test sc88_wave.c)
   sc88_test(sc88_oscillator_test sc88_oscillator.c)
+  sc88_test(sc88_reverb_test sc88_reverb.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)

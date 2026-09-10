@@ -30,6 +30,7 @@ install(FILES
   src/sc88_pan.h
   src/sc88_pitch.h
   src/sc88_renderer.h
+  src/sc88_reverb.h
   src/sc88_rom.h
   src/sc88_tva.h
   src/sc88_tvf.h
