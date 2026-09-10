@@ -62,8 +62,11 @@ struct sc88_drum_note {
   uint8_t flags;                 /* +0x480, receive and exclusivity bits */
 };
 
-/* `map` is 1 for the SC-55 kit set and 2 for the SC-88's own. Which one a
- * reset leaves active is not recovered, so the caller chooses. */
+/* Which drum kit set a rhythm part's program indexes. Which one a reset
+ * leaves active is not recovered, so the caller chooses. */
+#define SC88_RHYTHM_MAP_SC55 1u
+#define SC88_RHYTHM_MAP_SC88 2u
+
 bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
                           uint8_t program, uint32_t *kit_offset);
 bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,

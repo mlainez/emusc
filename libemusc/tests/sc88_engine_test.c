@@ -53,6 +53,9 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
+  /* the top of the send/pan curve: control 127 is unity, which is what a
+     fully wet drum key and a part send of 127 both resolve to */
+  put16(control + 0x15db6 + 126 * 2, 0x8000);
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
   control[0x30010] = 127;
@@ -62,6 +65,24 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   control[0x36106] = 60;
   put24(control + 0x36107, 0x8000);
   put24(control + 0x3610b, 0x8001);
+  /* A rhythm kit with two keys that differ only in their own reverb send:
+     key 36 is dry like STANDARD 1's kick, key 38 fully wet like its
+     snare. Both play the same tone, so any difference in the send bus is
+     the per-note send and nothing else. */
+  control[0x2fd00] = 0;
+  put24(control + 0x2b550, 0x23c30);
+  put24(control + 0x23c30 + 36 * 3, 0x40000);
+  put24(control + 0x23c30 + 38 * 3, 0x40000);
+  control[0x23c30 + 0x180 + 36] = 60;
+  control[0x23c30 + 0x180 + 38] = 60;
+  control[0x23c30 + 0x200 + 36] = 127;
+  control[0x23c30 + 0x200 + 38] = 127;
+  control[0x23c30 + 0x280 + 36] = 0;
+  control[0x23c30 + 0x280 + 38] = 0;
+  control[0x23c30 + 0x300 + 36] = 64;
+  control[0x23c30 + 0x300 + 38] = 64;
+  control[0x23c30 + 0x380 + 36] = 0;
+  control[0x23c30 + 0x380 + 38] = 127;
   wave[0x8000] = 1;
   wave[0x8001] = 1;
   for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
@@ -92,6 +113,8 @@ int main(void)
   struct sc88_engine engine;
   struct service_count count = {0, 0};
   float stereo[514];
+  float send[514];
+  float wet;
   unsigned i;
 
   assert(control && wave);
@@ -188,6 +211,72 @@ int main(void)
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 0);
   sc88_engine_destroy(&engine);
+
+  /* The send combination law, on its own: the firmware's rounded product
+     maps a full note send to the part's own control and a zero note send
+     to silence, and 127 against 127 must not overflow to 0. */
+  assert(sc88_send_combine(40, 127) == 40);
+  assert(sc88_send_combine(127, 127) == 127);
+  assert(sc88_send_combine(127, 0) == 0);
+  assert(sc88_send_combine(0, 127) == 0);
+  assert(sc88_send_combine(40, 50) == 16);
+  /* and the curve is a curve: control 64 is -4.5 dB, not half */
+  {
+    uint16_t gain;
+    assert(sc88_control_gain_q15(&renderer.rom, 0, &gain) && gain == 0);
+    assert(sc88_control_gain_q15(&renderer.rom, 64, &gain) &&
+           gain == 0x4c00);
+    assert(sc88_control_gain_q15(&renderer.rom, 127, &gain) &&
+           gain == 0x8000);
+    assert(!sc88_control_gain_q15(&renderer.rom, 128, &gain));
+  }
+
+  /* The kit's per-note send reaches the bus. A dry key must put nothing in
+     it while still being heard, which is what makes STANDARD 1's kick a
+     kick and not a kick in a hall (`M-009`). */
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_reverb_send(&engine, 0, 127);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  sc88_engine_render_with_send(&engine, stereo, send, 1);
+  assert(stereo[0] != 0.0f || stereo[1] != 0.0f);
+  assert(send[0] == 0.0f);
+  sc88_engine_destroy(&engine);
+
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_reverb_send(&engine, 0, 127);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  sc88_engine_render_with_send(&engine, stereo, send, 1);
+  wet = send[0];
+  assert(wet != 0.0f);
+  sc88_engine_destroy(&engine);
+
+  /* and the part send still scales it, so CC91 keeps authority over the
+     whole kit */
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_reverb_send(&engine, 0, 0);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  sc88_engine_render_with_send(&engine, stereo, send, 1);
+  assert(send[0] == 0.0f);
+  sc88_engine_destroy(&engine);
+
+  /* A melodic note carries no per-note send, so a fully wet drum key is
+     exactly as wet as the same tone played melodically: the kit bytes only
+     ever take away from the part send. The bus is summed before panning,
+     so this holds whatever the two notes' pans are. */
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_reverb_send(&engine, 0, 127);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  sc88_engine_render_with_send(&engine, stereo, send, 1);
+  assert(send[0] == wet);
+  sc88_engine_destroy(&engine);
+
   free(wave);
   free(control);
   return 0;

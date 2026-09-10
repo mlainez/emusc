@@ -14,9 +14,6 @@ extern "C" {
 #endif
 
 #define SC88_WAVE_CHIP_COUNT 4u
-/* Which drum kit set a rhythm part's program indexes. */
-#define SC88_RHYTHM_MAP_SC55 1u
-#define SC88_RHYTHM_MAP_SC88 2u
 #define SC88_MIDI_PORT_COUNT 2u
 
 struct sc88_channel_state {

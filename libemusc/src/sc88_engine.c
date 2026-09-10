@@ -681,10 +681,19 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
           engine->notes[slot->note].provisional_gain;
         left += gained * (slot->component.left_gain_q15 / 32768.0f);
         right += gained * (slot->component.right_gain_q15 / 32768.0f);
-        if (send && slot->note < SC88_ENGINE_NOTE_COUNT)
-          bus += gained *
-            (engine->parts[engine->notes[slot->note].part].reverb_send /
-             127.0f);
+        /* A rhythm note's send is its part's control combined with its own
+           from its kit record, through the firmware's rounded product and
+           the ROM's send curve. A melodic component carries 127 and so
+           keeps its part's control unchanged. */
+        if (send && slot->note < SC88_ENGINE_NOTE_COUNT) {
+          uint16_t send_q15;
+          uint8_t control = sc88_send_combine(
+            engine->parts[engine->notes[slot->note].part].reverb_send,
+            slot->component.reverb_send);
+          if (sc88_control_gain_q15(&engine->renderer->rom, control,
+                                    &send_q15))
+            bus += gained * (send_q15 / 32768.0f);
+        }
         if (slot->component.oscillator.ended)
           slot->component.active = false;
       } else {

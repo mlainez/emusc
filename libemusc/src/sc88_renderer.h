@@ -45,6 +45,11 @@ struct sc88_render_component {
   uint32_t static_pitch_word;
   struct sc88_pitch_envelope pitch_envelope;
   struct sc88_pitch_release pitch_release;
+  /* A rhythm note's own reverb send from its kit record, 127 for a
+     melodic note. The kits are not uniformly treated - STANDARD 1 sends
+     its snare and cymbals at 127 and its kick at 0 - and flattening them
+     to one part send is audible as a kit with no depth (`M-009`). */
+  uint8_t reverb_send;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
   struct sc88_tva_envelope envelope;

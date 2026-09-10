@@ -335,6 +335,7 @@ static bool sc88_renderer_note_on_tone(
     sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
+    render_component->reverb_send = 127;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
     pitch_word = sc88_pitch_current_word(
@@ -398,6 +399,7 @@ bool sc88_renderer_note_on_drum(
   struct sc88_tva_levels drum_levels;
   struct sc88_pan_controls drum_pan;
   uint32_t kit;
+  unsigned i;
   if (!renderer || !levels || !pan ||
       !sc88_rom_select_drum(&renderer->rom, map, program, &kit) ||
       !sc88_rom_open_drum_note(&renderer->rom, kit, key, &slot))
@@ -419,11 +421,14 @@ bool sc88_renderer_note_on_drum(
     drum_pan.part = slot.pan;
   if (note)
     *note = slot;
-  return sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
-                                    slot.play_note <= 127 ? slot.play_note
-                                                          : key,
-                                    velocity, provisional_gain, &drum_levels,
-                                    &drum_pan, tvf_controls);
+  if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
+                                  slot.play_note <= 127 ? slot.play_note : key,
+                                  velocity, provisional_gain, &drum_levels,
+                                  &drum_pan, tvf_controls))
+    return false;
+  for (i = 0; i < voice->component_count; ++i)
+    voice->components[i].reverb_send = slot.reverb_send;
+  return true;
 }
 
 bool sc88_renderer_voice_active(const struct sc88_render_voice *voice)

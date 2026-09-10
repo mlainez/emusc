@@ -20,6 +20,22 @@ bool sc88_pan_component_offset(const struct sc88_rom *rom,
                                const struct sc88_tone *tone,
                                const struct sc88_component *component,
                                uint8_t selector_key, int16_t *offset);
+/* The 127-word curve the pan pair is read from is also the curve the
+ * reverb and chorus sends are read from, once each rather than twice
+ * (`08_effects/routing.md`). It is monotone from silence at control 1 to
+ * unity at 127 and is deliberately not a straight line, so a send may not
+ * be modelled as `control / 127`. Control 0 is silence.
+ */
+bool sc88_control_gain_q15(const struct sc88_rom *rom, uint8_t control,
+                           uint16_t *gain_q15);
+
+/* The 0..127 send a rhythm voice ends up with, from its part's control and
+ * its own kit record's: the firmware's rounded unsigned product
+ * `((part * note) + 127) >> 7`, which maps 0 to 0 and 127x127 to 127. A
+ * melodic voice passes 127 as `note` and so keeps its part's control.
+ */
+uint8_t sc88_send_combine(uint8_t part, uint8_t note);
+
 bool sc88_pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
                        uint16_t *left_q15, uint16_t *right_q15);
 

@@ -64,6 +64,27 @@ bool sc88_pan_component_offset(const struct sc88_rom *rom,
   return true;
 }
 
+bool sc88_control_gain_q15(const struct sc88_rom *rom, uint8_t control,
+                           uint16_t *gain_q15)
+{
+  if (!rom || !rom->bytes || !gain_q15 || control > 127 ||
+      SC88_PAN_TABLE + 127u * 2 > rom->size)
+    return false;
+  if (control == 0) {
+    *gain_q15 = 0;
+    return true;
+  }
+  *gain_q15 = sc88_pan_be16(rom->bytes + SC88_PAN_TABLE + (control - 1) * 2);
+  return (*gain_q15 & 0x3f) == 0;
+}
+
+uint8_t sc88_send_combine(uint8_t part, uint8_t note)
+{
+  unsigned p = part > 127 ? 127u : part;
+  unsigned n = note > 127 ? 127u : note;
+  return (uint8_t)(((p * n) + 127u) >> 7);
+}
+
 bool sc88_pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
                        uint16_t *left_q15, uint16_t *right_q15)
 {
