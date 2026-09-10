@@ -2,6 +2,9 @@
 #include "sc88_wave.h"
 
 #include <assert.h>
+#ifdef NDEBUG
+#error "this test is assertion-driven; NDEBUG compiles it away"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

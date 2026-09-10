@@ -2,6 +2,9 @@
 #include "sc88_oscillator.h"
 
 #include <assert.h>
+#ifdef NDEBUG
+#error "this test is assertion-driven; NDEBUG compiles it away"
+#endif
 #include <math.h>
 
 static int sample_value(float sample)

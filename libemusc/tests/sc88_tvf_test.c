@@ -2,6 +2,9 @@
 #include "sc88_tvf.h"
 
 #include <assert.h>
+#ifdef NDEBUG
+#error "this test is assertion-driven; NDEBUG compiles it away"
+#endif
 #include <stdlib.h>
 #include <string.h>
 

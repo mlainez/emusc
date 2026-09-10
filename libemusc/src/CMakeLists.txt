@@ -72,56 +72,35 @@ target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 
 if(BUILD_TESTING)
-  add_executable(sc88_tvf_test ../tests/sc88_tvf_test.c sc88_rom.c
-                               sc88_tvf.c sc88_wave.c)
-  target_include_directories(sc88_tvf_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_tvf_test PRIVATE m)
-  set_target_properties(sc88_tvf_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_tvf_test COMMAND sc88_tvf_test)
+  # Every test here is assertion-driven: the assertions are the test, not a
+  # decoration on it. NDEBUG therefore compiles the bodies away and leaves a
+  # suite that passes while testing nothing - and two of the eight went
+  # further, freeing an engine that the stripped assertions never initialised.
+  # -UNDEBUG is applied last, so it survives whatever the build type asks for.
+  set(SC88_VOICE_SOURCES
+    sc88_engine.c sc88_oscillator.c sc88_pan.c sc88_renderer.c
+    sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
 
-  add_executable(sc88_wave_test ../tests/sc88_wave_test.c sc88_wave.c)
-  target_include_directories(sc88_wave_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  set_target_properties(sc88_wave_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_wave_test COMMAND sc88_wave_test)
+  function(sc88_test name)
+    add_executable(${name} ../tests/${name}.c ${ARGN})
+    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${name} PRIVATE m)
+    if(MSVC)
+      target_compile_options(${name} PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${name} PRIVATE -UNDEBUG)
+    endif()
+    set_target_properties(${name} PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+    add_test(NAME ${name} COMMAND ${name})
+  endfunction()
 
-  add_executable(sc88_rom_test ../tests/sc88_rom_test.c sc88_pan.c sc88_rom.c
-                                 sc88_tva.c sc88_tvf.c sc88_wave.c)
-  target_include_directories(sc88_rom_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_rom_test PRIVATE m)
-  set_target_properties(sc88_rom_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_rom_test COMMAND sc88_rom_test)
-
-  add_executable(sc88_oscillator_test ../tests/sc88_oscillator_test.c
-                                       sc88_oscillator.c)
-  target_include_directories(sc88_oscillator_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_oscillator_test PRIVATE m)
-  set_target_properties(sc88_oscillator_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_oscillator_test COMMAND sc88_oscillator_test)
-
-  add_executable(sc88_renderer_test ../tests/sc88_renderer_test.c
-                                     sc88_engine.c sc88_renderer.c
-                                     sc88_oscillator.c sc88_pan.c sc88_rom.c
-                                     sc88_tva.c sc88_tvf.c sc88_wave.c)
-  target_include_directories(sc88_renderer_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_renderer_test PRIVATE m)
-  set_target_properties(sc88_renderer_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_renderer_test COMMAND sc88_renderer_test)
-
-  add_executable(sc88_engine_test ../tests/sc88_engine_test.c sc88_engine.c
-                                   sc88_renderer.c sc88_oscillator.c
-                                   sc88_pan.c sc88_rom.c sc88_tva.c
-                                   sc88_tvf.c sc88_wave.c)
-  target_include_directories(sc88_engine_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_engine_test PRIVATE m)
-  set_target_properties(sc88_engine_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_engine_test COMMAND sc88_engine_test)
-
-  add_executable(sc88_device_test ../tests/sc88_device_test.c sc88_device.c
-                                   sc88_engine.c sc88_renderer.c
-                                   sc88_oscillator.c sc88_pan.c sc88_rom.c
-                                   sc88_tva.c sc88_tvf.c sc88_wave.c)
-  target_include_directories(sc88_device_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(sc88_device_test PRIVATE m)
-  set_target_properties(sc88_device_test PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-  add_test(NAME sc88_device_test COMMAND sc88_device_test)
+  sc88_test(sc88_wave_test sc88_wave.c)
+  sc88_test(sc88_oscillator_test sc88_oscillator.c)
+  sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_wave.c)
+  # The four that build a voice share one source list, so a new module is
+  # wired in once instead of four times.
+  sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test sc88_device.c ${SC88_VOICE_SOURCES})
 endif()
