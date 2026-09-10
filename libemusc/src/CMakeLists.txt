@@ -90,6 +90,11 @@ target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(sc88_render PRIVATE m)
 set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
+add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
+  sc88_rom.c sc88_wave.c)
+target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(sc88_dump_samples PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+
 if(BUILD_TESTING)
   # Every test here is assertion-driven: the assertions are the test, not a
   # decoration on it. NDEBUG therefore compiles the bodies away and leaves a
