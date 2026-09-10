@@ -75,6 +75,15 @@ target_compile_features(emusc PRIVATE c_std_99)
 target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 
+set(SC88_RENDER_SOURCES
+  sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
+  sc88_pitch.c sc88_renderer.c sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
+
+add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
+target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(sc88_render PRIVATE m)
+set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+
 if(BUILD_TESTING)
   # Every test here is assertion-driven: the assertions are the test, not a
   # decoration on it. NDEBUG therefore compiles the bodies away and leaves a
