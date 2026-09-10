@@ -247,7 +247,7 @@ static void usage(void)
     "usage: sc88_render --control FILE --wave A B C D --midi FILE "
     "--out FILE\n"
     "                   [--rate HZ] [--raw] [--tail SECONDS]\n"
-    "                   [--wrap carry|reset|fraction]\n"
+    "                   [--wrap carry|reset|fraction] [--trace]\n"
     "  --raw   the wave images are undescrambled chip dumps\n"
     "  --wrap  oscillator fractional wrap, an open question: state it\n");
 }
@@ -262,7 +262,7 @@ int main(int argc, char **argv)
      is a switch with a named default and it is printed with every render. */
   enum sc88_fractional_wrap wrap = SC88_WRAP_FULL_CARRY;
   const char *wrap_name = "carry";
-  bool raw = false;
+  bool raw = false, trace = false;
   uint8_t *control = NULL, *chips[SC88_WAVE_CHIP_COUNT] = {0};
   const uint8_t *chip_view[SC88_WAVE_CHIP_COUNT];
   size_t control_size = 0, chip_sizes[SC88_WAVE_CHIP_COUNT] = {0};
@@ -278,6 +278,8 @@ int main(int argc, char **argv)
   double frames_per_tick;
   size_t event_index = 0, i;
   int accepted = 0, rejected = 0;
+  uint64_t trace_at = 0;
+  float trace_peak = 0.0f;
   /* A rejected message is not noise: it is a control this device does not
      implement yet, and the tally says which to add next. Indexed by status
      nibble, and by controller number for the control changes. */
@@ -300,6 +302,8 @@ int main(int argc, char **argv)
       tail = atof(argv[++i]);
     else if (!strcmp(a, "--raw"))
       raw = true;
+    else if (!strcmp(a, "--trace"))
+      trace = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {
       wrap_name = argv[++i];
       if (!strcmp(wrap_name, "carry"))
@@ -406,7 +410,20 @@ int main(int argc, char **argv)
         peak = m;
     }
     fwrite(block, sizeof(float), want * 2, out);
+    for (n = 0; n < want * 2; ++n) {
+      float m = block[n] < 0.0f ? -block[n] : block[n];
+      if (m > trace_peak)
+        trace_peak = m;
+    }
     frame += want;
+    if (trace && frame >= trace_at) {
+      printf("  t=%6.1f s  active slots %2u  peak %.5f  events %zu/%zu\n",
+             (double)frame / rate,
+             sc88_engine_active_slots(&device.engine), trace_peak,
+             event_index, mf.count);
+      trace_peak = 0.0f;
+      trace_at = frame + (uint64_t)rate;
+    }
     total += (uint32_t)want;
     if (event_index >= mf.count && frame > next_frame + (uint64_t)(tail * rate))
       break;

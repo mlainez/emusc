@@ -116,7 +116,13 @@ int main(int argc, char **argv)
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x10, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
-  put16(control + 0x40000 + 34 + 0x78, 0xffff);
+  /* A stage level word is an **attenuation**: zero is full level. Storing
+     0xffff here once looked like full level because the conversion was
+     inverted, which the ROM disproves - a piano's last two stages store
+     0xffff and its tail is silent. */
+  put16(control + 0x40000 + 34 + 0x78, 0x0000);
+  /* and the opposite end, so the direction cannot invert again unnoticed */
+  put16(control + 0x40000 + 34 + 0x7a, 0xffff);
   control[0x40000 + 34 + 0x80] = 1;
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);
@@ -160,6 +166,8 @@ int main(int argc, char **argv)
   assert(voice.components[0].envelope.increments[0] == 0xffff);
   assert(voice.components[0].envelope.phase == 0xffff);
   assert(voice.components[0].envelope.targets_q17[0] == 0x1fffcu);
+  /* zero attenuation is unity; full attenuation is silence, not the reverse */
+  assert(voice.components[0].envelope.targets_q17[1] < 0x100u);
   assert(sc88_tva_envelope_linear_q17(
            &voice.components[0].envelope, 0.5) > 0);
   assert(sc88_tva_envelope_advance(&voice.components[0].envelope, 1));

@@ -53,7 +53,11 @@ static void make_control(uint8_t *control)
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
   control[0x40000 + 34 + 0x3e] = 0xff;
-  put16(control + 0x40000 + 34 + 0x78, 0xffff);
+  /* A stage level word is an **attenuation**: zero is full level. Storing
+     0xffff here once looked like full level because the conversion was
+     inverted, which the ROM disproves - a piano's last two stages store
+     0xffff and its tail is silent. */
+  put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
   control[0x30010] = 127;
   control[0x30011] = 0xff;

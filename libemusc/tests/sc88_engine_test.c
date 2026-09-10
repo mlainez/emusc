@@ -44,7 +44,11 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x40000 + 0x10, 0xb6d0);
   put16(control + 0x40000 + 34, 0);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
-  put16(control + 0x40000 + 34 + 0x78, 0xffff);
+  /* A stage level word is an **attenuation**: zero is full level. Storing
+     0xffff here once looked like full level because the conversion was
+     inverted, which the ROM disproves - a piano's last two stages store
+     0xffff and its tail is silent. */
+  put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
   put16(control + 0x1503e + 255 * 2, 0xffff);
   put16(control + 0x1523e + 255 * 2, 0xffff);

@@ -286,10 +286,16 @@ bool sc88_tva_release_advance(struct sc88_tva_release *release,
   return true;
 }
 
+/* A stage's stored word is an attenuation, so what the gain tables convert is
+ * the headroom **remaining** after it - exactly what the static path does
+ * with `sc88_tva_gain_from_headroom_q17`. Converting the stored word itself
+ * inverts every envelope in the ROM: it made a piano swell from silence over
+ * fourteen seconds and left every sustaining patch at -87 dB. */
 static bool sc88_tva_envelope_target_q17(const struct sc88_rom *rom,
-                                         uint16_t level,
+                                         uint16_t attenuation,
                                          uint32_t *gain_q17)
 {
+  uint16_t level = (uint16_t)(UINT16_MAX - attenuation);
   uint16_t coarse;
   uint16_t fine;
   uint16_t gain_q16;
