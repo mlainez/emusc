@@ -31,6 +31,7 @@ struct midi_event {
      outlives playback. */
   const uint8_t *sysex;
   uint32_t sysex_len;
+  uint8_t port;
 };
 
 struct midi_file {
@@ -117,11 +118,36 @@ static void push(struct midi_file *mf, const struct midi_event *event)
   ++mf->count;
 }
 
+/* Which of the device's two MIDI ports a track plays into.
+ *
+ * The standard mechanism is the `FF 21` port meta event. Roland's own demo
+ * SMFs carry no such event and instead name their tracks `PartA 1ch.`
+ * through `PartB 16ch.`, which is the only statement of port in the file -
+ * and it has to be honoured, because a 32-part song otherwise puts two
+ * different instruments on one channel: Brass Nation asks for a synth drum
+ * and a flute on channel 11, and whichever program change lands last wins
+ * for both tracks' notes.
+ */
+static uint8_t track_name_port(const uint8_t *name, size_t len)
+{
+  size_t i;
+  for (i = 0; i + 5 <= len; ++i)
+    if (name[i] == 'P' && name[i + 1] == 'a' && name[i + 2] == 'r' &&
+        name[i + 3] == 't' && (name[i + 4] == 'B' || name[i + 4] == 'b'))
+      return 1u;
+  return 0u;
+}
+
 static bool parse_track(struct midi_file *mf, const uint8_t *p, size_t size)
 {
   uint64_t tick = 0;
   uint8_t running = 0;
   size_t i = 0;
+  uint8_t port = 0;
+  /* A track states its port in a meta event, which is normally its first;
+     anything pushed before that statement is corrected when it arrives, so
+     the order the file chose does not matter. */
+  size_t first = mf->count;
   while (i < size) {
     struct midi_event event;
     uint32_t delta, length;
@@ -142,6 +168,7 @@ static bool parse_track(struct midi_file *mf, const uint8_t *p, size_t size)
     memset(&event, 0, sizeof event);
     event.tick = tick;
     event.status = status;
+    event.port = port;
     if (status == 0xffu) {              /* meta */
       uint8_t type;
       if (i >= size)
@@ -149,6 +176,22 @@ static bool parse_track(struct midi_file *mf, const uint8_t *p, size_t size)
       type = p[i++];
       if (!vlq(p, size, &i, &length) || i + length > size)
         return false;
+      if (type == 0x03u && length) {
+        uint8_t named = track_name_port(p + i, length);
+        if (named != port) {
+          size_t k;
+          port = named;
+          for (k = first; k < mf->count; ++k)
+            mf->events[k].port = port;
+        }
+      } else if (type == 0x21u && length == 1) {
+        port = p[i] < SC88_MIDI_PORT_COUNT ? p[i] : 0u;
+        {
+          size_t k;
+          for (k = first; k < mf->count; ++k)
+            mf->events[k].port = port;
+        }
+      }
       if (type == 0x51u && length == 3) {
         event.tempo = (uint32_t)p[i] << 16 | (uint32_t)p[i + 1] << 8 |
                       p[i + 2];
@@ -400,14 +443,15 @@ int main(int argc, char **argv)
         tempo = event->tempo;
         frames_per_tick = rate * (double)tempo / (1e6 * mf.division);
       } else if (event->sysex_len) {
-        if (sc88_device_sysex(&device, 0, event->sysex, event->sysex_len))
+        if (sc88_device_sysex(&device, event->port, event->sysex,
+                              event->sysex_len))
           ++accepted;
         else {
           ++rejected;
           ++rejected_sysex;
         }
-      } else if (sc88_device_midi(&device, 0, event->status, event->data1,
-                                  event->data2)) {
+      } else if (sc88_device_midi(&device, event->port, event->status,
+                                 event->data1, event->data2)) {
         ++accepted;
         if ((event->status & 0xf0u) == 0x90u && event->data2)
           ++note_ons;
@@ -417,10 +461,12 @@ int main(int argc, char **argv)
         if ((event->status & 0xf0u) == 0xb0u)
           ++rejected_cc[event->data1 & 0x7fu];
         if ((event->status & 0xf0u) == 0x90u && event->data2) {
-          uint8_t ch = event->status & 0x0fu;
-          ++rejected_program[device.channels[ch].program & 0x7fu];
-          ++rejected_variation[device.channels[ch].variation & 0x7fu];
-          ++rejected_channel[ch];
+          /* the part, not the channel: the two ports have their own */
+          uint8_t pt = (uint8_t)(event->port * 16u +
+                                 (event->status & 0x0fu));
+          ++rejected_program[device.channels[pt].program & 0x7fu];
+          ++rejected_variation[device.channels[pt].variation & 0x7fu];
+          ++rejected_channel[event->status & 0x0fu];
         }
       }
       ++event_index;
