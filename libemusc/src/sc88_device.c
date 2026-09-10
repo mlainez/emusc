@@ -226,6 +226,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     sc88_engine_set_part_rhythm(&device->engine, (uint8_t)part,
                                 (part % 16u) == 9u ? SC88_RHYTHM_MAP_SC88 : 0);
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
+    sc88_engine_hold(&device->engine, (uint8_t)part, false);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
     sc88_device_sync_part(device, (uint8_t)part);
     sc88_device_sync_pitch(device, (uint8_t)part);
@@ -545,7 +546,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       state->map_lsb = data2;
       return true;
     case 64:
+      /* Two things, and only the second was being done: the pedal both
+         retains notes past Note Off and scales their release. */
       state->hold1 = data2;
+      sc88_engine_hold(&device->engine, part, data2 >= 64);
       sc88_engine_hold_value(&device->engine, part, data2);
       return true;
     case 66:
