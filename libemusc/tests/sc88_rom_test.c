@@ -104,7 +104,7 @@ static void test_held_rom(const char *path)
             false, &release));
           assert(release.active);
           assert(sc88_tva_envelope_prepare(
-            &rom, &tone, &component, (uint8_t)key, 100, &envelope));
+            &rom, &tone, &component, (uint8_t)key, 100, NULL, &envelope));
           assert(envelope.stage <= 1 && envelope.active);
           assert(sc88_tvf_prepare_registers(
             &rom, &component, 0, &tvf_controls, &tvf));

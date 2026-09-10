@@ -26,6 +26,19 @@ struct sc88_tva_release {
   bool active;
 };
 
+/* The part-level envelope modifiers, each centred at 64. Stages 0 and 1
+ * take the attack pair at part `+14`, stages 2 and 3 the decay pair at
+ * `+15`; the centred sum is doubled and added to the component's own rate
+ * index, clamped to 0..127 (`07_synthesis/tva.md`). The secondary source
+ * is not modelled and stays neutral.
+ */
+struct sc88_tva_controls {
+  uint8_t part_attack;
+  uint8_t secondary_attack;
+  uint8_t part_decay;
+  uint8_t secondary_decay;
+};
+
 struct sc88_tva_envelope {
   uint32_t targets_q17[4];
   /* The stage words are attenuations, and the level tables convert them at
@@ -79,10 +92,12 @@ bool sc88_tva_release_advance(struct sc88_tva_release *release,
  * words. Attack/decay modifiers are neutral in this entry point. The
  * continuous curve between service points is an XP operation and is exposed
  * separately as a provisional linear transfer. */
+/* `controls` may be NULL, which is the same as every modifier centred. */
 bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
                                const struct sc88_tone *tone,
                                const struct sc88_component *component,
                                uint8_t selector_key, uint8_t velocity,
+                               const struct sc88_tva_controls *controls,
                                struct sc88_tva_envelope *envelope);
 bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
                                struct sc88_tva_envelope *envelope,

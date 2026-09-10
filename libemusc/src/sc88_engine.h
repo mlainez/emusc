@@ -53,6 +53,7 @@ struct sc88_engine_part {
   struct sc88_tva_levels levels;
   struct sc88_pan_controls pan;
   struct sc88_tvf_controls tvf_controls;
+  struct sc88_tva_controls tva_controls;
   int32_t pitch_offset;
   bool tvf_dirty;
   bool hold;
@@ -103,6 +104,9 @@ void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
                               const struct sc88_pan_controls *pan);
 void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
                                        uint8_t part, int32_t pitch_offset);
+void sc88_engine_set_part_tva_controls(
+  struct sc88_engine *engine, uint8_t part,
+  const struct sc88_tva_controls *controls);
 void sc88_engine_set_part_tvf_controls(
   struct sc88_engine *engine, uint8_t part,
   const struct sc88_tvf_controls *controls);

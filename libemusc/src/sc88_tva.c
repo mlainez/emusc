@@ -87,8 +87,17 @@ static bool sc88_tva_component_attenuation(
 
   velocity_index = (uint8_t)(((uint32_t)(uint8_t)(
     velocity - bytes[0x6c]) * sc88_tva_be16(bytes + 0x70)) >> 8);
-  /* Do not clamp to the nominal 128-byte curve. The firmware retains a byte
-   * after low-end underflow, and held components exercise the adjacent ROM. */
+  /* Clamp to the curve's own 128 entries. The curves at `0x2d150` are laid
+     end to end - that one is an identity ramp 0..127 and a different,
+     convex curve begins at index 128 - so an index past the end reads a
+     *different curve*, not more of this one. French Horns scales velocity
+     by 325/256, which sends velocity 127 to index 161: unclamped that
+     lands 33 bytes into the next curve and the patch reads 104, 116, 102
+     for velocities 18, 64, 127, louder at half velocity than at full.
+     Rendered, its level did not move at all across the range. Clamped it
+     reads 104, 116, 125 (`M-017`). */
+  if (velocity_index > 127)
+    velocity_index = 127;
   if (velocity_curve + velocity_index >= rom->size)
     return false;
   velocity_result = (uint8_t)(
@@ -397,10 +406,36 @@ static uint16_t sc88_tva_curve_pack(uint16_t curve_entry, uint16_t scale)
   return (uint16_t)(exponent | mantissa);
 }
 
+/* The component's own rate index shifted by the part's modifier for that
+   stage pair: `clamp(index + 2 * (part + secondary - 128), 0, 127)`. */
+static uint8_t sc88_tva_adjusted_rate_index(
+  uint8_t index, const struct sc88_tva_controls *controls, unsigned stage)
+{
+  int part;
+  int secondary;
+  int adjusted;
+  if (!controls)
+    return index;
+  if (stage < 2) {
+    part = controls->part_attack;
+    secondary = controls->secondary_attack;
+  } else {
+    part = controls->part_decay;
+    secondary = controls->secondary_decay;
+  }
+  adjusted = (int)index + 2 * (part + secondary - 128);
+  if (adjusted < 0)
+    adjusted = 0;
+  else if (adjusted > 127)
+    adjusted = 127;
+  return (uint8_t)adjusted;
+}
+
 bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
                                const struct sc88_tone *tone,
                                const struct sc88_component *component,
                                uint8_t selector_key, uint8_t velocity,
+                               const struct sc88_tva_controls *controls,
                                struct sc88_tva_envelope *envelope)
 {
   uint16_t key_scale;
@@ -419,6 +454,8 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
     uint16_t curve_entry;
     uint32_t product;
     uint32_t curve_table;
+    uint8_t rate_index = sc88_tva_adjusted_rate_index(
+      component->bytes[0x80 + stage], controls, stage);
     int factor = sc88_tva_s8(component->bytes[stage < 2 ? 0x90 : 0x91]);
     envelope->target_attenuations[stage] =
       sc88_tva_be16(component->bytes + 0x78 + stage * 2);
@@ -431,17 +468,16 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
     final_scale = (uint16_t)(((uint32_t)key_scale * velocity_scale) >> 8);
     curve_table = component->bytes[0x85 + stage] == 0
       ? SC88_AMP_CURVE_0_TABLE : SC88_AMP_CURVE_1_TABLE;
-    if (curve_table + (uint32_t)component->bytes[0x80 + stage] * 2 + 2 >
-        rom->size)
+    if (curve_table + (uint32_t)rate_index * 2 + 2 > rom->size)
       return false;
     curve_entry = sc88_tva_be16(rom->bytes + curve_table +
-      (uint32_t)component->bytes[0x80 + stage] * 2);
+      (uint32_t)rate_index * 2);
     if (component->bytes[0x85 + stage] != 0)
       curve_entry |= 0x4000;
     envelope->curve_words[stage] = sc88_tva_curve_pack(
       curve_entry, final_scale);
     rate = sc88_tva_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
-                         (uint32_t)component->bytes[0x80 + stage] * 2);
+                         (uint32_t)rate_index * 2);
     if (rate < 16)
       rate = UINT16_MAX;
     product = (uint32_t)rate * final_scale;
@@ -453,7 +489,11 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
       envelope->increments[stage] = (uint16_t)(product >> 8);
     }
   }
-  envelope->stage = component->bytes[0x80] == 0 ? 1 : 0;
+  /* "If the adjusted stage-0 rate is nonpositive, preparation advances
+     directly to stage 1" - adjusted, so a part modifier can move it. */
+  envelope->stage =
+    sc88_tva_adjusted_rate_index(component->bytes[0x80], controls, 0) == 0
+      ? 1 : 0;
   envelope->saved_count = 0;
   envelope->phase = envelope->initial_phases[envelope->stage];
   /* A stage ramps from wherever the one before it ended. When the first

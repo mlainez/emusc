@@ -59,6 +59,17 @@ static void sc88_device_sync_tvf(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_tvf_controls(&device->engine, part, &controls);
 }
 
+static void sc88_device_sync_tva(struct sc88_device *device, uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  struct sc88_tva_controls controls;
+  controls.part_attack = channel->attack;
+  controls.secondary_attack = 64;
+  controls.part_decay = channel->decay;
+  controls.secondary_decay = 64;
+  sc88_engine_set_part_tva_controls(&device->engine, part, &controls);
+}
+
 static bool sc88_device_init_common(
   struct sc88_device *device, const uint8_t *control_rom,
   size_t control_rom_size,
@@ -211,6 +222,9 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     sc88_engine_set_part_chorus_send(&device->engine, (uint8_t)part, 0);
     channel->cutoff = 64;
     channel->resonance = 64;
+    channel->attack = 64;
+    channel->decay = 64;
+    channel->release = 64;
     channel->pitch_bend = 8192;
     channel->pitch_bend_sensitivity = 2;
     channel->rpn_msb = 127;
@@ -410,6 +424,17 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
       state->pan = value;
       sc88_device_sync_part(device, part);
       return true;
+    case 0x34:
+      state->attack = value;
+      sc88_device_sync_tva(device, part);
+      return true;
+    case 0x35:
+      state->decay = value;
+      sc88_device_sync_tva(device, part);
+      return true;
+    case 0x36:
+      state->release = value;
+      return true;
     case 0x21:
       state->chorus_send = value;
       sc88_engine_set_part_chorus_send(&device->engine, part, value);
@@ -523,6 +548,33 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x21) {
         state->resonance = data2;
         sc88_device_sync_tvf(device, part);
+        return true;
+      }
+      /* The envelope-time modifiers. `07_synthesis/tva.md` gives the law:
+         stages 0 and 1 take the attack modifier, stages 2 and 3 the decay
+         one, doubled about their centre. Release is held but not applied -
+         the release path's own part modifier is not recovered. */
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x63) {
+        state->attack = data2;
+        sc88_device_sync_tva(device, part);
+        return true;
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x64) {
+        state->decay = data2;
+        sc88_device_sync_tva(device, part);
+        return true;
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x66) {
+        state->release = data2;
+        return true;
+      }
+      /* Vibrato rate, depth and delay are received so a song's request is
+         not silently discarded, but there is no LFO in the signal path to
+         apply them to yet (`12_implementation/wiring_audit.md`). */
+      if (state->nrpn_msb == 1 &&
+          (state->nrpn_lsb == 0x08 || state->nrpn_lsb == 0x09 ||
+           state->nrpn_lsb == 0x0a)) {
+        ++device->unhandled_sysex;
         return true;
       }
       return false;

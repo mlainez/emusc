@@ -136,6 +136,10 @@ bool sc88_renderer_init(struct sc88_renderer *renderer,
   renderer->tvf_controls.secondary_cutoff = 64;
   renderer->tvf_controls.part_resonance = 64;
   renderer->tvf_controls.secondary_resonance = 64;
+  renderer->tva_controls.part_attack = 64;
+  renderer->tva_controls.secondary_attack = 64;
+  renderer->tva_controls.part_decay = 64;
+  renderer->tva_controls.secondary_decay = 64;
   return true;
 }
 
@@ -230,7 +234,7 @@ bool sc88_renderer_note_on_with_controls(
     return false;
   return sc88_renderer_note_on_with_part_controls(
     renderer, voice, variation, program, key, velocity, provisional_gain,
-    levels, pan, &renderer->tvf_controls);
+    levels, pan, &renderer->tvf_controls, &renderer->tva_controls);
 }
 
 /* The body both entry points share. A melodic note selects its tone through
@@ -242,7 +246,8 @@ static bool sc88_renderer_note_on_tone(
   uint32_t tone_offset, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls)
+  const struct sc88_tvf_controls *tvf_controls,
+  const struct sc88_tva_controls *tva_controls)
 {
   struct sc88_tone tone;
   unsigned i;
@@ -306,6 +311,7 @@ static bool sc88_renderer_note_on_tone(
                                   &render_component->release) ||
         !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
                                    (uint8_t)selector_key, velocity,
+                                   tva_controls,
                                    &render_component->envelope) ||
         !sc88_pitch_envelope_prepare(
           &renderer->rom, &tone, &component, (uint8_t)selector_key,
@@ -378,7 +384,8 @@ bool sc88_renderer_note_on_with_part_controls(
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls)
+  const struct sc88_tvf_controls *tvf_controls,
+  const struct sc88_tva_controls *tva_controls)
 {
   uint32_t tone_offset;
   if (!renderer ||
@@ -387,7 +394,7 @@ bool sc88_renderer_note_on_with_part_controls(
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
                                     velocity, provisional_gain, levels, pan,
-                                    tvf_controls);
+                                    tvf_controls, tva_controls);
 }
 
 bool sc88_renderer_note_on_drum(
@@ -396,6 +403,7 @@ bool sc88_renderer_note_on_drum(
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
+  const struct sc88_tva_controls *tva_controls,
   struct sc88_drum_note *note)
 {
   struct sc88_drum_note slot;
@@ -427,7 +435,7 @@ bool sc88_renderer_note_on_drum(
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
                                   slot.play_note <= 127 ? slot.play_note : key,
                                   velocity, provisional_gain, &drum_levels,
-                                  &drum_pan, tvf_controls))
+                                  &drum_pan, tvf_controls, tva_controls))
     return false;
   for (i = 0; i < voice->component_count; ++i) {
     voice->components[i].reverb_send = slot.reverb_send;

@@ -82,6 +82,10 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].levels.expression = 127;
     engine->parts[i].pan.master = 64;
     engine->parts[i].pan.part = 64;
+    engine->parts[i].tva_controls.part_attack = 64;
+    engine->parts[i].tva_controls.secondary_attack = 64;
+    engine->parts[i].tva_controls.part_decay = 64;
+    engine->parts[i].tva_controls.secondary_decay = 64;
     engine->parts[i].tvf_controls.part_cutoff = 64;
     engine->parts[i].tvf_controls.secondary_cutoff = 64;
     engine->parts[i].tvf_controls.part_resonance = 64;
@@ -172,6 +176,15 @@ void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
       sc88_engine_update_slot_pitch(engine, slot);
     }
   }
+}
+
+void sc88_engine_set_part_tva_controls(
+  struct sc88_engine *engine, uint8_t part,
+  const struct sc88_tva_controls *controls)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || !controls)
+    return;
+  engine->parts[part].tva_controls = *controls;
 }
 
 void sc88_engine_set_part_tvf_controls(
@@ -421,12 +434,14 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
               engine->renderer, &voice, engine->parts[part].rhythm_map,
               program, key, velocity, provisional_gain,
               &engine->parts[part].levels, &engine->parts[part].pan,
-              &engine->parts[part].tvf_controls, NULL)
+              &engine->parts[part].tvf_controls,
+              &engine->parts[part].tva_controls, NULL)
           : sc88_renderer_note_on_with_part_controls(
               engine->renderer, &voice, variation, program, key, velocity,
               provisional_gain, &engine->parts[part].levels,
               &engine->parts[part].pan,
-              &engine->parts[part].tvf_controls)))
+              &engine->parts[part].tvf_controls,
+              &engine->parts[part].tva_controls)))
     return false;
   sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
   if (engine->free_slot_count < voice.component_count)

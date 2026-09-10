@@ -29,6 +29,12 @@ struct sc88_channel_state {
   uint8_t chorus_send;
   uint8_t cutoff;
   uint8_t resonance;
+  /* The envelope-time modifiers, centred at 64. Demo song 1 sets the
+     attack twenty-two times, so a part that never receives them cannot
+     sound like the recording. */
+  uint8_t attack;
+  uint8_t decay;
+  uint8_t release;
   uint16_t pitch_bend;
   uint8_t pitch_bend_sensitivity;
   uint8_t rpn_msb;
