@@ -18,7 +18,15 @@ static void sc88_device_sync_part(struct sc88_device *device, uint8_t part)
   levels.part = channel->volume;
   levels.expression = channel->expression;
   pan.master = device->master_pan;
-  pan.part = channel->pan;
+  /* GS pan 0 is RANDOM. The pan module refuses it rather than inventing the
+     XP's random source, and a refusal there costs the whole note - a far
+     larger error than a defined position. Substitute centre and count it. */
+  if (channel->pan == 0) {
+    pan.part = 64;
+    ++device->substituted_random_pan;
+  } else {
+    pan.part = channel->pan;
+  }
   sc88_engine_set_part_levels(&device->engine, part, &levels);
   sc88_engine_set_part_pan(&device->engine, part, &pan);
 }

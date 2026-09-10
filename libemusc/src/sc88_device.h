@@ -44,6 +44,11 @@ struct sc88_device {
   uint8_t master_volume;
   uint8_t secondary_level;
   uint8_t master_pan;
+  /* How many times a part's pan was substituted because it asked for GS
+     random pan, which needs a sound-chip random source that is not
+     recovered. Counted rather than hidden: it is a labelled divergence, and
+     a render reporting zero is exact in this respect. */
+  unsigned long substituted_random_pan;
   bool initialized;
 };
 

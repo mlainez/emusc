@@ -415,7 +415,6 @@ int main(int argc, char **argv)
   rewind(out);
   write_wav_header(out, (unsigned)rate, total);
   fclose(out);
-  sc88_device_destroy(&device);
   free(mf.events);
   free(midi_bytes);
   printf("%s: %u frames at %.0f Hz, %.1f s, peak %.4f, wrap %s, "
@@ -423,6 +422,9 @@ int main(int argc, char **argv)
          out_path, total, rate, total / rate, peak, wrap_name, accepted,
          rejected);
   printf("  note-ons %u\n", note_ons);
+  if (device.substituted_random_pan)
+    printf("  substituted a defined pan for GS random pan %lu times\n",
+           device.substituted_random_pan);
   if (rejected) {
     static const char *const names[8] = {
       "note off", "note on", "poly pressure", "control change",
@@ -436,5 +438,6 @@ int main(int argc, char **argv)
         printf(" cc%u x%u", (unsigned)i, rejected_cc[i]);
     printf("\n");
   }
+  sc88_device_destroy(&device);
   return 0;
 }
