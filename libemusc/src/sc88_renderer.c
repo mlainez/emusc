@@ -404,11 +404,17 @@ bool sc88_renderer_note_on_drum(
     return false;
   /* The kit record carries this key's own level and pan, and the key the
      tone is actually played at - a kick is not the sample transposed to the
-     key that triggered it. */
+     key that triggered it.
+     The level is a **per-note** property, so it does not belong in any of
+     the four part-level sources, all of which are part or global controls;
+     hijacking the secondary level for it both under-drove the kit and threw
+     away whatever that control was doing. Where in the amplitude chain the
+     firmware applies it is not yet traced, so it is applied to the
+     provisional gain, which this codebase already labels provisional. */
   drum_levels = *levels;
   drum_pan = *pan;
   if (slot.level <= 127)
-    drum_levels.secondary = slot.level;
+    provisional_gain *= (float)slot.level / 127.0f;
   if (slot.pan >= 1 && slot.pan <= 127)
     drum_pan.part = slot.pan;
   if (note)

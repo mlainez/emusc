@@ -313,6 +313,12 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       return false;
     }
   case 0xc0:
+    /* On a rhythm part a program change is ignored while the bank MSB is
+       nonzero (SC88-OM, `04_protocol/program_bank.md`). The demo songs rely
+       on it: they send CC0 48 and then program 48 on channel 10, which on
+       hardware leaves the kit alone and here was switching it to ORCHESTRA. */
+    if (device->engine.parts[part].rhythm_map && state->variation != 0)
+      return true;
     state->program = data1;
     return true;
   case 0xe0:
