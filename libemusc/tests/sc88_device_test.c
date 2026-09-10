@@ -164,8 +164,17 @@ int main(int argc, char **argv)
 
   put16(device.control_rom + 0x14f3e, 0xffff);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 0));
-  sc88_device_render(&device, output, 1);
-  assert(output[0] == 0.0f && output[1] == 0.0f);
+  /* Silencing the part silences the voices, but the output is AC-coupled
+     and a high-pass rings briefly on any step, so what is asserted is that
+     it settles rather than that it is zero on the next sample. */
+  sc88_device_render(&device, output, 64);
+  {
+    unsigned s;
+    for (s = 0; s < 64; ++s)
+      assert(fabs(output[s * 2]) < 0.2f &&
+             output[s * 2] == output[s * 2 + 1]);
+    assert(fabs(output[126]) < fabs(output[0]) || output[0] == 0.0f);
+  }
   put16(device.control_rom + 0x14f3e, 0);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 100));
   assert(sc88_device_midi(&device, 0, 0xb0, 64, 127));

@@ -83,6 +83,14 @@ struct sc88_device {
      implementation does not act on. Counted rather than dropped quietly,
      so a render can say what it ignored. */
   unsigned long unhandled_sysex;
+  /* The output is AC-coupled, as every analogue audio output is. The
+     decoder integrates differences, so a sample whose deltas do not
+     sum to zero leaves a standing offset, and a sustained note holds
+     it: song 1 measured 0.157 of DC against the hardware's 0.001, in
+     65 % of its length, and that offset is what pushed the mix into
+     clipping. One pole at 10 Hz, which is -0.3 dB by 40 Hz. */
+  float dc_x[2], dc_y[2];
+  float dc_pole;
   float *send_bus;
   float *chorus_bus;
   float *delay_bus;

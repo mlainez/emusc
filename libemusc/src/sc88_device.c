@@ -114,6 +114,10 @@ static bool sc88_device_init_common(
                           SC88_WAVE_BANK_COUNT, output_rate, wrap))
     goto fail;
   device->output_rate = output_rate;
+  device->dc_pole = (float)(1.0 - 2.0 * 3.14159265358979323846 * 10.0 /
+                            output_rate);
+  device->dc_x[0] = device->dc_x[1] = 0.0f;
+  device->dc_y[0] = device->dc_y[1] = 0.0f;
   sc88_renderer_set_tvf_audio_transfer(
     &device->renderer, sc88_tvf_audio_process_provisional,
     &device->output_rate);
@@ -764,4 +768,16 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
     sc88_chorus_process(&device->chorus, device->chorus_bus, stereo, frames);
   if (device->reverb.active)
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
+  {
+    size_t k;
+    unsigned ch;
+    for (k = 0; k < frames; ++k)
+      for (ch = 0; ch < 2; ++ch) {
+        float x = stereo[k * 2 + ch];
+        float y = x - device->dc_x[ch] + device->dc_pole * device->dc_y[ch];
+        device->dc_x[ch] = x;
+        device->dc_y[ch] = y;
+        stereo[k * 2 + ch] = y;
+      }
+  }
 }
