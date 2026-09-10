@@ -57,6 +57,8 @@ struct sc88_reverb {
   /* the decay the parameters ask for, in seconds, for reporting */
   double target_t60;
   float level;
+  /* the level divided by the square root of each side's comb count */
+  float wet_gain_left, wet_gain_right;
   double output_rate;
   bool active;
 };

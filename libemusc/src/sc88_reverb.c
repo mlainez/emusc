@@ -209,6 +209,17 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
     }
   }
   rv->damp = 0.35f;                     /* provisional, as above */
+  /* Normalised by the square root of the line count. Dividing by the count
+     itself, as this did, is what a bank of *identical* sources would need;
+     these are decorrelated, so their sum grows as the root and dividing by
+     the count threw away about 13 dB of wet level.
+     The root of the **total** count rather than of each side's is the form
+     that measures right: against the hardware recording of demo song 1 the
+     reverb has to fill the quiet moments of the music to within a decibel,
+     and per-side normalisation overshoots by about 4 dB (`M-018`). */
+  rv->wet_gain_left = rv->comb_count
+    ? rv->level / sqrtf((float)rv->comb_count) : 0.0f;
+  rv->wet_gain_right = rv->wet_gain_left;
 }
 
 void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
@@ -249,9 +260,14 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
         wet_l += y;
     }
     if (rv->comb_count) {
-      float g = rv->level / (float)rv->comb_count;
-      stereo[k * 2] += wet_l * g;
-      stereo[k * 2 + 1] += wet_r * g;
+      /* Each side sums the combs assigned to it, and those are mutually
+         decorrelated, so their sum grows as the square root of the count
+         and not the count. Dividing by the count instead cost about 13 dB
+         of wet level with ten lines, which measured as 1 to 2.4 dB less
+         reverb filling the quiet moments of a song than the hardware puts
+         there - a smaller room (`M-018`). */
+      stereo[k * 2] += wet_l * rv->wet_gain_left;
+      stereo[k * 2 + 1] += wet_r * rv->wet_gain_right;
     }
   }
 }

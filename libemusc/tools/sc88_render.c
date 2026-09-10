@@ -337,6 +337,7 @@ int main(int argc, char **argv)
      nibble, and by controller number for the control changes. */
   unsigned rejected_status[8] = {0};
   unsigned rejected_sysex = 0;
+  unsigned note_offs_after_the_note = 0;
   unsigned rejected_cc[128] = {0};
   unsigned note_ons = 0;
   /* A rejected note is the worst artifact there is, so say which voice was
@@ -463,6 +464,13 @@ int main(int argc, char **argv)
         ++accepted;
         if ((event->status & 0xf0u) == 0x90u && event->data2)
           ++note_ons;
+      } else if ((event->status & 0xf0u) == 0x80u ||
+                 ((event->status & 0xf0u) == 0x90u && !event->data2)) {
+        /* A Note Off that matches nothing is not an unimplemented feature:
+           the note ended on its own first, which is the normal case for a
+           drum that rings past the ten-millisecond note the file writes.
+           Counting these as rejections buried the real gaps under them. */
+        ++note_offs_after_the_note;
       } else {
         ++rejected;
         ++rejected_status[(event->status >> 4) & 7u];
@@ -520,6 +528,9 @@ int main(int argc, char **argv)
          out_path, total, rate, total / rate, peak, wrap_name, accepted,
          rejected);
   printf("  note-ons %u\n", note_ons);
+  if (note_offs_after_the_note)
+    printf("  note offs for notes that had already ended: %u\n",
+           note_offs_after_the_note);
   if (device.unhandled_sysex)
     printf("  sysex addresses received but not acted on: %lu\n",
            device.unhandled_sysex);
