@@ -449,6 +449,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
   note->tone_offset = voice.tone_offset;
   note->serial = engine->next_serial++;
   note->provisional_gain = provisional_gain;
+  note->ignore_note_off = voice.ignore_note_off;
   note->levels = engine->parts[part].levels;
   for (i = 0; i < voice.component_count; ++i) {
     uint8_t slot_index = sc88_engine_pop_slot(engine);
@@ -485,6 +486,13 @@ bool sc88_engine_note_off(struct sc88_engine *engine, uint8_t part,
       candidate = (uint8_t)i;
       serial = note->serial;
     }
+  }
+  /* A note the kit exempts is left sounding: the key is no longer down but
+     nothing is released, so the sample and its envelope run to their end. */
+  if (candidate != SC88_ENGINE_NONE &&
+      engine->notes[candidate].ignore_note_off) {
+    engine->notes[candidate].key_down = false;
+    return true;
   }
   if (candidate == SC88_ENGINE_NONE)
     return false;

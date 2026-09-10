@@ -79,6 +79,11 @@ struct sc88_render_voice {
   uint8_t key;
   uint8_t velocity;
   float provisional_gain;
+  /* A rhythm note whose kit record clears bit 0 of `+0x480` does not
+     receive Note Off and rings to its own end. Every drum in this song is
+     written as a 10 ms note, so honouring Note Off turns a crash into a
+     tick (`M-015`). */
+  bool ignore_note_off;
   sc88_tvf_audio_transfer_fn tvf_audio_transfer;
   void *tvf_audio_user;
 };

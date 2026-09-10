@@ -260,6 +260,8 @@ static bool sc88_renderer_note_on_tone(
   voice->key = key;
   voice->velocity = velocity;
   voice->provisional_gain = provisional_gain;
+  /* melodic notes always receive Note Off; a kit may say otherwise */
+  voice->ignore_note_off = false;
   voice->tvf_audio_transfer = renderer->tvf_audio_transfer;
   voice->tvf_audio_user = renderer->tvf_audio_user;
 
@@ -431,6 +433,7 @@ bool sc88_renderer_note_on_drum(
     voice->components[i].reverb_send = slot.reverb_send;
     voice->components[i].chorus_send = slot.chorus_send;
   }
+  voice->ignore_note_off = (slot.flags & 0x01u) == 0u;
   return true;
 }
 

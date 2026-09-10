@@ -83,6 +83,10 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   control[0x23c30 + 0x300 + 38] = 64;
   control[0x23c30 + 0x380 + 36] = 0;
   control[0x23c30 + 0x380 + 38] = 127;
+  /* bit 0 of `+0x480` is Rx. Note Off: key 36 clears it and so rings to
+     its own end, key 38 sets it and is released like any other note */
+  control[0x23c30 + 0x480 + 36] = 0x10;
+  control[0x23c30 + 0x480 + 38] = 0x11;
   wave[0x8000] = 1;
   wave[0x8001] = 1;
   for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
@@ -210,6 +214,37 @@ int main(void)
   sc88_engine_hold(&engine, 0, false);
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 0);
+  sc88_engine_destroy(&engine);
+
+  /* A rhythm note that does not receive Note Off keeps sounding after it.
+     Every drum in demo song 1 is written as a 10 ms note, so releasing on
+     Note Off cuts a crash to a tick (`M-015`). */
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  assert(sc88_engine_note_off(&engine, 0, 36));
+  /* The key is up, so the slot counts as released for stealing, but the
+     envelope must not have been released - that is the whole point. */
+  assert(sc88_engine_active_slots(&engine) == 1);
+  assert(!engine.slots[0].component.release.active);
+  sc88_engine_destroy(&engine);
+
+  /* and the one whose kit does set the bit is released as usual */
+  assert(sc88_engine_init(&engine, &renderer));
+  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  assert(sc88_engine_note_off(&engine, 0, 38));
+  assert(engine.slots[0].component.release.active);
+  sc88_engine_destroy(&engine);
+
+  /* a melodic note is never exempt */
+  assert(sc88_engine_init(&engine, &renderer));
+  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+  assert(sc88_engine_note_off(&engine, 0, 60));
+  assert(engine.slots[0].component.release.active);
   sc88_engine_destroy(&engine);
 
   /* The send combination law, on its own: the firmware's rounded product

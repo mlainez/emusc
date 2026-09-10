@@ -36,6 +36,7 @@ struct sc88_engine_note {
   struct sc88_tva_levels levels;
   bool allocated;
   bool key_down;
+  bool ignore_note_off;
   bool hold_retained;
   bool sostenuto_retained;
 };
