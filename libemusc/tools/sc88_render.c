@@ -27,6 +27,10 @@ struct midi_event {
   uint32_t order;                       /* keeps a tick's events in file order */
   uint8_t status, data1, data2;
   uint32_t tempo;                       /* microseconds per quarter, or 0 */
+  /* For a SysEx event, the payload inside the file's own buffer, which
+     outlives playback. */
+  const uint8_t *sysex;
+  uint32_t sysex_len;
 };
 
 struct midi_file {
@@ -154,10 +158,14 @@ static bool parse_track(struct midi_file *mf, const uint8_t *p, size_t size)
       if (type == 0x2fu)
         break;                          /* end of track */
     } else if (status == 0xf0u || status == 0xf7u) {
-      /* SysEx is parsed only to be stepped over: the device takes channel
-         messages, so a file's GS Reset does not reach it yet. */
       if (!vlq(p, size, &i, &length) || i + length > size)
         return false;
+      /* The payload is kept where it lies and played in tick order with
+         everything else: a song's reverb and chorus settings arrive as
+         SysEx, and dropping it silently renders the wrong effect. */
+      event.sysex = p + i;
+      event.sysex_len = (uint32_t)length;
+      push(mf, &event);
       i += length;
     } else {
       unsigned wanted = (status & 0xe0u) == 0xc0u ? 1u : 2u;
@@ -284,6 +292,7 @@ int main(int argc, char **argv)
      implement yet, and the tally says which to add next. Indexed by status
      nibble, and by controller number for the control changes. */
   unsigned rejected_status[8] = {0};
+  unsigned rejected_sysex = 0;
   unsigned rejected_cc[128] = {0};
   unsigned note_ons = 0;
   /* A rejected note is the worst artifact there is, so say which voice was
@@ -390,6 +399,13 @@ int main(int argc, char **argv)
       if (event->tempo) {
         tempo = event->tempo;
         frames_per_tick = rate * (double)tempo / (1e6 * mf.division);
+      } else if (event->sysex_len) {
+        if (sc88_device_sysex(&device, 0, event->sysex, event->sysex_len))
+          ++accepted;
+        else {
+          ++rejected;
+          ++rejected_sysex;
+        }
       } else if (sc88_device_midi(&device, 0, event->status, event->data1,
                                   event->data2)) {
         ++accepted;
@@ -450,6 +466,9 @@ int main(int argc, char **argv)
          out_path, total, rate, total / rate, peak, wrap_name, accepted,
          rejected);
   printf("  note-ons %u\n", note_ons);
+  if (device.unhandled_sysex)
+    printf("  sysex addresses received but not acted on: %lu\n",
+           device.unhandled_sysex);
   if (device.substituted_random_pan)
     printf("  substituted a defined pan for GS random pan %lu times\n",
            device.substituted_random_pan);
@@ -464,6 +483,8 @@ int main(int argc, char **argv)
     for (i = 0; i < 128; ++i)
       if (rejected_cc[i])
         printf(" cc%u x%u", (unsigned)i, rejected_cc[i]);
+    if (rejected_sysex)
+      printf(" malformed or foreign sysex x%u", rejected_sysex);
     printf("\n");
   }
   if (rejected_status[1]) {

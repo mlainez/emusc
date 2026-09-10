@@ -46,6 +46,19 @@ struct sc88_device {
   /* The reverb's own parameters. A GS reset leaves the character and its
      level, time and pre-LPF at the values the manual prints for Hall 2. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
+  /* The chorus parameters are received and held but not yet rendered: the
+     CPU-side transforms are recovered while the DSP's audio algorithm is
+     not (`08_effects/chorus.md`), so a chorus here would be invented
+     rather than modelled. Holding them keeps a song's settings from being
+     silently discarded. */
+  uint8_t chorus_macro, chorus_level, chorus_feedback, chorus_delay;
+  uint8_t chorus_rate, chorus_depth, chorus_pre_lpf, chorus_send_to_reverb;
+  /* 0 single module, 1 double. Several parameters exist only in one mode. */
+  uint8_t system_mode;
+  /* SysEx writes that parsed correctly but name an address this
+     implementation does not act on. Counted rather than dropped quietly,
+     so a render can say what it ignored. */
+  unsigned long unhandled_sysex;
   float *send_bus;
   size_t send_capacity;
   struct sc88_channel_state channels[SC88_ENGINE_PART_COUNT];
@@ -88,6 +101,15 @@ void sc88_device_set_master_pan(struct sc88_device *device, uint8_t value);
  * CC0/6/7/10/11/32/64/66/98..101/121, RPN 00/00 bend sensitivity, and
  * NRPN 01/20..21 cutoff/resonance.
  * Unsupported messages return false without changing state. */
+/* One System Exclusive message, with or without its leading `f0` and
+ * trailing `f7`. Returns false for a message that is not a well-formed GS
+ * DT1 for this device - a wrong manufacturer or model, a bad checksum, a
+ * truncated packet - and true once the packet has been applied, whether or
+ * not every address in it was one this implementation acts on.
+ */
+bool sc88_device_sysex(struct sc88_device *device, uint8_t port,
+                       const uint8_t *data, size_t size);
+
 bool sc88_device_midi(struct sc88_device *device, uint8_t port,
                       uint8_t status, uint8_t data1, uint8_t data2);
 
