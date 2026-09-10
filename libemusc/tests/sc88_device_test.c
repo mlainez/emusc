@@ -40,6 +40,7 @@ static void make_control(uint8_t *control)
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
     0x00, 0x00, 0x01, 0xf4, 0x00, 0x00, 0x01, 0xf4
   };
+  unsigned i;
   memcpy(control, vectors, sizeof vectors);
   memcpy(control + 0x30000, "\0\0Piano 1A    \3\377", 16);
   control[0x2fc80] = 0;
@@ -66,8 +67,14 @@ static void make_control(uint8_t *control)
   control[0x36106] = 60;
   put24(control + 0x36107, 0x8000);
   put24(control + 0x3610b, 0x8001);
-  put16(control + 0x1503e + 255 * 2, 0xffff);
-  put16(control + 0x1523e + 255 * 2, 0xffff);
+  /* The coarse and fine level tables, as a monotone ramp. The real tables
+     are a dB curve; what matters to a fixture is that an intermediate
+     attenuation converts to an intermediate gain, because an envelope
+     stage ramps its attenuation and reads the tables all the way along. */
+  for (i = 0; i < 256; ++i) {
+    put16(control + 0x1503e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+    put16(control + 0x1523e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+  }
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);

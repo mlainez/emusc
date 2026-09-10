@@ -50,8 +50,14 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
      0xffff and its tail is silent. */
   put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
-  put16(control + 0x1503e + 255 * 2, 0xffff);
-  put16(control + 0x1523e + 255 * 2, 0xffff);
+  /* The coarse and fine level tables, as a monotone ramp. The real tables
+     are a dB curve; what matters to a fixture is that an intermediate
+     attenuation converts to an intermediate gain, because an envelope
+     stage ramps its attenuation and reads the tables all the way along. */
+  for (i = 0; i < 256; ++i) {
+    put16(control + 0x1503e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+    put16(control + 0x1523e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+  }
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   /* the top of the send/pan curve: control 127 is unity, which is what a
      fully wet drum key and a part send of 127 both resolve to */

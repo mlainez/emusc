@@ -28,6 +28,13 @@ struct sc88_tva_release {
 
 struct sc88_tva_envelope {
   uint32_t targets_q17[4];
+  /* The stage words are attenuations, and the level tables convert them at
+     about -5.26 dB per 0x1000 - so a stage ramps its **attenuation**
+     linearly, which is an exponential decay in amplitude. Interpolating
+     the gains instead leaves a five-second cymbal stage still at half
+     amplitude after two and a half seconds (`M-016`). */
+  uint16_t target_attenuations[4];
+  uint16_t start_attenuation;
   uint16_t curve_words[4];
   uint16_t initial_phases[4];
   uint16_t increments[4];
@@ -77,11 +84,13 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
                                const struct sc88_component *component,
                                uint8_t selector_key, uint8_t velocity,
                                struct sc88_tva_envelope *envelope);
-bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
+bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
+                               struct sc88_tva_envelope *envelope,
                                unsigned elapsed_periods);
-uint32_t sc88_tva_envelope_linear_q17(
+uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
   const struct sc88_tva_envelope *envelope, double period_fraction);
-void sc88_tva_envelope_freeze(struct sc88_tva_envelope *envelope,
+void sc88_tva_envelope_freeze(const struct sc88_rom *rom,
+                              struct sc88_tva_envelope *envelope,
                               double period_fraction);
 
 #ifdef __cplusplus

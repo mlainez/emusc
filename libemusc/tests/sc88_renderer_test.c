@@ -124,8 +124,14 @@ int main(int argc, char **argv)
   /* and the opposite end, so the direction cannot invert again unnoticed */
   put16(control + 0x40000 + 34 + 0x7a, 0xffff);
   control[0x40000 + 34 + 0x80] = 1;
-  put16(control + 0x1503e + 255 * 2, 0xffff);
-  put16(control + 0x1523e + 255 * 2, 0xffff);
+  /* The coarse and fine level tables, as a monotone ramp. The real tables
+     are a dB curve; what matters to a fixture is that an intermediate
+     attenuation converts to an intermediate gain, because an envelope
+     stage ramps its attenuation and reads the tables all the way along. */
+  for (i = 0; i < 256; ++i) {
+    put16(control + 0x1503e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+    put16(control + 0x1523e + i * 2, (uint16_t)((i + 1) * 256 - 1));
+  }
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
@@ -169,8 +175,9 @@ int main(int argc, char **argv)
   /* zero attenuation is unity; full attenuation is silence, not the reverse */
   assert(voice.components[0].envelope.targets_q17[1] < 0x100u);
   assert(sc88_tva_envelope_linear_q17(
-           &voice.components[0].envelope, 0.5) > 0);
-  assert(sc88_tva_envelope_advance(&voice.components[0].envelope, 1));
+           &renderer.rom, &voice.components[0].envelope, 0.5) > 0);
+  assert(sc88_tva_envelope_advance(&renderer.rom,
+                                   &voice.components[0].envelope, 1));
   assert(voice.components[0].envelope.stage == 1);
   assert(voice.components[0].envelope.current_q17 == 0x1fffcu);
   assert(sc88_renderer_render(&voice, output, 2) == 2);

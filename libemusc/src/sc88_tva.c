@@ -420,8 +420,10 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
     uint32_t product;
     uint32_t curve_table;
     int factor = sc88_tva_s8(component->bytes[stage < 2 ? 0x90 : 0x91]);
+    envelope->target_attenuations[stage] =
+      sc88_tva_be16(component->bytes + 0x78 + stage * 2);
     if (!sc88_tva_envelope_target_q17(
-          rom, sc88_tva_be16(component->bytes + 0x78 + stage * 2),
+          rom, envelope->target_attenuations[stage],
           envelope->targets_q17 + stage) ||
         !sc88_tva_velocity_rate_scale(rom, velocity, factor,
                                       &velocity_scale))
@@ -454,8 +456,21 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
   envelope->stage = component->bytes[0x80] == 0 ? 1 : 0;
   envelope->saved_count = 0;
   envelope->phase = envelope->initial_phases[envelope->stage];
-  envelope->start_q17 = 0;
-  envelope->current_q17 = 0;
+  /* A stage ramps from wherever the one before it ended. When the first
+     stage is skipped because it has no rate, its target is still where the
+     envelope begins - for a piano that is full level, so the note starts
+     instantly and stage 1 decays to the sustain. Starting from silence
+     instead makes an attack that ramps its attenuation up from -87 dB,
+     which is inaudible for most of the stage: a 62 ms note came out
+     silent altogether. */
+  if (envelope->stage == 0) {
+    envelope->start_attenuation = UINT16_MAX;
+    envelope->start_q17 = 0;
+  } else {
+    envelope->start_attenuation = envelope->target_attenuations[0];
+    envelope->start_q17 = envelope->targets_q17[0];
+  }
+  envelope->current_q17 = envelope->start_q17;
   envelope->active = true;
   return true;
 }
@@ -472,7 +487,29 @@ static uint32_t sc88_tva_linear_between(uint32_t start, uint32_t target,
   return (uint32_t)(value < 0.0 ? 0.0 : value + 0.5);
 }
 
-uint32_t sc88_tva_envelope_linear_q17(
+/* One point along a stage: the attenuation ramps linearly and the level
+   tables turn it into a gain, so the amplitude falls exponentially. */
+static uint32_t sc88_tva_attenuation_between(
+  const struct sc88_rom *rom, uint16_t start, uint16_t target,
+  double fraction, uint32_t fallback)
+{
+  double value;
+  uint32_t gain_q17;
+  if (fraction <= 0.0)
+    fraction = 0.0;
+  else if (fraction >= 1.0)
+    fraction = 1.0;
+  value = (double)start + fraction * ((double)target - (double)start);
+  if (value < 0.0)
+    value = 0.0;
+  else if (value > (double)UINT16_MAX)
+    value = (double)UINT16_MAX;
+  if (!sc88_tva_envelope_target_q17(rom, (uint16_t)(value + 0.5), &gain_q17))
+    return fallback;
+  return gain_q17;
+}
+
+uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
   const struct sc88_tva_envelope *envelope, double period_fraction)
 {
   double phase;
@@ -488,12 +525,14 @@ uint32_t sc88_tva_envelope_linear_q17(
     period_fraction * envelope->increments[envelope->stage];
   if (phase > 65535.0)
     phase = 65535.0;
-  return sc88_tva_linear_between(
-    envelope->start_q17, envelope->targets_q17[envelope->stage],
-    phase / 65536.0);
+  return sc88_tva_attenuation_between(
+    rom, envelope->start_attenuation,
+    envelope->target_attenuations[envelope->stage], phase / 65536.0,
+    envelope->current_q17);
 }
 
-bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
+bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
+                               struct sc88_tva_envelope *envelope,
                                unsigned elapsed_periods)
 {
   uint8_t catchup;
@@ -514,6 +553,8 @@ bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
       envelope->saved_count = (uint8_t)remaining;
       envelope->current_q17 = envelope->targets_q17[envelope->stage];
       envelope->start_q17 = envelope->current_q17;
+      envelope->start_attenuation =
+        envelope->target_attenuations[envelope->stage];
       ++envelope->stage;
       envelope->phase = envelope->stage < 4
         ? envelope->initial_phases[envelope->stage] : 0;
@@ -528,18 +569,20 @@ bool sc88_tva_envelope_advance(struct sc88_tva_envelope *envelope,
   }
   envelope->phase = working;
   envelope->saved_count = 0;
-  envelope->current_q17 = sc88_tva_linear_between(
-    envelope->start_q17, envelope->targets_q17[envelope->stage],
-    working / 65536.0);
+  envelope->current_q17 = sc88_tva_attenuation_between(
+    rom, envelope->start_attenuation,
+    envelope->target_attenuations[envelope->stage], working / 65536.0,
+    envelope->current_q17);
   return true;
 }
 
-void sc88_tva_envelope_freeze(struct sc88_tva_envelope *envelope,
+void sc88_tva_envelope_freeze(const struct sc88_rom *rom,
+                              struct sc88_tva_envelope *envelope,
                               double period_fraction)
 {
   if (!envelope)
     return;
   envelope->current_q17 = sc88_tva_envelope_linear_q17(
-    envelope, period_fraction);
+    rom, envelope, period_fraction);
   envelope->active = false;
 }
