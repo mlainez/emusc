@@ -67,6 +67,7 @@ struct sc88_engine_part {
      per-note send too (`M-009`), which is why this is applied per slot
      rather than to the finished mix. */
   uint8_t reverb_send;
+  uint8_t chorus_send;
 };
 
 typedef void (*sc88_control_service_fn)(void *user,
@@ -107,6 +108,8 @@ void sc88_engine_set_part_tvf_controls(
 
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                                  uint8_t map);
+void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,
+                                     uint8_t part, uint8_t send);
 void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
                                       uint8_t part, uint8_t send);
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
@@ -129,10 +132,11 @@ unsigned sc88_engine_released_slots(const struct sc88_engine *engine);
  * catch-up counts whenever the 10,001-clock (8.0008 ms) service is due. */
 void sc88_engine_render(struct sc88_engine *engine, float *stereo,
                         size_t frames);
-/* As above, and also accumulates the mono reverb send bus into `send`,
- * which must hold `frames` samples. */
+/* As above, and also accumulates the two mono effect send buses, each of
+ * which must hold `frames` samples when given. Either may be NULL. */
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
-                                  float *send, size_t frames);
+                                  float *send, float *chorus_send,
+                                  size_t frames);
 
 #ifdef __cplusplus
 }

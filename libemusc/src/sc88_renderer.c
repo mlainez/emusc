@@ -336,6 +336,7 @@ static bool sc88_renderer_note_on_tone(
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
     render_component->reverb_send = 127;
+    render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
     pitch_word = sc88_pitch_current_word(
@@ -426,8 +427,10 @@ bool sc88_renderer_note_on_drum(
                                   velocity, provisional_gain, &drum_levels,
                                   &drum_pan, tvf_controls))
     return false;
-  for (i = 0; i < voice->component_count; ++i)
+  for (i = 0; i < voice->component_count; ++i) {
     voice->components[i].reverb_send = slot.reverb_send;
+    voice->components[i].chorus_send = slot.chorus_send;
+  }
   return true;
 }
 

@@ -150,6 +150,14 @@ void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
   engine->parts[part].reverb_send = send;
 }
 
+void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,
+                                      uint8_t part, uint8_t send)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || send > 127)
+    return;
+  engine->parts[part].chorus_send = send;
+}
+
 void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
                                        uint8_t part, int32_t pitch_offset)
 {
@@ -649,7 +657,8 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
 }
 
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
-                                  float *send, size_t frames)
+                                  float *send, float *chorus_send,
+                                  size_t frames)
 {
   size_t frame;
   if (!engine || !engine->renderer || !stereo)
@@ -658,6 +667,7 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
     float left = 0.0f;
     float right = 0.0f;
     float bus = 0.0f;
+    float chorus_bus = 0.0f;
     unsigned i;
     sc88_engine_run_scheduler(engine);
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
@@ -694,6 +704,17 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
                                     &send_q15))
             bus += gained * (send_q15 / 32768.0f);
         }
+        /* The chorus bus is formed the same way, from part byte `+0e` and
+           the kit's `+0x400` (`08_effects/routing.md`). */
+        if (chorus_send && slot->note < SC88_ENGINE_NOTE_COUNT) {
+          uint16_t send_q15;
+          uint8_t control = sc88_send_combine(
+            engine->parts[engine->notes[slot->note].part].chorus_send,
+            slot->component.chorus_send);
+          if (sc88_control_gain_q15(&engine->renderer->rom, control,
+                                    &send_q15))
+            chorus_bus += gained * (send_q15 / 32768.0f);
+        }
         if (slot->component.oscillator.ended)
           slot->component.active = false;
       } else {
@@ -704,11 +725,13 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
     stereo[frame * 2 + 1] = right;
     if (send)
       send[frame] = bus;
+    if (chorus_send)
+      chorus_send[frame] = chorus_bus;
   }
 }
 
 void sc88_engine_render(struct sc88_engine *engine, float *stereo,
                         size_t frames)
 {
-  sc88_engine_render_with_send(engine, stereo, NULL, frames);
+  sc88_engine_render_with_send(engine, stereo, NULL, NULL, frames);
 }

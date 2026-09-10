@@ -31,6 +31,14 @@ static void sc88_device_sync_part(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_pan(&device->engine, part, &pan);
 }
 
+static void sc88_device_sync_chorus(struct sc88_device *device)
+{
+  sc88_chorus_set_params(&device->renderer.rom, &device->chorus,
+                         device->chorus_level, device->chorus_feedback,
+                         device->chorus_delay, device->chorus_rate,
+                         device->chorus_depth, device->chorus_pre_lpf);
+}
+
 static void sc88_device_sync_pitch(struct sc88_device *device, uint8_t part)
 {
   const struct sc88_channel_state *channel = device->channels + part;
@@ -96,6 +104,8 @@ static bool sc88_device_init_common(
     goto fail;
   sc88_renderer_set_tvf_audio_transfer(
     &device->renderer, sc88_tvf_audio_process_provisional, NULL);
+  if (!sc88_chorus_init(&device->chorus, output_rate))
+    goto fail;
   if (!sc88_engine_init(&device->engine, &device->renderer))
     goto fail;
   /* Hall 2 is the character a reset selects; the reverb reads its own delay
@@ -147,6 +157,8 @@ void sc88_device_destroy(struct sc88_device *device)
     sc88_engine_destroy(&device->engine);
   sc88_reverb_destroy(&device->reverb);
   free(device->send_bus);
+  free(device->chorus_bus);
+  sc88_chorus_destroy(&device->chorus);
   for (chip = 0; chip < SC88_WAVE_CHIP_COUNT; ++chip)
     free(device->decoded_chips[chip]);
   free(device->control_rom);
@@ -169,6 +181,17 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   sc88_reverb_set_params(&device->reverb, device->reverb_level,
                          device->reverb_time, device->reverb_pre_lpf);
   sc88_reverb_reset(&device->reverb);
+  /* The manual's own chorus defaults. */
+  device->chorus_macro = 2;
+  device->chorus_pre_lpf = 0;
+  device->chorus_level = 64;
+  device->chorus_feedback = 8;
+  device->chorus_delay = 80;
+  device->chorus_rate = 3;
+  device->chorus_depth = 19;
+  device->chorus_send_to_reverb = 0;
+  sc88_device_sync_chorus(device);
+  sc88_chorus_reset(&device->chorus);
   for (part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
     struct sc88_channel_state *channel = device->channels + part;
     channel->variation = 0;
@@ -178,9 +201,12 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->expression = 127;
     channel->pan = 64;
     channel->hold1 = 0;
-    /* GS's own default part reverb send is 40 (SC88-OM). */
+    /* GS's own default part reverb send is 40, and its chorus send 0
+       (SC88-OM), so a song that wants chorus has to ask for it. */
     channel->reverb_send = 40;
     sc88_engine_set_part_reverb_send(&device->engine, (uint8_t)part, 40);
+    channel->chorus_send = 0;
+    sc88_engine_set_part_chorus_send(&device->engine, (uint8_t)part, 0);
     channel->cutoff = 64;
     channel->resonance = 64;
     channel->pitch_bend = 8192;
@@ -312,26 +338,38 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     sc88_reverb_set_params(&device->reverb, device->reverb_level,
                            device->reverb_time, device->reverb_pre_lpf);
     return true;
+  /* The macro's eight names are the manual's chorus types. Which fields
+     each preset loads is not recovered - the delay macro demonstrably
+     copies a ten-byte preset, and this one may too - so the macro is held
+     and the fields it would carry are left to the song, which sends them. */
   case 0x400138:
     device->chorus_macro = value;
     return true;
   case 0x400139:
+    if (value > 7)
+      return false;
     device->chorus_pre_lpf = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013a:
     device->chorus_level = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013b:
     device->chorus_feedback = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013c:
     device->chorus_delay = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013d:
     device->chorus_rate = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013e:
     device->chorus_depth = value;
+    sc88_device_sync_chorus(device);
     return true;
   case 0x40013f:
     device->chorus_send_to_reverb = value;
@@ -370,7 +408,8 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
       sc88_device_sync_part(device, part);
       return true;
     case 0x21:
-      /* Chorus send is held for the same reason the chorus block is. */
+      state->chorus_send = value;
+      sc88_engine_set_part_chorus_send(&device->engine, part, value);
       return true;
     case 0x22:
       state->reverb_send = value;
@@ -462,6 +501,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     case 91:
       state->reverb_send = data2;
       sc88_engine_set_part_reverb_send(&device->engine, part, data2);
+      return true;
+    case 93:
+      state->chorus_send = data2;
+      sc88_engine_set_part_chorus_send(&device->engine, part, data2);
       return true;
     case 6:
       if (state->rpn_msb == 0 && state->rpn_lsb == 0) {
@@ -569,16 +612,30 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
      so a render loop does not allocate per block. */
   if (frames > device->send_capacity) {
     float *grown = (float *)realloc(device->send_bus, frames * sizeof *grown);
+    float *grown_chorus;
     if (!grown) {
       sc88_engine_render(&device->engine, stereo, frames);
       return;
     }
     device->send_bus = grown;
+    grown_chorus = (float *)realloc(device->chorus_bus,
+                                    frames * sizeof *grown_chorus);
+    if (!grown_chorus) {
+      sc88_engine_render(&device->engine, stereo, frames);
+      return;
+    }
+    device->chorus_bus = grown_chorus;
     device->send_capacity = frames;
   }
   memset(device->send_bus, 0, frames * sizeof *device->send_bus);
+  memset(device->chorus_bus, 0, frames * sizeof *device->chorus_bus);
   sc88_engine_render_with_send(&device->engine, stereo, device->send_bus,
-                               frames);
+                               device->chorus_bus, frames);
+  /* The chorus runs before the reverb reads its bus, because the chorus
+     has its own send into the reverb; that send is received and held but
+     not yet routed, so the two effects are still parallel here. */
+  if (device->chorus.active)
+    sc88_chorus_process(&device->chorus, device->chorus_bus, stereo, frames);
   if (device->reverb.active)
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
 }

@@ -50,6 +50,8 @@ struct sc88_render_component {
      its snare and cymbals at 127 and its kick at 0 - and flattening them
      to one part send is audible as a kit with no depth (`M-009`). */
   uint8_t reverb_send;
+  /* the kit's `+0x400`, or 127 for a melodic note */
+  uint8_t chorus_send;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
   struct sc88_tva_envelope envelope;
