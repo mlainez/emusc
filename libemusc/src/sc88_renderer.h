@@ -4,6 +4,7 @@
 
 #include "sc88_oscillator.h"
 #include "sc88_pan.h"
+#include "sc88_lfo.h"
 #include "sc88_pitch.h"
 #include "sc88_rom.h"
 #include "sc88_tva.h"
@@ -50,6 +51,10 @@ struct sc88_render_component {
      melodic note. The kits are not uniformly treated - STANDARD 1 sends
      its snare and cymbals at 127 and its kick at 0 - and flattening them
      to one part send is audible as a kit with no depth (`M-009`). */
+  /* The tone-common oscillator. Its rate, waveform and delay/fade ramp
+     are exact; what the depth word means in cents is calibrated from
+     the manual's one published figure (`M-019`). */
+  struct sc88_lfo lfo1;
   uint8_t reverb_send;
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;

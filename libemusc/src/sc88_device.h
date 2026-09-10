@@ -35,6 +35,10 @@ struct sc88_channel_state {
   uint8_t attack;
   uint8_t decay;
   uint8_t release;
+  /* CC1, and the matrix depth it drives. The manual's initial
+     modulation-to-LFO1-pitch depth is 0x0a. */
+  uint8_t modulation;
+  uint8_t mod_lfo1_pitch_depth;
   uint16_t pitch_bend;
   uint8_t pitch_bend_sensitivity;
   uint8_t rpn_msb;

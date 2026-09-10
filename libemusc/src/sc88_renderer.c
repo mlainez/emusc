@@ -344,6 +344,12 @@ static bool sc88_renderer_note_on_tone(
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
     render_component->reverb_send = 127;
+    /* Neutral part and user modifiers: the part-level rate and delay
+       offsets are a controller-matrix destination this does not model
+       yet, so the tone's own rate stands. */
+    if (!sc88_lfo_common_prepare(&renderer->rom, &tone, 64, 64, 64, 64,
+                                 &render_component->lfo1))
+      memset(&render_component->lfo1, 0, sizeof render_component->lfo1);
     render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;

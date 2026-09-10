@@ -66,6 +66,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
   engine->free_slot_head = 0;
   engine->free_slot_tail = SC88_ENGINE_SLOT_COUNT - 1;
   engine->free_slot_count = SC88_ENGINE_SLOT_COUNT;
+  engine->lfo_seed = 0x1234u;
   engine->next_serial = 1;
   for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
     engine->note_next_free[i] = i + 1 < SC88_ENGINE_NOTE_COUNT
@@ -82,6 +83,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].levels.expression = 127;
     engine->parts[i].pan.master = 64;
     engine->parts[i].pan.part = 64;
+    engine->parts[i].lfo1_pitch_depth = 0;
     engine->parts[i].tva_controls.part_attack = 64;
     engine->parts[i].tva_controls.secondary_attack = 64;
     engine->parts[i].tva_controls.part_decay = 64;
@@ -120,6 +122,35 @@ void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
   }
 }
 
+/* The oscillator's pitch contribution, in pitch-word units.
+ *
+ * Exact: the waveform, the rate (`increment * 124.987501249875 / 65536` Hz)
+ * and the delay/fade ramp, whose fade multiplies the depth. Exact too is
+ * the depth word the controller matrix forms, `(depth * value) >> 2`
+ * summed over its sources.
+ *
+ * Calibrated, not decoded: what that word is worth in cents. The manual
+ * publishes one figure - the initial modulation-to-LFO1-pitch depth of
+ * `0x0a` is 47 cents - and at full modulation that depth gives the word
+ * `(10 * 127) >> 2 = 317`, so 317 stands for 47 cents. The scaling of
+ * these words into XP pitch state is listed as still being decoded in
+ * `07_synthesis/lfo.md`, so this is the anchor available (`M-019`).
+ */
+static int32_t sc88_engine_lfo_pitch_offset(
+  const struct sc88_engine *engine, const struct sc88_engine_slot *slot,
+  uint8_t part)
+{
+  double cents;
+  uint16_t depth = engine->parts[part].lfo1_pitch_depth;
+  if (!depth)
+    return 0;
+  cents = 47.0 / 317.0 * (double)depth *
+    ((double)slot->component.lfo1.ramp.fade / 65535.0) *
+    ((double)slot->component.lfo1.output / 32767.0);
+  /* 0x4000 pitch-word units to the octave */
+  return (int32_t)(cents * 16384.0 / 1200.0);
+}
+
 static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
                                           struct sc88_engine_slot *slot)
 {
@@ -131,7 +162,8 @@ static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
   note = engine->notes + slot->note;
   word = sc88_pitch_current_word(
     slot->component.static_pitch_word,
-    engine->parts[note->part].pitch_offset,
+    engine->parts[note->part].pitch_offset +
+      sc88_engine_lfo_pitch_offset(engine, slot, note->part),
     sc88_pitch_envelope_sum(&slot->component.pitch_envelope,
                             &slot->component.pitch_release));
   slot->component.oscillator.step = sc88_pitch_word_rate(
@@ -144,6 +176,14 @@ void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
   if (!engine || part >= SC88_ENGINE_PART_COUNT || map > 2)
     return;
   engine->parts[part].rhythm_map = map;
+}
+
+void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
+                                           uint8_t part, uint16_t depth)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].lfo1_pitch_depth = depth;
 }
 
 void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
@@ -637,6 +677,12 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
         tvf_retargeted = true;
       }
     }
+    /* The ramp runs on its own clock and is not gated by a stalled
+       oscillator, so both advance whatever the rate control says. */
+    (void)sc88_lfo_advance(&engine->renderer->rom, &slot->component.lfo1,
+                           0, (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+    (void)sc88_lfo_ramp_advance(&slot->component.lfo1.ramp,
+                                (uint8_t)(elapsed - 1u));
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&engine->renderer->rom,
                                       &slot->component.envelope, elapsed);

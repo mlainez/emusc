@@ -225,6 +225,10 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->attack = 64;
     channel->decay = 64;
     channel->release = 64;
+    channel->modulation = 0;
+    /* SC88-OM's initial modulation depths: LFO1 pitch 0x0a, the rest zero */
+    channel->mod_lfo1_pitch_depth = 0x0a;
+    sc88_engine_set_part_lfo1_pitch_depth(&device->engine, (uint8_t)part, 0);
     channel->pitch_bend = 8192;
     channel->pitch_bend_sensitivity = 2;
     channel->rpn_msb = 127;
@@ -525,6 +529,16 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     switch (data1) {
     case 0:
       state->variation = data2;
+      return true;
+    case 1:
+      /* The controller matrix forms each LFO depth destination as the sum
+         of `depth * value` over its sources, shifted right by two
+         (`04_protocol/controllers.md`). Modulation is the only source
+         modelled, so the sum is the one term. */
+      state->modulation = data2;
+      sc88_engine_set_part_lfo1_pitch_depth(
+        &device->engine, part,
+        (uint16_t)(((unsigned)state->mod_lfo1_pitch_depth * data2) >> 2));
       return true;
     case 91:
       state->reverb_send = data2;

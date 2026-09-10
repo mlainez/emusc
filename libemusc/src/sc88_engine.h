@@ -70,6 +70,9 @@ struct sc88_engine_part {
      rather than to the finished mix. */
   uint8_t reverb_send;
   uint8_t chorus_send;
+  /* `(depth * value) >> 2` summed over the controller matrix's
+     sources, of which only modulation is modelled. */
+  uint16_t lfo1_pitch_depth;
 };
 
 typedef void (*sc88_control_service_fn)(void *user,
@@ -80,6 +83,8 @@ struct sc88_engine {
   struct sc88_engine_note notes[SC88_ENGINE_NOTE_COUNT];
   struct sc88_engine_slot slots[SC88_ENGINE_SLOT_COUNT];
   struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
+  /* one random word shared by every oscillator, as the firmware has */
+  uint16_t lfo_seed;
   uint8_t free_note_head;
   uint8_t free_note_tail;
   uint8_t note_next_free[SC88_ENGINE_NOTE_COUNT];
@@ -115,6 +120,8 @@ void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                                  uint8_t map);
 void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,
                                      uint8_t part, uint8_t send);
+void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
+                                           uint8_t part, uint16_t depth);
 void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
                                       uint8_t part, uint8_t send);
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
