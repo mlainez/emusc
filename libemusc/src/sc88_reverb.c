@@ -29,6 +29,17 @@ static int sc88_reverb_cmp(const void *a, const void *b)
   return x < y ? -1 : x > y;
 }
 
+static const unsigned sc88_reverb_shift[4] = {0u, 1u, 2u, 4u};
+
+static double sc88_reverb_xp(uint16_t raw)
+{
+  int value = raw & 0x3fff;
+  if (value & 0x2000)
+    value -= 0x4000;
+  return (double)value * (double)(1u << sc88_reverb_shift[raw >> 14]) /
+    8192.0;
+}
+
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
                                 struct sc88_reverb_character *out)
 {
@@ -51,6 +62,21 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
     uint16_t b = sc88_reverb_be16(rom->bytes + block + 4u * i + 2u);
     if (a == SC88_REVERB_ALLPASS_PAIR_A && b == SC88_REVERB_ALLPASS_PAIR_B)
       ++out->allpasses;
+  }
+  /* words 16..19 are two more coefficient pairs, not unassigned space:
+     each is a one-pole `y = a*x - b*y'`, and the first is the damping the
+     late bank needs. Its DC gain is below unity, so it absorbs as well as
+     darkens (`M-023`). */
+  {
+    double a = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 32u));
+    double b = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 34u));
+    if (a > 0.0 && b < 0.0 && -b < 0.99) {
+      out->damp_input = (float)a;
+      out->damp_pole = (float)(-b);
+    } else {
+      out->damp_input = 1.0f;
+      out->damp_pole = 0.0f;
+    }
   }
   /* words 20..51 are 32 delay-memory addresses that **partition** the
      character's memory: sorted, the gaps between them are the line lengths
@@ -201,6 +227,7 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
       ? (double)longest / rv->output_rate : 0.0;
     if (seconds > 0.0 && rv->target_t60 > 0.01) {
       double g = pow(10.0, -3.0 * seconds / rv->target_t60);
+
       if (g > 0.995)
         g = 0.995;
       else if (g < 0.05)
@@ -208,7 +235,14 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
       rv->feedback = (float)g;
     }
   }
-  rv->damp = 0.35f;                     /* provisional, as above */
+  /* How fast the tail darkens. The two coefficient pairs at words 16..19
+     of the character block read as one-poles gentler than this, so they
+     are not it, and the firmware's own damping is not identified. What is
+     measurable is the hardware's tail: after the music stops, demo song 1
+     decays with a spectral centroid of 440 Hz where 0.35 here gave 1060.
+     This is calibrated to that (`M-023`), and the one-pole keeps unity at
+     DC so the decay stays where `M-013` put it. */
+  rv->damp = 0.82f;
   /* Normalised by the square root of the line count. Dividing by the count
      itself, as this did, is what a bank of *identical* sources would need;
      these are decorrelated, so their sum grows as the root and dividing by

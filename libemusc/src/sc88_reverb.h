@@ -27,6 +27,12 @@ struct sc88_reverb_character {
   uint8_t line_count;
   uint16_t lines[SC88_REVERB_LINE_MAX];   /* lengths in 32 kHz samples */
   uint16_t extent;                        /* the whole memory it spans */
+  /* Words 16..19, which `08_effects/reverb.md` lists as unassigned, are
+     two further coefficient pairs and they decode as one-poles: read as
+     `y = a*x - b*y'` the first gives DC 0.674 with a 6.5 kHz corner on
+     characters 2 to 4, and 0.242 with a 3.7 kHz corner on 1 and 5. That
+     is a damping filter, and it is per character (`M-023`). */
+  float damp_input, damp_pole;
 };
 
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
@@ -53,7 +59,7 @@ struct sc88_reverb {
   /* set from a decay time measured on hardware, not from a guessed curve;
      see the note in the source */
   float feedback;
-  float damp;                    /* provisional */
+  float damp;                    /* superseded by the character's own */
   /* the decay the parameters ask for, in seconds, for reporting */
   double target_t60;
   float level;

@@ -314,7 +314,7 @@ int main(int argc, char **argv)
      is a switch with a named default and it is printed with every render. */
   enum sc88_fractional_wrap wrap = SC88_WRAP_FULL_CARRY;
   const char *wrap_name = "carry";
-  bool raw = false, trace = false, no_filter = false;
+  bool raw = false, trace = false, no_filter = false, no_effects = false;
   uint8_t *control = NULL, *chips[SC88_WAVE_CHIP_COUNT] = {0};
   const uint8_t *chip_view[SC88_WAVE_CHIP_COUNT];
   size_t control_size = 0, chip_sizes[SC88_WAVE_CHIP_COUNT] = {0};
@@ -365,6 +365,8 @@ int main(int argc, char **argv)
       trace = true;
     else if (!strcmp(a, "--no-filter"))
       no_filter = true;
+    else if (!strcmp(a, "--no-effects"))
+      no_effects = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {
       wrap_name = argv[++i];
       if (!strcmp(wrap_name, "carry"))
@@ -421,6 +423,13 @@ int main(int argc, char **argv)
      argued about. */
   if (no_filter)
     sc88_renderer_set_tvf_audio_transfer(&device.renderer, NULL, NULL);
+  /* Bisecting a spectral difference: with these off, what remains is the
+     voices alone. */
+  if (no_effects) {
+    device.reverb.active = false;
+    device.chorus.active = false;
+    device.delay.active = false;
+  }
   for (i = 0; i < SC88_WAVE_CHIP_COUNT; ++i)
     free(chips[i]);
   free(control);
