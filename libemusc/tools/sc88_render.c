@@ -299,6 +299,7 @@ static void usage(void)
     "--out FILE\n"
     "                   [--rate HZ] [--raw] [--tail SECONDS]\n"
     "                   [--wrap carry|reset|fraction] [--trace]\n"
+    "                   [--no-filter]\n"
     "  --raw   the wave images are undescrambled chip dumps\n"
     "  --wrap  oscillator fractional wrap, an open question: state it\n");
 }
@@ -313,7 +314,7 @@ int main(int argc, char **argv)
      is a switch with a named default and it is printed with every render. */
   enum sc88_fractional_wrap wrap = SC88_WRAP_FULL_CARRY;
   const char *wrap_name = "carry";
-  bool raw = false, trace = false;
+  bool raw = false, trace = false, no_filter = false;
   uint8_t *control = NULL, *chips[SC88_WAVE_CHIP_COUNT] = {0};
   const uint8_t *chip_view[SC88_WAVE_CHIP_COUNT];
   size_t control_size = 0, chip_sizes[SC88_WAVE_CHIP_COUNT] = {0};
@@ -361,6 +362,8 @@ int main(int argc, char **argv)
       raw = true;
     else if (!strcmp(a, "--trace"))
       trace = true;
+    else if (!strcmp(a, "--no-filter"))
+      no_filter = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {
       wrap_name = argv[++i];
       if (!strcmp(wrap_name, "carry"))
@@ -412,6 +415,11 @@ int main(int argc, char **argv)
     fprintf(stderr, "sc88_render: the device rejected these ROMs\n");
     return 1;
   }
+  /* The filter's cutoff mapping is a labelled guess, so being able to take
+     it out of the path is how its contribution gets measured rather than
+     argued about. */
+  if (no_filter)
+    sc88_renderer_set_tvf_audio_transfer(&device.renderer, NULL, NULL);
   for (i = 0; i < SC88_WAVE_CHIP_COUNT; ++i)
     free(chips[i]);
   free(control);

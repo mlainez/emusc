@@ -7,6 +7,9 @@
 
 #define SC88_TVF_BASE_TABLE 0x78702u
 #define SC88_TVF_LIMIT_TABLE 0x78802u
+/* The sound chip's own sample rate, which the cutoff word is a
+   fraction of. */
+#define SC88_TVF_NATIVE_RATE 32000.0
 #define SC88_ENVELOPE_RATE_TABLE 0x1543eu
 #define SC88_RATE_SCALE_TABLE 0x1573eu
 #define SC88_RELEASE_PEDAL_TABLE 0x78a02u
@@ -491,7 +494,6 @@ float sc88_tvf_audio_process_provisional(
   double low;
   unsigned mode;
 
-  (void)user;
   if (!state || !registers)
     return input;
   if (period_fraction < 0.0)
@@ -503,14 +505,32 @@ float sc88_tvf_audio_process_provisional(
   f1 = word / 262144.0;
   if (f1 < 0.0)
     f1 = 0.0;
-  else if (f1 > 1.0)
-    f1 = 1.0;
+  else if (f1 > 0.999)
+    f1 = 0.999;
 
-  /* Provisional interpretation: the 15-bit value before the firmware's
-   * three-bit XP expansion is Chamberlin F1 = 2*sin(pi*fc/fs). Convert it
-   * to the equivalent stable topology-preserving integrator coefficient. */
-  sine = f1 * 0.5;
-  g = sine / sqrt(1.0 - sine * sine);
+  /* The word is `sin(pi * fc / 32000)`, not twice it.
+   *
+   * Reading it as Chamberlin's `F1 = 2*sin(pi*fc/fs)` halves every cutoff,
+   * and because the firmware's own ceiling is `filter_limit >> 1 << 3`,
+   * whose largest entry is `0xf800`, that put the **highest cutoff the
+   * device could ask for at 5.3 kHz**. Everything came out dull: a snare
+   * measured 1.0 % of its energy above 8 kHz where its own ROM sample has
+   * 30.4 %, which is why it sounded like a tick rather than a snare. Taken
+   * as `sin`, the same ceiling lands at 13.4 kHz and the snare matches its
+   * sample to within 50 Hz of centroid (`M-014`).
+   *
+   * The fraction is of the sound chip's 32 kHz, so the cutoff is a real
+   * frequency and the coefficient is recomputed for the output rate -
+   * otherwise rendering at 48 kHz moves every cutoff up by half again. */
+  sine = f1;
+  {
+    double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
+    double cutoff = asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
+    double nyquist = rate * 0.5;
+    if (cutoff > nyquist * 0.99)
+      cutoff = nyquist * 0.99;
+    g = tan(3.14159265358979323846 * cutoff / rate);
+  }
   damping = 2.0 - 1.9 * (registers->resonance_index / 127.0);
   denominator = 1.0 + damping * g + g * g;
   high = (input - (damping + g) * state->integrator_band -

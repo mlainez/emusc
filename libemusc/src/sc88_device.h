@@ -58,6 +58,10 @@ struct sc88_device {
   uint8_t chorus_rate, chorus_depth, chorus_pre_lpf, chorus_send_to_reverb;
   /* 0 single module, 1 double. Several parameters exist only in one mode. */
   uint8_t system_mode;
+  /* The filter's cutoff is a fraction of the sound chip's own 32 kHz,
+     so the coefficient has to be recomputed for whatever rate the
+     caller renders at; the transfer function is handed this. */
+  double output_rate;
   /* SysEx writes that parsed correctly but name an address this
      implementation does not act on. Counted rather than dropped quietly,
      so a render can say what it ignored. */

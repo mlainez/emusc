@@ -102,8 +102,10 @@ static bool sc88_device_init_common(
                           SC88_CONTROL_ROM_SIZE, device->banks,
                           SC88_WAVE_BANK_COUNT, output_rate, wrap))
     goto fail;
+  device->output_rate = output_rate;
   sc88_renderer_set_tvf_audio_transfer(
-    &device->renderer, sc88_tvf_audio_process_provisional, NULL);
+    &device->renderer, sc88_tvf_audio_process_provisional,
+    &device->output_rate);
   if (!sc88_chorus_init(&device->chorus, output_rate))
     goto fail;
   if (!sc88_engine_init(&device->engine, &device->renderer))
