@@ -110,6 +110,7 @@ if(BUILD_TESTING)
 
   sc88_test(sc88_wave_test sc88_wave.c)
   sc88_test(sc88_oscillator_test sc88_oscillator.c)
+  sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_wave.c)

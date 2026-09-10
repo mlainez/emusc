@@ -58,6 +58,11 @@ struct sc88_engine_part {
   bool sostenuto;
   uint8_t sostenuto_keys[16];
   uint8_t hold_value;
+  /* Nonzero makes this a rhythm part, and selects which kit set its program
+     indexes: 1 for the SC-55 kits, 2 for the SC-88's own. GS calls this Use
+     For Rhythm Part, and it is a property of the part rather than of a note,
+     which is why it lives here. */
+  uint8_t rhythm_map;
 };
 
 typedef void (*sc88_control_service_fn)(void *user,
@@ -96,6 +101,8 @@ void sc88_engine_set_part_tvf_controls(
   struct sc88_engine *engine, uint8_t part,
   const struct sc88_tvf_controls *controls);
 
+void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
+                                 uint8_t map);
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
                          uint8_t variation, uint8_t program,
                          uint8_t key, uint8_t velocity, uint8_t context,

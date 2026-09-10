@@ -233,15 +233,18 @@ bool sc88_renderer_note_on_with_controls(
     levels, pan, &renderer->tvf_controls);
 }
 
-bool sc88_renderer_note_on_with_part_controls(
+/* The body both entry points share. A melodic note selects its tone through
+ * the variation map and plays it at the MIDI key; a rhythm note's tone and
+ * key both come from its kit record, so the two differ only in what they
+ * hand in here. */
+static bool sc88_renderer_note_on_tone(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  uint32_t tone_offset, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls)
 {
   struct sc88_tone tone;
-  uint32_t tone_offset;
   unsigned i;
 
   if (!renderer || !voice || !levels || !pan || !tvf_controls ||
@@ -249,8 +252,6 @@ bool sc88_renderer_note_on_with_part_controls(
       levels->secondary > 127 || levels->part > 127 ||
       levels->expression > 127 || key > 127 || velocity > 127 ||
       provisional_gain < 0.0f ||
-      !sc88_rom_select_melodic(&renderer->rom, variation, program,
-                               &tone_offset) ||
       !sc88_rom_open_tone(&renderer->rom, tone_offset, &tone))
     return false;
   memset(voice, 0, sizeof *voice);
@@ -366,6 +367,57 @@ bool sc88_renderer_note_on_with_part_controls(
 fail:
   sc88_renderer_voice_destroy(voice);
   return false;
+}
+
+bool sc88_renderer_note_on_with_part_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls)
+{
+  uint32_t tone_offset;
+  if (!renderer ||
+      !sc88_rom_select_melodic(&renderer->rom, variation, program,
+                               &tone_offset))
+    return false;
+  return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
+                                    velocity, provisional_gain, levels, pan,
+                                    tvf_controls);
+}
+
+bool sc88_renderer_note_on_drum(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
+  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls,
+  struct sc88_drum_note *note)
+{
+  struct sc88_drum_note slot;
+  struct sc88_tva_levels drum_levels;
+  struct sc88_pan_controls drum_pan;
+  uint32_t kit;
+  if (!renderer || !levels || !pan ||
+      !sc88_rom_select_drum(&renderer->rom, map, program, &kit) ||
+      !sc88_rom_open_drum_note(&renderer->rom, kit, key, &slot))
+    return false;
+  /* The kit record carries this key's own level and pan, and the key the
+     tone is actually played at - a kick is not the sample transposed to the
+     key that triggered it. */
+  drum_levels = *levels;
+  drum_pan = *pan;
+  if (slot.level <= 127)
+    drum_levels.secondary = slot.level;
+  if (slot.pan >= 1 && slot.pan <= 127)
+    drum_pan.part = slot.pan;
+  if (note)
+    *note = slot;
+  return sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
+                                    slot.play_note <= 127 ? slot.play_note
+                                                          : key,
+                                    velocity, provisional_gain, &drum_levels,
+                                    &drum_pan, tvf_controls);
 }
 
 bool sc88_renderer_voice_active(const struct sc88_render_voice *voice)

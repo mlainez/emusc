@@ -170,6 +170,13 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->nrpn_msb = 127;
     channel->nrpn_lsb = 127;
     channel->same_note_mode = SC88_SAME_NOTE_LIMITED_MULTI;
+    /* GS puts the rhythm part on MIDI channel 10, i.e. part 9 of each port,
+       and a GS reset restores exactly that. Which kit set a reset leaves
+       selected is not recovered - the active map selector goes to zero and
+       zero is not documented to mean the SC-88 - so an SC-88 device defaults
+       to its own kits and says so. */
+    sc88_engine_set_part_rhythm(&device->engine, (uint8_t)part,
+                                (part % 16u) == 9u ? SC88_RHYTHM_MAP_SC88 : 0);
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
     sc88_device_sync_part(device, (uint8_t)part);

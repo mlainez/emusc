@@ -53,6 +53,55 @@ bool sc88_rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size)
   return true;
 }
 
+#define SC88_DRUM_MAP_BASE 0x2fd00u
+#define SC88_DRUM_POINTER_TABLE 0x2b550u
+#define SC88_DRUM_KIT_COUNT 24u
+#define SC88_DRUM_KIT_STRIDE 0x50cu
+#define SC88_DRUM_KIT_BASE 0x23c30u
+
+bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
+                          uint8_t program, uint32_t *kit_offset)
+{
+  uint8_t index;
+  uint32_t pointer;
+  if (!rom || !rom->bytes || !kit_offset || program > 127 ||
+      map < 1 || map > 2 ||
+      SC88_DRUM_POINTER_TABLE + SC88_DRUM_KIT_COUNT * 3 > rom->size)
+    return false;
+  index = rom->bytes[SC88_DRUM_MAP_BASE + ((unsigned)map - 1u) * 128u +
+                     program];
+  if (index >= SC88_DRUM_KIT_COUNT)
+    return false;                /* ff marks a program with no kit */
+  pointer = sc88_rom_be24(rom->bytes + SC88_DRUM_POINTER_TABLE +
+                          (uint32_t)index * 3);
+  if (pointer != SC88_DRUM_KIT_BASE + (uint32_t)index * SC88_DRUM_KIT_STRIDE ||
+      pointer + SC88_DRUM_KIT_STRIDE > rom->size)
+    return false;
+  *kit_offset = pointer;
+  return true;
+}
+
+bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
+                             uint8_t note, struct sc88_drum_note *out)
+{
+  uint32_t tone;
+  if (!rom || !rom->bytes || !out || note > 127 ||
+      kit_offset + SC88_DRUM_KIT_STRIDE > rom->size)
+    return false;
+  tone = sc88_rom_be24(rom->bytes + kit_offset + (uint32_t)note * 3);
+  if (tone == 0xffffffu || tone < SC88_TONE_BASE || tone >= SC88_TONE_END)
+    return false;                /* this key has no sound in this kit */
+  out->tone_offset = tone;
+  out->play_note = rom->bytes[kit_offset + 0x180u + note];
+  out->level = rom->bytes[kit_offset + 0x200u + note];
+  out->assign_group = rom->bytes[kit_offset + 0x280u + note];
+  out->pan = rom->bytes[kit_offset + 0x300u + note];
+  out->reverb_send = rom->bytes[kit_offset + 0x380u + note];
+  out->chorus_send = rom->bytes[kit_offset + 0x400u + note];
+  out->flags = rom->bytes[kit_offset + 0x480u + note];
+  return true;
+}
+
 bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t variation,
                              uint8_t program, uint32_t *tone_offset)
 {

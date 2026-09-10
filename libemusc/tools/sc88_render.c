@@ -286,6 +286,11 @@ int main(int argc, char **argv)
   unsigned rejected_status[8] = {0};
   unsigned rejected_cc[128] = {0};
   unsigned note_ons = 0;
+  /* A rejected note is the worst artifact there is, so say which voice was
+     asked for: the channel's variation and program at the time. */
+  unsigned rejected_program[128] = {0};
+  unsigned rejected_variation[128] = {0};
+  unsigned rejected_channel[16] = {0};
   float peak = 0.0f;
 
   for (i = 1; (int)i < argc; ++i) {
@@ -395,6 +400,12 @@ int main(int argc, char **argv)
         ++rejected_status[(event->status >> 4) & 7u];
         if ((event->status & 0xf0u) == 0xb0u)
           ++rejected_cc[event->data1 & 0x7fu];
+        if ((event->status & 0xf0u) == 0x90u && event->data2) {
+          uint8_t ch = event->status & 0x0fu;
+          ++rejected_program[device.channels[ch].program & 0x7fu];
+          ++rejected_variation[device.channels[ch].variation & 0x7fu];
+          ++rejected_channel[ch];
+        }
       }
       ++event_index;
     }
@@ -453,6 +464,21 @@ int main(int argc, char **argv)
     for (i = 0; i < 128; ++i)
       if (rejected_cc[i])
         printf(" cc%u x%u", (unsigned)i, rejected_cc[i]);
+    printf("\n");
+  }
+  if (rejected_status[1]) {
+    printf("  dropped notes asked for program:");
+    for (i = 0; i < 128; ++i)
+      if (rejected_program[i])
+        printf(" %u x%u", (unsigned)i, rejected_program[i]);
+    printf("\n  on channel:");
+    for (i = 0; i < 16; ++i)
+      if (rejected_channel[i])
+        printf(" %u x%u", (unsigned)i + 1, rejected_channel[i]);
+    printf("\n  and variation:");
+    for (i = 0; i < 128; ++i)
+      if (rejected_variation[i])
+        printf(" %u x%u", (unsigned)i, rejected_variation[i]);
     printf("\n");
   }
   sc88_device_destroy(&device);
