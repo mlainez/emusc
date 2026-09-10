@@ -280,7 +280,7 @@ int main(void)
   sc88_engine_set_part_reverb_send(&engine, 0, 127);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, 1);
+  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(stereo[0] != 0.0f || stereo[1] != 0.0f);
   assert(send[0] == 0.0f);
   sc88_engine_destroy(&engine);
@@ -290,7 +290,7 @@ int main(void)
   sc88_engine_set_part_reverb_send(&engine, 0, 127);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, 1);
+  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   wet = send[0];
   assert(wet != 0.0f);
   sc88_engine_destroy(&engine);
@@ -302,7 +302,7 @@ int main(void)
   sc88_engine_set_part_reverb_send(&engine, 0, 0);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, 1);
+  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == 0.0f);
   sc88_engine_destroy(&engine);
 
@@ -314,7 +314,7 @@ int main(void)
   sc88_engine_set_part_reverb_send(&engine, 0, 127);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, 1);
+  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == wet);
   sc88_engine_destroy(&engine);
 

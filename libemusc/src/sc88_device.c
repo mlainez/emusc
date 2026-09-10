@@ -119,6 +119,8 @@ static bool sc88_device_init_common(
     &device->output_rate);
   if (!sc88_chorus_init(&device->chorus, output_rate))
     goto fail;
+  if (!sc88_delay_init(&device->delay, output_rate))
+    goto fail;
   if (!sc88_engine_init(&device->engine, &device->renderer))
     goto fail;
   /* Hall 2 is the character a reset selects; the reverb reads its own delay
@@ -171,7 +173,9 @@ void sc88_device_destroy(struct sc88_device *device)
   sc88_reverb_destroy(&device->reverb);
   free(device->send_bus);
   free(device->chorus_bus);
+  free(device->delay_bus);
   sc88_chorus_destroy(&device->chorus);
+  sc88_delay_destroy(&device->delay);
   for (chip = 0; chip < SC88_WAVE_CHIP_COUNT; ++chip)
     free(device->decoded_chips[chip]);
   free(device->control_rom);
@@ -205,6 +209,13 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->chorus_send_to_reverb = 0;
   sc88_device_sync_chorus(device);
   sc88_chorus_reset(&device->chorus);
+  /* Delay macro 0 and the ten bytes it copies over pre-LPF through reverb
+     send, which is what writing the macro address does. */
+  device->delay_macro = 0;
+  if (sc88_delay_macro(&device->renderer.rom, 0, device->delay_params))
+    (void)sc88_delay_set_params(&device->renderer.rom, &device->delay,
+                                device->delay_params);
+  sc88_delay_reset(&device->delay);
   for (part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
     struct sc88_channel_state *channel = device->channels + part;
     channel->variation = 0;
@@ -220,6 +231,8 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     sc88_engine_set_part_reverb_send(&device->engine, (uint8_t)part, 40);
     channel->chorus_send = 0;
     sc88_engine_set_part_chorus_send(&device->engine, (uint8_t)part, 0);
+    channel->delay_send = 0;
+    sc88_engine_set_part_delay_send(&device->engine, (uint8_t)part, 0);
     channel->cutoff = 64;
     channel->resonance = 64;
     channel->attack = 64;
@@ -363,6 +376,23 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
      each preset loads is not recovered - the delay macro demonstrably
      copies a ten-byte preset, and this one may too - so the macro is held
      and the fields it would carry are left to the song, which sends them. */
+  case 0x400150:
+    /* Writing the macro copies its ten bytes over pre-LPF through reverb
+       send; writing any other field changes only that field. */
+    if (value > 9)
+      return false;
+    device->delay_macro = value;
+    if (!sc88_delay_macro(&device->renderer.rom, value,
+                          device->delay_params))
+      return false;
+    return sc88_delay_set_params(&device->renderer.rom, &device->delay,
+                                 device->delay_params);
+  case 0x400151: case 0x400152: case 0x400153: case 0x400154:
+  case 0x400155: case 0x400156: case 0x400157: case 0x400158:
+  case 0x400159: case 0x40015a:
+    device->delay_params[address - 0x400151u] = value;
+    return sc88_delay_set_params(&device->renderer.rom, &device->delay,
+                                 device->delay_params);
   case 0x400138:
     device->chorus_macro = value;
     return true;
@@ -442,6 +472,10 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     case 0x21:
       state->chorus_send = value;
       sc88_engine_set_part_chorus_send(&device->engine, part, value);
+      return true;
+    case 0x2c:
+      state->delay_send = value;
+      sc88_engine_set_part_delay_send(&device->engine, part, value);
       return true;
     case 0x22:
       state->reverb_send = value;
@@ -543,6 +577,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
     case 91:
       state->reverb_send = data2;
       sc88_engine_set_part_reverb_send(&device->engine, part, data2);
+      return true;
+    case 94:
+      state->delay_send = data2;
+      sc88_engine_set_part_delay_send(&device->engine, part, data2);
       return true;
     case 93:
       state->chorus_send = data2;
@@ -697,12 +735,28 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
       return;
     }
     device->chorus_bus = grown_chorus;
+    {
+      float *grown_delay = (float *)realloc(device->delay_bus,
+                                            frames * sizeof *grown_delay);
+      if (!grown_delay) {
+        sc88_engine_render(&device->engine, stereo, frames);
+        return;
+      }
+      device->delay_bus = grown_delay;
+    }
     device->send_capacity = frames;
   }
   memset(device->send_bus, 0, frames * sizeof *device->send_bus);
   memset(device->chorus_bus, 0, frames * sizeof *device->chorus_bus);
+  memset(device->delay_bus, 0, frames * sizeof *device->delay_bus);
   sc88_engine_render_with_send(&device->engine, stereo, device->send_bus,
-                               device->chorus_bus, frames);
+                               device->chorus_bus, device->delay_bus,
+                               frames);
+  /* The delay runs before the reverb reads its bus, because it has its own
+     send into the reverb and that send is recovered. */
+  if (device->delay.active)
+    sc88_delay_process(&device->delay, device->delay_bus, stereo,
+                       device->send_bus, frames);
   /* The chorus runs before the reverb reads its bus, because the chorus
      has its own send into the reverb; that send is received and held but
      not yet routed, so the two effects are still parallel here. */

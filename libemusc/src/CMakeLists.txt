@@ -42,6 +42,8 @@ add_library(emusc
   sc88_pitch.h
   sc88_chorus.c
   sc88_chorus.h
+  sc88_delay.c
+  sc88_delay.h
   sc88_renderer.c
   sc88_renderer.h
   sc88_reverb.c
@@ -80,7 +82,7 @@ target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 
 set(SC88_RENDER_SOURCES
-  sc88_chorus.c
+  sc88_chorus.c sc88_delay.c
   sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
   sc88_pitch.c sc88_renderer.c sc88_reverb.c sc88_rom.c sc88_tva.c
   sc88_tvf.c sc88_wave.c)
@@ -123,6 +125,7 @@ if(BUILD_TESTING)
   sc88_test(sc88_oscillator_test sc88_oscillator.c)
   sc88_test(sc88_reverb_test sc88_reverb.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_chorus_test sc88_chorus.c sc88_reverb.c sc88_rom.c sc88_wave.c)
+  sc88_test(sc88_delay_test sc88_delay.c sc88_reverb.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
@@ -132,5 +135,5 @@ if(BUILD_TESTING)
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test sc88_device.c sc88_chorus.c ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test sc88_device.c sc88_chorus.c sc88_delay.c ${SC88_VOICE_SOURCES})
 endif()

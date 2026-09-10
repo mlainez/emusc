@@ -3,6 +3,7 @@
 #define EMUSC_SC88_DEVICE_H
 
 #include "sc88_chorus.h"
+#include "sc88_delay.h"
 #include "sc88_engine.h"
 #include "sc88_reverb.h"
 
@@ -27,6 +28,7 @@ struct sc88_channel_state {
   uint8_t hold1;
   uint8_t reverb_send;
   uint8_t chorus_send;
+  uint8_t delay_send;
   uint8_t cutoff;
   uint8_t resonance;
   /* The envelope-time modifiers, centred at 64. Demo song 1 sets the
@@ -56,6 +58,7 @@ struct sc88_device {
   struct sc88_engine engine;
   struct sc88_reverb reverb;
   struct sc88_chorus chorus;
+  struct sc88_delay delay;
   /* The reverb's own parameters. A GS reset leaves the character and its
      level, time and pre-LPF at the values the manual prints for Hall 2. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
@@ -67,6 +70,10 @@ struct sc88_device {
   uint8_t chorus_macro, chorus_level, chorus_feedback, chorus_delay;
   uint8_t chorus_rate, chorus_depth, chorus_pre_lpf, chorus_send_to_reverb;
   /* 0 single module, 1 double. Several parameters exist only in one mode. */
+  /* The ten delay parameters in manual order, and the macro that last
+     loaded them. Single-module only. */
+  uint8_t delay_params[10];
+  uint8_t delay_macro;
   uint8_t system_mode;
   /* The filter's cutoff is a fraction of the sound chip's own 32 kHz,
      so the coefficient has to be recomputed for whatever rate the
@@ -78,6 +85,7 @@ struct sc88_device {
   unsigned long unhandled_sysex;
   float *send_bus;
   float *chorus_bus;
+  float *delay_bus;
   size_t send_capacity;
   struct sc88_channel_state channels[SC88_ENGINE_PART_COUNT];
   uint8_t master_volume;

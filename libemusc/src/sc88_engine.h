@@ -70,6 +70,7 @@ struct sc88_engine_part {
      rather than to the finished mix. */
   uint8_t reverb_send;
   uint8_t chorus_send;
+  uint8_t delay_send;
   /* `(depth * value) >> 2` summed over the controller matrix's
      sources, of which only modulation is modelled. */
   uint16_t lfo1_pitch_depth;
@@ -118,6 +119,8 @@ void sc88_engine_set_part_tvf_controls(
 
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                                  uint8_t map);
+void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
+                                     uint8_t part, uint8_t send);
 void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,
                                      uint8_t part, uint8_t send);
 void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
@@ -148,7 +151,7 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
  * which must hold `frames` samples when given. Either may be NULL. */
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
                                   float *send, float *chorus_send,
-                                  size_t frames);
+                                  float *delay_send, size_t frames);
 
 #ifdef __cplusplus
 }
