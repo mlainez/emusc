@@ -25,6 +25,7 @@ install(FILES
   src/params.h
   src/sc88_device.h
   src/sc88_engine.h
+  src/sc88_lfo.h
   src/sc88_oscillator.h
   src/sc88_pan.h
   src/sc88_pitch.h
