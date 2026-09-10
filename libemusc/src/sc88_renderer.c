@@ -304,6 +304,13 @@ bool sc88_renderer_note_on_with_part_controls(
         !sc88_tva_envelope_prepare(&renderer->rom, &tone, &component,
                                    (uint8_t)selector_key, velocity,
                                    &render_component->envelope) ||
+        !sc88_pitch_envelope_prepare(
+          &renderer->rom, &tone, &component, (uint8_t)selector_key,
+          velocity, &render_component->pitch_envelope) ||
+        !sc88_pitch_release_prepare(
+          &renderer->rom, &tone, &component, (uint8_t)selector_key,
+          render_component->pitch_envelope.depth,
+          &render_component->pitch_release) ||
         !sc88_tvf_key_modulation(&renderer->rom, &tone, &component,
                                  (uint8_t)selector_key,
                                  &tvf_key_modulation) ||
@@ -329,6 +336,8 @@ bool sc88_renderer_note_on_with_part_controls(
     render_component->rom_component_offset = component.offset;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
+    pitch_word = sc88_pitch_current_word(
+      pitch_word, 0, render_component->pitch_envelope.current);
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
     bank = sc88_renderer_find_bank(renderer, zone.descriptor.bank_select);

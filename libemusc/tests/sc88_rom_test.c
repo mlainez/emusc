@@ -1,10 +1,14 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_rom.h"
 #include "sc88_pan.h"
+#include "sc88_pitch.h"
 #include "sc88_tva.h"
 #include "sc88_tvf.h"
 
 #include <assert.h>
+#ifdef NDEBUG
+#error "this test is assertion-driven; NDEBUG compiles it away"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +78,8 @@ static void test_held_rom(const char *path)
           struct sc88_tvf_registers tvf;
           struct sc88_tvf_envelope tvf_envelope;
           struct sc88_tvf_release tvf_release;
+          struct sc88_pitch_envelope pitch_envelope;
+          struct sc88_pitch_release pitch_release;
           int16_t tvf_key_modulation;
           if (!sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone))
             continue;
@@ -116,6 +122,13 @@ static void test_held_rom(const char *path)
           assert(sc88_tvf_release_prepare(
             &rom, &tone, &component, (uint8_t)key, tvf_envelope.depth,
             &tvf_release));
+          assert(sc88_pitch_envelope_prepare(
+            &rom, &tone, &component, (uint8_t)key, 100,
+            &pitch_envelope));
+          assert(pitch_envelope.stage <= 1 && pitch_envelope.active);
+          assert(sc88_pitch_release_prepare(
+            &rom, &tone, &component, (uint8_t)key, pitch_envelope.depth,
+            &pitch_release));
           ++selected;
         }
         assert(selected > 0);

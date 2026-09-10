@@ -4,6 +4,7 @@
 
 #include "sc88_oscillator.h"
 #include "sc88_pan.h"
+#include "sc88_pitch.h"
 #include "sc88_rom.h"
 #include "sc88_tva.h"
 #include "sc88_tvf.h"
@@ -42,6 +43,8 @@ struct sc88_render_component {
   size_t pcm_count;
   struct sc88_oscillator oscillator;
   uint32_t static_pitch_word;
+  struct sc88_pitch_envelope pitch_envelope;
+  struct sc88_pitch_release pitch_release;
   uint16_t static_attenuation;
   uint32_t static_gain_q17;
   struct sc88_tva_envelope envelope;

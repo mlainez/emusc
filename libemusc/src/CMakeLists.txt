@@ -36,6 +36,8 @@ add_library(emusc
   sc88_oscillator.h
   sc88_pan.c
   sc88_pan.h
+  sc88_pitch.c
+  sc88_pitch.h
   sc88_renderer.c
   sc88_renderer.h
   sc88_rom.c
@@ -78,7 +80,7 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
-    sc88_engine.c sc88_oscillator.c sc88_pan.c sc88_renderer.c
+    sc88_engine.c sc88_oscillator.c sc88_pan.c sc88_pitch.c sc88_renderer.c
     sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
 
   function(sc88_test name)
@@ -96,6 +98,7 @@ if(BUILD_TESTING)
 
   sc88_test(sc88_wave_test sc88_wave.c)
   sc88_test(sc88_oscillator_test sc88_oscillator.c)
+  sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_wave.c)
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.

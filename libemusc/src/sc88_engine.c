@@ -116,14 +116,22 @@ void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
   }
 }
 
-static uint32_t sc88_engine_pitch_word(uint32_t base, int32_t offset)
+static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
+                                          struct sc88_engine_slot *slot)
 {
-  int64_t value = (int64_t)base + offset;
-  if (value < 0)
-    return 0;
-  if (value > 0x3ffff)
-    return 0x3ffff;
-  return (uint32_t)value;
+  const struct sc88_engine_note *note;
+  uint32_t word;
+  if (!engine || !slot || !slot->allocated ||
+      slot->note >= SC88_ENGINE_NOTE_COUNT)
+    return;
+  note = engine->notes + slot->note;
+  word = sc88_pitch_current_word(
+    slot->component.static_pitch_word,
+    engine->parts[note->part].pitch_offset,
+    sc88_pitch_envelope_sum(&slot->component.pitch_envelope,
+                            &slot->component.pitch_release));
+  slot->component.oscillator.step = sc88_pitch_word_rate(
+    word, engine->renderer->output_rate);
 }
 
 void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
@@ -137,10 +145,7 @@ void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
     struct sc88_engine_slot *slot = engine->slots + i;
     if (slot->allocated && slot->note < SC88_ENGINE_NOTE_COUNT &&
         engine->notes[slot->note].part == part) {
-      uint32_t word = sc88_engine_pitch_word(
-        slot->component.static_pitch_word, pitch_offset);
-      slot->component.oscillator.step = sc88_pitch_word_rate(
-        word, engine->renderer->output_rate);
+      sc88_engine_update_slot_pitch(engine, slot);
     }
   }
 }
@@ -231,6 +236,13 @@ static void sc88_engine_start_release(struct sc88_engine *engine,
         component->continuous_hold_release,
         component->keep_release_scale_at_zero, false,
         &component->tvf_release);
+      (void)sc88_pitch_release_activate(
+        &engine->renderer->rom, engine->parts[note->part].hold_value,
+        component->continuous_hold_release,
+        component->keep_release_scale_at_zero, false,
+        component->pitch_envelope.current, &component->pitch_release);
+      component->pitch_envelope.stage = 4;
+      component->pitch_envelope.active = false;
     }
   }
 }
@@ -414,10 +426,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
     slot->note = note_index;
     slot->serial = engine->next_serial++;
     slot->component = voice.components[i];
-    slot->component.oscillator.step = sc88_pitch_word_rate(
-      sc88_engine_pitch_word(slot->component.static_pitch_word,
-                             engine->parts[part].pitch_offset),
-      engine->renderer->output_rate);
+    sc88_engine_update_slot_pitch(engine, slot);
     voice.components[i].pcm24 = NULL;
     voice.components[i].active = false;
     note->slots[i] = slot_index;
@@ -576,6 +585,13 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     }
     if (slot->component.envelope.active)
       (void)sc88_tva_envelope_advance(&slot->component.envelope, elapsed);
+    if (slot->component.pitch_envelope.active)
+      (void)sc88_pitch_envelope_advance(&slot->component.pitch_envelope,
+                                        elapsed);
+    if (slot->component.pitch_release.active)
+      (void)sc88_pitch_release_advance(&slot->component.pitch_release,
+                                       elapsed);
+    sc88_engine_update_slot_pitch(engine, slot);
     if (slot->component.tvf_envelope.active ||
         slot->component.tvf_release.active) {
       if (!tvf_retargeted)

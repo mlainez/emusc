@@ -27,6 +27,7 @@ install(FILES
   src/sc88_engine.h
   src/sc88_oscillator.h
   src/sc88_pan.h
+  src/sc88_pitch.h
   src/sc88_renderer.h
   src/sc88_rom.h
   src/sc88_tva.h
