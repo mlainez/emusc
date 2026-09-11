@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
+#include <stdio.h>
+#include <stdlib.h>
 #include "sc88_tva.h"
 
 #include <limits.h>
@@ -478,6 +480,11 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
       curve_entry, final_scale);
     rate = sc88_tva_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
                          (uint32_t)rate_index * 2);
+    if (getenv("SC88_TRACE_TVA"))
+      fprintf(stderr, "  stage %u: rate_index %3u rate %5u key_scale %5u "
+              "vel_scale %5u final_scale %5u\n",
+              stage, rate_index, rate, key_scale, velocity_scale,
+              final_scale);
     if (rate < 16)
       rate = UINT16_MAX;
     product = (uint32_t)rate * final_scale;
