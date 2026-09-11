@@ -983,10 +983,26 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                 slot->component.pitch_envelope.stage,
                 slot->component.pitch_envelope.phase,
                 (int)slot->component.pitch_envelope.active);
-      if (n <= 10)
-        fprintf(stderr, "          static word %6u  step %.6f\n",
-                slot->component.static_pitch_word,
-                slot->component.oscillator.step);
+      if (n == 1) {
+        unsigned q;
+        fprintf(stderr, "          tva stages:");
+        for (q = 0; q < 4; ++q)
+          fprintf(stderr, " [%u] target %5u inc %5u",
+                  q, slot->component.envelope.target_attenuations[q],
+                  slot->component.envelope.increments[q]);
+        fprintf(stderr, "\n");
+      }
+      if (n <= 2)
+        fprintf(stderr, "          tva stage %u atten start %5u target %5u "
+                "inc %5u phase %5u gain_q17 %8u\n",
+                slot->component.envelope.stage,
+                slot->component.envelope.start_attenuation,
+                slot->component.envelope.target_attenuations[
+                  slot->component.envelope.stage],
+                slot->component.envelope.increments[
+                  slot->component.envelope.stage],
+                slot->component.envelope.phase,
+                slot->component.envelope.current_q17);
     }
     sc88_engine_update_slot_pitch(engine, slot);
     /* The approach of TVF-F and TVF-Q toward their targets is the chip's
