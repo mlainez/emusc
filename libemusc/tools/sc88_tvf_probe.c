@@ -114,8 +114,9 @@ int main(int argc, char **argv)
        cleared. */
     unsigned v, pr;
     printf("variation\tprogram\tcomponent\tname\tcutoff_index"
-           "\tresonance_index\tbase_value\tkeymod36\tkeymod60"
-           "\tkeymod84\tmode\n");
+           "\tresonance_index\tbase_value\tbase_unshifted\tkeymod36"
+           "\tkeymod60\tkeymod84\tmode\tenv_depth\tt0\tt1\tt2\tt3"
+           "\tinc0\tinc1\n");
     for (v = 0; v <= 36; ++v) {
       for (pr = 0; pr < 128; ++pr) {
         uint32_t offset;
@@ -130,6 +131,7 @@ int main(int argc, char **argv)
         for (c = 0; c < t.component_count; ++c) {
           struct sc88_component comp;
           struct sc88_tvf_registers r;
+          struct sc88_tvf_envelope env;
           struct sc88_tvf_controls ctl;
           int16_t k36 = 0, k60 = 0, k84 = 0;
           ctl.part_cutoff = 64;
@@ -141,12 +143,17 @@ int main(int argc, char **argv)
           (void)sc88_tvf_key_modulation(&rom, &t, &comp, 36, &k36);
           (void)sc88_tvf_key_modulation(&rom, &t, &comp, 60, &k60);
           (void)sc88_tvf_key_modulation(&rom, &t, &comp, 84, &k84);
-          if (!sc88_tvf_prepare_registers(&rom, &comp, k60, &ctl, &r))
+          if (!sc88_tvf_prepare_registers(&rom, &comp, k60, &ctl, &r) ||
+              !sc88_tvf_envelope_prepare(&rom, &t, &comp, 60, 100, false,
+                                         &env))
             continue;
-          printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%d\t%d\t%d\t%d\n",
+          printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%u\t%d\t%d\t%d\t%d"
+                 "\t%u\t%d\t%d\t%d\t%d\t%u\t%u\n",
                  v, pr, c, n, r.cutoff_index, r.resonance_index,
-                 r.base_value, k36, k60, k84,
-                 (int)(int8_t)comp.bytes[0x3e]);
+                 r.base_value, r.base_unshifted, k36, k60, k84,
+                 (int)(int8_t)comp.bytes[0x3e], env.depth,
+                 env.targets[0], env.targets[1], env.targets[2],
+                 env.targets[3], env.increments[0], env.increments[1]);
         }
       }
     }

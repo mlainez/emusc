@@ -125,6 +125,11 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
                                struct sc88_tvf_registers *registers);
 void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers);
 
+/* Move the frequency and resonance registers toward their targets by their
+ * own interpolation words, once per elapsed control period. */
+void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
+                                unsigned periods);
+
 void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state);
 float sc88_tvf_audio_process_provisional(
   void *user, struct sc88_tvf_audio_state *state,

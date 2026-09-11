@@ -754,7 +754,8 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                             &slot->component.right_gain_q15);
     if (engine->parts[note->part].tvf_dirty) {
       struct sc88_component component;
-      uint32_t previous_target = slot->component.tvf.frequency_target;
+      uint32_t previous_current = slot->component.tvf.frequency_current;
+      uint32_t previous_resonance = slot->component.tvf.resonance_current;
       component.bytes = engine->renderer->rom.bytes +
         slot->component.rom_component_offset;
       component.offset = slot->component.rom_component_offset;
@@ -770,7 +771,11 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                       (uint16_t)slot->component.tvf_envelope.current +
                       (uint16_t)slot->component.tvf_release.current),
             &slot->component.tvf)) {
-        slot->component.tvf.frequency_current = previous_target;
+        /* prepare_registers clears the struct, so the approach carries
+           its own progress across a retarget rather than restarting. */
+        slot->component.tvf.frequency_current = previous_current;
+        slot->component.tvf.resonance_current = previous_resonance;
+        sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
         tvf_retargeted = true;
       }
     }
@@ -797,7 +802,7 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     if (slot->component.tvf_envelope.active ||
         slot->component.tvf_release.active) {
       if (!tvf_retargeted)
-        sc88_tvf_latch_frequency(&slot->component.tvf);
+        sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
       if (slot->component.tvf_envelope.active)
         (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
                                         elapsed);
