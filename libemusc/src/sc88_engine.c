@@ -148,13 +148,28 @@ static int32_t sc88_engine_lfo_pitch_offset(
   double cents = 0.0;
   uint16_t matrix = engine->parts[part].lfo1_pitch_depth;
   int16_t local = slot->component.lfo2_pitch_depth;
+  int16_t common = slot->component.lfo1_pitch_depth;
   if (matrix)
     cents += 47.0 / 317.0 * (double)matrix *
       ((double)slot->component.lfo1.ramp.fade / 65535.0) *
       ((double)slot->component.lfo1.output / 32767.0);
-  /* The tone's own vibrato. Its field shares the matrix's units - both
-     saturate at exactly 4032, which is `(127 * 127) >> 2` - so the same
-     47-cents-per-317 anchor applies (`M-020`). */
+  /* The tone-common oscillator's own vibrato, component `+16`. This was
+     the one depth word of the six never read, on the grounds that
+     `07_synthesis/lfo.md` calls its unit unestablished because the field
+     reaches -9216..+6271 where the local one saturates at 4032. Those are
+     rare extremes: across the 633 held components it is nonzero on 300 -
+     more than the local field's 128 - and its median magnitude is 7,
+     about one cent under this anchor, against the local field's 20. So
+     the anchor is applied to it too, and the unit stays labelled
+     inferred. Leaving it out silenced the natural vibrato of nearly half
+     the device. */
+  if (common)
+    cents += 47.0 / 317.0 * (double)common *
+      ((double)slot->component.lfo1.ramp.fade / 65535.0) *
+      ((double)slot->component.lfo1.output / 32767.0);
+  /* The local oscillator's vibrato. Its field shares the matrix's units -
+     both saturate at exactly 4032, which is `(127 * 127) >> 2` - so the
+     same 47-cents-per-317 anchor applies (`M-020`). */
   if (local)
     cents += 47.0 / 317.0 * (double)local *
       ((double)slot->component.lfo2.ramp.fade / 65535.0) *

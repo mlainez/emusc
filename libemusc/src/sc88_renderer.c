@@ -357,6 +357,9 @@ static bool sc88_renderer_note_on_tone(
     if (!sc88_lfo_local_prepare(&renderer->rom, &component,
                                 &render_component->lfo2))
       memset(&render_component->lfo2, 0, sizeof render_component->lfo2);
+    render_component->lfo1_pitch_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x16] << 8) |
+                component.bytes[0x17]);
     render_component->lfo2_pitch_depth =
       (int16_t)((uint16_t)((uint16_t)component.bytes[0x18] << 8) |
                 component.bytes[0x19]);
