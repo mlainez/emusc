@@ -128,7 +128,7 @@ int main(int argc, char **argv)
            "\tkeymod60\tkeymod84\tmode\tenv_depth\tt0\tt1\tt2\tt3"
            "\tinc0\tinc1\tlfo1pitch\tlfo2pitch"
            "\tc44\tc45\tc46\tc47\tc74\tc75\tc76\tc77"
-           "\tshare_common\tshare_local\n");
+           "\tshare_common\tshare_local\tlfo2_inc\tlfo2_hz\tcommon_idx\tcommon_hz\n");
     for (v = 0; v <= 36; ++v) {
       for (pr = 0; pr < 128; ++pr) {
         uint32_t offset;
@@ -161,7 +161,7 @@ int main(int argc, char **argv)
             continue;
           printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%u\t%d\t%d\t%d\t%d"
                  "\t%u\t%d\t%d\t%d\t%d\t%u\t%u\t%d\t%d"
-                 "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+                 "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%u\t%.3f\t%u\t%.3f\n",
                  v, pr, c, n, r.cutoff_index, r.resonance_index,
                  r.base_value, r.base_unshifted, k36, k60, k84,
                  (int)(int8_t)comp.bytes[0x3e], env.depth,
@@ -173,7 +173,14 @@ int main(int argc, char **argv)
                  (int)(int8_t)comp.bytes[0x46], (int)(int8_t)comp.bytes[0x47],
                  (int)(int8_t)comp.bytes[0x74], (int)(int8_t)comp.bytes[0x75],
                  (int)(int8_t)comp.bytes[0x76], (int)(int8_t)comp.bytes[0x77],
-                 (int)t.common[0x18], (int)comp.bytes[0x08]);
+                 (int)t.common[0x18], (int)comp.bytes[0x08],
+                 (unsigned)((comp.bytes[0x0a] << 8) | comp.bytes[0x0b]),
+                 ((comp.bytes[0x0a] << 8) | comp.bytes[0x0b]) *
+                   124.987501249875 / 65536.0,
+                 (unsigned)t.common[0x1a],
+                 (double)((rom.bytes[0x29da + t.common[0x1a] * 2] << 8) |
+                          rom.bytes[0x29da + t.common[0x1a] * 2 + 1]) *
+                   124.987501249875 / 65536.0);
         }
       }
     }
