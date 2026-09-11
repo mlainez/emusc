@@ -229,6 +229,13 @@ static int32_t sc88_engine_lfo_filter(const struct sc88_engine_slot *slot)
   return (int32_t)term;
 }
 
+static int sc88_engine_shared_lfo_slot(struct sc88_engine *engine,
+                                       uint32_t tone, uint32_t comp,
+                                       uint8_t which);
+static void sc88_engine_shared_lfo_join(struct sc88_engine *engine,
+                                        uint32_t tone, uint32_t comp,
+                                        uint8_t which, struct sc88_lfo *lfo);
+
 static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
                                           struct sc88_engine_slot *slot)
 {
@@ -631,6 +638,16 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
     slot->note = note_index;
     slot->serial = engine->next_serial++;
     slot->component = voice.components[i];
+    /* A nonzero share byte means this voice joins its tone's oscillator
+       rather than starting one of its own, so overlapping notes of the
+       same tone modulate in phase (`07_synthesis/lfo.md`). */
+    if (slot->component.lfo1.share_request)
+      sc88_engine_shared_lfo_join(engine, voice.tone_offset, 0, 1,
+                                  &slot->component.lfo1);
+    if (slot->component.lfo2.share_request)
+      sc88_engine_shared_lfo_join(engine, voice.tone_offset,
+                                  slot->component.rom_component_offset, 2,
+                                  &slot->component.lfo2);
     sc88_engine_update_slot_pitch(engine, slot);
     voice.components[i].pcm24 = NULL;
     voice.components[i].active = false;
@@ -748,6 +765,56 @@ unsigned sc88_engine_released_slots(const struct sc88_engine *engine)
   return count;
 }
 
+/* The shared-oscillator table. A voice whose share byte is nonzero does not
+   own its oscillator: it joins the one already running for its tone, and
+   the first voice of a tone creates it. The entry outlives any single
+   voice, which is what the firmware achieves by copying the oscillator's
+   words into a replacement owner when the original is released. */
+static int sc88_engine_shared_lfo_slot(struct sc88_engine *engine,
+                                       uint32_t tone, uint32_t comp,
+                                       uint8_t which)
+{
+  unsigned i;
+  for (i = 0; i < SC88_ENGINE_SHARED_LFO_COUNT; ++i) {
+    const struct sc88_engine_shared_lfo *e = engine->shared_lfo + i;
+    if (e->active && e->which == which && e->tone_offset == tone &&
+        e->component_offset == comp)
+      return (int)i;
+  }
+  return -1;
+}
+
+static void sc88_engine_shared_lfo_join(struct sc88_engine *engine,
+                                        uint32_t tone, uint32_t comp,
+                                        uint8_t which, struct sc88_lfo *lfo)
+{
+  unsigned i;
+  int at = sc88_engine_shared_lfo_slot(engine, tone, comp, which);
+  if (at >= 0) {
+    /* Adopt the running oscillator's phase and output. The ramp stays the
+       voice's own: it is the note's delay and fade, not the waveform. */
+    struct sc88_lfo *shared = &engine->shared_lfo[at].lfo;
+    lfo->phase = shared->phase;
+    lfo->output = shared->output;
+    lfo->random_target = shared->random_target;
+    return;
+  }
+  for (i = 0; i < SC88_ENGINE_SHARED_LFO_COUNT; ++i) {
+    struct sc88_engine_shared_lfo *e = engine->shared_lfo + i;
+    if (e->active)
+      continue;
+    e->active = true;
+    e->used = true;
+    e->which = which;
+    e->tone_offset = tone;
+    e->component_offset = comp;
+    e->lfo = *lfo;
+    return;
+  }
+  /* Table full: the voice keeps its own oscillator, as it would if the
+     firmware's comparison had failed. */
+}
+
 static void sc88_engine_run_scheduler(struct sc88_engine *engine)
 {
   unsigned elapsed;
@@ -758,6 +825,26 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
   if (!elapsed)
     return;
   engine->scheduler_clocks -= elapsed * SC88_CONTROL_PERIOD_CLOCKS;
+
+  /* One oscillator per sharing tone, advanced once for the whole period
+     before any voice reads it. Entries nothing used last period are
+     retired, which is how a shared oscillator outlives its first owner
+     and stops when the last voice of its tone does. */
+  {
+    unsigned k;
+    for (k = 0; k < SC88_ENGINE_SHARED_LFO_COUNT; ++k) {
+      struct sc88_engine_shared_lfo *e = engine->shared_lfo + k;
+      if (!e->active)
+        continue;
+      if (!e->used) {
+        e->active = false;
+        continue;
+      }
+      e->used = false;
+      (void)sc88_lfo_advance(&engine->renderer->rom, &e->lfo, 0,
+                             (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+    }
+  }
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     struct sc88_engine_note *note;
@@ -801,14 +888,43 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
         tvf_retargeted = true;
       }
     }
-    /* The ramp runs on its own clock and is not gated by a stalled
-       oscillator, so both advance whatever the rate control says. */
-    (void)sc88_lfo_advance(&engine->renderer->rom, &slot->component.lfo1,
-                           0, (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+    /* A shared oscillator was advanced once for the whole tone above; this
+       voice reads it rather than running its own, which is what keeps an
+       ensemble's vibrato coherent. The ramp is always the voice's own: it
+       is the note's delay and fade, not the waveform. It runs on its own
+       clock and is not gated by a stalled oscillator. */
+    {
+      uint32_t tone = engine->notes[slot->note].tone_offset;
+      int at = slot->component.lfo1.share_request
+        ? sc88_engine_shared_lfo_slot(engine, tone, 0, 1) : -1;
+      if (at >= 0) {
+        engine->shared_lfo[at].used = true;
+        slot->component.lfo1.phase = engine->shared_lfo[at].lfo.phase;
+        slot->component.lfo1.output = engine->shared_lfo[at].lfo.output;
+        slot->component.lfo1.random_target =
+          engine->shared_lfo[at].lfo.random_target;
+      } else {
+        (void)sc88_lfo_advance(&engine->renderer->rom,
+                               &slot->component.lfo1, 0,
+                               (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+      }
+      at = slot->component.lfo2.share_request
+        ? sc88_engine_shared_lfo_slot(
+            engine, tone, slot->component.rom_component_offset, 2) : -1;
+      if (at >= 0) {
+        engine->shared_lfo[at].used = true;
+        slot->component.lfo2.phase = engine->shared_lfo[at].lfo.phase;
+        slot->component.lfo2.output = engine->shared_lfo[at].lfo.output;
+        slot->component.lfo2.random_target =
+          engine->shared_lfo[at].lfo.random_target;
+      } else {
+        (void)sc88_lfo_advance(&engine->renderer->rom,
+                               &slot->component.lfo2, 0,
+                               (uint8_t)(elapsed - 1u), &engine->lfo_seed);
+      }
+    }
     (void)sc88_lfo_ramp_advance(&slot->component.lfo1.ramp,
                                 (uint8_t)(elapsed - 1u));
-    (void)sc88_lfo_advance(&engine->renderer->rom, &slot->component.lfo2,
-                           0, (uint8_t)(elapsed - 1u), &engine->lfo_seed);
     (void)sc88_lfo_ramp_advance(&slot->component.lfo2.ramp,
                                 (uint8_t)(elapsed - 1u));
     if (slot->component.envelope.active)

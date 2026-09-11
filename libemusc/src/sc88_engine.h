@@ -80,8 +80,28 @@ struct sc88_engine_part {
 typedef void (*sc88_control_service_fn)(void *user,
                                         unsigned elapsed_periods);
 
+/* `07_synthesis/lfo.md`: an oscillator whose share byte is nonzero is not
+   private to its voice. The firmware compares the tone pointer and ROM page
+   before sharing, and when a shared oscillator's owner is released it
+   detaches and copies its words into the replacement owner - so "an
+   implementation cannot give every voice an independent phase
+   unconditionally". These entries are that shared state: one oscillator per
+   tone (and per component, for the local one), advanced once per control
+   period, read by every voice that shares it. */
+#define SC88_ENGINE_SHARED_LFO_COUNT 48u
+
+struct sc88_engine_shared_lfo {
+  uint32_t tone_offset;
+  uint32_t component_offset;    /* zero for the tone-common oscillator */
+  uint8_t which;                /* 1 tone-common, 2 local */
+  bool active;
+  bool used;
+  struct sc88_lfo lfo;
+};
+
 struct sc88_engine {
   const struct sc88_renderer *renderer;
+  struct sc88_engine_shared_lfo shared_lfo[SC88_ENGINE_SHARED_LFO_COUNT];
   struct sc88_engine_note notes[SC88_ENGINE_NOTE_COUNT];
   struct sc88_engine_slot slots[SC88_ENGINE_SLOT_COUNT];
   struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
