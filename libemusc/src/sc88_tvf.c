@@ -575,6 +575,11 @@ float sc88_tvf_audio_process_provisional(
 
   if (!state || !registers)
     return input;
+  /* A negative mode byte installs the fixed tuple: zero cutoff, type word
+     0x0800. `07_synthesis/tvf.md` reads it as bypass-like, and a filter
+     with no cutoff has nothing to do, so the signal passes untouched. */
+  if (registers->fixed_tuple)
+    return input;
   if (period_fraction < 0.0)
     period_fraction = 0.0;
   else if (period_fraction > 1.0)
@@ -654,12 +659,17 @@ float sc88_tvf_audio_process_provisional(
         state->section_band[section] = (float)sb;
         state->section_low[section] = (float)sl;
       }
-      switch ((registers->filter_select >> 10) & 3u) {
-      case 0: signal = low; break;
-      case 1: signal = band; break;
-      case 2: signal = high; break;
-      default: return input;
-      }
+      /* Every type code takes the low-pass output. XP bits 10..11 carry a
+         type code - 0 for 1193 components, 1 for 12, 2 for 38 - and the
+         only name binding on record, LPF/BPF/HPF for 0/1/2, was proposed
+         from JV-1080 documentation without SC-88 audio. The SC-88 audio
+         refutes it for code 2: the Fiddle, code 2 with a cutoff word of
+         8.1 kHz, is recorded on the hardware with its fundamental intact
+         and a low-pass roll-off above 8 kHz, while the high-pass output
+         here removed everything below the cutoff and left a hiss 100 dB
+         above the hardware's balance (`11_validation/measurements.md`
+         M-100). Code 1 has no hardware note to test against. */
+      signal = low;
     }
     return (float)signal;
   }

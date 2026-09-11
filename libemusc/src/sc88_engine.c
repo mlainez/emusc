@@ -937,26 +937,28 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       (void)sc88_pitch_release_advance(&slot->component.pitch_release,
                                        elapsed);
     sc88_engine_update_slot_pitch(engine, slot);
-    if (slot->component.tvf_envelope.active ||
-        slot->component.tvf_release.active) {
-      if (!tvf_retargeted)
-        sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
-      if (slot->component.tvf_envelope.active)
-        (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
-                                        elapsed);
-      if (slot->component.tvf_release.active)
-        (void)sc88_tvf_release_advance(&slot->component.tvf_release,
-                                       elapsed);
-      /* The filter LFO belongs in every update, not only the ones a
-         control change made dirty: left out here it reached the cutoff
-         only on the periods a part parameter happened to change. */
-      (void)sc88_tvf_update_frequency(
-        &engine->renderer->rom,
-        (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
-                  (uint16_t)slot->component.tvf_envelope.current +
-                  (uint16_t)slot->component.tvf_release.current),
-        &slot->component.tvf);
-    }
+    /* The approach of TVF-F and TVF-Q toward their targets is the chip's
+       own interpolation and runs every period; it does not wait for the
+       CPU's envelope. A tone with envelope depth 0 has no active envelope
+       or release at all, and gating the approach on them left such a
+       tone's resonance at the quarter-target the note opens with. */
+    if (!tvf_retargeted)
+      sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
+    if (slot->component.tvf_envelope.active)
+      (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
+                                      elapsed);
+    if (slot->component.tvf_release.active)
+      (void)sc88_tvf_release_advance(&slot->component.tvf_release,
+                                     elapsed);
+    /* The filter LFO belongs in every update, not only the ones a
+       control change made dirty: left out here it reached the cutoff
+       only on the periods a part parameter happened to change. */
+    (void)sc88_tvf_update_frequency(
+      &engine->renderer->rom,
+      (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
+                (uint16_t)slot->component.tvf_envelope.current +
+                (uint16_t)slot->component.tvf_release.current),
+      &slot->component.tvf);
     if (!slot->component.release.active)
       continue;
     if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
