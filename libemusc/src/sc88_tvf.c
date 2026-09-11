@@ -117,6 +117,7 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
     combined = 0;
   else if (combined > UINT16_MAX)
     combined = UINT16_MAX;
+  registers->base_unshifted = (uint16_t)combined;
   combined >>= 1;
   registers->base_value = (uint16_t)combined;
   limit = (uint16_t)(sc88_tvf_be16(
@@ -471,12 +472,21 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
     return false;
   if (registers->fixed_tuple)
     return true;
-  combined = (uint16_t)(registers->base_value +
-                        (uint16_t)post_base_modulation);
-  /* Halved, matching the base that `sc88_tvf_prepare_registers` stored
-     and the reading in `07_synthesis/tvf.md`. Comparing this whole
-     against a halved base is a unit error: nothing clamps, because the
-     smallest limit entry is then above almost every base value. */
+  /* Accumulate in the word's own units, then halve - the order
+     `07_synthesis/tvf.md` reads out of `6ccd..6d29`. Added to the halved
+     base instead, every envelope, release and LFO term would carry twice
+     its weight. Saturating rather than wrapping, as the firmware does. */
+  {
+    int32_t sum = (int32_t)registers->base_unshifted + post_base_modulation;
+    if (sum < 0)
+      sum = 0;
+    else if (sum > UINT16_MAX)
+      sum = UINT16_MAX;
+    combined = (uint16_t)((uint32_t)sum >> 1);
+  }
+  /* Halved, matching the base. Comparing this whole against a halved base
+     is a unit error: nothing clamps, because the smallest limit entry is
+     then above almost every base value. */
   limit = (uint16_t)(sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE +
     (uint32_t)registers->resonance_index * 2) >> 1);
