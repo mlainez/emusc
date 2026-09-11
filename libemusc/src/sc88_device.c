@@ -364,6 +364,9 @@ static bool sc88_device_set_reverb_character(struct sc88_device *device,
   if (!sc88_reverb_init(&replacement, &device->renderer.rom, character,
                         device->reverb.output_rate))
     return false;
+  /* A render that has the effects switched off keeps them off across a
+     character change; a freshly built reverb comes up enabled. */
+  replacement.active = device->reverb.active;
   sc88_reverb_destroy(&device->reverb);
   device->reverb = replacement;
   device->reverb_character = character;
