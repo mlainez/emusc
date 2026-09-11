@@ -99,6 +99,21 @@ struct sc88_engine_shared_lfo {
   struct sc88_lfo lfo;
 };
 
+/* Per-stage taps for one render, each a mono sum over all sounding
+ * components at that point in the chain. They exist to locate a defect
+ * at a stage instead of inferring it from the output: the difference
+ * between two adjacent taps is exactly what that stage did.
+ *
+ * A NULL pointer skips that tap; the struct itself may be NULL.
+ */
+struct sc88_engine_stage_taps {
+  float *oscillator;   /* sample as the oscillator produced it */
+  float *after_tvf;    /* ... through the filter */
+  float *after_static; /* ... times the component's static gain */
+  float *after_tva;    /* ... times the TVA envelope */
+  float *after_lfo;    /* ... times the amplitude LFO and note gain */
+};
+
 struct sc88_engine {
   const struct sc88_renderer *renderer;
   struct sc88_engine_shared_lfo shared_lfo[SC88_ENGINE_SHARED_LFO_COUNT];
@@ -121,6 +136,7 @@ struct sc88_engine {
   uint64_t next_serial;
   double scheduler_clocks;
   sc88_control_service_fn control_service;
+  struct sc88_engine_stage_taps stage_taps;
   void *control_user;
 };
 
@@ -185,6 +201,10 @@ void sc88_engine_render(struct sc88_engine *engine, float *stereo,
                         size_t frames);
 /* As above, and also accumulates the two mono effect send buses, each of
  * which must hold `frames` samples when given. Either may be NULL. */
+
+void sc88_engine_set_stage_taps(struct sc88_engine *engine,
+                                const struct sc88_engine_stage_taps *taps);
+
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
                                   float *send, float *chorus_send,
                                   float *delay_send, size_t frames);

@@ -275,21 +275,32 @@ static void write_le16(FILE *f, uint16_t v)
 }
 
 /* A 32-bit float stereo WAV, header patched once the length is known. */
-static void write_wav_header(FILE *f, unsigned rate, uint32_t frames)
+static void write_wav_header_channels(FILE *f, unsigned rate, uint32_t frames,
+                                      unsigned channels)
 {
-  uint32_t data = frames * 2u * 4u;
+  uint32_t data = frames * channels * 4u;
   fwrite("RIFF", 1, 4, f);
   write_le32(f, 36u + data);
   fwrite("WAVEfmt ", 1, 8, f);
   write_le32(f, 16);
   write_le16(f, 3);                     /* IEEE float */
-  write_le16(f, 2);
+  write_le16(f, (uint16_t)channels);
   write_le32(f, rate);
-  write_le32(f, rate * 2u * 4u);
-  write_le16(f, 8);
+  write_le32(f, rate * channels * 4u);
+  write_le16(f, (uint16_t)(channels * 4u));
   write_le16(f, 32);
   fwrite("data", 1, 4, f);
   write_le32(f, data);
+}
+
+static void write_wav_header_mono(FILE *f, unsigned rate, uint32_t frames)
+{
+  write_wav_header_channels(f, rate, frames, 1);
+}
+
+static void write_wav_header(FILE *f, unsigned rate, uint32_t frames)
+{
+  write_wav_header_channels(f, rate, frames, 2);
 }
 
 static void usage(void)
@@ -299,7 +310,7 @@ static void usage(void)
     "--out FILE\n"
     "                   [--rate HZ] [--raw] [--tail SECONDS]\n"
     "                   [--wrap carry|reset|fraction] [--trace]\n"
-    "                   [--no-filter]\n"
+    "                   [--no-filter] [--stages PREFIX]\n"
     "  --raw   the wave images are undescrambled chip dumps\n"
     "  --wrap  oscillator fractional wrap, an open question: state it\n");
 }
@@ -315,6 +326,7 @@ int main(int argc, char **argv)
   enum sc88_fractional_wrap wrap = SC88_WRAP_FULL_CARRY;
   const char *wrap_name = "carry";
   bool raw = false, trace = false, no_filter = false, no_effects = false;
+  const char *stages = NULL;
   uint8_t *control = NULL, *chips[SC88_WAVE_CHIP_COUNT] = {0};
   const uint8_t *chip_view[SC88_WAVE_CHIP_COUNT];
   size_t control_size = 0, chip_sizes[SC88_WAVE_CHIP_COUNT] = {0};
@@ -365,6 +377,8 @@ int main(int argc, char **argv)
       trace = true;
     else if (!strcmp(a, "--no-filter"))
       no_filter = true;
+    else if (!strcmp(a, "--stages") && i + 1 < argc)
+      stages = argv[++i];
     else if (!strcmp(a, "--no-effects"))
       no_effects = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {
@@ -440,6 +454,40 @@ int main(int argc, char **argv)
     return 1;
   }
   write_wav_header(out, (unsigned)rate, 0);
+  /* One mono file per point in the chain, so a defect can be placed at a
+     stage instead of inferred from the mix. Each is the sum over every
+     sounding component at that point, so the difference between two
+     adjacent files is exactly what the stage between them did. */
+  static const char *const stage_name[5] = {
+    "oscillator", "after-tvf", "after-static", "after-tva", "after-lfo"
+  };
+  FILE *stage_file[5] = {NULL, NULL, NULL, NULL, NULL};
+  float *stage_buf[5] = {NULL, NULL, NULL, NULL, NULL};
+  struct sc88_engine_stage_taps taps;
+  uint32_t stage_frames = 0;
+  memset(&taps, 0, sizeof taps);
+  if (stages) {
+    unsigned s_i;
+    for (s_i = 0; s_i < 5; ++s_i) {
+      char path[1024];
+      snprintf(path, sizeof path, "%s_%s.wav", stages, stage_name[s_i]);
+      stage_file[s_i] = fopen(path, "wb");
+      if (!stage_file[s_i]) {
+        fprintf(stderr, "cannot write %s\n", path);
+        return 1;
+      }
+      write_wav_header_mono(stage_file[s_i], (unsigned)rate, 0);
+      stage_buf[s_i] = malloc(sizeof(float) * SC88_RENDER_BLOCK);
+      if (!stage_buf[s_i])
+        return 1;
+    }
+    taps.oscillator = stage_buf[0];
+    taps.after_tvf = stage_buf[1];
+    taps.after_static = stage_buf[2];
+    taps.after_tva = stage_buf[3];
+    taps.after_lfo = stage_buf[4];
+    sc88_engine_set_stage_taps(&device.engine, &taps);
+  }
 
   frames_per_tick = rate * (double)tempo / (1e6 * mf.division);
   next_frame = 0;
@@ -500,7 +548,18 @@ int main(int argc, char **argv)
       want = 1;
     if (want > SC88_RENDER_BLOCK)
       want = SC88_RENDER_BLOCK;
+    if (stages) {
+      unsigned s_i;
+      for (s_i = 0; s_i < 5; ++s_i)
+        memset(stage_buf[s_i], 0, sizeof(float) * want);
+    }
     sc88_device_render(&device, block, want);
+    if (stages) {
+      unsigned s_i;
+      for (s_i = 0; s_i < 5; ++s_i)
+        fwrite(stage_buf[s_i], sizeof(float), want, stage_file[s_i]);
+      stage_frames += (uint32_t)want;
+    }
     for (n = 0; n < want * 2; ++n) {
       float v = block[n];
       float m = v < 0.0f ? -v : v;
@@ -528,6 +587,15 @@ int main(int argc, char **argv)
   }
 
   rewind(out);
+  if (stages) {
+    unsigned s_i;
+    for (s_i = 0; s_i < 5; ++s_i) {
+      rewind(stage_file[s_i]);
+      write_wav_header_mono(stage_file[s_i], (unsigned)rate, stage_frames);
+      fclose(stage_file[s_i]);
+      free(stage_buf[s_i]);
+    }
+  }
   write_wav_header(out, (unsigned)rate, total);
   fclose(out);
   free(mf.events);

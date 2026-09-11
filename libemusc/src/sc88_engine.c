@@ -1001,6 +1001,17 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     engine->control_service(engine->control_user, elapsed);
 }
 
+void sc88_engine_set_stage_taps(struct sc88_engine *engine,
+                                const struct sc88_engine_stage_taps *taps)
+{
+  if (!engine)
+    return;
+  if (taps)
+    engine->stage_taps = *taps;
+  else
+    memset(&engine->stage_taps, 0, sizeof engine->stage_taps);
+}
+
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
                                   float *send, float *chorus_send,
                                   float *delay_send, size_t frames)
@@ -1014,6 +1025,8 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
     float bus = 0.0f;
     float chorus_bus = 0.0f;
     float delay_bus = 0.0f;
+    float tap_osc = 0.0f, tap_tvf = 0.0f, tap_static = 0.0f;
+    float tap_tva = 0.0f, tap_lfo = 0.0f;
     unsigned i;
     sc88_engine_run_scheduler(engine);
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
@@ -1023,19 +1036,25 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
         continue;
       if (slot->component.active &&
           sc88_oscillator_next(&slot->component.oscillator, &sample)) {
+        tap_osc += sample;
         if (engine->renderer->tvf_audio_transfer)
           sample = engine->renderer->tvf_audio_transfer(
             engine->renderer->tvf_audio_user, &slot->component.tvf_audio,
             &slot->component.tvf,
             engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS, sample);
+        tap_tvf += sample;
         uint32_t envelope_gain = sc88_tva_envelope_linear_q17(
           &engine->renderer->rom, &slot->component.envelope,
           engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
+        tap_static += sample * (slot->component.static_gain_q17 / 131072.0f);
+        tap_tva += sample * (slot->component.static_gain_q17 / 131072.0f) *
+          (envelope_gain / 131072.0f);
         float gained = sample *
           (slot->component.static_gain_q17 / 131072.0f) *
           (envelope_gain / 131072.0f) *
           sc88_engine_lfo_amplitude(slot) *
           engine->notes[slot->note].provisional_gain;
+        tap_lfo += gained;
         left += gained * (slot->component.left_gain_q15 / 32768.0f);
         right += gained * (slot->component.right_gain_q15 / 32768.0f);
         /* A rhythm note's send is its part's control combined with its own
@@ -1082,6 +1101,16 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
     stereo[frame * 2 + 1] = right;
     if (send)
       send[frame] = bus;
+    if (engine->stage_taps.oscillator)
+      engine->stage_taps.oscillator[frame] = tap_osc;
+    if (engine->stage_taps.after_tvf)
+      engine->stage_taps.after_tvf[frame] = tap_tvf;
+    if (engine->stage_taps.after_static)
+      engine->stage_taps.after_static[frame] = tap_static;
+    if (engine->stage_taps.after_tva)
+      engine->stage_taps.after_tva[frame] = tap_tva;
+    if (engine->stage_taps.after_lfo)
+      engine->stage_taps.after_lfo[frame] = tap_lfo;
     if (chorus_send)
       chorus_send[frame] = chorus_bus;
     if (delay_send)
