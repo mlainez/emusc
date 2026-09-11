@@ -65,7 +65,7 @@ struct sc88_reverb {
   /* set from a decay time measured on hardware, not from a guessed curve;
      see the note in the source */
   float feedback;
-  float damp;                    /* superseded by the character's own */
+  float damp;                    /* the pole of the character's late-bank one-pole */
   /* the decay the parameters ask for, in seconds, for reporting */
   double target_t60;
   float level;

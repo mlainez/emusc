@@ -260,14 +260,16 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
       rv->feedback = (float)g;
     }
   }
-  /* How fast the tail darkens. The two coefficient pairs at words 16..19
-     of the character block read as one-poles gentler than this, so they
-     are not it, and the firmware's own damping is not identified. What is
-     measurable is the hardware's tail: after the music stops, demo song 1
-     decays with a spectral centroid of 440 Hz where 0.35 here gave 1060.
-     This is calibrated to that (`M-023`), and the one-pole keeps unity at
-     DC so the decay stays where `M-013` put it. */
-  rv->damp = 0.82f;
+  /* How fast the tail darkens: the pole of the character's own late-bank
+     one-pole, the first coefficient pair at words 16..17 of its block
+     (`08_effects/reverb.md`). The pair's DC gain is below unity and is not
+     applied here - the loop gain above is the decay calibration and stands
+     for every per-pass loss - so only the pole shapes the tail, and the
+     one-pole keeps unity at DC. Hall 2's pole of 0.281 leaves a band at
+     4 kHz ringing about two thirds as long as one at 250 Hz, which is the
+     shape the hardware recordings' song endings decay with; a character
+     whose pair is empty darkens nothing. */
+  rv->damp = rv->character.damp_pole;
   /* Normalised by the square root of the line count. Dividing by the count
      itself, as this did, is what a bank of *identical* sources would need;
      these are decorrelated, so their sum grows as the root and dividing by
