@@ -119,23 +119,12 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
   if (resonance_index < resonance_floor)
     resonance_index = resonance_floor;
 
-  /* Base and limit share one domain: both halved.
-   *
-   * The halves have to agree. Reading the base halved and the limit
-   * whole compares two different units, and it was that mix - not the
-   * shift itself - that produced the argument for dropping the shift:
-   * "108 of 128 base entries already exceed the halved limit" holds
-   * only if the base is left raw. Halved on both sides, the base spans
+  /* Base and limit share one domain: both halved. Routine 6ccd shifts
+   * the saturated table-plus-modulation sum right one (6d21) and the
+   * limit is read from 78802 and shifted right one (68b4, 6984) before
+   * the unsigned compare. Halved on both sides the base spans
    * 12561..32767 against a limit of 29811..31744, so the clamp bites
-   * for the top dozen indices and leaves the rest free, which is what
-   * a ceiling is for.
-   *
-   * Taking both whole instead is what the audio rules out. It puts
-   * every melodic tone's cutoff at 8.3..10.6 kHz, near enough wide
-   * open to do nothing, and the onset-aligned spectral centroid of all
-   * seven demo songs then runs far above the hardware's - song 4 at
-   * 2500 Hz against 1550, song 7 at 1700 against 900. Halved, the same
-   * tones sit at 4.0..5.3 kHz. */
+   * only for the top dozen indices. */
   combined = sc88_tvf_be16(rom->bytes + SC88_TVF_BASE_TABLE +
                            (unsigned)cutoff_index * 2u);
   combined += pre_base_modulation;
@@ -498,21 +487,18 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
     return false;
   if (registers->fixed_tuple)
     return true;
-  /* Accumulate in the word's own units, then halve - the order
-     `07_synthesis/tvf.md` reads out of `6ccd..6d29`. Added to the halved
-     base instead, every envelope, release and LFO term would carry twice
-     its weight. Saturating rather than wrapping, as the firmware does. */
-  {
-    int32_t sum = (int32_t)registers->base_unshifted + post_base_modulation;
-    if (sum < 0)
-      sum = 0;
-    else if (sum > UINT16_MAX)
-      sum = UINT16_MAX;
-    combined = (uint16_t)((uint32_t)sum >> 1);
-  }
-  /* Halved, matching the base. Comparing this whole against a halved base
-     is a unit error: nothing clamps, because the smallest limit entry is
-     then above almost every base value. */
+  /* The envelope and release outputs join the word after the halving.
+     Routine 6ccd saturates the table entry plus the key, controller and
+     LFO terms, shifts the sum right one and stores it; 68a1, 68e3 and
+     6971 then add the envelope output (and, in the update path, the
+     release ramp) to that stored word with a plain 16-bit add, and the
+     sum is compared unsigned against the halved limit. One unit of
+     envelope is therefore 1/2048 octave in the register - twice the
+     weight of one unit of table or key term. The add does not saturate;
+     over the held bank the halved word never falls below 12561 and no
+     envelope target reaches -9101 from there, so it never wraps. */
+  combined = (uint16_t)((uint16_t)registers->base_value +
+                        (uint16_t)post_base_modulation);
   limit = (uint16_t)(sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE +
     (uint32_t)registers->resonance_index * 2) >> 1);

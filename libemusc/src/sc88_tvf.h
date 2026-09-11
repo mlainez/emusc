@@ -24,11 +24,10 @@ struct sc88_tvf_registers {
   uint8_t cutoff_index;
   uint8_t resonance_index;
   uint16_t base_value;
-  /* The table entry plus the pre-base modulation, before the halving.
-     `07_synthesis/tvf.md` has the firmware accumulate every modulation
-     term at RAM `30da+R1` in these units and shift right one only after
-     the add, so a term applied to the halved value carries twice its
-     weight. */
+  /* The saturated table entry plus key, controller and LFO terms as
+     routine 6ccd holds it before the shift right one. The envelope and
+     release are not part of it: the firmware adds those to the halved
+     word (sc88_tvf_update_frequency). */
   uint16_t base_unshifted;
   uint16_t combined;
   uint32_t frequency_current;
