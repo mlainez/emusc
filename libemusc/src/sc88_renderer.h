@@ -60,6 +60,14 @@ struct sc88_render_component {
      contributes nothing until a mod wheel moves (`M-020`). */
   struct sc88_lfo lfo2;
   int16_t lfo2_pitch_depth;
+  /* Each oscillator's amplitude and filter depths (`M-021`). The amplitude
+     pair is in attenuation-word units, the unit the envelope's own stage
+     words use, which is what makes Vibraphone's 604 worth about 0.8 dB of
+     peak tremolo against the 1.1 dB peak-to-peak its hardware recording
+     shows at the rate the ROM asks for. The filter pair is in cutoff-word
+     units, as the filter envelope's targets are. */
+  int16_t lfo1_tva_depth, lfo2_tva_depth;
+  int16_t lfo1_tvf_depth, lfo2_tvf_depth;
   uint8_t reverb_send;
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;

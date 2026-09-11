@@ -2,6 +2,7 @@
 #include "sc88_engine.h"
 
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 #define SC88_CONTROL_TIMER_HZ 1250000.0
@@ -162,6 +163,48 @@ static int32_t sc88_engine_lfo_pitch_offset(
     return 0;
   /* 0x4000 pitch-word units to the octave */
   return (int32_t)(cents * 16384.0 / 1200.0);
+}
+
+/* One oscillator's contribution, as its depth scaled by the waveform and
+   the fade. Both oscillators sum, which is what `07_synthesis/lfo.md`
+   describes: two waveforms, each multiplied by its own depth term and its
+   own fade. */
+static double sc88_engine_lfo_term(const struct sc88_lfo *lfo, int16_t depth)
+{
+  if (!depth)
+    return 0.0;
+  return (double)depth * ((double)lfo->ramp.fade / 65535.0) *
+    ((double)lfo->output / 32767.0);
+}
+
+/* The amplitude modulation, as a gain. The depths are attenuation-word
+   units and the level tables run at about -5.26 dB per 0x1000, so one unit
+   is 0.001284 dB. */
+static float sc88_engine_lfo_amplitude(const struct sc88_engine_slot *slot)
+{
+  double attenuation =
+    sc88_engine_lfo_term(&slot->component.lfo1,
+                         slot->component.lfo1_tva_depth) +
+    sc88_engine_lfo_term(&slot->component.lfo2,
+                         slot->component.lfo2_tva_depth);
+  if (attenuation == 0.0)
+    return 1.0f;
+  return (float)pow(10.0, -attenuation * 0.001284 / 20.0);
+}
+
+/* The filter modulation, in cutoff-word units. */
+static int32_t sc88_engine_lfo_filter(const struct sc88_engine_slot *slot)
+{
+  double term =
+    sc88_engine_lfo_term(&slot->component.lfo1,
+                         slot->component.lfo1_tvf_depth) +
+    sc88_engine_lfo_term(&slot->component.lfo2,
+                         slot->component.lfo2_tvf_depth);
+  if (term > 32767.0)
+    term = 32767.0;
+  else if (term < -32768.0)
+    term = -32768.0;
+  return (int32_t)term;
 }
 
 static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
@@ -723,8 +766,10 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
             &slot->component.tvf) &&
           sc88_tvf_update_frequency(
             &engine->renderer->rom,
-            (int16_t)((uint16_t)slot->component.tvf_envelope.current +
-                      (uint16_t)slot->component.tvf_release.current),
+            (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
+                    (uint16_t)slot->component.tvf_envelope.current +
+                      (uint16_t)slot->component.tvf_release.current +
+                      (uint16_t)(int16_t)sc88_engine_lfo_filter(slot)),
             &slot->component.tvf)) {
         slot->component.tvf.frequency_current = previous_target;
         tvf_retargeted = true;
@@ -816,6 +861,7 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
         float gained = sample *
           (slot->component.static_gain_q17 / 131072.0f) *
           (envelope_gain / 131072.0f) *
+          sc88_engine_lfo_amplitude(slot) *
           engine->notes[slot->note].provisional_gain;
         left += gained * (slot->component.left_gain_q15 / 32768.0f);
         right += gained * (slot->component.right_gain_q15 / 32768.0f);

@@ -360,6 +360,18 @@ static bool sc88_renderer_note_on_tone(
     render_component->lfo2_pitch_depth =
       (int16_t)((uint16_t)((uint16_t)component.bytes[0x18] << 8) |
                 component.bytes[0x19]);
+    render_component->lfo1_tva_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x74] << 8) |
+                component.bytes[0x75]);
+    render_component->lfo2_tva_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x76] << 8) |
+                component.bytes[0x77]);
+    render_component->lfo1_tvf_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x44] << 8) |
+                component.bytes[0x45]);
+    render_component->lfo2_tvf_depth =
+      (int16_t)((uint16_t)((uint16_t)component.bytes[0x46] << 8) |
+                component.bytes[0x47]);
     /* The part's vibrato depth is a centred modifier on the tone's own,
        in the same units (`M-021`). */
     if (lfo_controls)
