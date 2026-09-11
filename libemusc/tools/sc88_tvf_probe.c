@@ -57,17 +57,7 @@ static unsigned comp_bytes_at(const struct sc88_component *c, unsigned off)
 
 static double cutoff_hz(uint32_t word)
 {
-  double f1 = word / 262144.0;
-  double sine;
-  if (f1 > 1.998)
-    f1 = 1.998;
-  /* The word IS the sine, 262144 unity (`M-033`). This had been halved
-     here after the implementation stopped halving it, so every hertz
-     figure the probe printed was from a superseded law. */
-  sine = f1;
-  if (sine > 1.0)
-    sine = 1.0;
-  return asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
+  return sc88_tvf_word_to_hz(word);
 }
 
 int main(int argc, char **argv)

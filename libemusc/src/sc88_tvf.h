@@ -68,17 +68,14 @@ struct sc88_tvf_release {
 /* Replaceable audio-side interpretation of the still-undecoded XP words.
  * This state-variable topology is intentionally separate from the exact CPU
  * state above. */
-/* Cascaded two-pole sections. The filter's ORDER is one of the things
-   `07_synthesis/tvf.md` records as unrecovered from the ROM, so this
-   count is chosen by measurement against the hardware recordings and is
-   INFERRED, not derived: over the seven demo songs the static spectral
-   centroid error against the recordings is +260 Hz with one section,
-   +82 with two and +7 with three, while the attack's normalised
-   excursion stays at 0.66, 0.71 and 0.67 - so the two are not trading
-   and the rolloff of a single two-pole section is simply too gentle.
-   Resonance belongs to the first section only: two resonant sections
-   multiply their peaks and a render reached a peak of 7.4. */
-#define SC88_TVF_SECTIONS 3
+/* Two-pole sections in cascade. The filter's order is not recovered from
+   the ROM; the sibling chip measures two-pole on hardware (`M-054`). Three
+   sections had been chosen by measurement while the cutoff word was read
+   as a sine and sat at 8-10 kHz on every tone, a compensating fit that
+   also cut a snare's content above 8 kHz from 30 % to 12 %; with the
+   cutoff word read in its own log domain one section measures closest to
+   the recordings (`M-105`). Resonance belongs to the first section. */
+#define SC88_TVF_SECTIONS 1
 
 struct sc88_tvf_audio_state {
   float integrator_band;
@@ -143,6 +140,10 @@ void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers);
  * own interpolation words, once per elapsed control period. */
 void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
                                 unsigned periods);
+
+/* The frequency a TVF-F register value asks for, in hertz at the chip's
+ * own rate. Slope from the ROM, anchor inferred - see sc88_tvf.c. */
+double sc88_tvf_word_to_hz(uint32_t word);
 
 void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state);
 float sc88_tvf_audio_process_provisional(

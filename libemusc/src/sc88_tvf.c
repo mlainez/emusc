@@ -6,16 +6,25 @@
 #include <string.h>
 
 #define SC88_TVF_BASE_TABLE 0x78702u
-/* The registers are ROM-exact; this normalisation is not. 262144 is the
-   frequency word's unity and makes the neutral index 64 a damping of
-   0.5, i.e. Q 2 - a permanent +6 dB at the cutoff. */
+/* The registers are ROM-exact; this normalisation is not. TVF-Q current
+   is the companion word << 2, i.e. resonance_index << 11, so this unity
+   makes the neutral index 64 a damping of 2.0 - a critically damped
+   section with no peak - and index 3 (Reso Panner) a Q near 10. */
 #define SC88_TVF_Q_UNITY 65536.0
-/* The word IS the sine, with 262144 as unity - `M-014`, as recorded in
-   `07_synthesis/tvf.md`. Halving it here was a patch laid on top of the
-   premise that the limit table was read unshifted; the limit is halved,
-   so the patch had nothing left to correct. Restored, the onset
-   excursion goes from 0.34 of the hardware's to 0.89. */
-#define SC88_TVF_SINE_SCALE 1.0
+/* The TVF-F register is a log-frequency word in the XP pitch register's
+   own domain. `07_synthesis/pitch.md` has the pitch word at 16384 units
+   per octave, 18 bits, unity playback at 0x38000; routine 67a8 forms
+   TVF-F as the same 18-bit high/low pair in the same scratch tuple with
+   the same interpolation word 0x4100, and the base table at 0x78702
+   steps by exactly 16384/12 per index once expanded - one semitone per
+   index. The ROM fixes the slope. It does not say which frequency any
+   register value means, so the anchor below is inferred: unity (0x38000)
+   is taken as fs/4, where the bilinear coefficient tan(pi*fc/fs) is 1,
+   which is the only reading under which every table value, including
+   the limit table at 0x78802 and the saturating top of the base table,
+   lands below Nyquist. */
+#define SC88_TVF_OCTAVE_UNITS 16384.0
+#define SC88_TVF_UNITY_WORD 0x38000
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 /* The sound chip's own sample rate, which the cutoff word is a
    fraction of. */
@@ -58,6 +67,13 @@ static int sc88_tvf_clamp_index(int value)
   if (value > 127)
     return 127;
   return value;
+}
+
+double sc88_tvf_word_to_hz(uint32_t word)
+{
+  double coefficient = exp2(((double)word - SC88_TVF_UNITY_WORD) /
+                            SC88_TVF_OCTAVE_UNITS);
+  return atan(coefficient) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
 }
 
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
@@ -515,13 +531,10 @@ void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
 
 /* The registers approach their targets; they are not latched onto them.
  *
- * `07_synthesis/tvf.md` records an interpolation word for each: TVF-F
- * `0x4100`, TVF-Q `0x095f`. Both were stored by
- * `sc88_tvf_prepare_registers` and then discarded, the engine latching
- * current onto target every control period instead. Read as the fraction
- * of the remaining gap closed per period, `0x4100/65536` is 0.254 - a
- * time constant near 27 ms, the window the hardware's onset centroid
- * moves in - and `0x095f/65536` is 0.037, about 220 ms. */
+ * `07_synthesis/tvf.md` records the TVF-F interpolation word `0x4100`.
+ * Read as the fraction of the remaining gap closed per period,
+ * `0x4100/65536` is 0.254 - a time constant near 27 ms, the window the
+ * hardware's onset centroid moves in. */
 static uint32_t sc88_tvf_approach(uint32_t current, uint32_t target,
                                   uint16_t interpolation,
                                   unsigned periods)
@@ -547,9 +560,8 @@ void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
   registers->frequency_current = sc88_tvf_approach(
     registers->frequency_current, registers->frequency_target,
     registers->frequency_interpolation, periods);
-  registers->resonance_current = sc88_tvf_approach(
-    registers->resonance_current, registers->resonance_target,
-    registers->resonance_interpolation, periods);
+  /* TVF-Q is not approached: its target is the same value as its current
+     with two more fraction bits (see the damping note in the audio path). */
 }
 
 void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state)
@@ -564,8 +576,6 @@ float sc88_tvf_audio_process_provisional(
   double period_fraction, float input)
 {
   double word;
-  double f1;
-  double sine;
   double g;
   double damping;
   double denominator;
@@ -586,53 +596,26 @@ float sc88_tvf_audio_process_provisional(
     period_fraction = 1.0;
   word = registers->frequency_current + period_fraction *
     ((double)registers->frequency_target - registers->frequency_current);
-  f1 = word / 262144.0;
-  if (f1 < 0.0)
-    f1 = 0.0;
-  else if (f1 > 1.998)
-    f1 = 1.998;
-
-  /* The word is `sin(pi * fc / 32000)`, not twice it.
-   *
-   * Reading it as Chamberlin's `F1 = 2*sin(pi*fc/fs)` halves every cutoff,
-   * and because the firmware's own ceiling is `filter_limit >> 1 << 3`,
-   * whose largest entry is `0xf800`, that put the **highest cutoff the
-   * device could ask for at 5.3 kHz**. Everything came out dull: a snare
-   * measured 1.0 % of its energy above 8 kHz where its own ROM sample has
-   * 30.4 %, which is why it sounded like a tick rather than a snare. Taken
-   * as `sin`, the same ceiling lands at 13.4 kHz and the snare matches its
-   * sample to within 50 Hz of centroid (`M-014`).
-   *
-   * The fraction is of the sound chip's 32 kHz, so the cutoff is a real
-   * frequency and the coefficient is recomputed for the output rate -
-   * otherwise rendering at 48 kHz moves every cutoff up by half again. */
-  sine = f1 * SC88_TVF_SINE_SCALE;
   {
     double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
-    double cutoff = asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
+    double cutoff = sc88_tvf_word_to_hz((uint32_t)(word + 0.5));
     double nyquist = rate * 0.5;
     if (cutoff > nyquist * 0.99)
       cutoff = nyquist * 0.99;
     g = tan(3.14159265358979323846 * cutoff / rate);
   }
-  /* Damping from the registers the ROM supplies, not a linear invention.
-   *
-   * `07_synthesis/tvf.md`: the companion table at `0x78902` is exactly
-   * `index * 512`, expanded left 2 into the TVF-Q current register and
-   * left 4 into the target, and "the Q target is shifted right two bits
-   * before use". Those are `resonance_index << 11` and `<< 13`, which
-   * this file computed and then discarded in favour of a straight line.
-   * Normalised by the same 262144 unity the frequency word uses
-   * (`M-014`), the shifted register is `resonance_index / 128`.
-   *
-   * The default corroborates it: the fixed-tuple path's documented TVF-Q
-   * current `0x20000` and target `0x80000` are exactly what index 64
-   * produces, so 64 is the neutral resonance. The index runs opposite to
-   * the player's setting - a positive SysEx resonance lowers it - so a
-   * low index is a high Q. Read at `current`, which approaches `target`
-   * from a quarter of it, a note therefore opens resonant and settles. */
-  damping = (double)(registers->resonance_current >> 2) /
-    SC88_TVF_Q_UNITY;
+  /* Damping from the register the ROM supplies. `07_synthesis/tvf.md`:
+   * the companion table at 0x78902 is exactly index * 512, expanded left
+   * 2 into TVF-Q current and left 4 into TVF-Q target, and the target is
+   * shifted right two bits before use - the target carries two extra
+   * fraction bits, so current and target name the same value and Q does
+   * not move after note-on. Approaching current toward target as if they
+   * shared units ramped Q fourfold over 220 ms and opened every note with
+   * a +6 dB peak at the cutoff, which set the drum path 200 Hz too bright
+   * (`M-105`). The fixed-tuple path's TVF-Q current 0x20000 is what index
+   * 64 produces, so 64 is the neutral resonance; the index runs opposite
+   * to the player's setting, so a low index is a high Q. */
+  damping = (double)registers->resonance_current / SC88_TVF_Q_UNITY;
   if (damping < 0.05)
     damping = 0.05;
   else if (damping > 2.0)
