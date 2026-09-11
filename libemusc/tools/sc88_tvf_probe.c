@@ -21,6 +21,7 @@
 
 #include "sc88_rom.h"
 #include "sc88_tvf.h"
+#include "sc88_tva.h"
 #include "sc88_wave.h"
 
 #define SC88_TVF_LIMIT_TABLE 0x78802u
@@ -274,6 +275,33 @@ int main(int argc, char **argv)
     printf("    swing over %u periods (%.0f ms): %.0f to %.0f Hz"
            " = %.0f Hz\n", periods, periods * 8.0008, lowest, highest,
            highest - lowest);
+
+    /* The amplitude envelope's own stage plateaus, so a rendered note can
+       be checked against the levels the ROM asks for without needing any
+       hardware: if the render does not settle where these say, the fault
+       is arithmetic rather than data. */
+    {
+      struct sc88_tva_envelope env;
+      struct sc88_tva_controls tva = {64, 64, 64, 64};
+      if (sc88_tva_envelope_prepare(&rom, &tone, &component,
+                                    (uint8_t)key, (uint8_t)velocity,
+                                    &tva, &env)) {
+        unsigned st;
+        printf("    TVA stages: %-6s %10s %9s %9s %8s\n", "stage",
+               "atten", "gain q17", "dB", "ms");
+        for (st = 0; st < 4; ++st) {
+          double db = env.targets_q17[st] > 0
+            ? 20.0 * log10((double)env.targets_q17[st] / 131072.0)
+            : -999.0;
+          double ms = env.increments[st]
+            ? 65536.0 / env.increments[st] * 8.0008 : 0.0;
+          printf("                %-6u %10u %9u %9.1f %8.0f\n",
+                 st, env.target_attenuations[st], env.targets_q17[st],
+                 db, ms);
+        }
+        printf("                starts at stage %u\n", env.stage);
+      }
+    }
   }
   free(control);
   return 0;
