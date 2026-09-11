@@ -302,6 +302,25 @@ int main(int argc, char **argv)
         printf("                starts at stage %u\n", env.stage);
       }
     }
+
+    /* The static balance between a tone's components. A two-component
+       tone whose layers sit at different levels moves timbrally as they
+       cross over; if they are rendered at the wrong relative level the
+       movement is lost, which is what `M-048` points at. */
+    {
+      struct sc88_zone_selection zone;
+      struct sc88_tva_levels levels = {127, 127, 127, 127};
+      uint16_t static_attenuation = 0;
+      uint32_t gain = 0;
+      if (sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
+          sc88_tva_static_gain_q17(&rom, &tone, &component, &zone,
+                                   (uint8_t)key, (uint8_t)velocity,
+                                   &levels, &static_attenuation, &gain)) {
+        printf("    static level: attenuation %u  gain q17 %u  %.1f dB\n",
+               static_attenuation, gain,
+               gain > 0 ? 20.0 * log10((double)gain / 131072.0) : -999.0);
+      }
+    }
   }
   free(control);
   return 0;
