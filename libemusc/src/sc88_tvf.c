@@ -18,13 +18,18 @@
    the same interpolation word 0x4100, and the base table at 0x78702
    steps by exactly 16384/12 per index once expanded - one semitone per
    index. The ROM fixes the slope. It does not say which frequency any
-   register value means, so the anchor below is inferred: unity (0x38000)
-   is taken as fs/4, where the bilinear coefficient tan(pi*fc/fs) is 1,
-   which is the only reading under which every table value, including
-   the limit table at 0x78802 and the saturating top of the base table,
-   lands below Nyquist. */
+   register value means, so the anchor is inferred: the word one past the
+   18-bit range, 0x40000, is read as the chip's Nyquist, so the base
+   table's saturating top (0xffff, register 0x3fff8) names the highest
+   frequency the filter has and nothing in either table lands above it.
+   Unity (0x38000) is then fs/8, the limit table at 0x78802 spans
+   11.3 kHz (resonance index 0) to 5.9 kHz (index 127), and the corners
+   fitted on seven hardware notes sit within 0.44 octave rms of the
+   computed word (`11_validation/measurements.md` M-136). The word is a
+   frequency, as the pitch word is a rate; the coefficient the chip
+   derives from it is not recovered, so the audio path warps it itself. */
 #define SC88_TVF_OCTAVE_UNITS 16384.0
-#define SC88_TVF_UNITY_WORD 0x38000
+#define SC88_TVF_NYQUIST_WORD 0x40000
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 /* The sound chip's own sample rate, which the cutoff word is a
    fraction of. */
@@ -71,9 +76,8 @@ static int sc88_tvf_clamp_index(int value)
 
 double sc88_tvf_word_to_hz(uint32_t word)
 {
-  double coefficient = exp2(((double)word - SC88_TVF_UNITY_WORD) /
-                            SC88_TVF_OCTAVE_UNITS);
-  return atan(coefficient) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
+  return 0.5 * SC88_TVF_NATIVE_RATE *
+    exp2(((double)word - SC88_TVF_NYQUIST_WORD) / SC88_TVF_OCTAVE_UNITS);
 }
 
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
