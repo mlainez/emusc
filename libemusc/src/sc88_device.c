@@ -758,12 +758,16 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       return false;
     }
   case 0xc0:
-    /* On a rhythm part a program change is ignored while the bank MSB is
-       nonzero (SC88-OM, `04_protocol/program_bank.md`). The demo songs rely
-       on it: they send CC0 48 and then program 48 on channel 10, which on
-       hardware leaves the kit alone and here was switching it to ORCHESTRA. */
-    if (device->engine.parts[part].rhythm_map && state->variation != 0)
-      return true;
+    /* A rhythm part's program change is honoured whatever the bank MSB is.
+       `04_protocol/program_bank.md` records the firmware as ignoring it
+       while the MSB is nonzero, but the music contradicts that: Brass
+       Nation is a full orchestra - tuba, horns, trombone, five string
+       parts, flute, oboe, clarinet, bassoon, piccolo, harp, timpani,
+       tubular bell, celesta, xylophone, glockenspiel - and its drum part
+       asks for program 48, which is the ORCHESTRA kit in both maps. Opus 88
+       asks for program 49, whose ETHNIC kit exists only in the SC-88 map,
+       with a zero MSB. Honouring it satisfies both; ignoring it leaves an
+       orchestra playing a pop kit (`M-024`). */
     state->program = data1;
     return true;
   case 0xe0:
