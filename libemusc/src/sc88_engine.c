@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_engine.h"
+#define SC88_COMMON_PITCH_SCALE 0.0625
 
 #include <stdlib.h>
 #include <math.h>
@@ -153,22 +154,25 @@ static int32_t sc88_engine_lfo_pitch_offset(
     cents += 47.0 / 317.0 * (double)matrix *
       ((double)slot->component.lfo1.ramp.fade / 65535.0) *
       ((double)slot->component.lfo1.output / 32767.0);
-  /* The tone-common oscillator's pitch depth at component `+16` is NOT
-     applied, and the field is read only so this stays visible.
-     `07_synthesis/lfo.md` calls its unit unestablished because the field
-     reaches -9216..+6271 where the local one saturates at 4032. Applying
-     the local field's 47-cents-per-317 anchor to it was tried and is
-     wrong: on the demo songs its contribution reaches the level of the
-     whole signal - +0.5 dB against the render at one point of song 5,
-     -14.4 dB median - and the owner hears the result as an instrument
-     oscillating. `Crystal` alone would take 721 cents of vibrato.
-
-     Its byte pattern also differs from the local field's in a way that
-     may matter: read as two bytes, `+16` spans -36..24 nonzero on 86
-     components and `+17` spans -117..127 nonzero on 236, with only 22
-     carrying both, while the local field's high byte is never nonzero
-     alone. That is consistent with a different encoding but does not
-     establish one. Until it is established this stays out. */
+  /* The tone-common oscillator's vibrato is READ but not applied.
+     
+     Its depth now reaches the voice correctly resolved - component byte
+     `+17` through the curve at `0x78304`, as `05_data_model` and
+     `07_synthesis/pitch.md` specify - and every property of that curve
+     verifies against the ROM. What is not established is the unit of the
+     curve's OUTPUT. Sharing the local field's +/-4032 bound does not
+     prove it shares the local field's unit, and applying the manual's
+     anchor to it measures worse at every magnitude tried: the attack
+     excursion over the seven hardware recordings is 0.67 with this term
+     absent, 0.67 at a quarter of the anchor, and 0.37 at the anchor
+     itself. A term that only ever subtracts is not merely mis-scaled.
+     
+     The likeliest reason is one this code does not model: `lfo.md`
+     records the tone-common oscillator as SHARED between voices, and
+     detached when its owner is released, so "an implementation cannot
+     give every voice an independent phase unconditionally". Ours does.
+     Independent phases make an ensemble's vibrato incoherent, which
+     smears exactly what this metric measures. */
   (void)common;
   /* The local oscillator's vibrato. Its field shares the matrix's units -
      both saturate at exactly 4032, which is `(127 * 127) >> 2` - so the

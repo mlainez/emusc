@@ -126,7 +126,8 @@ int main(int argc, char **argv)
     printf("variation\tprogram\tcomponent\tname\tcutoff_index"
            "\tresonance_index\tbase_value\tbase_unshifted\tkeymod36"
            "\tkeymod60\tkeymod84\tmode\tenv_depth\tt0\tt1\tt2\tt3"
-           "\tinc0\tinc1\tlfo1pitch\tlfo2pitch\n");
+           "\tinc0\tinc1\tlfo1pitch\tlfo2pitch"
+           "\tc44\tc45\tc46\tc47\tc74\tc75\tc76\tc77\n");
     for (v = 0; v <= 36; ++v) {
       for (pr = 0; pr < 128; ++pr) {
         uint32_t offset;
@@ -158,14 +159,19 @@ int main(int argc, char **argv)
                                          &env))
             continue;
           printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%u\t%d\t%d\t%d\t%d"
-                 "\t%u\t%d\t%d\t%d\t%d\t%u\t%u\t%d\t%d\n",
+                 "\t%u\t%d\t%d\t%d\t%d\t%u\t%u\t%d\t%d"
+                 "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
                  v, pr, c, n, r.cutoff_index, r.resonance_index,
                  r.base_value, r.base_unshifted, k36, k60, k84,
                  (int)(int8_t)comp.bytes[0x3e], env.depth,
                  env.targets[0], env.targets[1], env.targets[2],
                  env.targets[3], env.increments[0], env.increments[1],
                  (int)(int16_t)((comp.bytes[0x16] << 8) | comp.bytes[0x17]),
-                 (int)(int16_t)((comp.bytes[0x18] << 8) | comp.bytes[0x19]));
+                 (int)(int16_t)((comp.bytes[0x18] << 8) | comp.bytes[0x19]),
+                 (int)(int8_t)comp.bytes[0x44], (int)(int8_t)comp.bytes[0x45],
+                 (int)(int8_t)comp.bytes[0x46], (int)(int8_t)comp.bytes[0x47],
+                 (int)(int8_t)comp.bytes[0x74], (int)(int8_t)comp.bytes[0x75],
+                 (int)(int8_t)comp.bytes[0x76], (int)(int8_t)comp.bytes[0x77]);
         }
       }
     }

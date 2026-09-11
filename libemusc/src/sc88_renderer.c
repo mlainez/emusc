@@ -86,6 +86,10 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
   return true;
 }
 
+/* Centre of the 255-word bipolar pitch-control curve at 0x78304..0x78502,
+   indexed -127..127 about this address (`02_rom/tables.md`). */
+#define SC88_PITCH_CURVE_CENTRE 0x78402u
+
 static int sc88_renderer_bank_index(uint8_t selector)
 {
   switch (selector) {
@@ -357,9 +361,32 @@ static bool sc88_renderer_note_on_tone(
     if (!sc88_lfo_local_prepare(&renderer->rom, &component,
                                 &render_component->lfo2))
       memset(&render_component->lfo2, 0, sizeof render_component->lfo2);
-    render_component->lfo1_pitch_depth =
-      (int16_t)((uint16_t)((uint16_t)component.bytes[0x16] << 8) |
-                component.bytes[0x17]);
+    /* `05_data_model/partial_schema.md` and `07_synthesis/pitch.md` agree,
+       against the table in `lfo.md`: the tone-common oscillator's pitch
+       depth is the **signed byte at `+17`**, and it is an index rather
+       than a depth. Routine `0x6326..0x639e` clamps it to -127..127,
+       doubles it as a byte offset and reads the 255-word curve about its
+       centre at `0x78402`. That curve is strictly increasing, exactly
+       antisymmetric, zero at its centre and saturating at +/-4032 - the
+       same `(127 * 127) >> 2` the local field reaches, so its output
+       carries the unit the manual's anchor was measured in.
+
+       Read instead as a `+16` BE16, the field spans -9216..+6271, which
+       is what `lfo.md` records as an unestablished unit, and applying the
+       anchor to those raw numbers gives `Crystal` 721 cents of vibrato. */
+    {
+      int idx = (int)(int8_t)component.bytes[0x17];
+      uint32_t at;
+      if (idx < -127)
+        idx = -127;
+      else if (idx > 127)
+        idx = 127;
+      at = (uint32_t)(SC88_PITCH_CURVE_CENTRE + 2 * idx);
+      render_component->lfo1_pitch_depth =
+        at + 2 <= renderer->rom.size
+          ? sc88_renderer_s16(sc88_renderer_be16(renderer->rom.bytes + at))
+          : 0;
+    }
     render_component->lfo2_pitch_depth =
       (int16_t)((uint16_t)((uint16_t)component.bytes[0x18] << 8) |
                 component.bytes[0x19]);

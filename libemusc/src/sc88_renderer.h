@@ -59,9 +59,10 @@ struct sc88_render_component {
      This is where a tone's built-in vibrato lives: the controller matrix
      contributes nothing until a mod wheel moves (`M-020`). */
   struct sc88_lfo lfo2;
-  /* The tone-common oscillator's own pitch depth, component `+16`. It is
-     nonzero on 300 of the 633 held components - more than the local field
-     - and was the one of the six depth words never read. */
+  /* The tone-common oscillator's pitch depth. Component byte `+17` is a
+     signed INDEX, not a depth: it selects from the 255-word curve at
+     `0x78304`, and that curve's output is the depth, in the same unit as
+     the local field. Stored here already resolved. */
   int16_t lfo1_pitch_depth;
   int16_t lfo2_pitch_depth;
   /* Each oscillator's amplitude and filter depths (`M-021`). The amplitude
