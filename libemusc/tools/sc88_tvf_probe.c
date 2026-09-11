@@ -50,6 +50,11 @@ static uint8_t *read_file(const char *path, size_t *size)
   return data;
 }
 
+static unsigned comp_bytes_at(const struct sc88_component *c, unsigned off)
+{
+  return c && c->bytes ? c->bytes[off] : 0u;
+}
+
 static double cutoff_hz(uint32_t word)
 {
   double f1 = word / 262144.0;
@@ -316,7 +321,13 @@ int main(int argc, char **argv)
           sc88_tva_static_gain_q17(&rom, &tone, &component, &zone,
                                    (uint8_t)key, (uint8_t)velocity,
                                    &levels, &static_attenuation, &gain)) {
-        printf("    static level: attenuation %u  gain q17 %u  %.1f dB\n",
+        printf("    pitch env: depth %6d  rates %3u %3u %3u %3u  release %3u\n",
+           (int)(int16_t)((comp_bytes_at(&component, 0x1a) << 8) |
+                          comp_bytes_at(&component, 0x1b)),
+           comp_bytes_at(&component, 0x2a), comp_bytes_at(&component, 0x2b),
+           comp_bytes_at(&component, 0x2c), comp_bytes_at(&component, 0x2d),
+           comp_bytes_at(&component, 0x2e));
+    printf("    static level: attenuation %u  gain q17 %u  %.1f dB\n",
                static_attenuation, gain,
                gain > 0 ? 20.0 * log10((double)gain / 131072.0) : -999.0);
       }
