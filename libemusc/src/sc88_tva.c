@@ -529,6 +529,18 @@ static uint32_t sc88_tva_linear_between(uint32_t start, uint32_t target,
 
 /* One point along a stage: the attenuation ramps linearly and the level
    tables turn it into a gain, so the amplitude falls exponentially. */
+/* A stage rising out of digital silence is interpolated in the gain
+   domain; every other stage in the attenuation word. The word is
+   logarithmic, so a linear ramp from `UINT16_MAX` is an exponential rise
+   in amplitude that spends most of its length inaudible - the French
+   Horn's 147 ms attack was still under one per cent of full scale at
+   80 ms while the hardware note is audible 0.2 ms in (`M-149`). The
+   attenuation domain stays everywhere else, where a stage is a decay and
+   it is correct there (`M-016`). */
+static uint32_t sc88_tva_stage_between(
+  const struct sc88_rom *rom, const struct sc88_tva_envelope *envelope,
+  unsigned stage, double fraction, uint32_t fallback);
+
 static uint32_t sc88_tva_attenuation_between(
   const struct sc88_rom *rom, uint16_t start, uint16_t target,
   double fraction, uint32_t fallback)
@@ -549,6 +561,23 @@ static uint32_t sc88_tva_attenuation_between(
   return gain_q17;
 }
 
+static uint32_t sc88_tva_stage_between(
+  const struct sc88_rom *rom, const struct sc88_tva_envelope *envelope,
+  unsigned stage, double fraction, uint32_t fallback)
+{
+  if (envelope->start_attenuation == UINT16_MAX &&
+      envelope->target_attenuations[stage] != UINT16_MAX) {
+    uint32_t target;
+    if (!sc88_tva_envelope_target_q17(rom, envelope->target_attenuations[stage],
+                                      &target))
+      return fallback;
+    return sc88_tva_linear_between(0, target, fraction);
+  }
+  return sc88_tva_attenuation_between(
+    rom, envelope->start_attenuation, envelope->target_attenuations[stage],
+    fraction, fallback);
+}
+
 uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
   const struct sc88_tva_envelope *envelope, double period_fraction)
 {
@@ -565,10 +594,8 @@ uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
     period_fraction * envelope->increments[envelope->stage];
   if (phase > 65535.0)
     phase = 65535.0;
-  return sc88_tva_attenuation_between(
-    rom, envelope->start_attenuation,
-    envelope->target_attenuations[envelope->stage], phase / 65536.0,
-    envelope->current_q17);
+  return sc88_tva_stage_between(rom, envelope, envelope->stage,
+                                phase / 65536.0, envelope->current_q17);
 }
 
 bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
@@ -609,9 +636,8 @@ bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
   }
   envelope->phase = working;
   envelope->saved_count = 0;
-  envelope->current_q17 = sc88_tva_attenuation_between(
-    rom, envelope->start_attenuation,
-    envelope->target_attenuations[envelope->stage], working / 65536.0,
+  envelope->current_q17 = sc88_tva_stage_between(
+    rom, envelope, envelope->stage, working / 65536.0,
     envelope->current_q17);
   return true;
 }
