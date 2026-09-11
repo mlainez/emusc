@@ -39,6 +39,16 @@ static void sc88_device_sync_chorus(struct sc88_device *device)
                          device->chorus_depth, device->chorus_pre_lpf);
 }
 
+static void sc88_device_sync_lfo(struct sc88_device *device, uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  struct sc88_lfo_controls controls;
+  controls.rate = channel->vibrato_rate;
+  controls.delay = channel->vibrato_delay;
+  controls.depth = channel->vibrato_depth;
+  sc88_engine_set_part_lfo_controls(&device->engine, part, &controls);
+}
+
 static void sc88_device_sync_eq(struct sc88_device *device)
 {
   (void)sc88_eq_set_params(&device->renderer.rom, &device->eq,
@@ -209,6 +219,9 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->reverb_level = 64;
   device->reverb_time = 64;
   device->reverb_pre_lpf = 0;
+  device->reverb_predelay = 0;
+  device->reverb_delay_feedback = 0;
+  sc88_reverb_set_predelay(&device->reverb, 0);
   sc88_reverb_set_params(&device->reverb, device->reverb_level,
                          device->reverb_time, device->reverb_pre_lpf);
   sc88_reverb_reset(&device->reverb);
@@ -263,6 +276,18 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->release = 64;
     channel->modulation = 0;
     channel->key_shift = 64;
+    channel->cc1_assign = 0x10;
+    channel->cc2_assign = 0x11;
+    channel->cc1_value = 0;
+    channel->cc2_value = 0;
+    channel->mono_mode = 1;
+    channel->vibrato_rate = 64;
+    channel->vibrato_depth = 64;
+    channel->vibrato_delay = 64;
+    sc88_device_sync_lfo(device, (uint8_t)part);
+    channel->portamento_time = 0;
+    channel->portamento_switch = 0;
+    channel->portamento_control = 0;
     /* SC88-OM's initial modulation depths: LFO1 pitch 0x0a, the rest zero */
     channel->mod_lfo1_pitch_depth = 0x0a;
     sc88_engine_set_part_lfo1_pitch_depth(&device->engine, (uint8_t)part, 0);
@@ -391,6 +416,16 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     sc88_reverb_set_params(&device->reverb, device->reverb_level,
                            device->reverb_time, device->reverb_pre_lpf);
     return true;
+  case 0x400137:
+    /* Predelay, in milliseconds, single-module only. */
+    if (value > 127)
+      return false;
+    device->reverb_predelay = value;
+    sc88_reverb_set_predelay(&device->reverb, value);
+    return true;
+  case 0x400135:
+    device->reverb_delay_feedback = value;
+    return true;
   case 0x400134:
     device->reverb_time = value;
     sc88_reverb_set_params(&device->reverb, device->reverb_level,
@@ -476,6 +511,18 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
   default:
     break;
   }
+  /* `41 mf rr`: one per-note kit parameter. m is the map, f the field,
+     rr the note; `41 m0 00` is the kit's twelve-byte name, which has no
+     bearing on the sound. */
+  if ((address & 0xff0000u) == 0x410000u) {
+    uint8_t map = (uint8_t)(((address >> 12) & 0x0fu) + 1u);
+    uint8_t field = (uint8_t)((address >> 8) & 0x0fu);
+    uint8_t note = (uint8_t)(address & 0xffu);
+    if (field == 0)
+      return true;                     /* the name */
+    return sc88_engine_set_drum_parameter(&device->engine, map, field,
+                                          note, value);
+  }
   if ((address & 0xf0ff00u) == 0x402000u && (address & 0xffu) == 0x20u) {
     /* `40 4x 20`, the equaliser switch. It is one global effect, so any
        block's write governs it. */
@@ -505,6 +552,33 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
       if (value > 2)
         return false;
       sc88_engine_set_part_rhythm(&device->engine, part, value);
+      return true;
+    case 0x30:
+      state->vibrato_rate = value;
+      sc88_device_sync_lfo(device, part);
+      return true;
+    case 0x31:
+      state->vibrato_depth = value;
+      sc88_device_sync_lfo(device, part);
+      return true;
+    case 0x37:
+      state->vibrato_delay = value;
+      sc88_device_sync_lfo(device, part);
+      return true;
+    case 0x13:
+      if (value > 1)
+        return false;
+      state->mono_mode = value;
+      return true;
+    case 0x1f:
+      if (value > 0x5f)
+        return false;
+      state->cc1_assign = value;
+      return true;
+    case 0x20:
+      if (value > 0x5f)
+        return false;
+      state->cc2_assign = value;
       return true;
     case 0x16:
       if (value < 0x28 || value > 0x58)
@@ -542,6 +616,12 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     case 0x22:
       state->reverb_send = value;
       sc88_engine_set_part_reverb_send(&device->engine, part, value);
+      return true;
+    case 0x25:
+      /* Not in any held parameter map. Skatey Eight writes it once. It is
+         accepted and counted so the packet is not refused wholesale, and
+         so the count says something is being carried and discarded. */
+      ++device->unhandled_sysex;
       return true;
     default:
       return false;
@@ -644,6 +724,21 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       state->delay_send = data2;
       sc88_engine_set_part_delay_send(&device->engine, part, data2);
       return true;
+    case 5:
+      state->portamento_time = data2;
+      return true;
+    case 65:
+      state->portamento_switch = data2;
+      return true;
+    case 84:
+      state->portamento_control = data2;
+      return true;
+    case 126:
+      state->mono_mode = 0;
+      return true;
+    case 127:
+      state->mono_mode = 1;
+      return true;
     case 93:
       state->chorus_send = data2;
       sc88_engine_set_part_chorus_send(&device->engine, part, data2);
@@ -682,13 +777,40 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
         state->release = data2;
         return true;
       }
-      /* Vibrato rate, depth and delay are received so a song's request is
-         not silently discarded, but there is no LFO in the signal path to
-         apply them to yet (`12_implementation/wiring_audit.md`). */
-      if (state->nrpn_msb == 1 &&
-          (state->nrpn_lsb == 0x08 || state->nrpn_lsb == 0x09 ||
-           state->nrpn_lsb == 0x0a)) {
-        ++device->unhandled_sysex;
+      /* The drum-instrument block: the MSB names the parameter and the LSB
+         is the note. It reaches the same per-note overrides the `41 mf rr`
+         addresses do, except that its pitch is a centred offset. */
+      if (state->nrpn_msb >= 0x18 && state->nrpn_msb <= 0x1f) {
+        static const uint8_t field_of[8] = {
+          10u,  /* 18 pitch, relative */
+          0u,   /* 19 unassigned */
+          2u,   /* 1a TVA level */
+          0u,   /* 1b unassigned */
+          4u,   /* 1c panpot */
+          5u,   /* 1d reverb send */
+          6u,   /* 1e chorus send */
+          9u    /* 1f delay send */
+        };
+        uint8_t field = field_of[state->nrpn_msb - 0x18u];
+        uint8_t map = device->engine.parts[part].rhythm_map;
+        if (!field || !map)
+          return false;
+        return sc88_engine_set_drum_parameter(&device->engine, map, field,
+                                              state->nrpn_lsb, data2);
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x08) {
+        state->vibrato_rate = data2;
+        sc88_device_sync_lfo(device, part);
+        return true;
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x09) {
+        state->vibrato_depth = data2;
+        sc88_device_sync_lfo(device, part);
+        return true;
+      }
+      if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x0a) {
+        state->vibrato_delay = data2;
+        sc88_device_sync_lfo(device, part);
         return true;
       }
       return false;
@@ -755,9 +877,28 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       sc88_device_sync_pitch(device, part);
       return true;
     default:
+      /* An ordinary controller below CC120 is compared with this part's
+         CC1/CC2 assignment before being refused, which is the order
+         `04_protocol/controllers.md` gives. Every matrix depth those two
+         feed is zero after a reset, so this receives them and applies the
+         zero. */
+      if (data1 < 120) {
+        if (data1 == state->cc1_assign) {
+          state->cc1_value = data2;
+          return true;
+        }
+        if (data1 == state->cc2_assign) {
+          state->cc2_value = data2;
+          return true;
+        }
+      }
       return false;
     }
   case 0xc0:
+    if (device->engine.parts[part].rhythm_map &&
+        data1 != state->program)
+      sc88_engine_clear_drum_overlay(&device->engine,
+                                     device->engine.parts[part].rhythm_map);
     /* A rhythm part's program change is honoured whatever the bank MSB is.
        `04_protocol/program_bank.md` records the firmware as ignoring it
        while the MSB is nonzero, but the music contradicts that: Brass

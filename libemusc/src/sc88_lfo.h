@@ -34,6 +34,16 @@ struct sc88_lfo {
   struct sc88_lfo_ramp ramp;
 };
 
+/* The part-level vibrato controls, each centred at 64. Rate and delay are
+ * the two modifiers `sc88_lfo_common_rate_index` and `_delay_index` take;
+ * depth is added to the oscillator's own pitch depth.
+ */
+struct sc88_lfo_controls {
+  uint8_t rate;
+  uint8_t delay;
+  uint8_t depth;
+};
+
 /* The live rate contribution, from the cached controller and poly-pressure
  * word the part composes. Clipped before doubling, and the signed product's
  * high word is kept, which floors rather than truncating. */

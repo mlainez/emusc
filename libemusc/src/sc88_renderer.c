@@ -234,7 +234,7 @@ bool sc88_renderer_note_on_with_controls(
     return false;
   return sc88_renderer_note_on_with_part_controls(
     renderer, voice, variation, program, key, velocity, provisional_gain,
-    levels, pan, &renderer->tvf_controls, &renderer->tva_controls);
+    levels, pan, &renderer->tvf_controls, &renderer->tva_controls, NULL);
 }
 
 /* The body both entry points share. A melodic note selects its tone through
@@ -247,7 +247,8 @@ static bool sc88_renderer_note_on_tone(
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls)
+  const struct sc88_tva_controls *tva_controls,
+  const struct sc88_lfo_controls *lfo_controls)
 {
   struct sc88_tone tone;
   unsigned i;
@@ -347,8 +348,11 @@ static bool sc88_renderer_note_on_tone(
     /* Neutral part and user modifiers: the part-level rate and delay
        offsets are a controller-matrix destination this does not model
        yet, so the tone's own rate stands. */
-    if (!sc88_lfo_common_prepare(&renderer->rom, &tone, 64, 64, 64, 64,
-                                 &render_component->lfo1))
+    if (!sc88_lfo_common_prepare(
+          &renderer->rom, &tone,
+          lfo_controls ? lfo_controls->rate : 64, 64,
+          lfo_controls ? lfo_controls->delay : 64, 64,
+          &render_component->lfo1))
       memset(&render_component->lfo1, 0, sizeof render_component->lfo1);
     if (!sc88_lfo_local_prepare(&renderer->rom, &component,
                                 &render_component->lfo2))
@@ -356,6 +360,12 @@ static bool sc88_renderer_note_on_tone(
     render_component->lfo2_pitch_depth =
       (int16_t)((uint16_t)((uint16_t)component.bytes[0x18] << 8) |
                 component.bytes[0x19]);
+    /* The part's vibrato depth is a centred modifier on the tone's own,
+       in the same units (`M-021`). */
+    if (lfo_controls)
+      render_component->lfo2_pitch_depth = (int16_t)(
+        render_component->lfo2_pitch_depth +
+        ((int)lfo_controls->depth - 64) * 2);
     render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
     render_component->static_pitch_word = pitch_word;
@@ -397,7 +407,8 @@ bool sc88_renderer_note_on_with_part_controls(
   float provisional_gain, const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls)
+  const struct sc88_tva_controls *tva_controls,
+  const struct sc88_lfo_controls *lfo_controls)
 {
   uint32_t tone_offset;
   if (!renderer ||
@@ -406,7 +417,8 @@ bool sc88_renderer_note_on_with_part_controls(
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
                                     velocity, provisional_gain, levels, pan,
-                                    tvf_controls, tva_controls);
+                                    tvf_controls, tva_controls,
+                                    lfo_controls);
 }
 
 bool sc88_renderer_note_on_drum(
@@ -416,6 +428,8 @@ bool sc88_renderer_note_on_drum(
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
+  const struct sc88_lfo_controls *lfo_controls,
+  const struct sc88_drum_overlay *overlay,
   struct sc88_drum_note *note)
 {
   struct sc88_drum_note slot;
@@ -425,7 +439,8 @@ bool sc88_renderer_note_on_drum(
   unsigned i;
   if (!renderer || !levels || !pan ||
       !sc88_rom_select_drum(&renderer->rom, map, program, &kit) ||
-      !sc88_rom_open_drum_note(&renderer->rom, kit, key, &slot))
+      !sc88_rom_open_drum_note_overlaid(&renderer->rom, kit, key, overlay,
+                                       map, &slot))
     return false;
   /* The kit record carries this key's own level and pan, and the key the
      tone is actually played at - a kick is not the sample transposed to the
@@ -447,7 +462,8 @@ bool sc88_renderer_note_on_drum(
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
                                   slot.play_note <= 127 ? slot.play_note : key,
                                   velocity, provisional_gain, &drum_levels,
-                                  &drum_pan, tvf_controls, tva_controls))
+                                  &drum_pan, tvf_controls, tva_controls,
+                                  lfo_controls))
     return false;
   for (i = 0; i < voice->component_count; ++i) {
     voice->components[i].reverb_send = slot.reverb_send;

@@ -81,6 +81,48 @@ bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
   return true;
 }
 
+bool sc88_rom_open_drum_note_overlaid(
+  const struct sc88_rom *rom, uint32_t kit_offset, uint8_t note,
+  const struct sc88_drum_overlay *overlay, uint8_t map,
+  struct sc88_drum_note *out)
+{
+  unsigned m;
+  if (!sc88_rom_open_drum_note(rom, kit_offset, note, out))
+    return false;
+  if (!overlay || map < 1 || map > 2)
+    return true;
+  m = (unsigned)map - 1u;
+  /* the manual's field order: 1 play note, 2 level, 3 assign group,
+     4 pan, 5 reverb send, 6 chorus send, 7 receive Note Off,
+     8 receive Note On, 9 delay send */
+  if (overlay->present[m][0][note])
+    out->play_note = overlay->value[m][0][note];
+  if (overlay->present[m][1][note])
+    out->level = overlay->value[m][1][note];
+  if (overlay->present[m][2][note])
+    out->assign_group = overlay->value[m][2][note];
+  if (overlay->present[m][3][note])
+    out->pan = overlay->value[m][3][note];
+  if (overlay->present[m][4][note])
+    out->reverb_send = overlay->value[m][4][note];
+  if (overlay->present[m][5][note])
+    out->chorus_send = overlay->value[m][5][note];
+  /* The NRPN block's pitch is centred at 64 and relative, so it moves the
+     play note rather than replacing it. */
+  if (overlay->present[m][9][note]) {
+    int shifted = (int)out->play_note +
+      ((int)overlay->value[m][9][note] - 64);
+    out->play_note = (uint8_t)(shifted < 0 ? 0
+                               : shifted > 127 ? 127 : shifted);
+  }
+  /* Receive Note Off is bit 0 of the kit's own flags byte, so a write to
+     field 7 replaces that bit and leaves the rest of the byte alone. */
+  if (overlay->present[m][6][note])
+    out->flags = (uint8_t)((out->flags & (uint8_t)~1u) |
+                           (overlay->value[m][6][note] ? 1u : 0u));
+  return true;
+}
+
 bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
                              uint8_t note, struct sc88_drum_note *out)
 {

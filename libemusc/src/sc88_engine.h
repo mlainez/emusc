@@ -54,6 +54,7 @@ struct sc88_engine_part {
   struct sc88_pan_controls pan;
   struct sc88_tvf_controls tvf_controls;
   struct sc88_tva_controls tva_controls;
+  struct sc88_lfo_controls lfo_controls;
   int32_t pitch_offset;
   bool tvf_dirty;
   bool hold;
@@ -86,6 +87,8 @@ struct sc88_engine {
   struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
   /* one random word shared by every oscillator, as the firmware has */
   uint16_t lfo_seed;
+  /* Per-note kit overrides a song has written over SysEx. */
+  struct sc88_drum_overlay drum_overlay;
   uint8_t free_note_head;
   uint8_t free_note_tail;
   uint8_t note_next_free[SC88_ENGINE_NOTE_COUNT];
@@ -110,6 +113,9 @@ void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
                               const struct sc88_pan_controls *pan);
 void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
                                        uint8_t part, int32_t pitch_offset);
+void sc88_engine_set_part_lfo_controls(
+  struct sc88_engine *engine, uint8_t part,
+  const struct sc88_lfo_controls *controls);
 void sc88_engine_set_part_tva_controls(
   struct sc88_engine *engine, uint8_t part,
   const struct sc88_tva_controls *controls);
@@ -119,6 +125,13 @@ void sc88_engine_set_part_tvf_controls(
 
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                                  uint8_t map);
+/* One `41 mf rr` write: `map` 1 or 2, `field` 1..9, `note` 0..127. */
+bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
+                                    uint8_t map, uint8_t field,
+                                    uint8_t note, uint8_t value);
+/* Changing a rhythm part's kit clears them, as the firmware does. */
+void sc88_engine_clear_drum_overlay(struct sc88_engine *engine,
+                                    uint8_t map);
 void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
                                      uint8_t part, uint8_t send);
 void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,

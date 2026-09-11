@@ -56,6 +56,12 @@ struct sc88_reverb {
   uint8_t character_index;
   float comb_damp_state[SC88_REVERB_LINE_MAX];
   float pre_fb, pre_in, pre_state;
+  /* Predelay, single-module only. The firmware patches ERAM address
+     `0x3000 + 32*p`, and one address unit is one sample at 32 kHz, so
+     32 units is a millisecond and the parameter is its own value in
+     milliseconds - 0..127, as the manual prints it. */
+  float *pre_delay_buf;
+  size_t pre_delay_len, pre_delay_pos, pre_delay_taps;
   /* set from a decay time measured on hardware, not from a guessed curve;
      see the note in the source */
   float feedback;
@@ -79,6 +85,8 @@ void sc88_reverb_reset(struct sc88_reverb *rv);
  * labelled provisional where it is applied. */
 void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
                             uint8_t time, uint8_t pre_lpf);
+/* 0..127 milliseconds. */
+void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds);
 
 /* Adds the reverb's stereo return to `stereo`, an interleaved buffer that
  * already holds the dry mix, from a mono send bus. */

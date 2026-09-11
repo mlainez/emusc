@@ -154,11 +154,33 @@ bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
   return true;
 }
 
+void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
+{
+  size_t want;
+  if (!rv || milliseconds > 127)
+    return;
+  want = (size_t)(milliseconds * rv->output_rate / 1000.0);
+  if (!rv->pre_delay_buf || want + 2u > rv->pre_delay_len) {
+    size_t len = (size_t)(128.0 * rv->output_rate / 1000.0) + 2u;
+    float *grown = (float *)calloc(len ? len : 1u, sizeof *grown);
+    if (!grown)
+      return;
+    free(rv->pre_delay_buf);
+    rv->pre_delay_buf = grown;
+    rv->pre_delay_len = len;
+    rv->pre_delay_pos = 0;
+  }
+  rv->pre_delay_taps = want;
+}
+
 void sc88_reverb_destroy(struct sc88_reverb *rv)
 {
   unsigned i;
   if (!rv)
     return;
+  free(rv->pre_delay_buf);
+  rv->pre_delay_buf = NULL;
+  rv->pre_delay_len = 0;
   for (i = 0; i < SC88_REVERB_ALLPASS_MAX; ++i)
     free(rv->allpass[i].buf);
   for (i = 0; i < SC88_REVERB_LINE_MAX; ++i)
@@ -177,6 +199,9 @@ void sc88_reverb_reset(struct sc88_reverb *rv)
     memset(rv->comb[i].buf, 0, rv->comb[i].len * sizeof(float));
   memset(rv->comb_damp_state, 0, sizeof rv->comb_damp_state);
   rv->pre_state = 0.0f;
+  if (rv->pre_delay_buf)
+    memset(rv->pre_delay_buf, 0, rv->pre_delay_len * sizeof *rv->pre_delay_buf);
+  rv->pre_delay_pos = 0;
 }
 
 void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
@@ -266,6 +291,14 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
   for (k = 0; k < frames; ++k) {
     float x = send[k];
     float wet_l = 0.0f, wet_r = 0.0f;
+    if (rv->pre_delay_buf && rv->pre_delay_taps) {
+      size_t read = (rv->pre_delay_pos + rv->pre_delay_len -
+                     rv->pre_delay_taps) % rv->pre_delay_len;
+      rv->pre_delay_buf[rv->pre_delay_pos] = x;
+      x = rv->pre_delay_buf[read];
+      if (++rv->pre_delay_pos >= rv->pre_delay_len)
+        rv->pre_delay_pos = 0;
+    }
     /* the pre-LPF one-pole, on the way in */
     rv->pre_state = rv->pre_in * x + rv->pre_fb * rv->pre_state;
     x = rv->pre_state;

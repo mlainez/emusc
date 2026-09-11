@@ -46,6 +46,18 @@ struct sc88_channel_state {
      to the pitch rather than to the note number, which leaves zone and
      kit selection alone. TOXOPLASMA shifts a part down an octave. */
   uint8_t key_shift;
+  /* The two assignable controllers and the value each carries. Their
+     defaults are CC16 and CC17, and every one of their matrix depths
+     is zero after a reset, so an assigned controller is received and
+     changes nothing until a song sets a depth. */
+  uint8_t cc1_assign, cc2_assign;
+  uint8_t cc1_value, cc2_value;
+  /* Received and held. Mono mode and portamento need voice-lifecycle
+     work this does not do yet; holding them keeps a song's request
+     from being counted as unimplemented when it is only unapplied. */
+  uint8_t mono_mode;
+  uint8_t vibrato_rate, vibrato_depth, vibrato_delay;
+  uint8_t portamento_time, portamento_switch, portamento_control;
   uint16_t pitch_bend;
   uint8_t pitch_bend_sensitivity;
   uint8_t rpn_msb;
@@ -68,6 +80,7 @@ struct sc88_device {
   /* The reverb's own parameters. A GS reset leaves the character and its
      level, time and pre-LPF at the values the manual prints for Hall 2. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
+  uint8_t reverb_predelay, reverb_delay_feedback;
   /* The chorus parameters are received and held but not yet rendered: the
      CPU-side transforms are recovered while the DSP's audio algorithm is
      not (`08_effects/chorus.md`), so a chorus here would be invented

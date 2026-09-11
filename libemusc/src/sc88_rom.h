@@ -69,6 +69,27 @@ struct sc88_drum_note {
 
 bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
                           uint8_t program, uint32_t *kit_offset);
+/* A song may override any kit note's own parameters over SysEx, at
+ * `41 mf rr` where m selects the map, f the field and rr the note
+ * (`04_protocol/sysex.md`). The kit record in ROM is read first and these
+ * replace what the song has written, field by field; changing the kit
+ * clears them, as the firmware does.
+ */
+/* Nine of these are the manual's own drum-map fields; the tenth is the
+ * relative pitch the NRPN block carries, which is a centred offset
+ * rather than the absolute play note field 1 sets. */
+#define SC88_DRUM_FIELDS 10u
+struct sc88_drum_overlay {
+  uint8_t value[2][SC88_DRUM_FIELDS][128];
+  uint8_t present[2][SC88_DRUM_FIELDS][128];
+};
+
+/* `overlay` and `map` may be NULL and zero: then only the ROM is read. */
+bool sc88_rom_open_drum_note_overlaid(
+  const struct sc88_rom *rom, uint32_t kit_offset, uint8_t note,
+  const struct sc88_drum_overlay *overlay, uint8_t map,
+  struct sc88_drum_note *out);
+
 bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
                              uint8_t note, struct sc88_drum_note *out);
 

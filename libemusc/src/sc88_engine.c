@@ -85,6 +85,9 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].pan.part = 64;
     engine->parts[i].delay_send = 0;
     engine->parts[i].lfo1_pitch_depth = 0;
+    engine->parts[i].lfo_controls.rate = 64;
+    engine->parts[i].lfo_controls.delay = 64;
+    engine->parts[i].lfo_controls.depth = 64;
     engine->parts[i].tva_controls.part_attack = 64;
     engine->parts[i].tva_controls.secondary_attack = 64;
     engine->parts[i].tva_controls.part_decay = 64;
@@ -204,6 +207,26 @@ void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
   engine->parts[part].reverb_send = send;
 }
 
+bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
+                                    uint8_t map, uint8_t field,
+                                    uint8_t note, uint8_t value)
+{
+  if (!engine || map < 1 || map > 2 || field < 1 ||
+      field > SC88_DRUM_FIELDS || note > 127)
+    return false;
+  engine->drum_overlay.value[map - 1u][field - 1u][note] = value;
+  engine->drum_overlay.present[map - 1u][field - 1u][note] = 1u;
+  return true;
+}
+
+void sc88_engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t map)
+{
+  if (!engine || map < 1 || map > 2)
+    return;
+  memset(engine->drum_overlay.present[map - 1u], 0,
+         sizeof engine->drum_overlay.present[map - 1u]);
+}
+
 void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
                                      uint8_t part, uint8_t send)
 {
@@ -234,6 +257,15 @@ void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
       sc88_engine_update_slot_pitch(engine, slot);
     }
   }
+}
+
+void sc88_engine_set_part_lfo_controls(
+  struct sc88_engine *engine, uint8_t part,
+  const struct sc88_lfo_controls *controls)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || !controls)
+    return;
+  engine->parts[part].lfo_controls = *controls;
 }
 
 void sc88_engine_set_part_tva_controls(
@@ -493,13 +525,16 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
               program, key, velocity, provisional_gain,
               &engine->parts[part].levels, &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
-              &engine->parts[part].tva_controls, NULL)
+              &engine->parts[part].tva_controls,
+              &engine->parts[part].lfo_controls,
+              &engine->drum_overlay, NULL)
           : sc88_renderer_note_on_with_part_controls(
               engine->renderer, &voice, variation, program, key, velocity,
               provisional_gain, &engine->parts[part].levels,
               &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
-              &engine->parts[part].tva_controls)))
+              &engine->parts[part].tva_controls,
+              &engine->parts[part].lfo_controls)))
     return false;
   sc88_engine_apply_same_note_mode(engine, &voice, part, key, context, mode);
   if (engine->free_slot_count < voice.component_count)
