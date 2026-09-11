@@ -767,9 +767,8 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
           sc88_tvf_update_frequency(
             &engine->renderer->rom,
             (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
-                    (uint16_t)slot->component.tvf_envelope.current +
-                      (uint16_t)slot->component.tvf_release.current +
-                      (uint16_t)(int16_t)sc88_engine_lfo_filter(slot)),
+                      (uint16_t)slot->component.tvf_envelope.current +
+                      (uint16_t)slot->component.tvf_release.current),
             &slot->component.tvf)) {
         slot->component.tvf.frequency_current = previous_target;
         tvf_retargeted = true;
@@ -805,9 +804,13 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       if (slot->component.tvf_release.active)
         (void)sc88_tvf_release_advance(&slot->component.tvf_release,
                                        elapsed);
+      /* The filter LFO belongs in every update, not only the ones a
+         control change made dirty: left out here it reached the cutoff
+         only on the periods a part parameter happened to change. */
       (void)sc88_tvf_update_frequency(
         &engine->renderer->rom,
-        (int16_t)((uint16_t)slot->component.tvf_envelope.current +
+        (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
+                  (uint16_t)slot->component.tvf_envelope.current +
                   (uint16_t)slot->component.tvf_release.current),
         &slot->component.tvf);
     }

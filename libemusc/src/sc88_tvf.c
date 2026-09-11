@@ -93,6 +93,23 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
   if (resonance_index < resonance_floor)
     resonance_index = resonance_floor;
 
+  /* Base and limit share one domain: both halved.
+   *
+   * The halves have to agree. Reading the base halved and the limit
+   * whole compares two different units, and it was that mix - not the
+   * shift itself - that produced the argument for dropping the shift:
+   * "108 of 128 base entries already exceed the halved limit" holds
+   * only if the base is left raw. Halved on both sides, the base spans
+   * 12561..32767 against a limit of 29811..31744, so the clamp bites
+   * for the top dozen indices and leaves the rest free, which is what
+   * a ceiling is for.
+   *
+   * Taking both whole instead is what the audio rules out. It puts
+   * every melodic tone's cutoff at 8.3..10.6 kHz, near enough wide
+   * open to do nothing, and the onset-aligned spectral centroid of all
+   * seven demo songs then runs far above the hardware's - song 4 at
+   * 2500 Hz against 1550, song 7 at 1700 against 900. Halved, the same
+   * tones sit at 4.0..5.3 kHz. */
   combined = sc88_tvf_be16(rom->bytes + SC88_TVF_BASE_TABLE +
                            (unsigned)cutoff_index * 2u);
   combined += pre_base_modulation;
@@ -456,20 +473,13 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
     return true;
   combined = (uint16_t)(registers->base_value +
                         (uint16_t)post_base_modulation);
-  /* The limit table is used unshifted.
-   *
-   * `07_synthesis/tvf.md` records the firmware as capping by
-   * `filter_limit[index] >> 1`, but that reading cannot be right here:
-   * halved, the resonance-0 limit is 31744 while **108 of the 128 entries**
-   * of the base table at `0x78702` already exceed it, so every cutoff index
-   * above 20 clamps to the same number. The index is a real per-tone
-   * parameter - 93 distinct values across the held tones, median 62 - and
-   * an interpretation that collapses it to a constant leaves the filter
-   * inert: measured, it moved a tuba by 1.3 dB where the hardware moves it
-   * by 53 (`M-022`). Unshifted, the table's own 25123..65535 survives. */
-  limit = sc88_tvf_be16(
+  /* Halved, matching the base that `sc88_tvf_prepare_registers` stored
+     and the reading in `07_synthesis/tvf.md`. Comparing this whole
+     against a halved base is a unit error: nothing clamps, because the
+     smallest limit entry is then above almost every base value. */
+  limit = (uint16_t)(sc88_tvf_be16(
     rom->bytes + SC88_TVF_LIMIT_TABLE +
-    (uint32_t)registers->resonance_index * 2);
+    (uint32_t)registers->resonance_index * 2) >> 1);
   if (combined > limit)
     combined = limit;
   registers->combined = combined;

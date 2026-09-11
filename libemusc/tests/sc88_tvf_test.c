@@ -47,7 +47,11 @@ int main(void)
                                     &neutral, &registers));
   assert(registers.cutoff_index == 60);
   assert(registers.resonance_index == 12);
+  /* Base and limit are both halved, so 0x6000 less 0x1000 of pre-base
+     modulation becomes 0x2800 against a limit of 0x2800. The two must
+     share a domain or the clamp compares nothing. */
   assert(registers.combined == 0x2800);
+  assert(registers.base_value == 0x2800);
   assert(registers.frequency_current == 0x14000);
   assert(registers.frequency_target == 0x14000);
   assert(registers.frequency_interpolation == 0x4100);
