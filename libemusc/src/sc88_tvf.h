@@ -68,9 +68,23 @@ struct sc88_tvf_release {
 /* Replaceable audio-side interpretation of the still-undecoded XP words.
  * This state-variable topology is intentionally separate from the exact CPU
  * state above. */
+/* Cascaded two-pole sections. The filter's ORDER is one of the things
+   `07_synthesis/tvf.md` records as unrecovered from the ROM, so this
+   count is chosen by measurement against the hardware recordings and is
+   INFERRED, not derived: over the seven demo songs the static spectral
+   centroid error against the recordings is +260 Hz with one section,
+   +82 with two and +7 with three, while the attack's normalised
+   excursion stays at 0.66, 0.71 and 0.67 - so the two are not trading
+   and the rolloff of a single two-pole section is simply too gentle.
+   Resonance belongs to the first section only: two resonant sections
+   multiply their peaks and a render reached a peak of 7.4. */
+#define SC88_TVF_SECTIONS 3
+
 struct sc88_tvf_audio_state {
   float integrator_band;
   float integrator_low;
+  float section_band[SC88_TVF_SECTIONS];
+  float section_low[SC88_TVF_SECTIONS];
 };
 
 typedef float (*sc88_tvf_audio_transfer_fn)(

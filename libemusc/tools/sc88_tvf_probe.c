@@ -21,6 +21,7 @@
 
 #include "sc88_rom.h"
 #include "sc88_tvf.h"
+#include "sc88_wave.h"
 
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 #define SC88_TVF_NATIVE_RATE 32000.0
@@ -174,6 +175,42 @@ int main(int argc, char **argv)
   printf("variation %u program %u  \"%s\"  %u component(s)"
          "  key %u velocity %u\n",
          variation, program, name, tone.component_count, key, velocity);
+
+  /* Which sample each key actually reaches. A program whose partials sit
+     far from the hardware's may be selecting the wrong zone rather than
+     filtering wrongly, and the two are told apart here: a zone that does
+     not change across the key range, or whose root key is far from the
+     key being played, is a selection fault. */
+  {
+    unsigned c;
+    static const unsigned probe_keys[] = {24, 36, 48, 60, 72, 84, 96};
+    for (c = 0; c < tone.component_count; ++c) {
+      struct sc88_component comp;
+      unsigned k;
+      if (!sc88_rom_open_component(&rom, &tone, c, &comp))
+        continue;
+      printf("\n  component %u zones by key:\n", c);
+      printf("    %4s %9s %6s %9s %6s %5s %7s %7s %5s\n", "key",
+             "boundary", "root", "address_a", "bank", "atten",
+             "basecor", "altcor", "ctrl");
+      for (k = 0; k < sizeof probe_keys / sizeof *probe_keys; ++k) {
+        struct sc88_zone_selection zone;
+        if (!sc88_rom_select_zone(&rom, &comp, (uint8_t)probe_keys[k],
+                                  &zone)) {
+          printf("    %4u  (no zone)\n", probe_keys[k]);
+          continue;
+        }
+        printf("    %4u %9u %6u %9lx %6u %5u %7d %7d %5u\n",
+               probe_keys[k], zone.boundary, zone.descriptor.root_key,
+               (unsigned long)zone.descriptor.address_a,
+               zone.descriptor.bank_select, zone.static_attenuation,
+               zone.descriptor.base_pitch_correction,
+               zone.descriptor.alternate_pitch_correction,
+               zone.descriptor.control);
+      }
+    }
+    printf("\n");
+  }
 
   for (i = 0; i < tone.component_count; ++i) {
     struct sc88_component component;

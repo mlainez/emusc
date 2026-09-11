@@ -572,7 +572,6 @@ float sc88_tvf_audio_process_provisional(
   double high;
   double band;
   double low;
-  unsigned mode;
 
   if (!state || !registers)
     return input;
@@ -633,20 +632,35 @@ float sc88_tvf_audio_process_provisional(
     damping = 0.05;
   else if (damping > 2.0)
     damping = 2.0;
-  denominator = 1.0 + damping * g + g * g;
-  high = (input - (damping + g) * state->integrator_band -
-          state->integrator_low) / denominator;
-  band = g * high + state->integrator_band;
-  low = g * band + state->integrator_low;
-  state->integrator_band = (float)(2.0 * band - state->integrator_band);
-  state->integrator_low = (float)(2.0 * low - state->integrator_low);
-
-  mode = (registers->filter_select >> 10) & 3u;
-  if (mode == 0)
-    return (float)low;
-  if (mode == 1)
-    return (float)band;
-  if (mode == 2)
-    return (float)high;
-  return input;
+  {
+    unsigned section;
+    double signal = input;
+    for (section = 0; section < SC88_TVF_SECTIONS; ++section) {
+      double d = section == 0 ? damping : 2.0;
+      double sb = section == 0 ? state->integrator_band
+                               : state->section_band[section];
+      double sl = section == 0 ? state->integrator_low
+                               : state->section_low[section];
+      denominator = 1.0 + d * g + g * g;
+      high = (signal - (d + g) * sb - sl) / denominator;
+      band = g * high + sb;
+      low = g * band + sl;
+      sb = 2.0 * band - sb;
+      sl = 2.0 * low - sl;
+      if (section == 0) {
+        state->integrator_band = (float)sb;
+        state->integrator_low = (float)sl;
+      } else {
+        state->section_band[section] = (float)sb;
+        state->section_low[section] = (float)sl;
+      }
+      switch ((registers->filter_select >> 10) & 3u) {
+      case 0: signal = low; break;
+      case 1: signal = band; break;
+      case 2: signal = high; break;
+      default: return input;
+      }
+    }
+    return (float)signal;
+  }
 }
