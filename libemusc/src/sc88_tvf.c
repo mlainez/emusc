@@ -10,6 +10,12 @@
    frequency word's unity and makes the neutral index 64 a damping of
    0.5, i.e. Q 2 - a permanent +6 dB at the cutoff. */
 #define SC88_TVF_Q_UNITY 65536.0
+/* The word IS the sine, with 262144 as unity - `M-014`, as recorded in
+   `07_synthesis/tvf.md`. Halving it here was a patch laid on top of the
+   premise that the limit table was read unshifted; the limit is halved,
+   so the patch had nothing left to correct. Restored, the onset
+   excursion goes from 0.34 of the hardware's to 0.89. */
+#define SC88_TVF_SINE_SCALE 1.0
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 /* The sound chip's own sample rate, which the cutoff word is a
    fraction of. */
@@ -596,11 +602,7 @@ float sc88_tvf_audio_process_provisional(
    * The fraction is of the sound chip's 32 kHz, so the cutoff is a real
    * frequency and the coefficient is recomputed for the output rate -
    * otherwise rendering at 48 kHz moves every cutoff up by half again. */
-  /* With the limit unshifted the word reaches nearly twice 262144, so the
-     Chamberlin reading `F1 = 2*sin(pi*fc/fs)` is the one that fits: half
-     of `f1` is the sine, and the top of the range still lands near
-     13.4 kHz while the bottom is no longer pinned there. */
-  sine = f1 * 0.5;
+  sine = f1 * SC88_TVF_SINE_SCALE;
   {
     double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
     double cutoff = asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
