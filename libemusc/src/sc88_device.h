@@ -4,6 +4,7 @@
 
 #include "sc88_chorus.h"
 #include "sc88_delay.h"
+#include "sc88_eq.h"
 #include "sc88_engine.h"
 #include "sc88_reverb.h"
 
@@ -41,6 +42,10 @@ struct sc88_channel_state {
      modulation-to-LFO1-pitch depth is 0x0a. */
   uint8_t modulation;
   uint8_t mod_lfo1_pitch_depth;
+  /* Part key shift, 0x28..0x58 about 0x40, so +/-24 semitones. Applied
+     to the pitch rather than to the note number, which leaves zone and
+     kit selection alone. TOXOPLASMA shifts a part down an octave. */
+  uint8_t key_shift;
   uint16_t pitch_bend;
   uint8_t pitch_bend_sensitivity;
   uint8_t rpn_msb;
@@ -59,6 +64,7 @@ struct sc88_device {
   struct sc88_reverb reverb;
   struct sc88_chorus chorus;
   struct sc88_delay delay;
+  struct sc88_eq eq;
   /* The reverb's own parameters. A GS reset leaves the character and its
      level, time and pre-LPF at the values the manual prints for Hall 2. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
@@ -74,6 +80,10 @@ struct sc88_device {
      loaded them. Single-module only. */
   uint8_t delay_params[10];
   uint8_t delay_macro;
+  /* The output equaliser, on after a reset. Its four wire bytes are the
+     band corners and gains; at the centre gain it is an identity. */
+  uint8_t eq_low_frequency, eq_low_gain;
+  uint8_t eq_high_frequency, eq_high_gain;
   uint8_t system_mode;
   /* The filter's cutoff is a fraction of the sound chip's own 32 kHz,
      so the coefficient has to be recomputed for whatever rate the

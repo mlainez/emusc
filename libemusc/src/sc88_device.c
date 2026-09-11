@@ -39,12 +39,21 @@ static void sc88_device_sync_chorus(struct sc88_device *device)
                          device->chorus_depth, device->chorus_pre_lpf);
 }
 
+static void sc88_device_sync_eq(struct sc88_device *device)
+{
+  (void)sc88_eq_set_params(&device->renderer.rom, &device->eq,
+                           device->eq_low_frequency, device->eq_low_gain,
+                           device->eq_high_frequency, device->eq_high_gain);
+}
+
 static void sc88_device_sync_pitch(struct sc88_device *device, uint8_t part)
 {
   const struct sc88_channel_state *channel = device->channels + part;
   int64_t numerator = ((int32_t)channel->pitch_bend - 8192) *
     (int32_t)channel->pitch_bend_sensitivity * 16384;
   int32_t offset = (int32_t)(numerator / (8192 * 12));
+  /* 0x4000 pitch-word units to the octave */
+  offset += ((int32_t)channel->key_shift - 64) * 16384 / 12;
   sc88_engine_set_part_pitch_offset(&device->engine, part, offset);
 }
 
@@ -125,6 +134,7 @@ static bool sc88_device_init_common(
     goto fail;
   if (!sc88_delay_init(&device->delay, output_rate))
     goto fail;
+  sc88_eq_init(&device->eq);
   if (!sc88_engine_init(&device->engine, &device->renderer))
     goto fail;
   /* Hall 2 is the character a reset selects; the reverb reads its own delay
@@ -215,6 +225,15 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   sc88_chorus_reset(&device->chorus);
   /* Delay macro 0 and the ten bytes it copies over pre-LPF through reverb
      send, which is what writing the macro address does. */
+  /* Both corners at their first setting and both gains at the centre,
+     which is the identity, and enabled - as `40 4x 20` defaults to. */
+  device->eq_low_frequency = 0;
+  device->eq_high_frequency = 0;
+  device->eq_low_gain = 0x40;
+  device->eq_high_gain = 0x40;
+  device->eq.enabled = true;
+  sc88_device_sync_eq(device);
+  sc88_eq_reset(&device->eq);
   device->delay_macro = 0;
   if (sc88_delay_macro(&device->renderer.rom, 0, device->delay_params))
     (void)sc88_delay_set_params(&device->renderer.rom, &device->delay,
@@ -243,6 +262,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->decay = 64;
     channel->release = 64;
     channel->modulation = 0;
+    channel->key_shift = 64;
     /* SC88-OM's initial modulation depths: LFO1 pitch 0x0a, the rest zero */
     channel->mod_lfo1_pitch_depth = 0x0a;
     sc88_engine_set_part_lfo1_pitch_depth(&device->engine, (uint8_t)part, 0);
@@ -380,6 +400,30 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
      each preset loads is not recovered - the delay macro demonstrably
      copies a ten-byte preset, and this one may too - so the macro is held
      and the fields it would carry are left to the song, which sends them. */
+  case 0x400200:
+    if (value > 1)
+      return false;
+    device->eq_low_frequency = value;
+    sc88_device_sync_eq(device);
+    return true;
+  case 0x400201:
+    if (value < 0x34 || value > 0x4c)
+      return false;
+    device->eq_low_gain = value;
+    sc88_device_sync_eq(device);
+    return true;
+  case 0x400202:
+    if (value > 1)
+      return false;
+    device->eq_high_frequency = value;
+    sc88_device_sync_eq(device);
+    return true;
+  case 0x400203:
+    if (value < 0x34 || value > 0x4c)
+      return false;
+    device->eq_high_gain = value;
+    sc88_device_sync_eq(device);
+    return true;
   case 0x400150:
     /* Writing the macro copies its ten bytes over pre-LPF through reverb
        send; writing any other field changes only that field. */
@@ -432,6 +476,14 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
   default:
     break;
   }
+  if ((address & 0xf0ff00u) == 0x402000u && (address & 0xffu) == 0x20u) {
+    /* `40 4x 20`, the equaliser switch. It is one global effect, so any
+       block's write governs it. */
+    if (value > 1)
+      return false;
+    device->eq.enabled = value != 0;
+    return true;
+  }
   /* Patch-part block. Family 40 addresses the group on the same side as the
      port the message arrived on and family 50 the opposite group, so the
      caller's port is what decides which sixteen parts `1x` counts within. */
@@ -453,6 +505,12 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
       if (value > 2)
         return false;
       sc88_engine_set_part_rhythm(&device->engine, part, value);
+      return true;
+    case 0x16:
+      if (value < 0x28 || value > 0x58)
+        return false;
+      state->key_shift = value;
+      sc88_device_sync_pitch(device, part);
       return true;
     case 0x19:
       state->volume = value;
@@ -768,6 +826,7 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
     sc88_chorus_process(&device->chorus, device->chorus_bus, stereo, frames);
   if (device->reverb.active)
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
+  sc88_eq_process(&device->eq, stereo, frames);
   {
     size_t k;
     unsigned ch;
