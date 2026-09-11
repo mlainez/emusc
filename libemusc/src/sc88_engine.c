@@ -78,6 +78,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->slots[i].next_free = i + 1 < SC88_ENGINE_SLOT_COUNT
       ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
   }
+  engine->pan_seed = 0x4d55u;
   for (i = 0; i < SC88_ENGINE_PART_COUNT; ++i) {
     engine->parts[i].levels.master = 127;
     engine->parts[i].levels.secondary = 127;
@@ -85,6 +86,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].levels.expression = 127;
     engine->parts[i].pan.master = 64;
     engine->parts[i].pan.part = 64;
+    engine->parts[i].pan.random_position = 64;
     engine->parts[i].delay_send = 0;
     engine->parts[i].lfo1_pitch_depth = 0;
     engine->parts[i].lfo_controls.rate = 64;
@@ -578,6 +580,26 @@ static void sc88_engine_apply_same_note_mode(
     sc88_engine_recycle_note(engine, oldest);
 }
 
+/* The position a part-pan of zero asks for: seven bits with zero rejected,
+   which is what the firmware takes from the XP readback. The chip's own
+   distribution and seeding are not in the CPU path, so the sequence here is
+   a stand-in; only the range and the per-voice freshness are recovered
+   (`09_mixer/mixer_output.md`). */
+static uint8_t sc88_engine_pan_draw(struct sc88_engine *engine)
+{
+  unsigned tries;
+  for (tries = 0; tries < 8u; ++tries) {
+    uint16_t s = engine->pan_seed;
+    s ^= (uint16_t)(s << 7);
+    s ^= (uint16_t)(s >> 9);
+    s ^= (uint16_t)(s << 8);
+    engine->pan_seed = s;
+    if ((uint8_t)(s & 0x7fu))
+      return (uint8_t)(s & 0x7fu);
+  }
+  return 64u;
+}
+
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
                          uint8_t variation, uint8_t program,
                          uint8_t key, uint8_t velocity, uint8_t context,
@@ -589,6 +611,9 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
   uint8_t note_index;
   unsigned i;
 
+  if (engine && part < SC88_ENGINE_PART_COUNT &&
+      engine->parts[part].pan.part == 0)
+    engine->parts[part].pan.random_position = sc88_engine_pan_draw(engine);
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
       !(engine->parts[part].rhythm_map

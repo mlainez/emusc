@@ -543,9 +543,9 @@ int main(int argc, char **argv)
   if (device.unhandled_sysex)
     printf("  sysex addresses received but not acted on: %lu\n",
            device.unhandled_sysex);
-  if (device.substituted_random_pan)
-    printf("  substituted a defined pan for GS random pan %lu times\n",
-           device.substituted_random_pan);
+  if (device.random_pan_requests)
+    printf("  parts asking for GS random pan: %lu\n",
+           device.random_pan_requests);
   if (rejected) {
     static const char *const names[8] = {
       "note off", "note on", "poly pressure", "control change",

@@ -31,8 +31,15 @@ bool sc88_pan_static_q15(const struct sc88_rom *rom,
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !controls || !position || !left_q15 ||
       !right_q15 || selector_key > 127 || controls->master < 1 ||
-      controls->master > 127 || controls->part > 127 || controls->part == 0)
+      controls->master > 127 || controls->part > 127)
     return false;
+  if (controls->part == 0) {
+    /* A random-pan request takes the drawn position whole: composition
+       returns its sentinel rather than a value for the offsets to move. */
+    *position = controls->random_position < 1 ? 64u
+      : (controls->random_position > 127 ? 127u : controls->random_position);
+    return sc88_pan_pair_q15(rom, *position, left_q15, right_q15);
+  }
   if (!sc88_pan_component_offset(rom, tone, component, selector_key,
                                  &component_offset))
     return false;

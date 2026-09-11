@@ -1,0 +1,15 @@
+sc88_pitch_test 99 7.70372e-06
+sc88_tvf_test 97 8.9606e-06
+sc88_wave_test 99 0.00022451
+sc88_rom_test 98 9.26691e-06
+sc88_oscillator_test 99 8.74381e-06
+sc88_renderer_test 95 9.32019e-06
+sc88_engine_test 92 1.02253e-05
+sc88_device_test 85 5.6766e-05
+sc88_lfo_test 95 8.36229e-06
+sc88_drum_test 86 9.45265e-06
+sc88_reverb_test 79 1.24108e-05
+sc88_chorus_test 68 1.34507e-05
+sc88_delay_test 52 1.71838e-05
+sc88_eq_test 0 0
+---

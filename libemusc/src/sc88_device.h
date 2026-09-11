@@ -126,7 +126,8 @@ struct sc88_device {
      random pan, which needs a sound-chip random source that is not
      recovered. Counted rather than hidden: it is a labelled divergence, and
      a render reporting zero is exact in this respect. */
-  unsigned long substituted_random_pan;
+  /* Parts that asked for random pan; the engine draws each voice. */
+  unsigned long random_pan_requests;
   bool initialized;
 };
 

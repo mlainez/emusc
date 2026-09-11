@@ -14,6 +14,12 @@ extern "C" {
 struct sc88_pan_controls {
   uint8_t master;
   uint8_t part;
+  /* Part pan zero is a random-pan request, not a position. The firmware
+     returns ff from composition and then takes a position from an XP
+     readback, masked to seven bits with zero rejected, so 1..127. The
+     caller supplies that draw here; the chip's distribution and seeding
+     are not in the CPU path (`09_mixer/mixer_output.md`). */
+  uint8_t random_position;
 };
 
 bool sc88_pan_component_offset(const struct sc88_rom *rom,

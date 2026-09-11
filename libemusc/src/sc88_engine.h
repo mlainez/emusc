@@ -107,6 +107,9 @@ struct sc88_engine {
   struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
   /* one random word shared by every oscillator, as the firmware has */
   uint16_t lfo_seed;
+  /* Draws the position a part-pan of zero asks for. Separate from
+     lfo_seed so a random pan cannot perturb a random LFO. */
+  uint16_t pan_seed;
   /* Per-note kit overrides a song has written over SysEx. */
   struct sc88_drum_overlay drum_overlay;
   uint8_t free_note_head;
