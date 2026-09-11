@@ -65,6 +65,7 @@ int main(int argc, char **argv)
   const char *control_path = NULL;
   unsigned program = 0, variation = 0, key = 60, velocity = 100;
   unsigned periods = 250;
+  bool survey = false;
   size_t control_size = 0;
   uint8_t *control;
   struct sc88_rom rom;
@@ -76,7 +77,9 @@ int main(int argc, char **argv)
 
   for (a = 1; a < argc; ++a) {
     const char *arg = argv[a];
-    if (!strcmp(arg, "--control") && a + 1 < argc)
+    if (!strcmp(arg, "--survey"))
+      survey = true;
+    else if (!strcmp(arg, "--control") && a + 1 < argc)
       control_path = argv[++a];
     else if (!strcmp(arg, "--program") && a + 1 < argc)
       program = (unsigned)strtoul(argv[++a], NULL, 0);
@@ -101,6 +104,54 @@ int main(int argc, char **argv)
   if (!control || !sc88_rom_init(&rom, control, control_size)) {
     fprintf(stderr, "cannot read %s\n", control_path);
     return 1;
+  }
+  if (survey) {
+    /* Every melodic tone of both variation maps, so the spread of the
+       per-tone cutoff parameter is a fact about the ROM rather than about
+       whichever eighteen programs were sampled. Key modulation is printed
+       at three keys because it moves the base value, not the index, and
+       the two have to be separated before the filter is blamed or
+       cleared. */
+    unsigned v, pr;
+    printf("variation\tprogram\tcomponent\tname\tcutoff_index"
+           "\tresonance_index\tbase_value\tkeymod36\tkeymod60"
+           "\tkeymod84\tmode\n");
+    for (v = 0; v <= 36; ++v) {
+      for (pr = 0; pr < 128; ++pr) {
+        uint32_t offset;
+        struct sc88_tone t;
+        unsigned c;
+        char n[13];
+        if (!sc88_rom_select_melodic(&rom, (uint8_t)v, (uint8_t)pr,
+                                     &offset) ||
+            !sc88_rom_open_tone(&rom, offset, &t))
+          continue;
+        sc88_rom_tone_name(&t, n);
+        for (c = 0; c < t.component_count; ++c) {
+          struct sc88_component comp;
+          struct sc88_tvf_registers r;
+          struct sc88_tvf_controls ctl;
+          int16_t k36 = 0, k60 = 0, k84 = 0;
+          ctl.part_cutoff = 64;
+          ctl.secondary_cutoff = 64;
+          ctl.part_resonance = 64;
+          ctl.secondary_resonance = 64;
+          if (!sc88_rom_open_component(&rom, &t, c, &comp))
+            continue;
+          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 36, &k36);
+          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 60, &k60);
+          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 84, &k84);
+          if (!sc88_tvf_prepare_registers(&rom, &comp, k60, &ctl, &r))
+            continue;
+          printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%d\t%d\t%d\t%d\n",
+                 v, pr, c, n, r.cutoff_index, r.resonance_index,
+                 r.base_value, k36, k60, k84,
+                 (int)(int8_t)comp.bytes[0x3e]);
+        }
+      }
+    }
+    free(control);
+    return 0;
   }
   if (!sc88_rom_select_melodic(&rom, (uint8_t)variation, (uint8_t)program,
                                &tone_offset) ||
