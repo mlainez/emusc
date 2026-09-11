@@ -311,6 +311,7 @@ static void usage(void)
     "                   [--rate HZ] [--raw] [--tail SECONDS]\n"
     "                   [--wrap carry|reset|fraction] [--trace]\n"
     "                   [--no-filter] [--stages PREFIX]\n"
+    "                   [--only-component N]\n"
     "  --raw   the wave images are undescrambled chip dumps\n"
     "  --wrap  oscillator fractional wrap, an open question: state it\n");
 }
@@ -327,6 +328,7 @@ int main(int argc, char **argv)
   const char *wrap_name = "carry";
   bool raw = false, trace = false, no_filter = false, no_effects = false;
   const char *stages = NULL;
+  unsigned only_component = 0;
   uint8_t *control = NULL, *chips[SC88_WAVE_CHIP_COUNT] = {0};
   const uint8_t *chip_view[SC88_WAVE_CHIP_COUNT];
   size_t control_size = 0, chip_sizes[SC88_WAVE_CHIP_COUNT] = {0};
@@ -379,6 +381,8 @@ int main(int argc, char **argv)
       no_filter = true;
     else if (!strcmp(a, "--stages") && i + 1 < argc)
       stages = argv[++i];
+    else if (!strcmp(a, "--only-component") && i + 1 < argc)
+      only_component = (unsigned)strtoul(argv[++i], NULL, 10);
     else if (!strcmp(a, "--no-effects"))
       no_effects = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {
@@ -435,6 +439,9 @@ int main(int argc, char **argv)
   /* The filter's cutoff mapping is a labelled guess, so being able to take
      it out of the path is how its contribution gets measured rather than
      argued about. */
+  if (only_component)
+    sc88_renderer_set_only_component(&device.renderer,
+                                     only_component);
   if (no_filter)
     sc88_renderer_set_tvf_audio_transfer(&device.renderer, NULL, NULL);
   /* Bisecting a spectral difference: with these off, what remains is the

@@ -175,7 +175,19 @@ static int32_t sc88_engine_lfo_pitch_offset(
      give every voice an independent phase unconditionally". Ours does.
      Independent phases make an ensemble's vibrato incoherent, which
      smears exactly what this metric measures. */
-  (void)common;
+  /* Instrumentation only: apply it at a settable fraction of the local
+     field's anchor, so the unit can be calibrated against a direct
+     observable instead of a whole-song proxy. Off unless asked. */
+  if (common) {
+    const char *scale = getenv("SC88_COMMON_VIBRATO");
+    if (scale) {
+      double k = atof(scale);
+      if (k != 0.0)
+        cents += k * 47.0 / 317.0 * (double)common *
+          ((double)slot->component.lfo1.ramp.fade / 65535.0) *
+          ((double)slot->component.lfo1.output / 32767.0);
+    }
+  }
   /* The local oscillator's vibrato. Its field shares the matrix's units -
      both saturate at exactly 4032, which is `(127 * 127) >> 2` - so the
      same 47-cents-per-317 anchor applies (`M-020`). */

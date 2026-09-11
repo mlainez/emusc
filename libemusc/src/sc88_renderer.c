@@ -166,6 +166,13 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
   renderer->levels = *levels;
 }
 
+void sc88_renderer_set_only_component(struct sc88_renderer *renderer,
+                                      unsigned which)
+{
+  if (renderer)
+    renderer->only_component = which;
+}
+
 void sc88_renderer_set_tvf_audio_transfer(
   struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
   void *user)
@@ -266,6 +273,13 @@ static bool sc88_renderer_note_on_tone(
     return false;
   memset(voice, 0, sizeof *voice);
   voice->component_count = tone.component_count;
+  /* Instrumentation: sound one component of a multi-component tone, so a
+     defect in how the two are balanced can be separated from a defect in
+     either one. Zero, the default, sounds them all. */
+  if (renderer->only_component > 0 &&
+      renderer->only_component <= tone.component_count)
+    voice->component_count = 1;
+  voice->only_component = renderer->only_component;
   voice->tone_offset = tone_offset;
   voice->key = key;
   voice->velocity = velocity;
@@ -276,7 +290,14 @@ static bool sc88_renderer_note_on_tone(
   voice->tvf_audio_user = renderer->tvf_audio_user;
 
   for (i = 0; i < tone.component_count; ++i) {
-    struct sc88_render_component *render_component = voice->components + i;
+    struct sc88_render_component *render_component;
+    if (voice->only_component > 0) {
+      if (i + 1 != voice->only_component)
+        continue;
+      render_component = voice->components;
+    } else {
+      render_component = voice->components + i;
+    }
     struct sc88_component component;
     struct sc88_zone_selection zone;
     struct sc88_wave_registers registers;

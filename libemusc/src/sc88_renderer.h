@@ -38,6 +38,7 @@ struct sc88_renderer {
   struct sc88_tva_controls tva_controls;
   sc88_tvf_audio_transfer_fn tvf_audio_transfer;
   void *tvf_audio_user;
+  unsigned only_component;
 };
 
 struct sc88_render_component {
@@ -110,6 +111,7 @@ struct sc88_render_voice {
   bool ignore_note_off;
   sc88_tvf_audio_transfer_fn tvf_audio_transfer;
   void *tvf_audio_user;
+  unsigned only_component;
 };
 
 /* Firmware key transform at SC88-CTL 0x60c7..0x6123. */
@@ -132,6 +134,11 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
                               const struct sc88_tva_levels *levels);
 void sc88_renderer_set_pan(struct sc88_renderer *renderer,
                            const struct sc88_pan_controls *pan);
+/* Instrumentation: 1 sounds only the tone's first component, 2 only its
+ * second, 0 (the default) sounds them all. */
+void sc88_renderer_set_only_component(struct sc88_renderer *renderer,
+                                      unsigned which);
+
 void sc88_renderer_set_tvf_audio_transfer(
   struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
   void *user);
