@@ -54,7 +54,10 @@ static double cutoff_hz(uint32_t word)
   double sine;
   if (f1 > 1.998)
     f1 = 1.998;
-  sine = f1 * 0.5;
+  /* The word IS the sine, 262144 unity (`M-033`). This had been halved
+     here after the implementation stopped halving it, so every hertz
+     figure the probe printed was from a superseded law. */
+  sine = f1;
   if (sine > 1.0)
     sine = 1.0;
   return asin(sine) * SC88_TVF_NATIVE_RATE / 3.14159265358979323846;
