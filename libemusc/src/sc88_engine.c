@@ -153,20 +153,23 @@ static int32_t sc88_engine_lfo_pitch_offset(
     cents += 47.0 / 317.0 * (double)matrix *
       ((double)slot->component.lfo1.ramp.fade / 65535.0) *
       ((double)slot->component.lfo1.output / 32767.0);
-  /* The tone-common oscillator's own vibrato, component `+16`. This was
-     the one depth word of the six never read, on the grounds that
+  /* The tone-common oscillator's pitch depth at component `+16` is NOT
+     applied, and the field is read only so this stays visible.
      `07_synthesis/lfo.md` calls its unit unestablished because the field
-     reaches -9216..+6271 where the local one saturates at 4032. Those are
-     rare extremes: across the 633 held components it is nonzero on 300 -
-     more than the local field's 128 - and its median magnitude is 7,
-     about one cent under this anchor, against the local field's 20. So
-     the anchor is applied to it too, and the unit stays labelled
-     inferred. Leaving it out silenced the natural vibrato of nearly half
-     the device. */
-  if (common)
-    cents += 47.0 / 317.0 * (double)common *
-      ((double)slot->component.lfo1.ramp.fade / 65535.0) *
-      ((double)slot->component.lfo1.output / 32767.0);
+     reaches -9216..+6271 where the local one saturates at 4032. Applying
+     the local field's 47-cents-per-317 anchor to it was tried and is
+     wrong: on the demo songs its contribution reaches the level of the
+     whole signal - +0.5 dB against the render at one point of song 5,
+     -14.4 dB median - and the owner hears the result as an instrument
+     oscillating. `Crystal` alone would take 721 cents of vibrato.
+
+     Its byte pattern also differs from the local field's in a way that
+     may matter: read as two bytes, `+16` spans -36..24 nonzero on 86
+     components and `+17` spans -117..127 nonzero on 236, with only 22
+     carrying both, while the local field's high byte is never nonzero
+     alone. That is consistent with a different encoding but does not
+     establish one. Until it is established this stays out. */
+  (void)common;
   /* The local oscillator's vibrato. Its field shares the matrix's units -
      both saturate at exactly 4032, which is `(127 * 127) >> 2` - so the
      same 47-cents-per-317 anchor applies (`M-020`). */
