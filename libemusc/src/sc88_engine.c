@@ -2,6 +2,7 @@
 #include "sc88_engine.h"
 #define SC88_COMMON_PITCH_SCALE 0.0625
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -973,6 +974,20 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     if (slot->component.pitch_release.active)
       (void)sc88_pitch_release_advance(&slot->component.pitch_release,
                                        elapsed);
+    if (getenv("SC88_TRACE_PITCH")) {
+      static unsigned n;
+      if (n < 10)
+        fprintf(stderr, "period %2u  pitch env current %6d stage %u "
+                "phase %5u active %d\n", n++,
+                slot->component.pitch_envelope.current,
+                slot->component.pitch_envelope.stage,
+                slot->component.pitch_envelope.phase,
+                (int)slot->component.pitch_envelope.active);
+      if (n <= 10)
+        fprintf(stderr, "          static word %6u  step %.6f\n",
+                slot->component.static_pitch_word,
+                slot->component.oscillator.step);
+    }
     sc88_engine_update_slot_pitch(engine, slot);
     /* The approach of TVF-F and TVF-Q toward their targets is the chip's
        own interpolation and runs every period; it does not wait for the
