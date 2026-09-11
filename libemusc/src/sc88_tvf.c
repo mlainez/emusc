@@ -606,10 +606,14 @@ float sc88_tvf_audio_process_provisional(
    * 64 produces, so 64 is the neutral resonance; the index runs opposite
    * to the player's setting, so a low index is a high Q. */
   damping = (double)registers->resonance_current / SC88_TVF_Q_UNITY;
+  /* The register runs to index 127, which asks for 3.97. The topology is
+     stable for any positive damping, so the only bound needed is one that
+     keeps the denominator away from zero; refusing the overdamped end
+     flattened 13 components onto the neutral value. */
   if (damping < 0.05)
     damping = 0.05;
-  else if (damping > 2.0)
-    damping = 2.0;
+  else if (damping > 4.0)
+    damping = 4.0;
   {
     unsigned section;
     double signal = input;
