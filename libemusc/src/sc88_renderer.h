@@ -90,10 +90,10 @@ struct sc88_render_component {
      the point between them - the same current/target pair, read the same
      way, that `sc88_tvf_registers` uses for TVF-F.
 
-     The interpolation word's own scale is not recovered (the layout at
-     `78d1..78fd`), so the approach here completes within one control
-     period: the fastest the chip can be, and therefore the least
-     smoothing consistent with `71c7`. */
+     `0x2a7` is the exponential family's entry at rate index 2, so the
+     approach is one of about ten time constants per control period:
+     `sc88_tva_curve_decode` gives it `rate = 679/64`, a time constant of
+     0.75 ms. It is a de-click, not a glide. */
   uint32_t static_gain_q17;
   uint32_t static_gain_current_q17;
   /* Amplitude 0 has been written as the target and the period it glides
@@ -119,20 +119,26 @@ struct sc88_render_component {
   bool active;
 };
 
+/* The word at `71c7`, the exponential family's entry at rate index 2. */
+#define SC88_STATIC_AMPLITUDE_CURVE_WORD 0x02a7u
+
 /* Where the chip's amplitude register stands `period_fraction` of the way
    through the control period. */
 static inline uint32_t sc88_render_static_gain_q17(
   const struct sc88_render_component *component, double period_fraction)
 {
+  struct sc88_tva_curve curve;
   double from;
   double to;
+  double value;
   if (period_fraction <= 0.0)
     return component->static_gain_current_q17;
-  if (period_fraction >= 1.0)
-    return component->static_gain_q17;
   from = (double)component->static_gain_current_q17;
   to = (double)component->static_gain_q17;
-  return (uint32_t)(from + period_fraction * (to - from) + 0.5);
+  sc88_tva_curve_decode(SC88_STATIC_AMPLITUDE_CURVE_WORD, &curve);
+  value = from +
+    sc88_tva_curve_progress(&curve, period_fraction) * (to - from);
+  return value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
 }
 
 struct sc88_render_voice {

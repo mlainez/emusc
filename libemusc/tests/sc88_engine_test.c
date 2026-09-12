@@ -69,6 +69,12 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   put16(control + 0x15db6 + 126 * 2, 0x8000);
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
+  /* The stage's interpolation word, which the chip is handed beside the
+     target: the component takes the exponential table at `0x1563e`, and
+     this is the SC-88's own entry at the rate index above. Left at zero a
+     fixture says "never move", and the stage would hold at its start
+     level for its whole dwell. */
+  put16(control + 0x1563e + 2, 0x0517);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);

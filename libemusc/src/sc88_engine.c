@@ -891,12 +891,14 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       continue;
     /* The period that has just ended is the one the chip's amplitude
        register spent approaching the target composed for it, so the
-       register now stands at that target. */
+       register now stands where `0x2a7` left it - two parts in a hundred
+       thousand short of the target, not on it. */
     if (slot->component.release_zeroed) {
       sc88_engine_free_slot(engine, (uint8_t)i, false);
       continue;
     }
-    slot->component.static_gain_current_q17 = slot->component.static_gain_q17;
+    slot->component.static_gain_current_q17 =
+      sc88_render_static_gain_q17(&slot->component, 1.0);
     note = engine->notes + slot->note;
     if (slot->component.pan_position < slot->component.pan_target_position)
       ++slot->component.pan_position;

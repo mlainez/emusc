@@ -151,6 +151,15 @@ if(BUILD_TESTING)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_wave.c)
+  sc88_test(sc88_tva_test sc88_tva.c sc88_rom.c sc88_wave.c)
+  # The interpolation word's identity is a property of the SC-88's own
+  # curve and rate tables, so the sweep needs the ROM; without it the test
+  # reports skipped rather than passing while checking only the layout.
+  set_property(TEST sc88_tva_test PROPERTY SKIP_RETURN_CODE 77)
+  if(DEFINED ENV{SC88_CONTROL_ROM})
+    set_property(TEST sc88_tva_test PROPERTY
+      COMMAND $<TARGET_FILE:sc88_tva_test> $ENV{SC88_CONTROL_ROM})
+  endif()
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
