@@ -243,6 +243,16 @@ int main(int argc, char **argv)
     controls.part_resonance = 64;
     controls.secondary_resonance = 64;
 
+    if (getenv("SC88_DUMP_BYTES")) {
+      struct sc88_component cdump;
+      if (sc88_rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
+        unsigned b;
+        printf("BYTES\t%u\t%u", (unsigned)program, i);
+        for (b = 0; b < SC88_COMPONENT_SIZE; ++b)
+          printf("\t%u", (unsigned)cdump.bytes[b]);
+        printf("\n");
+      }
+    }
     if (!sc88_rom_open_component(&rom, &tone, i, &component) ||
         !sc88_tvf_key_modulation(&rom, &tone, &component, (uint8_t)key,
                                  &key_modulation) ||
