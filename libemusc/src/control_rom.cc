@@ -72,6 +72,21 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
 
   _profile = _profile_for(_synthModel);
 
+  // The SC-88 is rendered by the sc88_* engine, which reads this ROM itself.
+  // Keep the image and stop here: none of the readers below describe this
+  // device's layout, and running them would fill the instrument, partial and
+  // sample tables with another machine's offsets rather than failing loudly.
+  if (_synthModel == sm_SC88) {
+    romFile.clear();
+    romFile.seekg(0, std::ios::end);
+    const size_t size = (size_t) romFile.tellg();
+    romFile.seekg(0);
+    _deviceRom.resize(size);
+    romFile.read((char *) &_deviceRom[0], size);
+    romFile.close();
+    return;
+  }
+
   // Which firmware revision this image is, for the tables that move with it.
   // The banner is the device's own and appears exactly once, so searching for
   // it beats trusting a file name or a fixed address - the banner itself moved
@@ -196,7 +211,8 @@ const ControlRom::KnownDevice ControlRom::KNOWN_DEVICES[] = {
   { &SC55_SIGNATURE,     sm_SC55,     SynthGen::SC55    },
   { &SC55MKII_SIGNATURE, sm_SC55mkII, SynthGen::SC55mk2 },
   { &SCB55_SIGNATURE,    sm_SC55mkII, SynthGen::SC55mk2 },
-  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    }
+  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    },
+  { &SC88_SIGNATURE,     sm_SC88,     SynthGen::SC88    }
 };
 const int ControlRom::KNOWN_DEVICE_COUNT =
   (int) (sizeof(KNOWN_DEVICES) / sizeof(KNOWN_DEVICES[0]));

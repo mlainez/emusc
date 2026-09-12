@@ -18,6 +18,7 @@
 
 
 #include "synth.h"
+#include "sc88_device.h"
 #include "part.h"
 #include "settings.h"
 
@@ -71,14 +72,70 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
     std::cout << "libEmuSC: MT-32 sound map initialized" << std::endl;
   }
 
+  // The SC-88 is rendered by its own engine. None of what follows applies to
+  // it: it has no DeviceProfile for the analog stage to read, its effects are
+  // its own, and it resamples internally to whatever rate it is opened at.
+  // Settings above is kept so the parameter API still answers.
+  if (_ctrlRom.generation() == ControlRom::SynthGen::SC88)
+    return;
+
   _systemEffects = new SystemEffects(_settings, _ctrlRom);
   _resampler = new Resampler();
   _analogStage = new AnalogStage(_ctrlRom.device()->analog);
 }
 
 
+// Open the SC-88's engine at the host's rate. It resamples internally, so the
+// rate is handed straight to it rather than run through Resampler. Re-opening
+// on a rate change is what the engine's own interface asks for: the rate is
+// fixed at init.
+bool Synth::_sc88_configure(uint32_t sampleRate)
+{
+  if (_sc88) {
+    sc88_device_destroy(_sc88);
+    delete _sc88;
+    _sc88 = nullptr;
+  }
+
+  const std::vector<uint8_t> &ctrl = _ctrlRom.device_rom();
+  const std::vector<std::vector<uint8_t>> &chips = _waveRom.raw_chips();
+
+  if (ctrl.empty() || chips.size() != SC88_WAVE_CHIP_COUNT) {
+    std::cerr << "libEmuSC: the SC-88 needs its control ROM and "
+              << (int) SC88_WAVE_CHIP_COUNT << " wave ROM images, got "
+              << chips.size() << std::endl;
+    return false;
+  }
+
+  const uint8_t *raw[SC88_WAVE_CHIP_COUNT];
+  size_t sizes[SC88_WAVE_CHIP_COUNT];
+  for (int i = 0; i < (int) SC88_WAVE_CHIP_COUNT; i++) {
+    raw[i]   = chips[i].data();
+    sizes[i] = chips[i].size();
+  }
+
+  _sc88 = new struct sc88_device();
+  if (!sc88_device_init_raw(_sc88, ctrl.data(), ctrl.size(), raw, sizes,
+                            (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
+    delete _sc88;
+    _sc88 = nullptr;
+    std::cerr << "libEmuSC: the SC-88's engine refused these ROM images"
+              << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+
 Synth::~Synth()
 {
+  if (_sc88) {
+    sc88_device_destroy(_sc88);
+    delete _sc88;
+    _sc88 = nullptr;
+  }
+
   _parts.clear();
   delete _settings;
   delete _systemEffects;
@@ -406,8 +463,32 @@ bool Synth::_jv_control_channel(uint8_t channel) const
 
 
 void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2,
-                       uint32_t frameOffset)
+                       uint32_t frameOffset, uint8_t port)
 {
+  // Applied as it arrives rather than queued. The engine advances a frame at a
+  // time, so "now" is the frame boundary the caller is standing on, and the
+  // queue's sub-block offset has nothing left to correct for.
+  // Queued in OUTPUT frames, which is the clock this engine runs on: it
+  // resamples internally and advances its scheduler once per output frame,
+  // where the Sound Canvas path counts in 32 kHz control samples. The SC-55's
+  // measured serialisation and note-on delays are not applied - they are that
+  // device's measurements, and nothing has measured the SC-88's.
+  if (_sc88) {
+    PendingEvent e;
+    e.applyAt = _framesDelivered + frameOffset;
+    e.isSysEx = false;
+    e.startDelay = 0;
+    e.status = status;
+    e.data1 = data1;
+    e.data2 = data2;
+    e.port = port;
+
+    midiMutex.lock();
+    _eventQueue.push_back(e);
+    midiMutex.unlock();
+    return;
+  }
+
   midiMutex.lock();
   _queue_event(status, data1, data2, NULL, 0, frameOffset);
   midiMutex.unlock();
@@ -595,8 +676,24 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
 
 
 void Synth::midi_input_sysex(uint8_t *data, uint16_t length,
-                             uint32_t frameOffset)
+                             uint32_t frameOffset, uint8_t port)
 {
+  if (_sc88) {
+    PendingEvent e;
+    e.applyAt = _framesDelivered + frameOffset;
+    e.isSysEx = true;
+    e.startDelay = 0;
+    e.status = 0xf0;
+    e.data1 = e.data2 = 0;
+    e.port = port;
+    e.sysex.assign(data, data + length);
+
+    midiMutex.lock();
+    _eventQueue.push_back(e);
+    midiMutex.unlock();
+    return;
+  }
+
   midiMutex.lock();
   _queue_event(0xf0, 0, 0, data, length, frameOffset);
   midiMutex.unlock();
@@ -742,6 +839,39 @@ int Synth::get_next_frame(float &lOut, float &rOut)
     return 0;
   }
 
+  // The SC-88's engine runs its scheduler once per frame off its own clock, so
+  // a frame at a time is exactly what a block of 256 would have produced, and
+  // it lets a MIDI event delivered between two frames land on the frame it was
+  // delivered for.
+  if (_sc88) {
+    float frame[2] = {0.0f, 0.0f};
+    midiMutex.lock();
+
+    // Everything whose frame has come. A caller may hand events in ahead of
+    // time with the offset saying when they act - emusc-render runs 2048
+    // frames of lead - so applying them on arrival would play the whole piece
+    // early and out of step with itself.
+    while (!_eventQueue.empty() &&
+           _eventQueue.front().applyAt <= _framesDelivered) {
+      PendingEvent &e = _eventQueue.front();
+      if (e.isSysEx)
+        sc88_device_sysex(_sc88, e.port, e.sysex.data(), e.sysex.size());
+      else
+        sc88_device_midi(_sc88, e.port, e.status, e.data1, e.data2);
+      _eventQueue.pop_front();
+    }
+
+    sc88_device_render(_sc88, frame, 1);
+    midiMutex.unlock();
+    lOut = std::clamp(frame[0], -1.0f, 1.0f);
+    rOut = std::clamp(frame[1], -1.0f, 1.0f);
+    if (frame[0] > 1.0f || frame[0] < -1.0f ||
+        frame[1] > 1.0f || frame[1] < -1.0f)
+      _numClippedSamples.fetch_add(1, std::memory_order_relaxed);
+    _framesDelivered++;
+    return 0;
+  }
+
   // We are out of samples, trigger new control update + 256 samples @ 32 kHz
   if (_hostSampleBufWIndex == _hostSampleBufRIndex) {
     _process_samples();
@@ -867,6 +997,14 @@ std::array<int, 16> Synth::get_parts_last_peak_sample(void)
 
 void Synth::set_audio_format(uint32_t sampleRate, uint8_t channels)
 {
+  if (_ctrlRom.generation() == ControlRom::SynthGen::SC88) {
+    _sampleRate = _sc88_configure(sampleRate) ? sampleRate : 0;
+    _channels = channels;
+    _settings->set_sample_rate(sampleRate);
+    _settings->set_channels(channels);
+    return;
+  }
+
   _resampler->set_sample_rate(sampleRate);
   _analogStage->set_sample_rate(sampleRate);
   _settings->set_sample_rate(sampleRate);
@@ -895,11 +1033,22 @@ std::string Synth::version(void)
 }
 
 
+int Synth::midi_ports(void) const
+{
+  return (_ctrlRom.generation() == ControlRom::SynthGen::SC88) ? 2 : 1;
+}
+
+
 void Synth::panic(void)
 {
   midiMutex.lock();
   _eventQueue.clear();
+  if (_sc88)
+    sc88_device_reset_controllers(_sc88);
   midiMutex.unlock();
+
+  if (_sc88)
+    return;
 
   for (auto &p : _parts)
     p.delete_all_notes();

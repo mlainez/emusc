@@ -46,6 +46,11 @@ private:
   };
   std::vector<struct Samples> _sampleSets;
 
+  // The SC-88's wave chips, verbatim and in the order given. Its engine
+  // descrambles them itself with its own scheme, so applying the Sound Canvas
+  // one here would corrupt them. Empty for every other device.
+  std::vector<std::vector<uint8_t>> _rawChips;
+
   uint32_t _unscramble_address(uint32_t address,
                                enum ControlRom::SynthGen synthGen);
   int8_t   _unscramble_data(int8_t byte,
@@ -63,6 +68,9 @@ public:
   WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom);
 
   inline struct Samples& samples(uint16_t ss) { return _sampleSets[ss]; }
+
+  inline const std::vector<std::vector<uint8_t>> &raw_chips(void) const
+  { return _rawChips; }
 
   std::string version(void) { return _version; }
   std::string date(void) { return _date; }

@@ -36,6 +36,20 @@ WaveRom::WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom)
   if (romPath.empty())
     throw (std::string("No wave ROM file specified"));
 
+  // The SC-88 keeps its own copy, unscrambled and unparsed. Its sample table is
+  // not the Sound Canvas's, so neither the address unscrambling below nor the
+  // sample-set extraction that follows it applies.
+  if (ctrlRom.generation() == ControlRom::SynthGen::SC88) {
+    for (auto &rp : romPath) {
+      std::ifstream f(rp, std::ios::binary | std::ios::in);
+      if (!f.is_open())
+        throw(std::string("Unable to open wave ROM file: ") + rp);
+      _rawChips.emplace_back((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+    }
+    return;
+  }
+
   for (auto rp : romPath) {
     std::ifstream romFile(rp, std::ios::binary | std::ios::in);
     if (!romFile.is_open()) {

@@ -539,7 +539,12 @@ public:
   enum class SynthGen {
     SC55    = 0,
     SC55mk2 = 1,
-    JV880   = 4
+    JV880   = 4,
+
+    // The SC-88 is rendered by the sc88_* engine rather than by the Note and
+    // Partial path, so this generation selects a different code path in Synth
+    // entirely, not another set of table offsets.
+    SC88    = 5
   };
 
   int dump_demo_songs(std::string path);
@@ -550,6 +555,11 @@ public:
   std::string version(void) { return _version; }
   std::string date(void) { return _date; }
   enum SynthGen generation(void) { return _synthGeneration; }
+
+  // The whole control ROM image, verbatim. The SC-88 path hands this to its own
+  // engine, which reads the device's tables itself; it is empty for a device
+  // whose tables this class parses.
+  const std::vector<uint8_t> &device_rom(void) const { return _deviceRom; }
 
   // JV only: which patch each MIDI channel plays, taken from the performance.
   // -1 means no part of the performance listens on that channel.
@@ -658,6 +668,7 @@ private:
     sm_SC55mkII,          // Upgraded model
     sm_SCC1,              // ISA card version
     sm_JV880,
+    sm_SC88,
   };
   enum SynthModel _synthModel;
 

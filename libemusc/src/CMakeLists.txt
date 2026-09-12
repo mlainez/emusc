@@ -11,6 +11,7 @@ add_library(emusc
   devices/jv880.cc
   devices/sc55.cc
   devices/sc55mkii.cc
+  devices/sc88.cc
   devices/sound_canvas_default.cc
   control_rom.h
   envelope.cc

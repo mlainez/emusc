@@ -56,6 +56,10 @@
  */
 
 
+// The SC-88's engine, written in C and holding its own device state. Declared
+// rather than included so that this header stays C++ only.
+struct sc88_device;
+
 namespace EmuSC {
 
 class Part;
@@ -82,10 +86,15 @@ public:
   // over early; one that is fed a live MIDI stream leaves it at 0 and gets
   // what it always got. The synth applies a note-on at the exact sample it
   // falls on when it can, because the SC-55mkII does (PROVENANCE.md P-0229).
+  // `port` selects one of the device's MIDI ports, for a device that has more
+  // than one. The SC-88 has two and addresses parts 1-16 from the first and
+  // 17-32 from the second; every other device here has one, and ignores it.
+  // Roland's own SC-88 demo files state the port only in their track names, so
+  // a front-end that drops it puts two instruments on one channel.
   void midi_input(uint8_t status, uint8_t data1, uint8_t data2,
-                  uint32_t frameOffset = 0);
+                  uint32_t frameOffset = 0, uint8_t port = 0);
   void midi_input_sysex(uint8_t *data, uint16_t length,
-                        uint32_t frameOffset = 0);
+                        uint32_t frameOffset = 0, uint8_t port = 0);
 
   int get_next_frame(float &lOut, float &rOut);
   uint32_t get_num_clipped_samples(bool reset = true);
@@ -97,6 +106,9 @@ public:
   void reset(SoundMap sm, bool resetParts = false);
 
   void panic(void);
+
+  // How many MIDI ports this device answers on: 2 for the SC-88, 1 otherwise.
+  int midi_ports(void) const;
 
   // Returns libEmuSC version as a string
   static std::string version(void);
@@ -154,7 +166,15 @@ private:
   bool _jv_control_channel(uint8_t channel) const;
 
 private:
-  Settings *_settings;
+  Settings *_settings = nullptr;
+
+  // The SC-88 is not rendered by the Part and Note path: its engine reads the
+  // control ROM itself and renders a stereo frame at a time off its own
+  // scheduler clock. When the loaded ROM is an SC-88 this holds that engine and
+  // every audio and MIDI call is forwarded to it. Null for every other device.
+  struct sc88_device *_sc88 = nullptr;
+
+  bool _sc88_configure(uint32_t sampleRate);
   
   uint32_t _sampleRate;
   uint8_t _channels;
@@ -192,6 +212,7 @@ private:
     bool     isSysEx;
     int      startDelay;      // sub-period offset, note-on only
     uint8_t  status, data1, data2;
+    uint8_t  port;            // which MIDI port it arrived on
     std::vector<uint8_t> sysex;
   };
   std::deque<PendingEvent> _eventQueue;
@@ -217,13 +238,13 @@ private:
   std::array<std::array<float, 256>, 2> _chorusOut;
   std::array<std::array<float, 256>, 2> _reverbOut;
 
-  SystemEffects *_systemEffects;
-  Resampler *_resampler;
+  SystemEffects *_systemEffects = nullptr;
+  Resampler *_resampler = nullptr;
 
   // The device's analog board, after the converter. See analog_stage.h: the
   // single place for what a module does to the finished mix that its chip did
   // not, and a no-op for every device whose board has not been measured.
-  AnalogStage *_analogStage;
+  AnalogStage *_analogStage = nullptr;
 
   // MIDI message types
   static const uint8_t midi_NoteOff         = 0x80;
