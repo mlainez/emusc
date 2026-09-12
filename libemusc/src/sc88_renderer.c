@@ -435,6 +435,12 @@ static bool sc88_renderer_note_on_tone(
           &render_component->tvf))
       goto fail;
     sc88_tvf_latch_frequency(&render_component->tvf);
+    /* The amplitude register opens the note already at the composed
+       amplitude, the way `sc88_tvf_latch_frequency` opens TVF-F: only the
+       periods after note-on are an approach. Opening it at zero would make
+       every note fade in over a control period. */
+    render_component->static_gain_current_q17 =
+      render_component->static_gain_q17;
     sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
@@ -646,7 +652,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
           sample = voice->tvf_audio_transfer(
             voice->tvf_audio_user, &component->tvf_audio, &component->tvf,
             1.0, sample);
-        float gained = sample * (component->static_gain_q17 / 131072.0f);
+        float gained = sample *
+          (sc88_render_static_gain_q17(component, 1.0) / 131072.0f);
         left += gained * (component->left_gain_q15 / 32768.0f);
         right += gained * (component->right_gain_q15 / 32768.0f);
         active = true;

@@ -78,7 +78,29 @@ struct sc88_render_component {
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;
   uint16_t static_attenuation;
+  /* The composed amplitude is handed to the XP chip as a TARGET with an
+     interpolation word beside it, not as a value to latch: `71a9` writes
+     the four-word block {zero, interpolation, target high, target low} at
+     the voice's register base every control period, with `#0x2a7` as the
+     interpolation word at `71c7`. The register therefore moves toward the
+     composed amplitude over the period; it is never a staircase.
+
+     `static_gain_q17` is that target. `static_gain_current_q17` is where
+     the register stood when the period opened, and the audio path reads
+     the point between them - the same current/target pair, read the same
+     way, that `sc88_tvf_registers` uses for TVF-F.
+
+     The interpolation word's own scale is not recovered (the layout at
+     `78d1..78fd`), so the approach here completes within one control
+     period: the fastest the chip can be, and therefore the least
+     smoothing consistent with `71c7`. */
   uint32_t static_gain_q17;
+  uint32_t static_gain_current_q17;
+  /* Amplitude 0 has been written as the target and the period it glides
+     over is running. `7228..7232` writes that target when the release
+     counter underflows; the voice ends when the register arrives, not
+     when the CPU composes the zero. */
+  bool release_zeroed;
   struct sc88_tva_envelope envelope;
   struct sc88_tva_release release;
   struct sc88_tvf_registers tvf;
@@ -96,6 +118,22 @@ struct sc88_render_component {
   uint16_t right_gain_q15;
   bool active;
 };
+
+/* Where the chip's amplitude register stands `period_fraction` of the way
+   through the control period. */
+static inline uint32_t sc88_render_static_gain_q17(
+  const struct sc88_render_component *component, double period_fraction)
+{
+  double from;
+  double to;
+  if (period_fraction <= 0.0)
+    return component->static_gain_current_q17;
+  if (period_fraction >= 1.0)
+    return component->static_gain_q17;
+  from = (double)component->static_gain_current_q17;
+  to = (double)component->static_gain_q17;
+  return (uint32_t)(from + period_fraction * (to - from) + 0.5);
+}
 
 struct sc88_render_voice {
   struct sc88_render_component components[SC88_MAX_TONE_COMPONENTS];

@@ -190,6 +190,9 @@ int main(int argc, char **argv)
   sc88_device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 1);
   assert(sc88_device_midi(&device, 0, 0xb0, 64, 0));
+  /* Two control periods: one for the release to run out and compose
+     amplitude 0, one for the chip's register to glide to it. */
+  sc88_device_render(&device, output, 257);
   sc88_device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 0);
   assert(sc88_device_midi(&device, 1, 0xc0, 0, 0));

@@ -889,6 +889,14 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     bool tvf_retargeted = false;
     if (!slot->allocated)
       continue;
+    /* The period that has just ended is the one the chip's amplitude
+       register spent approaching the target composed for it, so the
+       register now stands at that target. */
+    if (slot->component.release_zeroed) {
+      sc88_engine_free_slot(engine, (uint8_t)i, false);
+      continue;
+    }
+    slot->component.static_gain_current_q17 = slot->component.static_gain_q17;
     note = engine->notes + slot->note;
     if (slot->component.pan_position < slot->component.pan_target_position)
       ++slot->component.pan_position;
@@ -1029,13 +1037,24 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       &slot->component.tvf);
     if (!slot->component.release.active)
       continue;
+    /* `7228..7232`: when the release counter underflows, the firmware
+       clears it, drops the release flag and composes amplitude 0, which
+       `71a9` writes as the chip's TARGET with the interpolation word
+       beside it like any other. The chip glides down to it. Freeing the
+       slot in the period the zero is composed cuts the voice where it
+       stands instead, and what it stands at is 4/131072 - the floor the
+       gain table puts under every decay (`72bf`, and `coarse[0]*fine[n]`
+       quantising to 1 for every remaining headroom below about 1024).
+       A steady level ending in a step is a click, and this one is on the
+       end of every note. */
     if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
         !sc88_tva_gain_from_headroom_q17(
           &engine->renderer->rom, slot->component.release.current,
           &note->levels, slot->component.static_attenuation,
           &slot->component.static_gain_q17) ||
         slot->component.static_gain_q17 == 0) {
-      sc88_engine_free_slot(engine, (uint8_t)i, false);
+      slot->component.static_gain_q17 = 0;
+      slot->component.release_zeroed = true;
     }
   }
   for (i = 0; i < SC88_ENGINE_PART_COUNT; ++i)
@@ -1086,14 +1105,19 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
             &slot->component.tvf,
             engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS, sample);
         tap_tvf += sample;
+        double period_fraction =
+          engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS;
         uint32_t envelope_gain = sc88_tva_envelope_linear_q17(
           &engine->renderer->rom, &slot->component.envelope,
-          engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
-        tap_static += sample * (slot->component.static_gain_q17 / 131072.0f);
-        tap_tva += sample * (slot->component.static_gain_q17 / 131072.0f) *
-          (envelope_gain / 131072.0f);
-        float gained = sample *
-          (slot->component.static_gain_q17 / 131072.0f) *
+          period_fraction);
+        /* The chip's amplitude register, not the CPU's composed target:
+           the target is a step once per control period and the register
+           is the ramp between two of them. */
+        float static_gain = sc88_render_static_gain_q17(
+          &slot->component, period_fraction) / 131072.0f;
+        tap_static += sample * static_gain;
+        tap_tva += sample * static_gain * (envelope_gain / 131072.0f);
+        float gained = sample * static_gain *
           (envelope_gain / 131072.0f) *
           sc88_engine_lfo_amplitude(slot) *
           engine->notes[slot->note].provisional_gain;

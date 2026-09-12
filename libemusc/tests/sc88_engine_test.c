@@ -196,10 +196,16 @@ int main(void)
       }
     assert(found);
   }
-  assert(sc88_engine_active_slots(&engine) == 2);
+  /* The two released voices composed amplitude 0 in the period just
+     rendered and are spending the next one gliding down to it, which is
+     what the chip does with a target (`71c7`); they are still allocated
+     until it ends. */
+  assert(sc88_engine_active_slots(&engine) == 4);
+  assert(sc88_engine_released_slots(&engine) == 2);
   engine.scheduler_clocks = 2.0 * 10001.0;
   sc88_engine_render(&engine, stereo, 1);
   assert(count.calls == 2 && count.periods == 3);
+  assert(sc88_engine_active_slots(&engine) == 2);
   sc88_engine_destroy(&engine);
 
   assert(sc88_engine_init(&engine, &renderer));
@@ -223,6 +229,8 @@ int main(void)
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 1);
   sc88_engine_hold(&engine, 0, false);
+  /* One period for the release to run out, one for the glide to zero. */
+  sc88_engine_render(&engine, stereo, 257);
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 0);
   sc88_engine_destroy(&engine);
