@@ -7,10 +7,17 @@
 
 #define SC88_TVF_BASE_TABLE 0x78702u
 /* The registers are ROM-exact; this normalisation is not. TVF-Q current
-   is the companion word << 2, i.e. resonance_index << 11, so this unity
-   makes the neutral index 64 a damping of 2.0 - a critically damped
-   section with no peak - and index 3 (Reso Panner) a Q near 10. */
-#define SC88_TVF_Q_UNITY 65536.0
+   is the companion word << 2, i.e. resonance_index << 11.
+
+   libEmuSC's SC-55 path makes the same index mean half this damping:
+   svf.cc's set_resonance is q = index / 64, so its neutral 0x40 is a
+   damping of 1.0, where index / 32 would make it 2.0 - critically
+   damped, with no peak at all. The hardware knee already measured
+   Butterworth over critically damped on 7 of 9 pairs (journal
+   2026-09-11-009), which is the same direction. Neither is ROM-verified:
+   this is the SC-55 path's choice, adopted because two independent
+   readings agree it is nearer than the one it replaces. */
+#define SC88_TVF_Q_UNITY 131072.0
 /* The TVF-F register is a log-frequency word in the XP pitch register's
    own domain. `07_synthesis/pitch.md` has the pitch word at 16384 units
    per octave, 18 bits, unity playback at 0x38000; routine 67a8 forms
@@ -74,10 +81,41 @@ static int sc88_tvf_clamp_index(int value)
   return value;
 }
 
+/* The word is the log of sin(pi * f / fs), not the log of f.
+
+   Both machines hold the same cutoff table and the SC-55 holds it in the
+   clear. The SC-55 mk1 CPU ROM at 0x7612 is 32768 * sin(pi * f / 32000)
+   for f = 440 * 2^((index - 64)/12): fitted over its 116 pre-saturation
+   entries the residual is 0.435 LSB rms and the anchor lands on 440.0 Hz
+   at index 64 - one semitone per index, saturating where the sine folds.
+
+   The SC-88's base table at 0x78702 is that same quantity in the XP pitch
+   register's log domain: word = 0x40000 + 16384 * log2(sin(pi * f /
+   32000)) reproduces indices 0..126 to an sd of 5.7 word units, which is
+   0.00035 octave. Reading the word as a log FREQUENCY leaves sd 2072 word
+   units and up to 0.67 octave - 363 times worse - because it has no
+   account of why the table's steps shrink from 1368 to 0 over its last
+   twelve entries. That compression is the sine approaching one; the
+   frequency underneath it is a clean note table.
+
+   Measured on the archive recordings against our own --no-filter render,
+   so that our filter is not in the measurement: the hardware's own corner
+   is 0.67x the computed cutoff under the old reading and 1.03x under this
+   one, and the hardware's fitted order goes from 2.5 poles to 1.9
+   (filter_slope.py --cutoff, 9 instruments with r2 >= 0.5).
+
+   0x40000 still means the top of the range and still means fs/2; what
+   runs exponentially between is sin(pi * f / fs). Below about 4 kHz the
+   two readings differ by exactly pi/2 - 0.651 octave - converging at the
+   top. */
 double sc88_tvf_word_to_hz(uint32_t word)
 {
-  return 0.5 * SC88_TVF_NATIVE_RATE *
-    exp2(((double)word - SC88_TVF_NYQUIST_WORD) / SC88_TVF_OCTAVE_UNITS);
+  double sine = exp2(((double)word - SC88_TVF_NYQUIST_WORD) /
+                     SC88_TVF_OCTAVE_UNITS);
+
+  if (sine >= 1.0)
+    return 0.5 * SC88_TVF_NATIVE_RATE;
+  return (SC88_TVF_NATIVE_RATE / 3.14159265358979323846) * asin(sine);
 }
 
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,

@@ -5,6 +5,7 @@
 #include "sc88_chorus.h"
 #include "sc88_delay.h"
 #include "sc88_eq.h"
+#include "sc88_output.h"
 #include "sc88_engine.h"
 #include "sc88_reverb.h"
 
@@ -77,6 +78,7 @@ struct sc88_device {
   struct sc88_chorus chorus;
   struct sc88_delay delay;
   struct sc88_eq eq;
+  struct sc88_output output;
   /* The reverb's own parameters. A GS reset leaves the character and its
      level, time and pre-LPF at the values the manual prints for Hall 2. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
@@ -112,8 +114,6 @@ struct sc88_device {
      it: song 1 measured 0.157 of DC against the hardware's 0.001, in
      65 % of its length, and that offset is what pushed the mix into
      clipping. One pole at 10 Hz, which is -0.3 dB by 40 Hz. */
-  float dc_x[2], dc_y[2];
-  float dc_pole;
   float *send_bus;
   float *chorus_bus;
   float *delay_bus;

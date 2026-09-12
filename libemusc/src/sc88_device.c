@@ -130,10 +130,7 @@ static bool sc88_device_init_common(
                           SC88_WAVE_BANK_COUNT, output_rate, wrap))
     goto fail;
   device->output_rate = output_rate;
-  device->dc_pole = (float)(1.0 - 2.0 * 3.14159265358979323846 * 10.0 /
-                            output_rate);
-  device->dc_x[0] = device->dc_x[1] = 0.0f;
-  device->dc_y[0] = device->dc_y[1] = 0.0f;
+  sc88_output_init(&device->output, output_rate);
   sc88_renderer_set_tvf_audio_transfer(
     &device->renderer, sc88_tvf_audio_process_provisional,
     &device->output_rate);
@@ -244,6 +241,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->eq.enabled = true;
   sc88_device_sync_eq(device);
   sc88_eq_reset(&device->eq);
+  sc88_output_reset(&device->output);
   device->delay_macro = 0;
   if (sc88_delay_macro(&device->renderer.rom, 0, device->delay_params))
     (void)sc88_delay_set_params(&device->renderer.rom, &device->delay,
@@ -972,16 +970,8 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
   if (device->reverb.active)
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
   sc88_eq_process(&device->eq, stereo, frames);
-  {
-    size_t k;
-    unsigned ch;
-    for (k = 0; k < frames; ++k)
-      for (ch = 0; ch < 2; ++ch) {
-        float x = stereo[k * 2 + ch];
-        float y = x - device->dc_x[ch] + device->dc_pole * device->dc_y[ch];
-        device->dc_x[ch] = x;
-        device->dc_y[ch] = y;
-        stereo[k * 2 + ch] = y;
-      }
-  }
+  /* Last: the output stage. Everything above this line is the digital
+     machine; sc88_output.c is the one place that carries behaviour we
+     have measured but not derived. */
+  sc88_output_process(&device->output, stereo, frames);
 }

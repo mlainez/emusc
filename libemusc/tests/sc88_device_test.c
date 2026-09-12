@@ -164,16 +164,19 @@ int main(int argc, char **argv)
 
   put16(device.control_rom + 0x14f3e, 0xffff);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 0));
-  /* Silencing the part silences the voices, but the output is AC-coupled
-     and a high-pass rings briefly on any step, so what is asserted is that
-     it settles rather than that it is zero on the next sample. */
+  /* Silencing the part silences the voices, but the output stage is
+     AC-coupled and rings briefly on any step, so what is asserted is that
+     it settles rather than that it is zero on the next sample. The
+     settled level is asserted against an absolute bound: comparing two
+     samples of the tail against each other compares float noise once
+     more than one section is in the path. */
   sc88_device_render(&device, output, 64);
   {
     unsigned s;
     for (s = 0; s < 64; ++s)
       assert(fabs(output[s * 2]) < 0.2f &&
              output[s * 2] == output[s * 2 + 1]);
-    assert(fabs(output[126]) < fabs(output[0]) || output[0] == 0.0f);
+    assert(fabs(output[126]) < 1e-3f);
   }
   put16(device.control_rom + 0x14f3e, 0);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 100));
