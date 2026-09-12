@@ -32,3 +32,8 @@ libemusc*.deb
 emusc*.rpm
 libemusc*.rpm
 emusc*.exe
+
+# Build artefacts must never be tracked: a git worktree would check out a
+# stale binary at the conventional path, and a lane that builds there can
+# render against an engine that is not the one it thinks it is testing.
+build/
