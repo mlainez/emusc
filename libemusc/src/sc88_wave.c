@@ -91,31 +91,45 @@ bool sc88_wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
     *out = SC88_WAVE_FORWARD_LOOP;
     return true;
   case 0x10:
-    /* Read as a forward loop, NOT as ping-pong, and the reasoning matters
-       because it overturns a same-silicon reading.
+    /* Ping-pong, and the ROM says so by itself.
 
-       The ping-pong reading is an inference in three steps: SC-88 control
-       0x10 sets XP bit 12, bit 12 is taken to be the JV-1080's loop_type 1,
-       and the JV-1080's loop_type 1 is measured as ping-pong. Only the last
-       step is a measurement. The chip is the same part, but the firmware
-       driving it is not, so what the SC-88 asks of bit 12 is not established
-       by what the JV's firmware asks of loop_type.
+       Read forward - which is what this returned until TASK-183 - every
+       control-0x10 loop jumps in phase once per traversal, and that is the
+       pop the owner reported on the French Horn for weeks. It is not one
+       instrument: over the whole wave ROM, the correlation ACROSS the join
+       of a loop played forward is +0.968 at the median for the 1518
+       descriptors that carry 0x00 and +0.197 for the 215 that carry 0x10.
+       The 0x00 loops tile; the 0x10 loops do not, and 0x10 is on exactly
+       the material a designer cannot cut to a whole number of periods -
+       Choir, Strings, Church Organ, French Horn, Tremolo Strings,
+       Overdrive, Timpani.
 
-       What is measured here: rendered ping-pong, the French Horn's C4 loses
-       its own periodicity three times, 0.944 s apart - one traversal of its
-       14990-sample loop at the half rate C4 plays it - where the reference
-       recording holds a period-to-period correlation of 0.999 throughout and
-       dips not once. Read forward, the dips disappear entirely, the seven
-       demo songs' onset excursion goes 0.72 to 0.82, and the 76-instrument
-       set does not move at all: 65 within 6 dB, median -0.8 dB, identical
-       either way.
+       But a ping-pong turn in a DIFFERENTIAL format is not a time reversal.
+       The decoder is an accumulator over deltas; running the address back
+       down the stream while still adding what it reads gives
 
-       Still open, and it is the reason this is a reading rather than a fact:
-       215 descriptors carry 0x10 where 1520 carry 0x00, so bit 12 means
-       SOMETHING. This says only that it does not mean reverse the direction.
-       The decisive test is on the owner's JV-1080, driving its own register
-       and measuring, rather than on any recording. */
-    *out = SC88_WAVE_FORWARD_LOOP;
+           y[m] = x[c] + d[c] + ... + d[c-m+1] = 2*x[c] - x[c-m]
+
+       - the loop backwards AND reflected about the value it turned at,
+       which is continuous in value and in SLOPE. A plain time reversal
+       leaves a corner instead, and measures worse than the forward read,
+       which is how the forward reading came to look right.
+
+       The ROM is cut for the reflected turn: over all 1733 looping
+       descriptors the deltas from address_b to address_c sum to EXACTLY
+       zero, so x[c] == x[b-1] without a single exception. That is what
+       lands the reflected pass on x[b-1] as its address reaches b-1, so
+       the cycle closes with no step and no drift.
+
+       Measured, French Horn C4, worst period-to-period correlation through
+       the sustain: forward 0.780, plain time reversal -0.424, reflected
+       0.987, against the hardware recording's 0.992. Over the eighteen
+       control-0x10 instruments that have an SC-88 recording, p50 goes from
+       +0.370 to +0.941 where the hardware's own is +0.926, and where the
+       hardware dips we now dip with it. The 0x00 renders are unchanged
+       byte for byte, and the corrected 63-instrument audit does not move:
+       median MAD 2.1 dB, 46 within 3 dB, 7 past 6. */
+    *out = SC88_WAVE_PING_PONG_LOOP;
     return true;
   case 0x80:
     *out = SC88_WAVE_FORWARD_ONE_SHOT;

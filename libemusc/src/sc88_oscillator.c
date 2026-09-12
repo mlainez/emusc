@@ -11,6 +11,33 @@ double sc88_pitch_word_rate(uint32_t pitch_word, double output_rate)
     pow(2.0, ((double)pitch_word - 0x38000) / 0x4000);
 }
 
+/* A ping-pong turn in a DIFFERENTIAL format is not a time reversal.
+
+   The wave ROM stores deltas, and the decoder is an accumulator.  Walking
+   the address back down the stream while still ADDING what it reads gives,
+   from the turn at address_c,
+
+       y[m] = x[c] + sum(d[c] .. d[c-m+1]) = 2*x[c] - x[c-m]
+
+   - the loop's own waveform, backwards AND reflected about the value it
+   turned at.  That is continuous in value and in SLOPE at the turn, where a
+   plain time reversal puts a corner and a forward wrap puts a phase jump.
+
+   The ROM says this is the shape the format is cut for: over all 1733
+   looping descriptors the deltas from address_b to address_c sum to exactly
+   zero, so x[c] == x[b-1] without exception.  That single fact makes the
+   reflected pass land exactly on x[b-1] when the address reaches b-1, and
+   the cycle closes with no step and no drift - which a reflection about any
+   other value would not do.
+
+   Cycle of 2*span positions, span = c - b + 1:
+     index < span        address c-1 down to b-1, value reflected
+     index >= span       address b up to c, value as decoded
+
+   The descending pass's last position is b-1, where the reflection returns
+   x[c] by the invariant above, so it is answered directly rather than read:
+   b-1 can sit before the first decoded frame when a zone loops from its own
+   start.  */
 static uint32_t sc88_oscillator_cycle_address(
   const struct sc88_oscillator *oscillator, size_t index)
 {
@@ -19,8 +46,30 @@ static uint32_t sc88_oscillator_cycle_address(
   if (oscillator->mode == SC88_WAVE_FORWARD_LOOP)
     return oscillator->loop + (uint32_t)index;
   if (index < span)
-    return oscillator->end - (uint32_t)index;
+    return oscillator->end - 1 - (uint32_t)index;
   return oscillator->loop + (uint32_t)(index - span);
+}
+
+/* True while the cycle is on its reflected descending pass. */
+static bool sc88_oscillator_cycle_reflected(
+  const struct sc88_oscillator *oscillator, size_t index)
+{
+  const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
+  if (oscillator->mode != SC88_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
+    return false;
+  return (index % oscillator->cycle_count) < span;
+}
+
+static bool sc88_oscillator_reflected(
+  const struct sc88_oscillator *oscillator, size_t index)
+{
+  if (oscillator->initial) {
+    if (index < oscillator->initial_count || !oscillator->cycle_count)
+      return false;
+    return sc88_oscillator_cycle_reflected(
+      oscillator, index - oscillator->initial_count);
+  }
+  return sc88_oscillator_cycle_reflected(oscillator, index);
 }
 
 static uint32_t sc88_oscillator_address(
@@ -124,11 +173,42 @@ static double sc88_oscillator_wrapped_phase(
   return 0.0;
 }
 
+/* The decoded value the oscillator is standing on, with the reflected
+   descending pass of a ping-pong applied.  The one position the reflection
+   cannot read is address_b - 1, which can precede the first decoded frame;
+   the ROM's zero-sum invariant answers it as x[c] exactly. */
+static bool sc88_oscillator_value(const struct sc88_oscillator *oscillator,
+                                  size_t index, double *out)
+{
+  uint32_t address = sc88_oscillator_address(oscillator, index);
+  double anchor;
+
+  if (sc88_oscillator_reflected(oscillator, index)) {
+    anchor = (double)oscillator->pcm24[oscillator->end -
+                                       oscillator->pcm_base];
+    if (sc88_oscillator_contains(oscillator, address)) {
+      *out = 2.0 * anchor -
+        (double)oscillator->pcm24[address - oscillator->pcm_base];
+      return true;
+    }
+    /* address_b - 1 only: it can precede the first decoded frame when a
+       zone loops from its own start, and the ROM's zero-sum invariant
+       answers it as x[c] exactly. */
+    if (address + 1 == oscillator->loop) {
+      *out = anchor;
+      return true;
+    }
+    return false;
+  }
+  if (!sc88_oscillator_contains(oscillator, address))
+    return false;
+  *out = (double)oscillator->pcm24[address - oscillator->pcm_base];
+  return true;
+}
+
 bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 {
   size_t index;
-  uint32_t address0;
-  uint32_t address1;
   double fraction;
   double value0;
   double value1;
@@ -137,13 +217,9 @@ bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
     return false;
   index = (size_t)floor(oscillator->phase);
   fraction = oscillator->phase - (double)index;
-  address0 = sc88_oscillator_address(oscillator, index);
-  address1 = sc88_oscillator_address(oscillator, index + 1);
-  if (!sc88_oscillator_contains(oscillator, address0) ||
-      !sc88_oscillator_contains(oscillator, address1))
+  if (!sc88_oscillator_value(oscillator, index, &value0) ||
+      !sc88_oscillator_value(oscillator, index + 1, &value1))
     return false;
-  value0 = oscillator->pcm24[address0 - oscillator->pcm_base];
-  value1 = oscillator->pcm24[address1 - oscillator->pcm_base];
   *sample = (float)((value0 + fraction * (value1 - value0)) /
                     8388608.0);
 
