@@ -203,8 +203,8 @@ int main(int argc, char **argv)
       if (!sc88_rom_open_component(&rom, &tone, c, &comp))
         continue;
       printf("\n  component %u zones by key:\n", c);
-      printf("    %4s %9s %6s %9s %6s %5s %7s %7s %5s\n", "key",
-             "boundary", "root", "address_a", "bank", "atten",
+      printf("    %4s %9s %6s %9s %9s %9s %6s %6s %5s %7s %7s %5s\n", "key",
+             "boundary", "root", "address_a", "loop_b", "end_c", "off16", "bank", "atten",
              "basecor", "altcor", "ctrl");
       for (k = 0; k < sizeof probe_keys / sizeof *probe_keys; ++k) {
         struct sc88_zone_selection zone;
@@ -213,9 +213,12 @@ int main(int argc, char **argv)
           printf("    %4u  (no zone)\n", probe_keys[k]);
           continue;
         }
-        printf("    %4u %9u %6u %9lx %6u %5u %7d %7d %5u\n",
+        printf("    %4u %9u %6u %9lx %9lx %9lx %6u %6u %5u %7d %7d %5u\n",
                probe_keys[k], zone.boundary, zone.descriptor.root_key,
                (unsigned long)zone.descriptor.address_a,
+               (unsigned long)zone.descriptor.address_b,
+               (unsigned long)zone.descriptor.address_c,
+               (unsigned)zone.descriptor.start_offset,
                zone.descriptor.bank_select, zone.static_attenuation,
                zone.descriptor.base_pitch_correction,
                zone.descriptor.alternate_pitch_correction,
