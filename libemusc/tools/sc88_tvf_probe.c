@@ -66,6 +66,7 @@ int main(int argc, char **argv)
   unsigned program = 0, variation = 0, key = 60, velocity = 100;
   unsigned periods = 250;
   bool survey = false;
+  bool keyfollow = false;
   size_t control_size = 0;
   uint8_t *control;
   struct sc88_rom rom;
@@ -79,6 +80,8 @@ int main(int argc, char **argv)
     const char *arg = argv[a];
     if (!strcmp(arg, "--survey"))
       survey = true;
+    else if (!strcmp(arg, "--keyfollow"))
+      keyfollow = true;
     else if (!strcmp(arg, "--control") && a + 1 < argc)
       control_path = argv[++a];
     else if (!strcmp(arg, "--program") && a + 1 < argc)
@@ -104,6 +107,41 @@ int main(int argc, char **argv)
   if (!control || !sc88_rom_init(&rom, control, control_size)) {
     fprintf(stderr, "cannot read %s\n", control_path);
     return 1;
+  }
+  if (keyfollow) {
+    /* The key-follow factor every component scales the played key by, and
+       the key offset added after it.  A component at 0x4000 tracks the
+       keyboard one semitone per key; anything else scales a stimulus error
+       along with everything else, so a reference recorded twelve keys away
+       from the one we play comes back as six semitones at 0x2000 and never
+       lands on an octave.  No octave test can see that, which is why the
+       factor has to be listed rather than inferred from the audio. */
+    unsigned v, pr;
+    printf("variation\tprogram\tcomponent\tname\tfactor\tkeyfollow"
+           "\tkey_offset\n");
+    for (v = 0; v <= 36; ++v) {
+      for (pr = 0; pr < 128; ++pr) {
+        uint32_t offset;
+        struct sc88_tone t;
+        unsigned c;
+        char n[13];
+        if (!sc88_rom_select_melodic(&rom, (uint8_t)v, (uint8_t)pr, &offset) ||
+            !sc88_rom_open_tone(&rom, offset, &t))
+          continue;
+        sc88_rom_tone_name(&t, n);
+        for (c = 0; c < t.component_count; ++c) {
+          struct sc88_component comp;
+          int16_t factor;
+          if (!sc88_rom_open_component(&rom, &t, c, &comp))
+            continue;
+          factor = (int16_t)((comp.bytes[0x14] << 8) | comp.bytes[0x15]);
+          printf("%u\t%u\t%u\t%s\t%d\t%.5f\t%d\n", v, pr, c, n,
+                 factor, factor / 16384.0, (int)(int8_t)comp.bytes[0x16]);
+        }
+      }
+    }
+    free(control);
+    return 0;
   }
   if (survey) {
     /* Every melodic tone of both variation maps, so the spread of the
