@@ -150,6 +150,25 @@ int main(void)
          DC, which is the property that says the coefficients are paired
          correctly. */
       assert(filtered > 0.999f && filtered < 1.001f);
+      /* Type code 2 takes the high-pass output of the same section, and
+         a high-pass is zero at DC. Same registers, same input, opposite
+         limit: this is what separates the two readings of the code, and
+         it fails if code 2 ever falls back to the low-pass. */
+      registers.filter_select = 0x0800;
+      sc88_tvf_audio_reset(&audio);
+      for (n = 0; n < 262144; ++n) {
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+        assert(filtered > -1.0f && filtered < 2.0f);
+      }
+      assert(filtered > -0.001f && filtered < 0.001f);
+      /* Code 0 and code 1 keep the low-pass. */
+      registers.filter_select = 0x0400;
+      sc88_tvf_audio_reset(&audio);
+      for (n = 0; n < 262144; ++n)
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+      assert(filtered > 0.999f && filtered < 1.001f);
     }
     {
       struct sc88_tvf_release release;

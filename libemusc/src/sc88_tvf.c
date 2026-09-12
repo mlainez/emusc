@@ -658,8 +658,9 @@ float sc88_tvf_audio_process_provisional(
   if (!state || !registers)
     return input;
   /* A negative mode byte installs the fixed tuple: zero cutoff, type word
-     0x0800. `07_synthesis/tvf.md` reads it as bypass-like, and a filter
-     with no cutoff has nothing to do, so the signal passes untouched. */
+     0x0800 - type code 2, the high-pass. A high-pass at zero cutoff
+     passes everything, so the tuple is a bypass by its own terms; see the
+     type-code note in the filter below. */
   if (registers->fixed_tuple)
     return input;
   if (period_fraction < 0.0)
@@ -737,17 +738,44 @@ float sc88_tvf_audio_process_provisional(
         state->section_band[section] = (float)band;
         state->section_low[section] = (float)low;
       }
-      /* Every type code takes the low-pass output. XP bits 10..11 carry a
-         type code - 0 for 1193 components, 1 for 12, 2 for 38 - and the
-         only name binding on record, LPF/BPF/HPF for 0/1/2, was proposed
-         from JV-1080 documentation without SC-88 audio. The SC-88 audio
-         refutes it for code 2: the Fiddle, code 2 with a cutoff word of
-         8.1 kHz, is recorded on the hardware with its fundamental intact
-         and a low-pass roll-off above 8 kHz, while the high-pass output
-         here removed everything below the cutoff and left a hiss 100 dB
-         above the hardware's balance (`11_validation/measurements.md`
-         M-100). Code 1 has no hardware note to test against. */
-      signal = low;
+      /* XP bits 10..11 carry a type code - 0 on 1193 components, 1 on 12,
+         2 on 38 - and the name binding proposed from JV-1080
+         documentation is LPF/BPF/HPF for 0/1/2. Code 2 takes the
+         high-pass output, which the SC-88's own archive recordings show
+         directly.
+
+         Breath Noise is the case that cannot be read two ways: its one
+         component is code 2 with a static 2.7 kHz cutoff and no envelope,
+         and it is broadband, so the filter's shape is the tone. Against
+         the archive recording at C4, level-matched over 17 log bands, the
+         high-pass output lands within 1.1 dB from 256 Hz to 7.2 kHz. The
+         same render with the filter removed is 36 dB too loud at 256 Hz
+         and 22 dB at 590 Hz: the hardware has less low end than the raw
+         sample, which neither a low-pass nor a bypass can produce, and
+         the low-pass output is 20 dB short at 8.9 kHz on top of that.
+         Seashore, also code 2, moves from 20.0 to 1.6 dB median band
+         error at the same key. In the 63-note set the Fiddle goes from
+         19.19 to 1.75 dB and Halo Pad from 8.34 to 2.24.
+
+         The earlier reading - every code takes the low-pass output -
+         rested on M-100, which put the Fiddle's cutoff at 8.1 kHz, where
+         a high-pass would indeed have removed its fundamental. The
+         firmware-exact cutoff law puts that same component at 439 Hz at
+         C5, where a two-pole high-pass leaves the 523 Hz fundamental at
+         +1.0 dB and everything above it flat. M-100's measurement stands;
+         what it refutes does not survive the law it was read under.
+
+         This also settles the negative-mode tuple, which installs type
+         code 2 with a cutoff word of zero: a high-pass at zero passes
+         everything, so `fixed_tuple` returning the input untouched is the
+         type code's own behaviour rather than an assumption about it.
+
+         Code 1 keeps the low-pass output. No component in any archive
+         recording carries it - the only one in the GM bank is Slap Bass
+         2, which is not in the single-note set - so band-pass is
+         unverified here and is not adopted on the strength of the
+         binding alone. */
+      signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : low;
     }
     return (float)signal;
   }
