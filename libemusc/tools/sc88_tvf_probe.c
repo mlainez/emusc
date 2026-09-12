@@ -310,17 +310,17 @@ int main(int argc, char **argv)
                                     (uint8_t)key, (uint8_t)velocity,
                                     &tva, &env)) {
         unsigned st;
-        printf("    TVA stages: %-6s %10s %9s %9s %8s\n", "stage",
-               "atten", "gain q17", "dB", "ms");
+        printf("    TVA stages: %-6s %10s %9s %9s %8s %8s\n", "stage",
+               "atten", "gain q17", "dB", "dwell ms", "curve");
         for (st = 0; st < 4; ++st) {
           double db = env.targets_q17[st] > 0
             ? 20.0 * log10((double)env.targets_q17[st] / 131072.0)
             : -999.0;
           double ms = env.increments[st]
             ? 65536.0 / env.increments[st] * 8.0008 : 0.0;
-          printf("                %-6u %10u %9u %9.1f %8.0f\n",
+          printf("                %-6u %10u %9u %9.1f %8.0f   0x%04x\n",
                  st, env.target_attenuations[st], env.targets_q17[st],
-                 db, ms);
+                 db, ms, env.curve_words[st]);
         }
         printf("                starts at stage %u\n", env.stage);
       }
