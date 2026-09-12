@@ -91,7 +91,31 @@ bool sc88_wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
     *out = SC88_WAVE_FORWARD_LOOP;
     return true;
   case 0x10:
-    *out = SC88_WAVE_PING_PONG_LOOP;
+    /* Read as a forward loop, NOT as ping-pong, and the reasoning matters
+       because it overturns a same-silicon reading.
+
+       The ping-pong reading is an inference in three steps: SC-88 control
+       0x10 sets XP bit 12, bit 12 is taken to be the JV-1080's loop_type 1,
+       and the JV-1080's loop_type 1 is measured as ping-pong. Only the last
+       step is a measurement. The chip is the same part, but the firmware
+       driving it is not, so what the SC-88 asks of bit 12 is not established
+       by what the JV's firmware asks of loop_type.
+
+       What is measured here: rendered ping-pong, the French Horn's C4 loses
+       its own periodicity three times, 0.944 s apart - one traversal of its
+       14990-sample loop at the half rate C4 plays it - where the reference
+       recording holds a period-to-period correlation of 0.999 throughout and
+       dips not once. Read forward, the dips disappear entirely, the seven
+       demo songs' onset excursion goes 0.72 to 0.82, and the 76-instrument
+       set does not move at all: 65 within 6 dB, median -0.8 dB, identical
+       either way.
+
+       Still open, and it is the reason this is a reading rather than a fact:
+       215 descriptors carry 0x10 where 1520 carry 0x00, so bit 12 means
+       SOMETHING. This says only that it does not mean reverse the direction.
+       The decisive test is on the owner's JV-1080, driving its own register
+       and measuring, rather than on any recording. */
+    *out = SC88_WAVE_FORWARD_LOOP;
     return true;
   case 0x80:
     *out = SC88_WAVE_FORWARD_ONE_SHOT;
