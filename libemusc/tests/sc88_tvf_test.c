@@ -127,10 +127,29 @@ int main(void)
     {
       struct sc88_tvf_audio_state audio;
       float filtered;
+      unsigned n;
       sc88_tvf_audio_reset(&audio);
+      /* The forward-Euler low-pass reads its integrators before it
+         writes them, so a cleared filter's first output is zero: the
+         section carries one sample of delay and nothing else. Asserting
+         instead that the first sample is already inside (0, 1) tests the
+         trapezoidal form's instantaneous path, which this topology does
+         not have. */
       filtered = sc88_tvf_audio_process_provisional(
         NULL, &audio, &registers, 0.5, 1.0f);
-      assert(filtered > 0.0f && filtered < 1.0f);
+      assert(filtered == 0.0f);
+      /* The corner these registers ask for is low enough that the step
+         takes tens of thousands of samples to arrive; the count is what
+         it takes, not a round number. */
+      for (n = 0; n < 262144; ++n) {
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+        assert(filtered > -1.0f && filtered < 2.0f);
+      }
+      /* Held at one a low-pass settles on one: the section is unity at
+         DC, which is the property that says the coefficients are paired
+         correctly. */
+      assert(filtered > 0.999f && filtered < 1.001f);
     }
     {
       struct sc88_tvf_release release;

@@ -6,44 +6,47 @@
 #include <math.h>
 #include <string.h>
 
-/* [MEASURED] - not [FW-EXACT]. One high shelf, standing in for high
-   frequency the engine loses somewhere between the wave and the output
-   and which no ROM table accounts for.
+/* The response list is EMPTY, and that is the finding.
 
-   What it is fitted to. Over the 61-instrument single-note audit against
-   the archive recordings, with the TVF cutoff law and the damping
-   normalisation both firmware-correct, our render's median band error
-   against the hardware is flat to within 0.9 dB from 111 Hz to 4.8 kHz
-   and then falls away: -2.63 dB at 5.9 kHz, -5.48 at 7.2 kHz, -8.73 at
-   8.9 kHz. This shelf is the least-squares inverse of that deficit over
-   479 Hz to 8.9 kHz, and reproduces it to an rms of 0.30 dB.
+   A high shelf stood here: 6692.7 Hz, +8.986 dB, Q 0.910, the
+   least-squares inverse of the whole-set median band deficit. It was
+   standing in for high frequency the engine lost in its own TVF, whose
+   trapezoidal integrators are a bilinear transform and left a double
+   zero at Nyquist, so the two poles the ROM asks for rolled off like
+   three. With the TVF realised in the topology the chip's limit table
+   names (sc88_tvf.c, SC88_TVF_LIMIT_TABLE) there is nothing left for the
+   shelf to stand in for.
 
-   Why the fit stops at 8.9 kHz. Above it our own signal is already 15 to
-   23 dB down, so a boost has almost nothing left to act on; and the
-   archive's own noise floor is close enough there that the deficit
-   cannot be read cleanly. The shelf therefore under-corrects above
-   9 kHz on purpose rather than amplifying what is nearly silence.
+   Measured, 63 single notes against the archive recordings, median band
+   error of ours minus the hardware, level-matched per tone:
 
-   What it is standing in for, and why it is a stand-in rather than a
-   model. The deficit is not a fixed output response: measured at matched
-   fractions of each tone's own cutoff it is the same curve for every
-   tone, which means it belongs to the filter, not to the connector. Two
-   terms are visible in it. The first is ours and is understood exactly:
-   sc88_tvf.c realises its two-pole with trapezoidal integrators, whose
-   bilinear mapping leaves a double zero at Nyquist, so our two-pole
-   rolls off like three at the top of the band - worth 0.5 dB at 2x the
-   corner for a tone cut off at 1.6 kHz and 7.5 dB for one cut off at
-   5.3 kHz. The second is unresolved: even where that warping is
-   negligible the hardware's rolloff above its corner is gentler than a
-   two-pole at the computed cutoff, which is either a corner higher than
-   the ROM law states or a dry signal of ours that is already too dark.
-   Neither is settled here, so neither is written into a law. When either
-   is, this section shrinks or goes. */
-const struct sc88_output_section SC88_OUTPUT_RESPONSE[] = {
-  { SC88_OUTPUT_HIGH_SHELF, 6692.7f, +8.986f, 0.910f },
+     trapezoidal, no shelf   median MAD 2.94 dB   median tilt -1.56 dB/oct
+     trapezoidal + shelf           1.81                  -0.36
+     forward Euler + shelf         2.73                  +1.23
+     forward Euler, no shelf       1.77                  +0.25
+
+   The structure change on its own does what the fitted shelf did and a
+   little more, and the two together over-correct. Per band, with no
+   shelf, the median error is now within 0.7 dB of flat from 111 Hz to
+   5.9 kHz and runs +1.3 dB at 7.2 kHz, +2.6 at 8.9 and +4.1 at 11.0.
+
+   Nothing is fitted to that remainder, on purpose. Split by the tone's
+   own cutoff it is not one response: tones cut off below 3.2 kHz are
+   flat to 0.7 dB across the whole band, while tones cut off above
+   3.2 kHz carry all of it. A fixed output section cannot be that shape,
+   and fitting one to the median would darken the tones that are already
+   right - which is exactly what the shelf it replaces did in the other
+   direction, brightening Bagpipe from 0.44 to 1.59 dB MAD and Oboe from
+   0.61 to 1.53. The remainder is the open question in TASK-193, not an
+   output response.
+
+   The stage stays, with the DC blocker in it, because it is the one
+   labelled place for this class of thing. C has no empty array, so one
+   zeroed entry stands in the list and the count is zero. */
+const struct sc88_output_section SC88_OUTPUT_RESPONSE[1] = {
+  { SC88_OUTPUT_PEAKING, 0.0f, 0.0f, 0.0f },
 };
-const unsigned SC88_OUTPUT_RESPONSE_SECTIONS =
-  (unsigned)(sizeof SC88_OUTPUT_RESPONSE / sizeof SC88_OUTPUT_RESPONSE[0]);
+const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
 
 /* Audio EQ Cookbook forms, normalised by a0. */
 static void sc88_output_design(struct sc88_output_biquad *bq,

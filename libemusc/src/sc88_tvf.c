@@ -6,17 +6,17 @@
 #include <string.h>
 
 #define SC88_TVF_BASE_TABLE 0x78702u
-/* The registers are ROM-exact; this normalisation is not. TVF-Q current
-   is the companion word << 2, i.e. resonance_index << 11.
+/* [FW-EXACT] TVF-Q current is the companion word << 2, i.e.
+   resonance_index << 11, and one unit of damping is 131072 - that is,
+   q = resonance_index / 64.
 
-   libEmuSC's SC-55 path makes the same index mean half this damping:
-   svf.cc's set_resonance is q = index / 64, so its neutral 0x40 is a
-   damping of 1.0, where index / 32 would make it 2.0 - critically
-   damped, with no peak at all. The hardware knee already measured
-   Butterworth over critically damped on 7 of 9 pairs (journal
-   2026-09-11-009), which is the same direction. Neither is ROM-verified:
-   this is the SC-55 path's choice, adopted because two independent
-   readings agree it is nearer than the one it replaces. */
+   The scaling is fixed by the chip's own limit table; see the note on
+   SC88_TVF_LIMIT_TABLE. Read with q = index/64 that table is exactly
+   f*f + f*q = 2 on all 128 entries; read with index/32 it spans
+   2.000..3.458 and with index/128 1.270..2.000. The value libEmuSC's
+   SC-55 path uses (svf.cc's set_resonance, q = resonance/64, which the
+   SC-55's own two stability tables fix to a rounding unit in P-0130 and
+   P-0131) is the value the SC-88's ROM asks for too. */
 #define SC88_TVF_Q_UNITY 131072.0
 /* The TVF-F register is a log-frequency word in the XP pitch register's
    own domain. `07_synthesis/pitch.md` has the pitch word at 16384 units
@@ -33,10 +33,55 @@
    11.3 kHz (resonance index 0) to 5.9 kHz (index 127), and the corners
    fitted on seven hardware notes sit within 0.44 octave rms of the
    computed word (`11_validation/measurements.md` M-136). The word is a
-   frequency, as the pitch word is a rate; the coefficient the chip
-   derives from it is not recovered, so the audio path warps it itself. */
+   frequency, as the pitch word is a rate. The coefficient the chip
+   derives from it is now recovered as well: see SC88_TVF_LIMIT_TABLE. */
 #define SC88_TVF_OCTAVE_UNITS 16384.0
 #define SC88_TVF_NYQUIST_WORD 0x40000
+/* [FW-EXACT] The limit table is the filter's own topology, written down.
+ *
+ * 0x78802 holds one cutoff ceiling per resonance index. Read in the base
+ * table's domain - f = 2*sin(pi*fc/32000), the Chamberlin coefficient the
+ * base table already is - and with q = resonance_index/64, every one of
+ * its 128 entries satisfies
+ *
+ *     f*f + f*q = 2
+ *
+ * to a rounding unit: the residual against the exact law is -0.53 +- 0.29
+ * table units and lies in [-0.99, 0], which is the signature of a floor(),
+ * not of a fit. In octaves that is 0.33 cent of cutoff.
+ *
+ * That expression is not a general fact about two-pole filters. It is the
+ * trace of the state matrix of the forward-Euler state-variable filter
+ *
+ *     lp[n] = lp[n-1] + f*bp[n-1]
+ *     hp[n] = x[n] - lp[n] - q*bp[n-1]
+ *     bp[n] = bp[n-1] + f*hp[n]
+ *
+ * whose trace is 2 - f*f - f*q and whose determinant is 1 - f*q. Setting
+ * the trace to zero puts the pole pair at exactly +-90 degrees: the chip
+ * refuses to let the filter's realised resonance climb past fs/4, and the
+ * ceiling it writes for each resonance is the cutoff at which that
+ * happens. A trapezoidal (bilinear) realisation is stable for every
+ * positive coefficient and has no such ceiling to tabulate; its own
+ * coefficient g = tan(pi*fc/fs) puts g*g + g*q at 0.906..1.000 over the
+ * same table, and reading the word as a frequency instead of a sine puts
+ * it at 3.211..3.414. The topology is forward-Euler.
+ *
+ * This is the SC-55's filter. libEmuSC's svf.cc is the same three lines,
+ * and the SC-55's control ROM carries the same law twice: TVFResonance[]
+ * is 128*(sqrt(q*q+4) - q) and TVFResonanceFreq[] is 32*(4-f*f)/f, the
+ * two sides of that state matrix's stability edge, with q = r/64 and
+ * f = x/128 (P-0130, P-0131). The SC-88 tabulates the same topology at a
+ * tighter bound.
+ *
+ * Two things follow that the audio path could not have been told any
+ * other way. The coefficient is the ROM's own word and is not warped
+ * again; and a tone whose computed cutoff is clamped to this ceiling is
+ * a tone the chip has been asked to leave alone - at q = 1 the law gives
+ * f = 1 exactly, where the difference equations above collapse to
+ * y[n] = x[n-1], a bare sample of delay. "Wide open" is realised as
+ * transparent, which is what asking for a cutoff above the ceiling
+ * should mean. */
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 /* The sound chip's own sample rate, which the cutoff word is a
    fraction of. */
@@ -606,7 +651,6 @@ float sc88_tvf_audio_process_provisional(
   double word;
   double g;
   double damping;
-  double denominator;
   double high;
   double band;
   double low;
@@ -625,12 +669,17 @@ float sc88_tvf_audio_process_provisional(
   word = registers->frequency_current + period_fraction *
     ((double)registers->frequency_target - registers->frequency_current);
   {
+    /* The coefficient the ROM's word already is. At the chip's own rate
+       this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
+       taken out of the word by sc88_tvf_word_to_hz and put straight back
+       - and at any other host rate it is the same analog corner retuned
+       to that rate, which is the only part of this that is a choice. */
     double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
     double cutoff = sc88_tvf_word_to_hz((uint32_t)(word + 0.5));
     double nyquist = rate * 0.5;
     if (cutoff > nyquist * 0.99)
       cutoff = nyquist * 0.99;
-    g = tan(3.14159265358979323846 * cutoff / rate);
+    g = 2.0 * sin(3.14159265358979323846 * cutoff / rate);
   }
   /* Damping from the register the ROM supplies. `07_synthesis/tvf.md`:
    * the companion table at 0x78902 is exactly index * 512, expanded left
@@ -652,27 +701,41 @@ float sc88_tvf_audio_process_provisional(
     damping = 0.05;
   else if (damping > 4.0)
     damping = 4.0;
+  /* The two poles are realised with forward-Euler integrators, the
+     topology the chip's limit table names (see SC88_TVF_LIMIT_TABLE) and
+     the one libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal
+     form this replaced is a bilinear transform: it leaves a double zero
+     at Nyquist, so the two poles the ROM asks for rolled off like three
+     near the top of the band - 0.5 dB darker than its own analog
+     prototype at twice the corner for a tone cut off at 1.6 kHz, 3.0 dB
+     at 3.7 kHz and 7.5 dB at 5.3 kHz. Forward Euler has no zero but the
+     one sample of delay, and its error runs the other way. */
   {
     unsigned section;
     double signal = input;
     for (section = 0; section < SC88_TVF_SECTIONS; ++section) {
       double d = section == 0 ? damping : 2.0;
+      double f = g;
       double sb = section == 0 ? state->integrator_band
                                : state->section_band[section];
       double sl = section == 0 ? state->integrator_low
                                : state->section_low[section];
-      denominator = 1.0 + d * g + g * g;
-      high = (signal - (d + g) * sb - sl) / denominator;
-      band = g * high + sb;
-      low = g * band + sl;
-      sb = 2.0 * band - sb;
-      sl = 2.0 * low - sl;
+      /* The chip's own limit table keeps f*f + f*d at or below 2, which is
+         well inside this bound; the bound is here because the damping floor
+         above and a host sample rate other than the chip's are not the ROM's
+         doing and must not be able to put a pole outside the unit circle. */
+      double bound = 0.99 * (sqrt(d * d + 4.0) - d);
+      if (f > bound)
+        f = bound;
+      low = sl + f * sb;
+      high = signal - low - d * sb;
+      band = sb + f * high;
       if (section == 0) {
-        state->integrator_band = (float)sb;
-        state->integrator_low = (float)sl;
+        state->integrator_band = (float)band;
+        state->integrator_low = (float)low;
       } else {
-        state->section_band[section] = (float)sb;
-        state->section_low[section] = (float)sl;
+        state->section_band[section] = (float)band;
+        state->section_low[section] = (float)low;
       }
       /* Every type code takes the low-pass output. XP bits 10..11 carry a
          type code - 0 for 1193 components, 1 for 12, 2 for 38 - and the
