@@ -315,7 +315,22 @@ static bool sc88_renderer_note_on_tone(
     if (!sc88_rom_select_zone(&renderer->rom, &component,
                               (uint8_t)selector_key, &zone) ||
         !sc88_wave_descriptor_loop_type(&zone.descriptor, &mode) ||
-        !sc88_wave_prepare_registers(&zone.descriptor, false, &registers) ||
+        // The descriptor's +16 word is NOT added to the start address. Adding it
+        // skipped the first 4608 samples of every sample this tone plays -
+        // 144 ms, which on a struck instrument is the whole strike: the
+        // Xylophone's onset centroid read 1403 Hz against the reference's
+        // 4603, and its timbre travel over the first 400 ms was 356 Hz against
+        // 3548. Suppressed, they are 4863 Hz and 3816.
+        //
+        // `02_rom/wave_metadata.md` says the word is added "unless per-voice
+        // state +187d bit 7 suppresses it", and that condition is NOT
+        // recovered. Both branches are therefore a guess about when; this one
+        // is the guess the measurements support - over seven demo songs the
+        // onset excursion goes 0.54 to 0.72 and the static centroid to within
+        // 45 Hz on both paths, and the 76-instrument set is unchanged at 65
+        // within 6 dB, because the loop points are separate from the start
+        // address and the sustain never moves.
+        !sc88_wave_prepare_registers(&zone.descriptor, true, &registers) ||
         !sc88_renderer_static_pitch_word(&renderer->rom, &tone, &component,
                                          &zone.descriptor,
                                          (uint8_t)selector_key, &pitch_word) ||
