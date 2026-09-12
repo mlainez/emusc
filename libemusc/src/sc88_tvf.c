@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_tvf.h"
 
+#include "sc88_tva.h"
+
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -602,37 +604,41 @@ void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
     registers->frequency_current = registers->frequency_target;
 }
 
-/* The registers approach their targets; they are not latched onto them.
+/* [FW-EXACT] The registers approach their targets; they are not latched
+ * onto them, and the word beside the target says how.
  *
- * `07_synthesis/tvf.md` records the TVF-F interpolation word `0x4100`.
- * Read as the fraction of the remaining gap closed per period,
- * `0x4100/65536` is 0.254 - a time constant near 27 ms, the window the
- * hardware's onset centroid moves in. */
-static uint32_t sc88_tvf_approach(uint32_t current, uint32_t target,
-                                  uint16_t interpolation,
-                                  unsigned periods)
+ * One encoding serves every register the chip approaches. `67a8` writes
+ * the TVF-F target at scratch `1a7c+24/+26`, the current value at
+ * `+2c/+2e`, and the interpolation pair at `+28/+2a`: `683b` puts zero in
+ * the high word and `683f: ea 2a 07 41 00` puts `#0x4100` in the low one.
+ * The update path at `6918`/`691c` and the fixed tuple at `67dc`/`67e0`
+ * write the same constant. It is the word the pitch register gets at
+ * `+1c/+1e` as well, and `sc88_tva_curve_decode` is where the packing is
+ * read - `0x4100` is bit 14 set, exponent 0, mantissa 0x100, so the
+ * LINEAR family at value 256 and `q = 4 * periods`.
+ *
+ * Linear covers `min(1, q)` of the gap, so TVF-F arrives a quarter of the
+ * way into a control period - 2.0 ms. That is a de-click on a register the
+ * CPU rewrites every period, the same office `0x2a7` holds for the static
+ * amplitude at 0.75 ms, not a glide with a time constant of its own. */
+static double sc88_tvf_frequency_progress(
+  const struct sc88_tvf_registers *registers, double periods)
 {
-  unsigned i;
-  for (i = 0; i < periods && current != target; ++i) {
-    int64_t gap = (int64_t)target - current;
-    int64_t step = gap * interpolation / 65536;
-    if (step == 0)
-      step = gap > 0 ? 1 : -1;
-    current = (uint32_t)((int64_t)current + step);
-  }
-  return current;
+  struct sc88_tva_curve curve;
+  sc88_tva_curve_decode(registers->frequency_interpolation, &curve);
+  return sc88_tva_curve_progress(&curve, periods);
 }
 
 void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
                                 unsigned periods)
 {
+  double value;
   if (!registers || periods == 0)
     return;
-  if (periods > 64)
-    periods = 64;
-  registers->frequency_current = sc88_tvf_approach(
-    registers->frequency_current, registers->frequency_target,
-    registers->frequency_interpolation, periods);
+  value = (double)registers->frequency_current +
+    sc88_tvf_frequency_progress(registers, (double)periods) *
+    ((double)registers->frequency_target - registers->frequency_current);
+  registers->frequency_current = value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
   /* TVF-Q is not approached: its target is the same value as its current
      with two more fraction bits (see the damping note in the audio path). */
 }
@@ -667,7 +673,10 @@ float sc88_tvf_audio_process_provisional(
     period_fraction = 0.0;
   else if (period_fraction > 1.0)
     period_fraction = 1.0;
-  word = registers->frequency_current + period_fraction *
+  /* Where the register stands this far into the period, by its own
+     interpolation word rather than by a ramp spread over the whole of it. */
+  word = (double)registers->frequency_current +
+    sc88_tvf_frequency_progress(registers, period_fraction) *
     ((double)registers->frequency_target - registers->frequency_current);
   {
     /* The coefficient the ROM's word already is. At the chip's own rate
