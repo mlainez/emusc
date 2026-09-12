@@ -101,6 +101,21 @@ bool sc88_rom_open_component(const struct sc88_rom *rom,
                              const struct sc88_tone *tone, unsigned index,
                              struct sc88_component *component);
 
+/* A component sounds only inside its own velocity range, bytes +6c and +6d,
+ * both bounds inclusive. The two are a matched pair: +70, the factor that
+ * maps the velocity into the 128-entry TVA curve, is exactly
+ * `floor(127 * 256 / (high - low))` on every component in the ROM - 635
+ * melodic and 342 rhythm, no exception - so the pair defines a window and
+ * the curve spans it. Twenty-seven two-component tones give their two
+ * components different windows, several as clean partitions with no overlap
+ * and no gap: `Rotary Org.` 0..112 and 113..127, `Velo Harmnix` 0..120 and
+ * 121..127, `Funk Gt.2` 0..115 and 116..127, `French Horns` 0..100 and
+ * 101..127. libEmuSC's SC-55 path gates its partials on the same bytes, and
+ * the measurement behind it is this same tone at this same boundary
+ * (`Funk Gt.2` switches partials between velocity 115 and 116). */
+bool sc88_rom_component_sounds(const struct sc88_component *component,
+                               uint8_t velocity);
+
 /* `selector_key` is the firmware's already transformed 0..127 directory key,
  * not necessarily the raw MIDI key. The first boundary >= it wins. */
 bool sc88_rom_select_zone(const struct sc88_rom *rom,

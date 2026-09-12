@@ -311,13 +311,12 @@ static bool sc88_renderer_note_on_tone(
       !sc88_rom_open_tone(&renderer->rom, tone_offset, &tone))
     return false;
   memset(voice, 0, sizeof *voice);
-  voice->component_count = tone.component_count;
-  /* Instrumentation: sound one component of a multi-component tone, so a
-     defect in how the two are balanced can be separated from a defect in
-     either one. Zero, the default, sounds them all. */
-  if (renderer->only_component > 0 &&
-      renderer->only_component <= tone.component_count)
-    voice->component_count = 1;
+  /* `component_count` is the number of components this note actually
+     sounds, which is not the tone's own count: a component whose velocity
+     window excludes this note is not prepared and takes no slot. It is
+     counted up as the loop below prepares them, and the prepared ones are
+     packed from index zero, so a note that sounds only the tone's second
+     component holds it in `components[0]`. */
   voice->only_component = renderer->only_component;
   voice->tone_offset = tone_offset;
   voice->key = key;
@@ -330,13 +329,6 @@ static bool sc88_renderer_note_on_tone(
 
   for (i = 0; i < tone.component_count; ++i) {
     struct sc88_render_component *render_component;
-    if (voice->only_component > 0) {
-      if (i + 1 != voice->only_component)
-        continue;
-      render_component = voice->components;
-    } else {
-      render_component = voice->components + i;
-    }
     struct sc88_component component;
     struct sc88_zone_selection zone;
     struct sc88_wave_registers registers;
@@ -349,8 +341,28 @@ static bool sc88_renderer_note_on_tone(
     size_t capacity;
     int16_t tvf_key_modulation;
 
+    /* Instrumentation: sound one component of a multi-component tone, so a
+       defect in how the two are balanced can be separated from a defect in
+       either one. The components are numbered from ONE, and zero - the
+       default - sounds every component the tone asks for. Read as a
+       zero-based index instead, `--only-component 0` renders the whole
+       tone and looks like proof that the second component is silent. */
+    if (voice->only_component > 0 && i + 1 != voice->only_component)
+      continue;
     if (!sc88_rom_open_component(&renderer->rom, &tone, i, &component))
       goto fail;
+    /* The component's velocity window, +6c..+6d inclusive. Outside it the
+       component does not sound at all: `sc88_rom_component_sounds` carries
+       the ROM evidence. Ignoring it does not merely add a layer that should
+       be absent, it adds the LOUDEST one - the firmware's velocity index is
+       `(velocity - low) * factor >> 8` on a wrapping byte, so one count
+       below the window the subtraction wraps to 255 and the index saturates
+       at the top of the curve. French Horns at velocity 100 sounded its
+       101..127 component, six cutoff indices brighter than the one the note
+       asks for, at full level. */
+    if (!sc88_rom_component_sounds(&component, velocity))
+      continue;
+    render_component = voice->components + voice->component_count;
     selector_key = sc88_renderer_selector_key(&component, key);
     key_fraction = sc88_renderer_key_fraction(&component, key);
     if (!sc88_rom_select_zone(&renderer->rom, &component,
@@ -513,7 +525,16 @@ static bool sc88_renderer_note_on_tone(
                               renderer->output_rate, renderer->wrap))
       goto fail;
     render_component->active = true;
+    ++voice->component_count;
   }
+  /* Every tone in the ROM covers every velocity: all 201 single-component
+     melodic tones and every single-component rhythm tone carry the window
+     0..127, and no two-component tone leaves a velocity uncovered. So zero
+     here is not a ROM tone at all - it is `--only-component` naming a
+     component the tone does not have. Refuse the note rather than allocate
+     slots that sound nothing. */
+  if (voice->component_count == 0)
+    goto fail;
   return true;
 
 fail:

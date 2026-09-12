@@ -124,6 +124,11 @@ int main(int argc, char **argv)
   /* and the opposite end, so the direction cannot invert again unnoticed */
   put16(control + 0x40000 + 34 + 0x7a, 0xffff);
   control[0x40000 + 34 + 0x80] = 1;
+  /* The component's velocity window, +6c..+6d inclusive. A calloc'd
+     fixture states 0..0, which sounds nothing: every note this file
+     plays would be refused. The ROM's own tones all reach 127. */
+  control[0x40000 + 34 + 0x6c] = 0;
+  control[0x40000 + 34 + 0x6d] = 127;
   /* The coarse and fine level tables, as a monotone ramp. The real tables
      are a dB curve; what matters to a fixture is that an intermediate
      attenuation converts to an intermediate gain, because an envelope
@@ -165,6 +170,24 @@ int main(int argc, char **argv)
   assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
                             banks, SC88_WAVE_BANK_COUNT, 32000.0,
                             SC88_WRAP_FULL_CARRY));
+  /* The velocity window gates the component, both bounds inclusive: inside
+     it the note sounds, one count outside it there is no component to
+     sound and the note is refused. Ignoring the window does not merely add
+     a layer, it adds the loudest one - the firmware's velocity index runs
+     on a wrapping byte, so one count below the window it saturates at the
+     top of the curve. */
+  control[0x40000 + 34 + 0x6c] = 100;
+  control[0x40000 + 34 + 0x6d] = 110;
+  memset(&voice, 0, sizeof voice);
+  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 99, 0.5f));
+  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 111, 0.5f));
+  memset(&voice, 0, sizeof voice);
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 110, 0.5f));
+  assert(voice.component_count == 1);
+  sc88_renderer_voice_destroy(&voice);
+  control[0x40000 + 34 + 0x6c] = 0;
+  control[0x40000 + 34 + 0x6d] = 127;
+
   memset(&voice, 0, sizeof voice);
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
   assert(sc88_renderer_voice_active(&voice));

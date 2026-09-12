@@ -60,6 +60,11 @@ static void make_control(uint8_t *control)
      0xffff and its tail is silent. */
   put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
+  /* The component's velocity window, +6c..+6d inclusive. A calloc'd
+     fixture states 0..0, which sounds nothing: every note this file
+     plays would be refused. The ROM's own tones all reach 127. */
+  control[0x40000 + 34 + 0x6c] = 0;
+  control[0x40000 + 34 + 0x6d] = 127;
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
