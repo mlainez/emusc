@@ -49,6 +49,41 @@ uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
   return (uint8_t)key;
 }
 
+/* Fractional remainder of the key transform, in pitch units.
+
+   The transform at SC88-CTL 0x60c7..0x6123 holds `(midi_key - 60) * +0x14`
+   as a 32-bit value shifted left twice (0x60fb..0x6101), so its high word is
+   the integer key and its low word is the remainder in units of 1/65536
+   semitone. 0x611e..0x6121 (`5c 05 55` `mov:i.w #0x555,r4`, `ab ac`
+   `mulxu.w r3,r4`) multiply that remainder by 0x555 - 1365 pitch units, one
+   semitone - and keep the high word of the product. The firmware stores it
+   at RAM 0x197c (0x603f, 0x6072) and adds it into the pitch word at 0x6081
+   (`f9 19 7c 23` plus `addx.w #0,r2`); nothing else reads 0x197c.
+
+   r4 is cleared at 0x610d and the multiply is skipped on both clamp branches
+   (0x6116 key <- 0, 0x611a key <- 0x7f), so a clamped key contributes no
+   fraction. The multiply is unsigned, and the remainder is the distance
+   above the floored key, so the term is 0..1364 and never negative. */
+uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
+                                    uint8_t midi_key)
+{
+  int32_t factor;
+  int32_t product;
+  int32_t key;
+  uint32_t remainder;
+
+  if (!component || !component->bytes || midi_key > 127)
+    return 0;
+  factor = sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x14));
+  product = ((int32_t)midi_key - 60) * factor;
+  key = 60 + sc88_renderer_floor_q14(product) +
+    sc88_renderer_s8(component->bytes[0x16]);
+  if (key < 0 || key > 127)
+    return 0;
+  remainder = ((uint32_t)product << 2) & 0xffffu;
+  return (uint16_t)((0x555u * remainder) >> 16);
+}
+
 static int32_t sc88_renderer_relative_pitch(int difference)
 {
   int32_t value = (int32_t)((difference * 16384) / 12);
@@ -60,6 +95,7 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
                                      uint8_t selector_key,
+                                     uint16_t key_fraction,
                                      uint32_t *pitch_word)
 {
   uint32_t table_offset;
@@ -74,6 +110,9 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
     return false;
   pitch = 0x38000 +
     sc88_renderer_relative_pitch((int)selector_key - desc->root_key) +
+    /* SC88-CTL 0x6081 adds RAM 0x197c into the low word of the pitch the
+       key table just produced, before the 0x6124 offsets land on it. */
+    (int32_t)key_fraction +
     sc88_wave_pitch_correction(desc, false) +
     sc88_renderer_s16(sc88_renderer_be16(
       rom->bytes + table_offset + (uint32_t)selector_key * 2)) +
@@ -304,6 +343,7 @@ static bool sc88_renderer_note_on_tone(
     enum sc88_wave_loop_type mode;
     const struct sc88_wave_bank *bank;
     uint32_t selector_key;
+    uint16_t key_fraction;
     uint32_t pitch_word;
     uint32_t pcm_base;
     size_t capacity;
@@ -312,6 +352,7 @@ static bool sc88_renderer_note_on_tone(
     if (!sc88_rom_open_component(&renderer->rom, &tone, i, &component))
       goto fail;
     selector_key = sc88_renderer_selector_key(&component, key);
+    key_fraction = sc88_renderer_key_fraction(&component, key);
     if (!sc88_rom_select_zone(&renderer->rom, &component,
                               (uint8_t)selector_key, &zone) ||
         !sc88_wave_descriptor_loop_type(&zone.descriptor, &mode) ||
@@ -333,7 +374,8 @@ static bool sc88_renderer_note_on_tone(
         !sc88_wave_prepare_registers(&zone.descriptor, true, &registers) ||
         !sc88_renderer_static_pitch_word(&renderer->rom, &tone, &component,
                                          &zone.descriptor,
-                                         (uint8_t)selector_key, &pitch_word) ||
+                                         (uint8_t)selector_key, key_fraction,
+                                         &pitch_word) ||
         !sc88_tva_static_gain_q17(&renderer->rom, &tone, &component, &zone,
                                   (uint8_t)selector_key, velocity,
                                   levels,

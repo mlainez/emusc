@@ -118,12 +118,18 @@ struct sc88_render_voice {
 uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
                                    uint8_t midi_key);
 
+/* The remainder that transform drops, in pitch units (0..1364):
+   SC88-CTL 0x611e..0x6121 scale it by 0x555, one semitone. */
+uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
+                                    uint8_t midi_key);
+
 /* Static note-on pitch before controllers, LFOs and the pitch envelope. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
                                      uint8_t selector_key,
+                                     uint16_t key_fraction,
                                      uint32_t *pitch_word);
 
 bool sc88_renderer_init(struct sc88_renderer *renderer,
