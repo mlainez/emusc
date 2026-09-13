@@ -12,27 +12,49 @@
 extern "C" {
 #endif
 
-#define SC88_REVERB_ALLPASS_MAX 8u
-#define SC88_REVERB_LINE_MAX 16u
+/* The reverb's delay-line graph is read out of the DSP program in the
+ * control ROM (`M-173`, scdb `08_effects/dsp_program.md`). Twelve ERAM
+ * buffers, eight output taps:
+ *
+ *   B0 B1 B2 B3   four series allpasses at g = 0.5, the input diffuser
+ *   B4 B5 B6 B7   tank half 1: allpass, delay, allpass, delay
+ *   B8 B9 B10 B11 tank half 2: allpass, delay, allpass, delay
+ *   eight taps    read inside the tank, two per pair of program slots
+ *
+ * The twelve buffer heads are the twelve instructions with the ERAM write
+ * enable (bit 24) set; the twenty reads have it clear, and each buffer's
+ * far end sits one address below the next head. The eight taps are reads
+ * that land inside a buffer rather than at its end, and they are the early
+ * field. */
+#define SC88_REVERB_BUFFERS 12u
+#define SC88_REVERB_TAPS 8u
+#define SC88_REVERB_HALF_BUFFERS 4u
 /* The delay-line lengths in a character record are addresses in the XP's
  * delay memory, one unit per sample at the engine's own 32 kHz. */
 #define SC88_REVERB_NATIVE_RATE 32000.0
 
-/* One reverb character as the ROM describes it. `allpasses` is how many of
- * the eight coefficient pairs are enabled - seven for Room 1/2/3 and Hall 1,
- * eight for Hall 2 and Plate, none for the two delays - and every enabled
- * pair is (-0.5, +0.5), an allpass at g = 0.5 (`M-008`). */
+/* One reverb character as the ROM describes it: the graph above with this
+ * character's own addresses, allpass enables and damping.
+ *
+ * `head` and `far` are ERAM addresses relative to the character's own base,
+ * so buffer i runs from head[i] to far[i] inclusive and delivers its input
+ * `far[i] - head[i]` samples later. `tap` are eight more addresses, which
+ * land inside the buffers. `allpass[i]` is set where the character enables
+ * that section's (-0.5, +0.5) coefficient pair; a disabled section still
+ * has its buffer and runs as a plain delay. */
 struct sc88_reverb_character {
-  uint8_t allpasses;
-  uint8_t line_count;
-  uint16_t lines[SC88_REVERB_LINE_MAX];   /* lengths in 32 kHz samples */
+  uint16_t head[SC88_REVERB_BUFFERS];
+  uint16_t far[SC88_REVERB_BUFFERS];
+  uint16_t tap[SC88_REVERB_TAPS];
+  bool allpass[SC88_REVERB_BUFFERS];
+  uint8_t allpasses;                      /* how many pairs are enabled */
   uint16_t extent;                        /* the whole memory it spans */
-  /* Words 16..19, which `08_effects/reverb.md` lists as unassigned, are
-     two further coefficient pairs and they decode as one-poles: read as
-     `y = a*x - b*y'` the first gives DC 0.674 with a 6.5 kHz corner on
-     characters 2 to 4, and 0.242 with a 3.7 kHz corner on 1 and 5. That
-     is a damping filter, and it is per character (`M-023`). */
-  float damp_input, damp_pole;
+  /* The per-half damping one-pole, `y = input*x - pole_word*y'`, from the
+     character record's words 16..19. Those four words are the coefficients
+     at CRAM (59, 58) and (74, 75), one pair immediately before each tank
+     half's reads, so each half has its own filter: on Room 1 and Plate the
+     two differ, on Room 3, Hall 1 and Hall 2 they are equal. */
+  float damp_input[2], damp_pole[2];
 };
 
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
@@ -43,18 +65,27 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
  * an exact bypass and every other entry leaks one part in 64. */
 bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input);
 
-struct sc88_reverb_line {
-  float *buf;
-  unsigned len, pos;
-};
+/* The eight tap gains, read from the DSP program's own coefficient RAM at
+ * the tap instructions. They are not part of the character record - every
+ * character shares them, and both program images carry the same eight. */
+bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
+                           float gains[SC88_REVERB_TAPS]);
 
 struct sc88_reverb {
   struct sc88_reverb_character character;
-  struct sc88_reverb_line allpass[SC88_REVERB_ALLPASS_MAX];
-  struct sc88_reverb_line comb[SC88_REVERB_LINE_MAX];
-  unsigned allpass_count, comb_count;
+  /* One shared delay memory, addressed the way the chip addresses it: a
+     base pointer that steps back one sample per sample, so a read at
+     address R of something written at address W comes back R - W samples
+     later whatever buffer the two belong to. Tap addresses then need no
+     assignment to a buffer - they are just reads. */
+  float *eram;
+  unsigned eram_len, eram_pos;
+  unsigned head[SC88_REVERB_BUFFERS], far[SC88_REVERB_BUFFERS];
+  unsigned tap[SC88_REVERB_TAPS];
+  float tap_gain[SC88_REVERB_TAPS];
   uint8_t character_index;
-  float comb_damp_state[SC88_REVERB_LINE_MAX];
+  float damp_state[2];
+  float tank_return;             /* half 2's output, held for half 1 */
   float pre_fb, pre_in, pre_state;
   /* Predelay, single-module only. The firmware patches ERAM address
      `0x3000 + 32*p`, and one address unit is one sample at 32 kHz, so
@@ -64,12 +95,11 @@ struct sc88_reverb {
   size_t pre_delay_len, pre_delay_pos, pre_delay_taps;
   /* set from a decay time measured on hardware, not from a guessed curve;
      see the note in the source */
-  float feedback;
-  float damp;                    /* the pole of the character's late-bank one-pole */
+  float decay[2];
+  float damp[2];                 /* the pole of each half's one-pole */
   /* the decay the parameters ask for, in seconds, for reporting */
   double target_t60;
   float level;
-  /* the level divided by the square root of each side's comb count */
   float wet_gain_left, wet_gain_right;
   double output_rate;
   bool active;
