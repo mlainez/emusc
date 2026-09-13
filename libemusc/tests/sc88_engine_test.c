@@ -64,9 +64,15 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
     put16(control + 0x1523e + i * 2, (uint16_t)((i + 1) * 256 - 1));
   }
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
-  /* the top of the send/pan curve: control 127 is unity, which is what a
-     fully wet drum key and a part send of 127 both resolve to */
+  /* the top of the pan curve: position 127 is unity on its own side */
   put16(control + 0x15db6 + 126 * 2, 0x8000);
+  /* The send curve is a DIFFERENT table, at 0x15eb6, indexed by the control
+     value whole, and linear where the pan curve is not. The fixture carries
+     the firmware's own expression for it so the reader can see that the two
+     disagree everywhere except three points. */
+  for (i = 0; i < 128; ++i)
+    put16(control + 0x15eb6 + i * 2,
+          (uint16_t)(64u * (((unsigned)i * 512u + 63u) / 127u)));
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
   /* The stage's interpolation word, which the chip is handed beside the
@@ -280,14 +286,20 @@ int main(void)
   assert(sc88_send_combine(127, 0) == 0);
   assert(sc88_send_combine(0, 127) == 0);
   assert(sc88_send_combine(40, 50) == 16);
-  /* and the curve is a curve: control 64 is -4.5 dB, not half */
+  /* and the send curve is LINEAR: control 64 is a shade over half, not the
+     pan curve's -4.5 dB. The two tables are only three points apart over
+     the whole range and reading the pan one here opens every send too far
+     (`P-xxxx`). */
   {
     uint16_t gain;
     assert(sc88_control_gain_q15(&renderer.rom, 0, &gain) && gain == 0);
     assert(sc88_control_gain_q15(&renderer.rom, 64, &gain) &&
-           gain == 0x4c00);
+           gain == 0x4080);
     assert(sc88_control_gain_q15(&renderer.rom, 127, &gain) &&
            gain == 0x8000);
+    /* control 1 is a small open send, not a closed one: the pan table's
+       first word is zero and using it here muted the send entirely */
+    assert(sc88_control_gain_q15(&renderer.rom, 1, &gain) && gain == 0x0100);
     assert(!sc88_control_gain_q15(&renderer.rom, 128, &gain));
   }
 
