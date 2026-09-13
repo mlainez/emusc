@@ -226,11 +226,18 @@ int main(int argc, char **argv)
      the wave decodes to 128 of 2^23 and the trim was hidden inside the
      number. That is the same defect in miniature as the one that motivated
      removing the trim - a gain folded into something that does not look
-     like a gain. */
+     like a gain.
+
+     The wave decodes to 128 then 256, and the oscillator's three-tap read
+     on the first position weights them (1/8 folded back, 3/4, 1/8), so the
+     first sample is 144 and not 128. The two decoded values are written
+     out here rather than the product, so a change in the kernel names
+     itself. */
   assert(voice.component_count == 1);
   assert(voice.components[0].left_gain_q15 == 0x4c00);
   assert(sc88_render_static_gain_q17(&voice.components[0], 1.0) == 0x1fffc);
-  assert(fabs(output[0] - (128.0 / 8388608.0) *
+  assert(fabs(output[0] - ((0.125 * 128.0 + 0.75 * 128.0 + 0.125 * 256.0)
+                           / 8388608.0) *
          (32767.0 / 32768.0) * (0x4c00 / 32768.0)) < 1e-9);
   assert(output[0] == output[1]);
   assert(output[2] > output[0]);
