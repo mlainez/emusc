@@ -105,20 +105,24 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
   }
   /* words 16..19 are the two damping pairs, one per tank half: they are the
      coefficients at CRAM (59, 58) and (74, 75), the slots immediately before
-     each half's reads. Each is a one-pole `y = input*x - pole*y'`. Room 1
-     and Plate give their two halves different filters; Room 3, Hall 1 and
-     Hall 2 give them the same one. */
+     each half's reads. Each pair is a one-pole whose POLE is its positive
+     word and whose input coefficient is its negative one, and the two are
+     kept here in the record's own order. Room 1 and Plate give their two
+     halves different filters; Room 3, Hall 1 and Hall 2 give them the same
+     one. A pair that is not two words of those two signs is not a filter,
+     and the half then runs undamped rather than on coefficients chosen
+     here - which is what Delay and Panning Delay leave behind. */
   for (i = 0; i < 2; ++i) {
     double a = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 32u +
                                                4u * i));
     double b = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 34u +
                                                4u * i));
-    if (a > 0.0 && b < 0.0 && -b < 0.99) {
+    if (a > 0.0 && a < 0.99 && b < 0.0) {
       out->damp_input[i] = (float)a;
       out->damp_pole[i] = (float)(-b);
     } else {
-      out->damp_input[i] = 1.0f;
-      out->damp_pole[i] = 0.0f;
+      out->damp_input[i] = 0.0f;
+      out->damp_pole[i] = 1.0f;
     }
   }
   /* words 20..51 are the 32 delay-memory addresses, in the program order of
@@ -267,56 +271,96 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
   /* Level is recovered: the CPU forms 4*p, so the parameter is a linear
      level over 0..127 against a 512 full scale. */
   rv->level = (float)(4u * (unsigned)(level > 127 ? 127 : level)) / 512.0f;
-  /* Time is **not** recovered as a decay: the firmware turns it into a
-     register value - min(380, floor(p*380/108)) below character 6 - and
-     which accumulator that register reaches is exactly what `M-173` could
-     not recover, so there is still nothing in the ROM to read the decay off.
-     What is available instead is the hardware itself. Each of the seven
-     demo songs sets its own reverb and then stops playing, and the decay
-     after its last note is measurable in the recordings: three songs share
-     character 4 at times 53, 80 and 100 and decay in 0.66, 1.52 and
-     2.59 s, which is `T60 = 0.1423 * exp(0.0292 * time)` to within the
-     spread of the measurement. Characters 3 and 5 each give one point and
-     sit 1.9 and 4.4 times longer at the same time value, which mean line
-     length does not explain, so those factors are carried as a per-
-     character table. Characters 0, 1 and 2 are unmeasured and take 1.0.
-     So this is a **calibration against hardware recordings** (`M-013`),
-     labelled as such, and not a decode. */
+  /* Below character 6, Time IS the decay and the decay is a chip register
+     (`P-0359`). The firmware forms `min(380, floor(p * 380 / 108))` and
+     writes it to XP 0x337a / 0x336e / 0x337e depending on which program
+     layout is loaded - a 9-bit control register in the 0x3364..337e bank,
+     not coefficient memory - and that bank's full scale is 512, the same
+     scale the Level register runs on. The tank's per-pass loop gain is
+     therefore `register / 512`, linear, 0 to 0.7422, with nothing fitted.
+     Two separately compiled firmwares for this part agree on the top of
+     that range: the JV-1080 reaches the same quantity through a coefficient
+     instead, `48 * v / 8192`, and caps it at 0.7441.
+     It is applied ONCE PER TANK HALF. That is how the JV holds the same
+     quantity - not as a register but as a coefficient, in two slots, one
+     inside each half of its own tank - and it is where this program has
+     room for it: the only two coefficients in the whole reverb block that
+     nothing else explains are the unities at CRAM 68 and 84, one per half.
+     So the round trip through both halves carries the register twice, and
+     the T60 that falls out is a fact about the character's own line
+     lengths and not a number chosen here.
+     From character 6 up the firmware does something else entirely with
+     Time - it patches delay addresses, and the register carries Feedback,
+     which this engine does not plumb - so those characters keep the decay
+     measured off the demo songs' own endings (`M-013`). */
   {
-    static const float character_factor[10] = {
-      1.0f, 1.0f, 1.0f, 1.89f, 1.0f, 4.40f, 1.0f, 1.0f, 1.0f, 1.0f};
     unsigned index = rv->character_index < 10u ? rv->character_index : 4u;
-    rv->target_t60 = character_factor[index] * 0.1423 *
-      exp(0.0292 * (double)(time > 127 ? 127 : time));
-    /* One gain per tank half, sized by that half's own delay, so the round
-       trip loses 60 dB in the time asked for whichever way the two halves
-       are joined: the product over a loop is always 10^(-3*loop/T60). */
+    unsigned p = time > 127 ? 127u : (unsigned)time;
+    unsigned samples[2];
+    double seconds;
     for (h = 0; h < 2; ++h) {
-      unsigned i, samples = 0;
-      double seconds, g = 0.0;
+      unsigned i;
+      samples[h] = 0u;
       for (i = 0; i < SC88_REVERB_HALF_BUFFERS; ++i) {
         unsigned b = SC88_REVERB_HALF_BUFFERS * (h + 1u) + i;
-        samples += rv->far[b] - rv->head[b];
+        samples[h] += rv->far[b] - rv->head[b];
       }
-      seconds = rv->output_rate > 0.0
-        ? (double)samples / rv->output_rate : 0.0;
-      if (seconds > 0.0 && rv->target_t60 > 0.01)
-        g = pow(10.0, -3.0 * seconds / rv->target_t60);
-      if (g > 0.995)
-        g = 0.995;
-      else if (g < 0.05)
-        g = 0.05;
-      rv->decay[h] = (float)g;
+    }
+    seconds = rv->output_rate > 0.0
+      ? (double)(samples[0] + samples[1]) / rv->output_rate : 0.0;
+    if (index < 6u) {
+      unsigned reg = p * 380u / 108u;
+      double g = (double)(reg > 380u ? 380u : reg) / 512.0;
+      if (g < 0.001)
+        g = 0.001;
+      for (h = 0; h < 2; ++h)
+        rv->decay[h] = (float)g;
+      /* the decay the register and the lines come to, for reporting */
+      rv->target_t60 = 3.0 * seconds / (2.0 * log10(1.0 / g));
+    } else {
+      rv->target_t60 = 0.1423 * exp(0.0292 * (double)p);
+      for (h = 0; h < 2; ++h) {
+        double half = rv->output_rate > 0.0
+          ? (double)samples[h] / rv->output_rate : 0.0;
+        double g = 0.0;
+        if (half > 0.0 && rv->target_t60 > 0.01)
+          g = pow(10.0, -3.0 * half / rv->target_t60);
+        if (g > 0.995)
+          g = 0.995;
+        else if (g < 0.05)
+          g = 0.05;
+        rv->decay[h] = (float)g;
+      }
     }
   }
   /* How fast the tail darkens: the pole of each half's own one-pole, which
-     the ROM puts one per half and not one per line. The pair's DC gain is
-     below unity and is not applied here - the loop gain above is the decay
-     calibration and stands for every per-pass loss, and applying both would
-     count the same loss twice - so only the pole shapes the tail and the
-     one-pole keeps unity at DC. */
-  rv->damp[0] = rv->character.damp_pole[0];
-  rv->damp[1] = rv->character.damp_pole[1];
+     the ROM puts one per half and not one per line. The pole is the pair's
+     POSITIVE word (`P-0360`). Program order cannot say which word is which,
+     because the two multiplies land in one accumulator and commute - and
+     the character record proves the compiler used that freedom, writing the
+     pair to CRAM (59, 58) for half 1 and (74, 75) for half 2, the two
+     orders opposed. Four things fix the role on the sign instead. The chip's
+     other one-pole in this same block settles the form: the pre-LPF pair is
+     `(pole, input)` with both words positive and `p = 0` giving (0, 1), an
+     exact bypass, so the recurrence adds `coefficient * y'` with the
+     coefficient as stored and a positive word is a lowpass pole. A negative
+     word in that place would be a treble-lifting pole, which is not what a
+     damping filter in a feedback loop is. Read this way the DC gain
+     `input / (1 - pole)` is -0.5417, -0.5536 and -0.5455 over the three
+     distinct pairs - a design constant held inside 2 % while the pole moves
+     by a factor of four - where the other assignment spreads it over 2.8x.
+     And it puts the poles where a reverb designer would: 0.484375 on Room 3,
+     Hall 1 and Hall 2, 0.25 and 0.125 on the Rooms' and Plate's first
+     halves, so the halls damp hardest and the plate least.
+     The DC gain is NOT applied here and the one-pole is normalised to unity
+     at DC. It cannot be an uncompensated per-pass loss: with it in the loop
+     the decay register's own full scale caps Hall 2 at a 1.65 s T60
+     (measured, at Time 127), and the hardware needs more than that - 2.59 s
+     on the demo song at Time 100 and about 2 s on the single-note reference.
+     Where the chip restores it is in the accumulator and register file,
+     which are not recovered. */
+  rv->damp[0] = rv->character.damp_input[0];
+  rv->damp[1] = rv->character.damp_input[1];
   /* Normalised by the square root of the number of taps summed, which is
      the form `M-018` settled: the taps are mutually decorrelated, so their
      sum grows as the root of the count and not as the count, and the root

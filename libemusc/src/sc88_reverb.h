@@ -49,11 +49,14 @@ struct sc88_reverb_character {
   bool allpass[SC88_REVERB_BUFFERS];
   uint8_t allpasses;                      /* how many pairs are enabled */
   uint16_t extent;                        /* the whole memory it spans */
-  /* The per-half damping one-pole, `y = input*x - pole_word*y'`, from the
-     character record's words 16..19. Those four words are the coefficients
-     at CRAM (59, 58) and (74, 75), one pair immediately before each tank
-     half's reads, so each half has its own filter: on Room 1 and Plate the
-     two differ, on Room 3, Hall 1 and Hall 2 they are equal. */
+  /* The per-half damping one-pole, from the character record's words
+     16..19. Those four words are the coefficients at CRAM (59, 58) and
+     (74, 75), one pair immediately before each tank half's reads, so each
+     half has its own filter: on Room 1 and Plate the two differ, on Room 3,
+     Hall 1 and Hall 2 they are equal. Each pair is one positive word and
+     one negative word and the fields hold them in that order, so the filter
+     is `y = -damp_pole*x + damp_input*y'`: the POSITIVE word is the pole
+     and the negative one multiplies the input (`P-0360`). */
   float damp_input[2], damp_pole[2];
 };
 
