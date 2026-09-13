@@ -504,9 +504,6 @@ static bool sc88_renderer_note_on_tone(
         ((int)lfo_controls->depth - 64) * 2);
     render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
-    render_component->static_pitch_word = pitch_word;
-    pitch_word = sc88_pitch_current_word(
-      pitch_word, 0, render_component->pitch_envelope.current);
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
     bank = sc88_renderer_find_bank(renderer, zone.descriptor.bank_select);
@@ -521,8 +518,27 @@ static bool sc88_renderer_note_on_tone(
     if (!render_component->pcm24 ||
         !sc88_fce_decode_storage(bank->bytes, bank->size, &zone.descriptor,
                                  render_component->pcm24, capacity, &pcm_base,
-                                 &render_component->pcm_count) ||
-        !sc88_oscillator_init(&render_component->oscillator,
+                                 &render_component->pcm_count))
+      goto fail;
+    /* Thirty descriptors are read at twice the rate, and the pitch word is
+       the only place that can say so: 0x4000 is one octave in the SC-88's
+       own 16384-per-octave domain (`07_synthesis/pitch.md`).  The predicate
+       is decided from the sample that was just decoded, never from a table
+       of offsets - see `sc88_wave_loop_reads_double` for the arithmetic, the
+       gaps it sits in the middle of, and the standing of the claim.  It is
+       applied to the static word, so the per-period recomposition carries it
+       for the life of the note. */
+    if (sc88_wave_loop_reads_double(render_component->pcm24,
+                                    render_component->pcm_count, pcm_base,
+                                    &zone.descriptor)) {
+      pitch_word += 0x4000u;
+      if (pitch_word > 0x3ffffu)
+        pitch_word = 0x3ffffu;
+    }
+    render_component->static_pitch_word = pitch_word;
+    pitch_word = sc88_pitch_current_word(
+      pitch_word, 0, render_component->pitch_envelope.current);
+    if (!sc88_oscillator_init(&render_component->oscillator,
                               render_component->pcm24,
                               render_component->pcm_count, pcm_base,
                               &registers, mode, pitch_word,
