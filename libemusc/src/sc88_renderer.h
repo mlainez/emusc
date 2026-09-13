@@ -78,6 +78,13 @@ struct sc88_render_component {
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;
   uint16_t static_attenuation;
+  /* The rhythm kit's own level for this note, or `SC88_TVA_NO_DRUM_LEVEL`
+     on a melodic one. It is a fifth term in the composed amplitude, so it
+     is kept beside the attenuation it is subtracted with: the release and
+     a part-level change both recompose that amplitude from the stored
+     terms, and a note that dropped this one would rise to full kit level
+     the moment either happened. */
+  uint8_t drum_level;
   /* The composed amplitude is handed to the XP chip as a TARGET with an
      interpolation word beside it, not as a value to latch: `71a9` writes
      the four-word block {zero, interpolation, target high, target low} at

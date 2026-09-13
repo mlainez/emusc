@@ -141,6 +141,7 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
                               const struct sc88_zone_selection *zone,
                               uint8_t selector_key, uint8_t velocity,
                               const struct sc88_tva_levels *levels,
+                              uint8_t drum_level,
                               uint16_t *static_attenuation,
                               uint32_t *gain_q17)
 {
@@ -153,16 +154,26 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
     return false;
   *static_attenuation = component_attenuation;
   return sc88_tva_gain_from_headroom_q17(
-    rom, UINT16_MAX, levels, component_attenuation, gain_q17);
+    rom, UINT16_MAX, levels, drum_level, component_attenuation, gain_q17);
 }
 
+/* `compose_voice_amplitude` subtracts five level words from the headroom
+ * before the component's own static attenuation at `72b2`: master,
+ * secondary, part, expression, and - on a rhythm note whose gate `7295`
+ * finds set - the kit's per-note level read at `72a3` and subtracted at
+ * `72ab` through the same table at `0x14f3e` as the other four. The fifth
+ * is therefore in this loop and not a multiply on the way in: the table is
+ * a log-domain attenuation, and applying the level as a linear ratio
+ * delivered almost exactly half the attenuation in dB. */
 bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
                                      uint16_t headroom,
                                      const struct sc88_tva_levels *levels,
+                                     uint8_t drum_level,
                                      uint16_t static_attenuation,
                                      uint32_t *gain_q17)
 {
-  uint8_t sources[4];
+  uint8_t sources[5];
+  unsigned source_count = 4;
   uint16_t remaining = headroom;
   uint16_t reduction;
   uint16_t coarse;
@@ -176,7 +187,13 @@ bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
   sources[1] = levels->secondary;
   sources[2] = levels->part;
   sources[3] = levels->expression;
-  for (i = 0; i < 4; ++i) {
+  if (drum_level <= 127) {
+    sources[4] = drum_level;
+    source_count = 5;
+  } else if (drum_level != SC88_TVA_NO_DRUM_LEVEL) {
+    return false;
+  }
+  for (i = 0; i < source_count; ++i) {
     if (sources[i] > 127 ||
         !sc88_tva_level_word(rom, sources[i], &reduction))
       return false;

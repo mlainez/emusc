@@ -506,7 +506,8 @@ void sc88_engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
       component = &engine->slots[slot_index].component;
       (void)sc88_tva_gain_from_headroom_q17(
         &engine->renderer->rom, component->release.current, levels,
-        component->static_attenuation, &component->static_gain_q17);
+        component->drum_level, component->static_attenuation,
+        &component->static_gain_q17);
     }
   }
 }
@@ -1052,7 +1053,8 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     if (!sc88_tva_release_advance(&slot->component.release, elapsed) ||
         !sc88_tva_gain_from_headroom_q17(
           &engine->renderer->rom, slot->component.release.current,
-          &note->levels, slot->component.static_attenuation,
+          &note->levels, slot->component.drum_level,
+          slot->component.static_attenuation,
           &slot->component.static_gain_q17) ||
         slot->component.static_gain_q17 == 0) {
       slot->component.static_gain_q17 = 0;

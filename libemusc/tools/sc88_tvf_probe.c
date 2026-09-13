@@ -376,7 +376,8 @@ int main(int argc, char **argv)
       if (sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
           sc88_tva_static_gain_q17(&rom, &tone, &component, &zone,
                                    (uint8_t)key, (uint8_t)velocity,
-                                   &levels, &static_attenuation, &gain)) {
+                                   &levels, SC88_TVA_NO_DRUM_LEVEL,
+                                   &static_attenuation, &gain)) {
         printf("    pitch env: depth %6d  rates %3u %3u %3u %3u  release %3u\n",
            (int)(int16_t)((comp_bytes_at(&component, 0x1a) << 8) |
                           comp_bytes_at(&component, 0x1b)),

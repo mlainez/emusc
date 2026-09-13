@@ -295,7 +295,7 @@ static bool sc88_renderer_note_on_tone(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint32_t tone_offset, uint8_t key, uint8_t velocity,
   float provisional_gain, const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
+  uint8_t drum_level, const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls)
@@ -390,7 +390,7 @@ static bool sc88_renderer_note_on_tone(
                                          &pitch_word) ||
         !sc88_tva_static_gain_q17(&renderer->rom, &tone, &component, &zone,
                                   (uint8_t)selector_key, velocity,
-                                  levels,
+                                  levels, drum_level,
                                   &render_component->static_attenuation,
                                   &render_component->static_gain_q17) ||
         !sc88_pan_static_q15(&renderer->rom, &tone, &component,
@@ -444,6 +444,7 @@ static bool sc88_renderer_note_on_tone(
     sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
+    render_component->drum_level = drum_level;
     render_component->reverb_send = 127;
     /* Neutral part and user modifiers: the part-level rate and delay
        offsets are a controller-matrix destination this does not model
@@ -563,7 +564,8 @@ bool sc88_renderer_note_on_with_part_controls(
                                &tone_offset))
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
-                                    velocity, provisional_gain, levels, pan,
+                                    velocity, provisional_gain, levels,
+                                    SC88_TVA_NO_DRUM_LEVEL, pan,
                                     tvf_controls, tva_controls,
                                     lfo_controls);
 }
@@ -582,6 +584,7 @@ bool sc88_renderer_note_on_drum(
   struct sc88_drum_note slot;
   struct sc88_tva_levels drum_levels;
   struct sc88_pan_controls drum_pan;
+  uint8_t drum_level;
   uint32_t kit;
   unsigned i;
   if (!renderer || !levels || !pan ||
@@ -595,13 +598,17 @@ bool sc88_renderer_note_on_drum(
      The level is a **per-note** property, so it does not belong in any of
      the four part-level sources, all of which are part or global controls;
      hijacking the secondary level for it both under-drove the kit and threw
-     away whatever that control was doing. Where in the amplitude chain the
-     firmware applies it is not yet traced, so it is applied to the
-     provisional gain, which this codebase already labels provisional. */
+     away whatever that control was doing. It is a fifth source of its own:
+     `72a3..72ab` subtracts it from the same headroom, through the same
+     table, before the component's static attenuation at `72b2`, so it
+     travels to `sc88_tva_gain_from_headroom_q17` beside the other four.
+     `4d76` gates it on bit 7 of this note's `+0x280` assign-group byte
+     being clear, which is the state of every sounding slot in all 24
+     kits. */
   drum_levels = *levels;
   drum_pan = *pan;
-  if (slot.level <= 127)
-    provisional_gain *= (float)slot.level / 127.0f;
+  drum_level = ((slot.assign_group & 0x80u) == 0u && slot.level <= 127)
+    ? slot.level : (uint8_t)SC88_TVA_NO_DRUM_LEVEL;
   if (slot.pan >= 1 && slot.pan <= 127)
     drum_pan.part = slot.pan;
   if (note)
@@ -609,8 +616,8 @@ bool sc88_renderer_note_on_drum(
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
                                   slot.play_note <= 127 ? slot.play_note : key,
                                   velocity, provisional_gain, &drum_levels,
-                                  &drum_pan, tvf_controls, tva_controls,
-                                  lfo_controls))
+                                  drum_level, &drum_pan, tvf_controls,
+                                  tva_controls, lfo_controls))
     return false;
   for (i = 0; i < voice->component_count; ++i) {
     voice->components[i].reverb_send = slot.reverb_send;

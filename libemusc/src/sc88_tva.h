@@ -18,6 +18,19 @@ struct sc88_tva_levels {
   uint8_t expression;
 };
 
+/* A rhythm note also subtracts its own level, the kit's `+0x200 + note`
+ * byte, from the same headroom and through the same table (`72a3..72ab`).
+ * It is a fifth source beside the four above and not one of them: those are
+ * part or global controls, this is per note, and it is passed separately
+ * rather than folded into the struct because a part-level change rewrites
+ * the four while the note keeps this one.
+ *
+ * `4d76` sets the flag `7295` tests from bit 7 of the kit's `+0x280`
+ * assign-group byte - clear means subtract. The melodic note-on path at
+ * `1bb4` stages `0xff` there, so bit 7 is set and the term is skipped;
+ * `SC88_TVA_NO_DRUM_LEVEL` is that case. */
+#define SC88_TVA_NO_DRUM_LEVEL 0xffu
+
 struct sc88_tva_release {
   uint16_t current;
   uint16_t increment;
@@ -102,11 +115,13 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
                               const struct sc88_zone_selection *zone,
                               uint8_t selector_key, uint8_t velocity,
                               const struct sc88_tva_levels *levels,
+                              uint8_t drum_level,
                               uint16_t *static_attenuation,
                               uint32_t *gain_q17);
 bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
                                      uint16_t headroom,
                                      const struct sc88_tva_levels *levels,
+                                     uint8_t drum_level,
                                      uint16_t static_attenuation,
                                      uint32_t *gain_q17);
 bool sc88_tva_release_prepare(const struct sc88_rom *rom,
