@@ -56,7 +56,7 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
 			 std::array<float, 256> &chorusBus,
 			 std::array<float, 256> &reverbBus)
 {
-  _notesMutex->lock();
+  const std::scoped_lock lock(*_notesMutex);
 
   // Only process notes if we have any
   if (_notes.size() > 0) {
@@ -153,14 +153,14 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
       _lfoCallback(0, 0, 0);
   }
 
-  _notesMutex->unlock();
-
   return 0;
 }
 
 
 void Part::update(void)
 {
+  const std::scoped_lock lock(*_notesMutex);
+
   for (auto &n : _notes)
     n->update();
 }
@@ -185,12 +185,12 @@ int Part::get_last_peak_sample(void)
   scale >>= 8;
 
   int tvaMax = 0;
-  _notesMutex->lock();
 
-  for (auto &n: _notes)
-    tvaMax = std::max({tvaMax, n->get_current_tva(0), n->get_current_tva(1)});
-
-  _notesMutex->unlock();
+  {
+    const std::scoped_lock lock(*_notesMutex);
+    for (auto &n: _notes)
+      tvaMax = std::max({tvaMax, n->get_current_tva(0), n->get_current_tva(1)});
+  }
 
   if (0)
     std::cout << "PartScale=" << std::hex << scale
@@ -221,6 +221,8 @@ int Part::get_last_peak_sample(void)
 // render limit, and the uncounted voices must keep sounding.
 int Part::get_num_partials(void)
 {
+  const std::scoped_lock lock(*_notesMutex);
+
   if (_notes.size() == 0)
     return 0;
 
@@ -479,16 +481,15 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
       _settings->generation() != ControlRom::SynthGen::JV880)
     delete_all_notes();
 
-  _notesMutex->lock();
+  {
+    const std::scoped_lock lock(*_notesMutex);
+    Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id,
+                       serial, startDelay);
+    _notes.push_back(n);
 
-  Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id, serial,
-                     startDelay);
-  _notes.push_back(n);
-
-  _notesMutex->unlock();
-
-  if (_settings->get_param(PatchParam::Hold1, _id))
+    if (_settings->get_param(PatchParam::Hold1, _id))
       n->sustain(true);
+  }
 
   if (0)
     std::cout << "EmuSC: New note [ part=" << (int) _id
@@ -502,6 +503,8 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
 
 int Part::stop_note(uint8_t key, uint8_t releaseVelocity)
 {
+  const std::scoped_lock lock(*_notesMutex);
+
   for (auto &n : _notes)
     n->stop(key, releaseVelocity);
 
@@ -511,6 +514,8 @@ int Part::stop_note(uint8_t key, uint8_t releaseVelocity)
 
 int Part::stop_all_notes(void)
 {
+  const std::scoped_lock lock(*_notesMutex);
+
   int i = _notes.size();
   for (auto n : _notes)
     n->stop();
@@ -521,15 +526,13 @@ int Part::stop_all_notes(void)
 
 int Part::delete_all_notes(void)
 {
-  _notesMutex->lock();
+  const std::scoped_lock lock(*_notesMutex);
 
   int i = _notes.size();
   for (auto n : _notes)
     delete n;
 
   _notes.clear();
-
-  _notesMutex->unlock();
 
   return i;
 }
@@ -688,10 +691,11 @@ int Part::control_change(uint8_t msgId, uint8_t value)
       } else {
 	_settings->set_param(PatchParam::Hold1, (uint8_t) 1, (int8_t) _id);
       }
-
-      for (auto &n : _notes)
-	n->sustain(_settings->get_param(PatchParam::Hold1, _id));
-
+      {
+        const std::scoped_lock lock(*_notesMutex);
+        for (auto &n : _notes)
+          n->sustain(_settings->get_param(PatchParam::Hold1, _id));
+      }
     } // Note: SC-88 Pro seems to use full 7 bit value for Hold1
 
   } else if (msgId == 65) {                            // Portamento
@@ -708,9 +712,11 @@ int Part::control_change(uint8_t msgId, uint8_t value)
 	_settings->set_param(PatchParam::Sostenuto, (uint8_t)0,(int8_t)_id);
       else
 	_settings->set_param(PatchParam::Sostenuto, (uint8_t)1,(int8_t)_id);
-
-      for (auto &n : _notes)
-	n->sustain(_settings->get_param(PatchParam::Sostenuto, _id));
+      {
+        const std::scoped_lock lock(*_notesMutex);
+        for (auto &n : _notes)
+          n->sustain(_settings->get_param(PatchParam::Sostenuto, _id));
+      }
     }
 
   } else if (msgId == 67) {                            // Soft
