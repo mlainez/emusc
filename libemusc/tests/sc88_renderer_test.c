@@ -63,7 +63,7 @@ static void test_held_rom(char **paths)
   assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
                             banks, SC88_WAVE_BANK_COUNT, 48000.0,
                             SC88_WRAP_FULL_CARRY));
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.25f));
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
   assert(voice.components[0].static_gain_q17 > 0);
   assert(voice.components[0].tvf.frequency_interpolation == 0x4100);
   assert(voice.components[0].tvf.resonance_interpolation == 0x095f);
@@ -185,17 +185,17 @@ int main(int argc, char **argv)
   control[0x40000 + 34 + 0x6c] = 100;
   control[0x40000 + 34 + 0x6d] = 110;
   memset(&voice, 0, sizeof voice);
-  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 99, 0.5f));
-  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 111, 0.5f));
+  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 99));
+  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 111));
   memset(&voice, 0, sizeof voice);
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 110, 0.5f));
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 110));
   assert(voice.component_count == 1);
   sc88_renderer_voice_destroy(&voice);
   control[0x40000 + 34 + 0x6c] = 0;
   control[0x40000 + 34 + 0x6d] = 127;
 
   memset(&voice, 0, sizeof voice);
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
   assert(sc88_renderer_voice_active(&voice));
   assert(voice.components[0].envelope.stage == 0);
   assert(voice.components[0].envelope.increments[0] == 0xffff);
@@ -210,7 +210,27 @@ int main(int argc, char **argv)
   assert(voice.components[0].envelope.stage == 1);
   assert(voice.components[0].envelope.current_q17 == 0x1fffcu);
   assert(sc88_renderer_render(&voice, output, 2) == 2);
-  assert(fabs(output[0] - (64.0 / 8388608.0) *
+  /* The frame is the SUM over the components this note sounds, each one
+     sample * static gain * pan gain, and the renderer applies no output trim
+     of its own. This tone sounds two, which is why the frame is twice one
+     component's contribution - the expectation used to omit that factor and
+     passed only because the call also passed a 0.5 trim that cancelled it.
+     Assert the count, so the day this tone sounds a different number of
+     components the test says so instead of quietly re-balancing. */
+  /* One component, and the frame is its sample times its static gain times
+     its pan gain - the renderer applies no output trim of its own. Each
+     factor is asserted beside the product so a change in any one of them
+     names itself instead of being absorbed.
+
+     The sample constant used to read 64 while this call passed a 0.5 trim:
+     the wave decodes to 128 of 2^23 and the trim was hidden inside the
+     number. That is the same defect in miniature as the one that motivated
+     removing the trim - a gain folded into something that does not look
+     like a gain. */
+  assert(voice.component_count == 1);
+  assert(voice.components[0].left_gain_q15 == 0x4c00);
+  assert(sc88_render_static_gain_q17(&voice.components[0], 1.0) == 0x1fffc);
+  assert(fabs(output[0] - (128.0 / 8388608.0) *
          (32767.0 / 32768.0) * (0x4c00 / 32768.0)) < 1e-9);
   assert(output[0] == output[1]);
   assert(output[2] > output[0]);
@@ -222,7 +242,7 @@ int main(int argc, char **argv)
     const struct sc88_pan_controls hard_left = {64, 1};
     put16(control + 0x15db6 + 126 * 2, 0x8000);
     sc88_renderer_set_pan(&renderer, &hard_left);
-    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
     assert(sc88_renderer_render(&voice, output, 1) == 1);
     assert(output[0] > 0.0f && output[1] == 0.0f);
     sc88_renderer_voice_destroy(&voice);
@@ -232,7 +252,7 @@ int main(int argc, char **argv)
     const struct sc88_tva_levels muted = {0, 127, 127, 127};
     put16(control + 0x14f3e, 0xffff);
     sc88_renderer_set_levels(&renderer, &muted);
-    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100, 0.5f));
+    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
     assert(voice.components[0].static_gain_q17 == 0);
     sc88_renderer_voice_destroy(&voice);
   }

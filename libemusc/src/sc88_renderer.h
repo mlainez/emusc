@@ -154,7 +154,6 @@ struct sc88_render_voice {
   uint32_t tone_offset;
   uint8_t key;
   uint8_t velocity;
-  float provisional_gain;
   /* A rhythm note whose kit record clears bit 0 of `+0x480` does not
      receive Note Off and rings to its own end. Every drum in this song is
      written as a 10 ms note, so honouring Note Off turns a crash into a
@@ -202,27 +201,34 @@ void sc88_renderer_set_tvf_audio_transfer(
 void sc88_renderer_set_tvf_controls(
   struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls);
 
-/* The explicit gain is temporary output trim. Static TVA, release, pan and
- * exact TVF control state are native ROM paths; the audio-side TVF callback
- * and effects remain explicit seams. */
+/* There is no gain argument and no gain field on the voice. The firmware
+ * composes a voice's amplitude in exactly one place - `compose_voice_amplitude`
+ * subtracts its five level sources and the component's static attenuation from
+ * one headroom - so a float multiply beside it is an escape hatch with no
+ * counterpart in the device, and anything put through it is not being modelled.
+ * The kit's per-note level was applied that way and, because the engine's mix
+ * reads its own copy of the caller's trim rather than the voice's, it reached
+ * `sc88_renderer_render` and no song. Output trim belongs to the caller.
+ *
+ * Static TVA, release, pan and exact TVF control state are native ROM paths;
+ * the audio-side TVF callback and effects remain explicit seams. */
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity,
-                           float provisional_gain);
+                           uint8_t key, uint8_t velocity);
 bool sc88_renderer_note_on_with_levels(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels);
+  const struct sc88_tva_levels *levels);
 bool sc88_renderer_note_on_with_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan);
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -234,7 +240,7 @@ bool sc88_renderer_note_on_with_part_controls(
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,

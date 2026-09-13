@@ -633,7 +633,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
       !(engine->parts[part].rhythm_map
           ? sc88_renderer_note_on_drum(
               engine->renderer, &voice, engine->parts[part].rhythm_map,
-              program, key, velocity, provisional_gain,
+              program, key, velocity,
               &engine->parts[part].levels, &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
               &engine->parts[part].tva_controls,
@@ -641,7 +641,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
               &engine->drum_overlay, NULL)
           : sc88_renderer_note_on_with_part_controls(
               engine->renderer, &voice, variation, program, key, velocity,
-              provisional_gain, &engine->parts[part].levels,
+              &engine->parts[part].levels,
               &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
               &engine->parts[part].tva_controls,
@@ -667,6 +667,9 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
   note->context = context;
   note->tone_offset = voice.tone_offset;
   note->serial = engine->next_serial++;
+  /* The engine's own output trim, and the only place it lives: the renderer
+     takes no gain and the voice carries no gain field, so there is no second
+     copy that could silently disagree with this one. */
   note->provisional_gain = provisional_gain;
   note->ignore_note_off = voice.ignore_note_off;
   note->levels = engine->parts[part].levels;

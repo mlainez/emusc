@@ -252,38 +252,37 @@ void sc88_renderer_voice_destroy(struct sc88_render_voice *voice)
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity,
-                           float provisional_gain)
+                           uint8_t key, uint8_t velocity)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_levels(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     &renderer->levels);
 }
 
 bool sc88_renderer_note_on_with_levels(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels)
+  const struct sc88_tva_levels *levels)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_controls(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     levels, &renderer->pan);
 }
 
 bool sc88_renderer_note_on_with_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_part_controls(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     levels, pan, &renderer->tvf_controls, &renderer->tva_controls, NULL);
 }
 
@@ -294,7 +293,7 @@ bool sc88_renderer_note_on_with_controls(
 static bool sc88_renderer_note_on_tone(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint32_t tone_offset, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   uint8_t drum_level, const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -307,7 +306,6 @@ static bool sc88_renderer_note_on_tone(
       levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
       levels->expression > 127 || key > 127 || velocity > 127 ||
-      provisional_gain < 0.0f ||
       !sc88_rom_open_tone(&renderer->rom, tone_offset, &tone))
     return false;
   memset(voice, 0, sizeof *voice);
@@ -321,7 +319,6 @@ static bool sc88_renderer_note_on_tone(
   voice->tone_offset = tone_offset;
   voice->key = key;
   voice->velocity = velocity;
-  voice->provisional_gain = provisional_gain;
   /* melodic notes always receive Note Off; a kit may say otherwise */
   voice->ignore_note_off = false;
   voice->tvf_audio_transfer = renderer->tvf_audio_transfer;
@@ -552,7 +549,7 @@ fail:
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -564,7 +561,7 @@ bool sc88_renderer_note_on_with_part_controls(
                                &tone_offset))
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
-                                    velocity, provisional_gain, levels,
+                                    velocity, levels,
                                     SC88_TVA_NO_DRUM_LEVEL, pan,
                                     tvf_controls, tva_controls,
                                     lfo_controls);
@@ -573,7 +570,7 @@ bool sc88_renderer_note_on_with_part_controls(
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -615,7 +612,7 @@ bool sc88_renderer_note_on_drum(
     *note = slot;
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
                                   slot.play_note <= 127 ? slot.play_note : key,
-                                  velocity, provisional_gain, &drum_levels,
+                                  velocity, &drum_levels,
                                   drum_level, &drum_pan, tvf_controls,
                                   tva_controls, lfo_controls))
     return false;
@@ -672,8 +669,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
     }
     if (!active)
       break;
-    stereo[frame * 2] = left * voice->provisional_gain;
-    stereo[frame * 2 + 1] = right * voice->provisional_gain;
+    stereo[frame * 2] = left;
+    stereo[frame * 2 + 1] = right;
   }
   return frame;
 }
