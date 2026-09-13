@@ -20,23 +20,52 @@
    SC-55's own two stability tables fix to a rounding unit in P-0130 and
    P-0131) is the value the SC-88's ROM asks for too. */
 #define SC88_TVF_Q_UNITY 131072.0
-/* The TVF-F register is a log-frequency word in the XP pitch register's
-   own domain. `07_synthesis/pitch.md` has the pitch word at 16384 units
-   per octave, 18 bits, unity playback at 0x38000; routine 67a8 forms
-   TVF-F as the same 18-bit high/low pair in the same scratch tuple with
-   the same interpolation word 0x4100, and the base table at 0x78702
-   steps by exactly 16384/12 per index once expanded - one semitone per
-   index. The ROM fixes the slope. It does not say which frequency any
-   register value means, so the anchor is inferred: the word one past the
-   18-bit range, 0x40000, is read as the chip's Nyquist, so the base
-   table's saturating top (0xffff, register 0x3fff8) names the highest
-   frequency the filter has and nothing in either table lands above it.
-   Unity (0x38000) is then fs/8, the limit table at 0x78802 spans
-   11.3 kHz (resonance index 0) to 5.9 kHz (index 127), and the corners
-   fitted on seven hardware notes sit within 0.44 octave rms of the
-   computed word (`11_validation/measurements.md` M-136). The word is a
-   frequency, as the pitch word is a rate. The coefficient the chip
-   derives from it is now recovered as well: see SC88_TVF_LIMIT_TABLE. */
+/* [FW-EXACT] The TVF-F register is a log-frequency word in the XP pitch
+   register's own domain. `07_synthesis/pitch.md` has the pitch word at
+   16384 units per octave, 18 bits, unity playback at 0x38000; routine
+   67a8 forms TVF-F as the same 18-bit high/low pair in the same scratch
+   tuple with the same interpolation word 0x4100, and the base table at
+   0x78702 steps by exactly 16384/12 per index once expanded - one
+   semitone per index. That is the slope. The anchor - which frequency a
+   register value names - is the ROM's too, and the limit table fixes it
+   in integer arithmetic.
+
+   The limit table's law is f*f + f*q = 2 (see SC88_TVF_LIMIT_TABLE),
+   which gives f = sqrt(2) at resonance index 0 and f = 1 at index 64.
+   With f = 2*sin(pi*fc/fs) those two ceilings are fc = fs/4 and fs/6
+   exactly, so their sines are sqrt(2)/2 and 1/2 and their words sit
+   16384/2 and 16384 units below the word whose sine is one. The entries
+   are 0xf800 and 0xf000, which the firmware expands ((e >> 1) << 3) to
+   0x3e000 and 0x3c000:
+
+       0x3e000 + 8192  = 0x40000
+       0x3c000 + 16384 = 0x40000
+
+   Neither equation rounds. Those two are the only entries in either
+   table whose exact word is a multiple of four, so they are the only
+   two the table's floor leaves untouched, and both name 0x40000 - the
+   word one past the 18-bit range - as the chip's Nyquist.
+
+   With that anchor both tables decode to the bit:
+
+       entry = floor((0x40000 + 16384*log2(sin(pi*f/fs))) / 4)
+
+   the base table over f = 440*2^((i - 64)/12) for all 127 indices below
+   Nyquist, and the limit table over the stability law for all 128. So
+   the base table is a note table whose index 64 is A440; index 127 asks
+   for 16744 Hz, past the fold, and holds 0xffff instead. floor is what
+   reproduces them - round gets 64 and 57, ceil 0 and 2 - and moving the
+   anchor by one word unit breaks at least 28 entries per table. The
+   limit table runs fs/4 at resonance index 0 through fs/6 at 64 to
+   3835 Hz at 127, and 0x38000 - unity playback in the pitch register -
+   is 2573.8 Hz here.
+
+   fc and fs enter only as sin(pi*fc/fs), so the ROM fixes their ratio
+   and nothing more. Fit the base table with the anchor and the absolute
+   scale both free and index 64 comes out at 439.9996 Hz, 1sd 0.05 cent,
+   which is a second reading of the 32.000 kHz rate - `M-166` has it from
+   the DAC image mirror. The coefficient the chip derives from the word
+   is recovered as well: see SC88_TVF_LIMIT_TABLE. */
 #define SC88_TVF_OCTAVE_UNITS 16384.0
 #define SC88_TVF_NYQUIST_WORD 0x40000
 /* [FW-EXACT] The limit table is the filter's own topology, written down.
@@ -137,19 +166,22 @@ static int sc88_tvf_clamp_index(int value)
    at index 64 - one semitone per index, saturating where the sine folds.
 
    The SC-88's base table at 0x78702 is that same quantity in the XP pitch
-   register's log domain: word = 0x40000 + 16384 * log2(sin(pi * f /
-   32000)) reproduces indices 0..126 to an sd of 5.7 word units, which is
-   0.00035 octave. Reading the word as a log FREQUENCY leaves sd 2072 word
-   units and up to 0.67 octave - 363 times worse - because it has no
-   account of why the table's steps shrink from 1368 to 0 over its last
-   twelve entries. That compression is the sine approaching one; the
+   register's log domain and decodes to the bit; see the note on
+   SC88_TVF_NYQUIST_WORD. Reading the word as a log FREQUENCY instead
+   leaves an sd of 2072 word units and up to 0.67 octave, because it has
+   no account of why the table's steps shrink from 1368 to 0 over its
+   last twelve entries. That compression is the sine approaching one; the
    frequency underneath it is a clean note table.
 
-   Measured on the archive recordings against our own --no-filter render,
-   so that our filter is not in the measurement: the hardware's own corner
-   is 0.67x the computed cutoff under the old reading and 1.03x under this
-   one, and the hardware's fitted order goes from 2.5 poles to 1.9
-   (filter_slope.py --cutoff, 9 instruments with r2 >= 0.5).
+   Hardware agrees, on two stimuli each with its own control and with the
+   corner fitted through the realisation the chip has rather than an
+   analog prototype. Hardware corner over computed cutoff is 0.97
+   (quartiles 0.90/1.10, n = 13) measured against our own --no-filter
+   render, and 1.04 (0.99/1.25, n = 9) on a self-differential of two
+   instants inside one held note, which carries no render of ours at all.
+   Their controls - the same fit on our own output, whose corner is at
+   the computed cutoff by construction - read 1.05 and 1.00, so the
+   method's own bias is the size of the disagreement.
 
    0x40000 still means the top of the range and still means fs/2; what
    runs exponentially between is sin(pi * f / fs). Below about 4 kHz the
