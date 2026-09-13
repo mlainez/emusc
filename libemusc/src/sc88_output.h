@@ -46,9 +46,22 @@ struct sc88_output_biquad {
 
 #define SC88_OUTPUT_MAX_SECTIONS 4
 
+/* The converter hold, as a symmetric FIR. 31 taps realises the target to
+   0.003 dB through 13.9 kHz and 0.05 dB at 15 kHz at the chip's own
+   32 kHz, 0.007 dB across the whole band at 44.1 kHz; only the last few
+   hundred hertz before Nyquist fall short, where the target is a cusp.
+   The cost is a constant group delay of SC88_OUTPUT_HOLD_TAPS / 2
+   samples on the whole render, 0.47 ms at 32 kHz. */
+#define SC88_OUTPUT_HOLD_TAPS 31
+
 struct sc88_output {
   struct sc88_output_biquad section[SC88_OUTPUT_MAX_SECTIONS];
   unsigned sections;
+  /* The DAC's zero-order hold. See sc88_output.c for the measurement. */
+  float hold[SC88_OUTPUT_HOLD_TAPS];
+  float hold_z[2][SC88_OUTPUT_HOLD_TAPS];
+  unsigned hold_taps;
+  unsigned hold_pos;
   /* The DC blocker, which lived inline in sc88_device.c until it was
      moved here. It is not cited to any ROM either, so it belongs in the
      labelled stage rather than unmarked in the middle of the render. */
@@ -66,6 +79,9 @@ void sc88_output_process(struct sc88_output *out, float *stereo,
 /* The profile itself, exposed so a test can assert its response. */
 extern const struct sc88_output_section SC88_OUTPUT_RESPONSE[];
 extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
+
+/* The converter's hold, in hertz: the rate the DAC is clocked at. */
+#define SC88_OUTPUT_DAC_RATE 32000.0
 
 #ifdef __cplusplus
 }

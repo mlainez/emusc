@@ -48,6 +48,98 @@ const struct sc88_output_section SC88_OUTPUT_RESPONSE[1] = {
 };
 const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
 
+/* THE CONVERTER'S HOLD, and it is measured rather than assumed.
+
+   The SC-88's parts list gives a PCM69AU-1/T2 and no oversampling filter
+   in front of it, so the DAC should be a plain zero-order hold at the
+   chip's 32 kHz - a sin(x)/x droop of -0.48 dB at 5.9 kHz rising to
+   -2.72 at 13.5 and -3.92 at Nyquist. Our engine runs the whole voice
+   path at the host rate and emits samples, not steps, so it carried none
+   of it.
+
+   The measurement that establishes the hold, and it does not use the
+   engine at all. A digital filter clocked at 32 kHz has
+   |H(32000 - f)| = |H(f)|, so everything digital in the machine attenuates
+   a DAC image exactly as much as the baseband component that produced it
+   and cancels in their ratio. The hold and the analog board do not. The
+   archive recordings carry the images: correlating each recording's
+   spectrum above 16.3 kHz against its own baseband mirrored about a
+   candidate centre, swept from 29 to 35 kHz, peaks at 32.000 kHz and
+   nowhere else - 0.92 on Bagpipe, 0.91 on Harpsichord, 0.84 on Seashore,
+   0.81 on Accordion, 0.79 on Applause, and near zero or negative at
+   every other centre tried.
+
+   Their ratio, ten recordings, image at 32000-f over baseband at f, f
+   from 11.0 to 15.8 kHz:
+
+     f base kHz      11.0  12.0  13.0  14.0  15.0  15.8
+     measured dB     -7.3  -5.7  -4.3  -2.9  -1.4  -0.1
+     sin(x)/x dB     -5.6  -4.4  -3.3  -2.2  -1.1  -0.3
+     residual        -1.7  -1.3  -1.0  -0.7  -0.3  +0.2
+
+   So the hold is there, at 32 kHz, to within a dB and a half over a ten
+   kilohertz span - and the residual is the whole analog path, device plus
+   whatever recorded these, which is down only 1.7 dB from 11 kHz to
+   21 kHz. That is the reason the response list above this one is still
+   empty: an output filter steep enough to matter in the audio band would
+   have crushed these images, and it did not.
+
+   Whole board, 63 single notes against the archive recordings, wet at
+   CC91 24: median MAD 1.5 -> 1.2 dB, 57 of 63 within 3 dB unchanged, 2
+   past 6 dB unchanged, tilted bright 9 -> 7.
+
+   [MEASURED]. It is the converter, not the chip, so it is here and not in
+   the engine. Delete it the day libEmuSC's SC-88 path emits at 32 kHz and
+   reconstructs properly, because then it is already in the signal. */
+static double sc88_output_i0(double x)
+{
+  double sum = 1.0, term = 1.0, xh = 0.5 * x;
+  int k;
+  for (k = 1; k <= 25; ++k) {
+    term *= xh / k;
+    sum += term * term;
+  }
+  return sum;
+}
+
+/* The zero-phase filter whose magnitude is |sin(pi f / 32000) /
+   (pi f / 32000)| over the whole output band, by frequency sampling, then
+   a Kaiser window so a 31-tap truncation does not ripple. */
+static void sc88_output_design_hold(struct sc88_output *out, double rate)
+{
+  const double pi = 3.14159265358979323846;
+  const int half = SC88_OUTPUT_HOLD_TAPS / 2;
+  const int steps = 4096;
+  const double beta = 7.0;
+  const double i0beta = sc88_output_i0(beta);
+  double h[SC88_OUTPUT_HOLD_TAPS];
+  double sum = 0.0;
+  int k, j;
+
+  for (k = -half; k <= half; ++k) {
+    double acc = 0.0;
+    for (j = 0; j <= steps; ++j) {
+      double f = 0.5 * rate * (double)j / (double)steps;
+      double x = pi * f / SC88_OUTPUT_DAC_RATE;
+      double mag = (x > 1e-12) ? fabs(sin(x) / x) : 1.0;
+      double w = (j == 0 || j == steps) ? 0.5 : 1.0;
+      acc += w * mag * cos(2.0 * pi * f * (double)k / rate);
+    }
+    acc *= (0.5 * rate / (double)steps) * 2.0 / rate;
+    {
+      double wn = (double)k / (double)half;
+      double win = sc88_output_i0(beta * sqrt(fmax(0.0, 1.0 - wn * wn))) /
+        i0beta;
+      h[k + half] = acc * win;
+    }
+    sum += h[k + half];
+  }
+  for (k = 0; k < SC88_OUTPUT_HOLD_TAPS; ++k)
+    out->hold[k] = (float)(h[k] / sum);
+  out->hold_taps = SC88_OUTPUT_HOLD_TAPS;
+  out->hold_pos = 0;
+}
+
 /* Audio EQ Cookbook forms, normalised by a0. */
 static void sc88_output_design(struct sc88_output_biquad *bq,
                                const struct sc88_output_section *s,
@@ -117,6 +209,7 @@ void sc88_output_init(struct sc88_output *out, double rate)
     out->sections = SC88_OUTPUT_MAX_SECTIONS;
   for (i = 0; i < out->sections; ++i)
     sc88_output_design(&out->section[i], &SC88_OUTPUT_RESPONSE[i], rate);
+  sc88_output_design_hold(out, rate);
   /* A 10 Hz single-pole blocker: 0.03 dB at 111 Hz and unity everywhere
      the audit measures, so it is not what removes the high frequency
      above - but it is not cited to any ROM either, and libEmuSC's SC-55
@@ -139,6 +232,8 @@ void sc88_output_reset(struct sc88_output *out)
   }
   out->dc_x[0] = out->dc_x[1] = 0.0f;
   out->dc_y[0] = out->dc_y[1] = 0.0f;
+  memset(out->hold_z, 0, sizeof out->hold_z);
+  out->hold_pos = 0;
 }
 
 void sc88_output_process(struct sc88_output *out, float *stereo,
@@ -167,4 +262,18 @@ void sc88_output_process(struct sc88_output *out, float *stereo,
       out->dc_y[ch] = y;
       stereo[k * 2 + ch] = y;
     }
+  for (k = 0; k < frames; ++k) {
+    unsigned pos = out->hold_pos;
+    for (ch = 0; ch < 2; ++ch) {
+      float acc = 0.0f;
+      unsigned t;
+      out->hold_z[ch][pos] = stereo[k * 2 + ch];
+      for (t = 0; t < out->hold_taps; ++t) {
+        unsigned idx = (pos + out->hold_taps - t) % out->hold_taps;
+        acc += out->hold[t] * out->hold_z[ch][idx];
+      }
+      stereo[k * 2 + ch] = acc;
+    }
+    out->hold_pos = (pos + 1) % out->hold_taps;
+  }
 }
