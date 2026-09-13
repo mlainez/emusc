@@ -469,6 +469,9 @@ void sc88_engine_destroy(struct sc88_engine *engine)
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
     if (engine->slots[i].allocated)
       free(engine->slots[i].component.pcm24);
+  for (i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i)
+    if (engine->stopping[i].active)
+      free(engine->stopping[i].component.pcm24);
   memset(engine, 0, sizeof *engine);
 }
 
@@ -555,6 +558,51 @@ static bool sc88_engine_note_matches(const struct sc88_engine_note *note,
     note->tone_offset == tone_offset && note->context == context;
 }
 
+/* Hand a still-sounding voice to the chip's stop ramp, so that taking its
+   slot back does not end the waveform where it stands.
+
+   The register is picked up where it stands this instant and given the
+   target zero; everything else the CPU composed is frozen with it, so the
+   first ramped sample continues the last serviced one. See
+   `sc88_engine_stopping` for what is traced here and what is not: the slot
+   accounting is, the stop's effect on the sound is not. */
+static void sc88_engine_stop_voice(struct sc88_engine *engine,
+                                   uint8_t slot_index)
+{
+  struct sc88_engine_slot *slot = engine->slots + slot_index;
+  double fraction = engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS;
+  uint32_t current;
+  unsigned i;
+  if (!slot->allocated || !slot->component.active ||
+      slot->note >= SC88_ENGINE_NOTE_COUNT)
+    return;
+  current = sc88_render_static_gain_q17(&slot->component, fraction);
+  if (!current)
+    return;
+  for (i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i) {
+    struct sc88_engine_stopping *stop = engine->stopping + i;
+    if (stop->active)
+      continue;
+    stop->gain =
+      (sc88_tva_envelope_linear_q17(&engine->renderer->rom,
+                                    &slot->component.envelope, fraction) /
+       131072.0f) *
+      sc88_engine_lfo_amplitude(slot) *
+      engine->notes[slot->note].provisional_gain;
+    stop->part = engine->notes[slot->note].part;
+    stop->periods = 0.0;
+    stop->component = slot->component;
+    stop->component.static_gain_current_q17 = current;
+    stop->component.static_gain_q17 = 0;
+    /* The decoded sample moves with the voice; the slot must not free the
+       buffer the ramp is still reading. */
+    slot->component.pcm24 = NULL;
+    stop->active = true;
+    return;
+  }
+  /* Nowhere to put it: the voice ends where it stands. */
+}
+
 static void sc88_engine_recycle_note(struct sc88_engine *engine,
                                      uint8_t note_index)
 {
@@ -563,8 +611,12 @@ static void sc88_engine_recycle_note(struct sc88_engine *engine,
   memcpy(slots, engine->notes[note_index].slots, sizeof slots);
   for (i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
     uint8_t slot = slots[SC88_MAX_TONE_COMPONENTS - 1 - i];
-    if (slot != SC88_ENGINE_NONE)
-      sc88_engine_free_slot(engine, slot, true);
+    if (slot == SC88_ENGINE_NONE)
+      continue;
+    /* The slot goes back on the free list this instant and at its head, as
+       `0x2333` does; the sound of the voice it held runs down separately. */
+    sc88_engine_stop_voice(engine, slot);
+    sc88_engine_free_slot(engine, slot, true);
   }
 }
 
@@ -1170,6 +1222,71 @@ void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
       } else {
         sc88_engine_free_slot(engine, (uint8_t)i, false);
       }
+    }
+    /* The voices the CPU has already handed their slots back. Nothing
+       composes for them any more: the amplitude register runs down to the
+       zero the stop wrote, on its own clock, and the rest of the voice -
+       oscillator, filter, pan - carries on from exactly where it stood. */
+    for (i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i) {
+      struct sc88_engine_stopping *stop = engine->stopping + i;
+      uint32_t register_q17;
+      float sample;
+      float gained;
+      if (!stop->active)
+        continue;
+      register_q17 =
+        sc88_render_static_gain_q17(&stop->component, stop->periods);
+      if (!register_q17 || !stop->component.active ||
+          !sc88_oscillator_next(&stop->component.oscillator, &sample)) {
+        /* The register has arrived at zero, or the sample ran out first. */
+        free(stop->component.pcm24);
+        memset(stop, 0, sizeof *stop);
+        continue;
+      }
+      tap_osc += sample;
+      if (engine->renderer->tvf_audio_transfer)
+        sample = engine->renderer->tvf_audio_transfer(
+          engine->renderer->tvf_audio_user, &stop->component.tvf_audio,
+          &stop->component.tvf,
+          engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS, sample);
+      tap_tvf += sample;
+      /* One frozen product for the three amplitude taps: the envelope, the
+         oscillators and the note gain no longer move apart. */
+      gained = sample * (register_q17 / 131072.0f) * stop->gain;
+      tap_static += gained;
+      tap_tva += gained;
+      tap_lfo += gained;
+      left += gained * (stop->component.left_gain_q15 / 32768.0f);
+      right += gained * (stop->component.right_gain_q15 / 32768.0f);
+      if (send) {
+        uint16_t send_q15;
+        uint8_t control = sc88_send_combine(
+          engine->parts[stop->part].reverb_send,
+          stop->component.reverb_send);
+        if (sc88_control_gain_q15(&engine->renderer->rom, control,
+                                  &send_q15))
+          bus += gained * (send_q15 / 32768.0f);
+      }
+      if (delay_send) {
+        uint16_t send_q15;
+        if (sc88_control_gain_q15(&engine->renderer->rom,
+                                  engine->parts[stop->part].delay_send,
+                                  &send_q15))
+          delay_bus += gained * (send_q15 / 32768.0f);
+      }
+      if (chorus_send) {
+        uint16_t send_q15;
+        uint8_t control = sc88_send_combine(
+          engine->parts[stop->part].chorus_send,
+          stop->component.chorus_send);
+        if (sc88_control_gain_q15(&engine->renderer->rom, control,
+                                  &send_q15))
+          chorus_bus += gained * (send_q15 / 32768.0f);
+      }
+      if (stop->component.oscillator.ended)
+        stop->component.active = false;
+      stop->periods += SC88_CONTROL_TIMER_HZ /
+        (engine->renderer->output_rate * SC88_CONTROL_PERIOD_CLOCKS);
     }
     stereo[frame * 2] = left;
     stereo[frame * 2 + 1] = right;
