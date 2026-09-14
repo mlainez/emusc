@@ -8,6 +8,11 @@
 
 /* The delay memory counts in samples at 32 kHz, the rate the sound chip
    runs its lines at, so every recovered length is converted from that. */
+/* The eight macro presets, 8 bytes each, read by SC88-CTL handler 0x3400 and
+ * by the power-on loader at 0x44a8. The reset image at ROM 0x13104 carries
+ * macro 2 and that macro's own eight bytes, which are the manual's printed
+ * chorus defaults byte for byte. */
+#define SC88_CHORUS_MACRO_TABLE 0x1587eu
 #define SC88_CHORUS_NATIVE_RATE 32000.0
 /* The voice-control task wakes every 8.0008 ms (`M-006`), which is the
    period the rate register is added over. */
@@ -65,6 +70,21 @@ void sc88_chorus_reset(struct sc88_chorus *ch)
   ch->pre_state = 0.0f;
   ch->fb_state_l = 0.0f;
   ch->fb_state_r = 0.0f;
+}
+
+bool sc88_chorus_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[8])
+{
+  uint32_t base;
+  unsigned i;
+  if (!rom || !rom->bytes || !out || macro > 7)
+    return false;
+  base = SC88_CHORUS_MACRO_TABLE + (uint32_t)macro * 8u;
+  if (base + 8u > rom->size)
+    return false;
+  for (i = 0; i < 8; ++i)
+    out[i] = rom->bytes[base + i];
+  return true;
 }
 
 void sc88_chorus_set_params(const struct sc88_rom *rom,

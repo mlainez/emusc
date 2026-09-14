@@ -36,6 +36,28 @@ static void sc88_device_sync_chorus(struct sc88_device *device)
                          device->chorus_depth, device->chorus_pre_lpf);
 }
 
+/* Writing the chorus macro copies eight bytes over pre-LPF through delay
+   send - handler 0x3400, the reverb handler 0x3388's sibling, through the
+   same copy helper and the same 8-byte record stride. The delay send is
+   single-module only and this engine does not hold it. */
+static bool sc88_device_load_chorus_macro(struct sc88_device *device,
+                                          uint8_t macro)
+{
+  uint8_t p[8];
+  if (macro > 7 || !sc88_chorus_macro(&device->renderer.rom, macro, p))
+    return false;
+  device->chorus_macro = macro;
+  device->chorus_pre_lpf = p[0] > 7 ? 7 : p[0];
+  device->chorus_level = p[1];
+  device->chorus_feedback = p[2];
+  device->chorus_delay = p[3];
+  device->chorus_rate = p[4];
+  device->chorus_depth = p[5];
+  device->chorus_send_to_reverb = p[6];
+  sc88_device_sync_chorus(device);
+  return true;
+}
+
 static void sc88_device_sync_lfo(struct sc88_device *device, uint8_t part)
 {
   const struct sc88_channel_state *channel = device->channels + part;
@@ -218,16 +240,9 @@ void sc88_device_reset_controllers(struct sc88_device *device)
      copies. So this is a table read, not a second set of constants. */
   (void)sc88_device_load_reverb_macro(device, 4);
   sc88_reverb_reset(&device->reverb);
-  /* The manual's own chorus defaults. */
-  device->chorus_macro = 2;
-  device->chorus_pre_lpf = 0;
-  device->chorus_level = 64;
-  device->chorus_feedback = 8;
-  device->chorus_delay = 80;
-  device->chorus_rate = 3;
-  device->chorus_depth = 19;
-  device->chorus_send_to_reverb = 0;
-  sc88_device_sync_chorus(device);
+  /* The chorus block a reset leaves behind is macro 2's own preset row, the
+     same way the reverb's is macro 4's; the power-on image carries it. */
+  (void)sc88_device_load_chorus_macro(device, 2);
   sc88_chorus_reset(&device->chorus);
   /* Delay macro 0 and the ten bytes it copies over pre-LPF through reverb
      send, which is what writing the macro address does. */
@@ -500,8 +515,7 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     return sc88_delay_set_params(&device->renderer.rom, &device->delay,
                                  device->delay_params);
   case 0x400138:
-    device->chorus_macro = value;
-    return true;
+    return sc88_device_load_chorus_macro(device, value);
   case 0x400139:
     if (value > 7)
       return false;
