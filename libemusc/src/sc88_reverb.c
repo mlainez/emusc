@@ -11,6 +11,12 @@
 #define SC88_REVERB_POINTERS 0x1595eu
 #define SC88_REVERB_PAGE 0x10000u
 #define SC88_REVERB_PRE_LPF_TABLE 0x15972u
+/* The eight macro presets, 8 bytes each, read by SC88-CTL handler 0x3388 and
+ * by the power-on loader at 0x4476. The reset image at ROM 0x13104 - the
+ * patch common block whose first sixteen bytes are the default patch name -
+ * carries macro 4 and that macro's own seven bytes, so a GS reset is this
+ * table's Hall 2 row and not a separate set of defaults. */
+#define SC88_REVERB_MACRO_TABLE 0x1583eu
 #define SC88_REVERB_CHARACTERS 10u
 #define SC88_REVERB_RECORD_WORDS 53u
 #define SC88_REVERB_ALLPASS_PAIR_A 0x3000u   /* -0.5 under the XP law */
@@ -167,6 +173,23 @@ bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input)
 static unsigned sc88_reverb_scale(unsigned addr, double scale)
 {
   return (unsigned)((double)addr * scale + 0.5);
+}
+
+/* The eight reverb macro presets, one 8-byte record each, of which the
+ * firmware copies the first seven bytes over character..predelay. */
+bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[7])
+{
+  uint32_t base;
+  unsigned i;
+  if (!rom || !rom->bytes || !out || macro > 7)
+    return false;
+  base = SC88_REVERB_MACRO_TABLE + (uint32_t)macro * 8u;
+  if (base + 7u > rom->size)
+    return false;
+  for (i = 0; i < 7; ++i)
+    out[i] = rom->bytes[base + i];
+  return true;
 }
 
 bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,

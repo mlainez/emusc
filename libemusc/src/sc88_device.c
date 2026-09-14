@@ -200,6 +200,9 @@ void sc88_device_destroy(struct sc88_device *device)
   memset(device, 0, sizeof *device);
 }
 
+static bool sc88_device_load_reverb_macro(struct sc88_device *device,
+                                          uint8_t macro);
+
 void sc88_device_reset_controllers(struct sc88_device *device)
 {
   unsigned part;
@@ -208,16 +211,12 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->master_volume = 127;
   device->secondary_level = 127;
   device->master_pan = 64;
-  /* Hall 2 with the manual's own default level, time and pre-LPF. */
-  device->reverb_character = 4;
-  device->reverb_level = 64;
-  device->reverb_time = 64;
-  device->reverb_pre_lpf = 0;
-  device->reverb_predelay = 0;
-  device->reverb_delay_feedback = 0;
-  sc88_reverb_set_predelay(&device->reverb, 0);
-  sc88_reverb_set_params(&device->reverb, device->reverb_level,
-                         device->reverb_time, device->reverb_pre_lpf);
+  /* The reverb block a reset leaves behind is macro 4's own preset row.
+     The power-on image at ROM 0x13104 - the patch common block, recognisable
+     by the default patch name in its first sixteen bytes - holds
+     `04 04 00 40 40 00 00 00` there: the macro, then the seven bytes macro 4
+     copies. So this is a table read, not a second set of constants. */
+  (void)sc88_device_load_reverb_macro(device, 4);
   sc88_reverb_reset(&device->reverb);
   /* The manual's own chorus defaults. */
   device->chorus_macro = 2;
@@ -370,6 +369,35 @@ static bool sc88_device_set_reverb_character(struct sc88_device *device,
   return true;
 }
 
+/* Writing the reverb macro address copies the preset's seven bytes over
+   character, pre-LPF, level, time, delay feedback, the reserved byte and
+   predelay. SC88-CTL handler 0x3388 is the delay handler 0x342b's sibling:
+   both clamp the written byte through a bounds record, store it, and then,
+   only when the index is zero, copy the rest of the block out of a ROM table
+   (`0x1583e + 8*macro` here, `0x158be + 16*macro` there) through the same
+   pair of copy helpers. The power-on loader at 0x4476 reads the same table. */
+static bool sc88_device_load_reverb_macro(struct sc88_device *device,
+                                          uint8_t macro)
+{
+  uint8_t p[7];
+  if (macro > 7 || !sc88_reverb_macro(&device->renderer.rom, macro, p))
+    return false;
+  device->reverb_macro = macro;
+  if (!sc88_device_set_reverb_character(device, p[0] > 7 ? 7 : p[0]))
+    return false;
+  device->reverb_pre_lpf = p[1] > 7 ? 7 : p[1];
+  device->reverb_level = p[2];
+  device->reverb_time = p[3];
+  device->reverb_delay_feedback = p[4];
+  /* p[5] is the block's reserved byte; `40 01 36` has no parameter and the
+     firmware refuses a write to it. */
+  device->reverb_predelay = p[6];
+  sc88_reverb_set_predelay(&device->reverb, device->reverb_predelay);
+  sc88_reverb_set_params(&device->reverb, device->reverb_level,
+                         device->reverb_time, device->reverb_pre_lpf);
+  return true;
+}
+
 /* One address of a DT1 packet. `true` means the write was acted on. */
 static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
                                    uint32_t address, uint8_t value)
@@ -394,12 +422,9 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
   case 0x400006:
     sc88_device_set_master_pan(device, value);
     return true;
-  /* The macro and the character are printed with the same eight names and
-     the same default, so a macro write selects that character. Whether the
-     macro also reloads the rest of the reverb block from a preset - as the
-     delay macro demonstrably does - is not recovered, so nothing else is
-     touched here. A song that means a preset sends its fields anyway. */
   case 0x400130:
+    /* The macro reloads the whole block from its preset; see the loader. */
+    return value <= 7 && sc88_device_load_reverb_macro(device, value);
   case 0x400131:
     return value <= 7 && sc88_device_set_reverb_character(device, value);
   case 0x400132:

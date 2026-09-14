@@ -79,10 +79,11 @@ struct sc88_device {
   struct sc88_delay delay;
   struct sc88_eq eq;
   struct sc88_output output;
-  /* The reverb's own parameters. A GS reset leaves the character and its
-     level, time and pre-LPF at the values the manual prints for Hall 2. */
+  /* The reverb's own parameters. Writing the macro reloads all of them from
+     a ROM preset, and a GS reset is the same read with macro 4. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
   uint8_t reverb_predelay, reverb_delay_feedback;
+  uint8_t reverb_macro;
   /* The chorus parameters are received and held but not yet rendered: the
      CPU-side transforms are recovered while the DSP's audio algorithm is
      not (`08_effects/chorus.md`), so a chorus here would be invented

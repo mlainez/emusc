@@ -108,6 +108,15 @@ struct sc88_reverb {
   bool active;
 };
 
+/* One of the eight macro presets at `0x1583e + 8*macro`: character, pre-LPF,
+ * level, time, delay feedback, the reserved byte the reverb block has at
+ * `40 01 36`, and predelay, in that order. Writing the reverb macro address
+ * copies these seven bytes over the rest of the block, exactly as writing
+ * the delay macro copies its ten - SC88-CTL handler 0x3388 is the reverb
+ * sibling of the delay's 0x342b and calls the same copy helper. */
+bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[7]);
+
 bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
                       uint8_t character, double output_rate);
 void sc88_reverb_destroy(struct sc88_reverb *rv);

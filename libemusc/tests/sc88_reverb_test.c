@@ -184,6 +184,25 @@ int main(void)
     sc88_reverb_destroy(&rv);
   }
 
+  /* The macro preset table: eight records of eight bytes at 0x1583e, of
+     which seven are copied. The stride and the count are what the firmware
+     handler's own copy helper fixes, so pin both, and pin that a macro
+     above seven is refused rather than read past the table. */
+  {
+    uint8_t got[7];
+    unsigned m, j;
+    for (m = 0; m < 8; ++m)
+      for (j = 0; j < 8; ++j)
+        bytes[0x1583e + m * 8 + j] = (uint8_t)(0x10 * m + j);
+    for (m = 0; m < 8; ++m) {
+      assert(sc88_reverb_macro(&rom, (uint8_t)m, got));
+      for (j = 0; j < 7; ++j)
+        assert(got[j] == (uint8_t)(0x10 * m + j));
+    }
+    assert(!sc88_reverb_macro(&rom, 8, got));
+    assert(!sc88_reverb_macro(NULL, 0, got));
+  }
+
   free(bytes);
   return 0;
 }
