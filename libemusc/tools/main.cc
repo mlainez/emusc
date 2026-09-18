@@ -196,15 +196,17 @@ int main(int argc, char **argv) {
     die(2, std::string("control ROM load failed: ") + e.what());
   }
 
-  if (!o.romset.empty()) {
-    // Guard against a directory holding the wrong generation's ROMs.
+  if (!o.device.empty()) {
+    // Guard against a directory holding the wrong device's ROMs.
     auto gen = ctrl->generation();
-    bool ok = (o.romset == "mk1" && gen == EmuSC::ControlRom::SynthGen::SC55) ||
-              (o.romset == "mk2" && gen == EmuSC::ControlRom::SynthGen::SC55mk2);
+    bool ok = (o.device == "sc55" && gen == EmuSC::ControlRom::SynthGen::SC55) ||
+              (o.device == "sc55mkii" && gen == EmuSC::ControlRom::SynthGen::SC55mk2) ||
+              (o.device == "sc88" && gen == EmuSC::ControlRom::SynthGen::SC88) ||
+              (o.device == "jv880" && gen == EmuSC::ControlRom::SynthGen::JV880);
     if (!ok) {
       restore_cout();
       die(2, "control ROM identifies as " + ctrl->model() + " v" + ctrl->version() +
-             ", which is not what --romset " + o.romset + " expects");
+             ", which is not what --device " + o.device + " expects");
     }
   }
 
