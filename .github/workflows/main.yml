@@ -43,7 +43,14 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         mkdir -p release
-        cp build/libemusc/src/libemusc.a release/
+        # Copy library (could be .so, .so.* or .a)
+        if [ -f build/libemusc/src/libemusc.so ]; then
+          cp build/libemusc/src/libemusc.so* release/ 2>/dev/null || true
+        fi
+        if [ -f build/libemusc/src/libemusc.a ]; then
+          cp build/libemusc/src/libemusc.a release/
+        fi
+        # Copy daemon if built
         if [ -f build/emuscd/emuscd ]; then
           cp build/emuscd/emuscd release/
         fi
