@@ -10,6 +10,6 @@ include(CTest)
 add_subdirectory(libemusc)
 
 # emuscd daemon requires ALSA (Linux only)
-if(UNIX AND NOT APPLE)
+if(NOT WIN32 AND NOT APPLE)
   add_subdirectory(emuscd)
 endif()
