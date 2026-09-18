@@ -570,11 +570,11 @@ void TVF::_iterate_phase(void)
                                              : (int) _instPartial.TVFBaseFlt);
 
   uint16_t accDepth = _ipLevelInit + (accCoFreq << 8);
-  accDepth = std::clamp((int) accDepth, 0, INT16_MAX);
+  accDepth = (uint16_t) std::clamp((int) accDepth, 0, (int) INT16_MAX);
 
   int accCutoffCtrl = _settings->get_acc_control_param(Settings::ControllerParam::TVFCutoff, _partId);
 
-  accDepth = std::clamp(accDepth + std::abs(accCutoffCtrl), 0, (int) INT16_MAX);
+  accDepth = (uint16_t) std::clamp((int) accDepth + std::abs(accCutoffCtrl), 0, (int) INT16_MAX);
 
   // This is how far the "TVF envelope" goes
   _envelopeOut = accDepth >> 8;
@@ -592,7 +592,7 @@ void TVF::_iterate_phase(void)
   lfoDepth = std::min(lfoDepth, 0x1800);
   lfoProd = int32_t(_LFO2->value() << 1) * lfoDepth;
   lfoMod = (lfoProd + 0x8000) >> 16;
-  accDepth = std::clamp(accDepth + lfoMod, 0, INT16_MAX);
+  accDepth = (uint16_t) std::clamp((int) accDepth + lfoMod, 0, (int) INT16_MAX);
 
   int tmRes = _settings->get_param(PatchParam::TVFResonance, _partId) - 0x40;
   tmRes = std::clamp(_instPartial.TVFResonance - tmRes * 2,
