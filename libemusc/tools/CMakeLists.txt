@@ -4,9 +4,7 @@ add_executable(emusc-render
   main.cc
   smf.cc
   smf.h
-  wav.h
-  ../src/sc88_render.c
-  ../src/sc88_renderer.h)
+  wav.h)
 
 target_link_libraries(emusc-render PRIVATE emusc_static)
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
