@@ -70,10 +70,10 @@ emuscd --device sc88
 ```
 
 ROM files should be named:
-- `sc55_rom1.bin` and `sc55_rom2.bin` (SC-55)
-- `sc55mkii_rom1.bin` and `sc55mkii_rom2.bin` (SC-55mkII)
-- `sc88_rom1.bin` and `sc88_rom2.bin` (SC-88)
-- `jv880_rom1.bin` and `jv880_wave.bin` (JV-880)
+- `sc55_rom1.bin`, `sc55_rom2.bin`, `sc55_waverom{1,2,3}.bin` (SC-55)
+- `sc55mkii_rom1.bin`, `sc55mkii_rom2.bin`, `sc55mkii_waverom{1,2}.bin` (SC-55mkII)
+- `sc88_rom1.bin`, `sc88_waverom{1,2,3,4}.bin` (SC-88; no separate CPU ROM)
+- `jv880_rom2.bin`, `jv880_waverom{1,2}.bin` (JV-880; `jv880_rom1.bin` is not used)
 
 ## Audio Output
 
