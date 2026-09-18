@@ -8,4 +8,8 @@ project(
 include(CTest)
 
 add_subdirectory(libemusc)
-add_subdirectory(emuscd)
+
+# emuscd daemon requires ALSA (Linux only)
+if(UNIX AND NOT APPLE)
+  add_subdirectory(emuscd)
+endif()
