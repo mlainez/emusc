@@ -4,6 +4,7 @@
 #include "sc88_tva.h"
 
 #include <limits.h>
+#include <math.h>
 
 #define SC88_LEVEL_TABLE 0x14f3eu
 #define SC88_COARSE_GAIN_TABLE 0x1503eu
@@ -140,6 +141,7 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
                               const struct sc88_zone_selection *zone,
                               uint8_t selector_key, uint8_t velocity,
                               const struct sc88_tva_levels *levels,
+                              uint8_t drum_level,
                               uint16_t *static_attenuation,
                               uint32_t *gain_q17)
 {
@@ -152,16 +154,26 @@ bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
     return false;
   *static_attenuation = component_attenuation;
   return sc88_tva_gain_from_headroom_q17(
-    rom, UINT16_MAX, levels, component_attenuation, gain_q17);
+    rom, UINT16_MAX, levels, drum_level, component_attenuation, gain_q17);
 }
 
+/* `compose_voice_amplitude` subtracts five level words from the headroom
+ * before the component's own static attenuation at `72b2`: master,
+ * secondary, part, expression, and - on a rhythm note whose gate `7295`
+ * finds set - the kit's per-note level read at `72a3` and subtracted at
+ * `72ab` through the same table at `0x14f3e` as the other four. The fifth
+ * is therefore in this loop and not a multiply on the way in: the table is
+ * a log-domain attenuation, and applying the level as a linear ratio
+ * delivered almost exactly half the attenuation in dB. */
 bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
                                      uint16_t headroom,
                                      const struct sc88_tva_levels *levels,
+                                     uint8_t drum_level,
                                      uint16_t static_attenuation,
                                      uint32_t *gain_q17)
 {
-  uint8_t sources[4];
+  uint8_t sources[5];
+  unsigned source_count = 4;
   uint16_t remaining = headroom;
   uint16_t reduction;
   uint16_t coarse;
@@ -175,7 +187,13 @@ bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
   sources[1] = levels->secondary;
   sources[2] = levels->part;
   sources[3] = levels->expression;
-  for (i = 0; i < 4; ++i) {
+  if (drum_level <= 127) {
+    sources[4] = drum_level;
+    source_count = 5;
+  } else if (drum_level != SC88_TVA_NO_DRUM_LEVEL) {
+    return false;
+  }
+  for (i = 0; i < source_count; ++i) {
     if (sources[i] > 127 ||
         !sc88_tva_level_word(rom, sources[i], &reduction))
       return false;
@@ -408,6 +426,33 @@ static uint16_t sc88_tva_curve_pack(uint16_t curve_entry, uint16_t scale)
   return (uint16_t)(exponent | mantissa);
 }
 
+/* The exponent's shifts, `0, 3, 5, 7`, read out of `78af..78bf`: stepping
+   the exponent byte down by `0x40` shifts the product right by two, and
+   the last step from `e = 1` to `e = 0` shifts by one more. */
+void sc88_tva_curve_decode(uint16_t word, struct sc88_tva_curve *curve)
+{
+  static const unsigned shift[4] = {0, 3, 5, 7};
+  if (!curve)
+    return;
+  curve->linear = (word & 0x4000) != 0;
+  curve->rate = (double)(word & 0x0fff) /
+    (double)(1u << shift[(word >> 12) & 3]) / 64.0;
+}
+
+double sc88_tva_curve_progress(const struct sc88_tva_curve *curve,
+                               double periods)
+{
+  double q;
+  if (!curve || periods <= 0.0 || curve->rate <= 0.0)
+    return 0.0;
+  q = curve->rate * periods;
+  if (curve->linear)
+    return q >= 1.0 ? 1.0 : q;
+  /* An exponential stage is 10.95 time constants long, so `q` runs to
+     about 11 and the gap left when the counter carries is 2e-5. */
+  return q >= 40.0 ? 1.0 : 1.0 - exp(-q);
+}
+
 /* The component's own rate index shifted by the part's modifier for that
    stage pair: `clamp(index + 2 * (part + secondary - 128), 0, 127)`. */
 static uint8_t sc88_tva_adjusted_rate_index(
@@ -478,6 +523,8 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
       curve_entry |= 0x4000;
     envelope->curve_words[stage] = sc88_tva_curve_pack(
       curve_entry, final_scale);
+    sc88_tva_curve_decode(envelope->curve_words[stage],
+                          envelope->curves + stage);
     rate = sc88_tva_be16(rom->bytes + SC88_ENVELOPE_RATE_TABLE +
                          (uint32_t)rate_index * 2);
     if (getenv("SC88_TRACE_TVA"))
@@ -502,6 +549,7 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
     sc88_tva_adjusted_rate_index(component->bytes[0x80], controls, 0) == 0
       ? 1 : 0;
   envelope->saved_count = 0;
+  envelope->stage_periods = 0.0;
   envelope->phase = envelope->initial_phases[envelope->stage];
   /* A stage ramps from wherever the one before it ended. When the first
      stage is skipped because it has no rate, its target is still where the
@@ -522,73 +570,33 @@ bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
   return true;
 }
 
-static uint32_t sc88_tva_linear_between(uint32_t start, uint32_t target,
-                                        double fraction)
-{
-  double value;
-  if (fraction <= 0.0)
-    return start;
-  if (fraction >= 1.0)
-    return target;
-  value = start + fraction * ((double)target - start);
-  return (uint32_t)(value < 0.0 ? 0.0 : value + 0.5);
-}
+/* Where the chip's amplitude register stands `periods` into the stage.
+   `76b3..7705` converts the stage's target attenuation through the coarse
+   and fine gain tables and stores the GAIN at `3d5a`; `71a9` hands that to
+   the chip with the stage's interpolation word beside it. So the approach
+   is in the gain domain, and its shape is the word's, not the counter's.
 
-/* One point along a stage: the attenuation ramps linearly and the level
-   tables turn it into a gain, so the amplitude falls exponentially. */
-/* A stage rising out of digital silence is interpolated in the gain
-   domain; every other stage in the attenuation word. The word is
-   logarithmic, so a linear ramp from `UINT16_MAX` is an exponential rise
-   in amplitude that spends most of its length inaudible - the French
-   Horn's 147 ms attack was still under one per cent of full scale at
-   80 ms while the hardware note is audible 0.2 ms in (`M-149`). The
-   attenuation domain stays everywhere else, where a stage is a decay and
-   it is correct there (`M-016`). */
-static uint32_t sc88_tva_stage_between(
-  const struct sc88_rom *rom, const struct sc88_tva_envelope *envelope,
-  unsigned stage, double fraction, uint32_t fallback);
-
-static uint32_t sc88_tva_attenuation_between(
-  const struct sc88_rom *rom, uint16_t start, uint16_t target,
-  double fraction, uint32_t fallback)
+   This replaces a ramp that was linear in the attenuation word and
+   therefore exactly as long as the dwell (`M-016`, `M-149`), together with
+   the separate gain-domain case that a stage rising out of digital silence
+   needed: an exponential stage covers most of its gap early whichever
+   direction it moves, so neither special case survives. */
+static uint32_t sc88_tva_stage_point(
+  const struct sc88_tva_envelope *envelope, unsigned stage, double periods)
 {
-  double value;
-  uint32_t gain_q17;
-  if (fraction <= 0.0)
-    fraction = 0.0;
-  else if (fraction >= 1.0)
-    fraction = 1.0;
-  value = (double)start + fraction * ((double)target - (double)start);
-  if (value < 0.0)
-    value = 0.0;
-  else if (value > (double)UINT16_MAX)
-    value = (double)UINT16_MAX;
-  if (!sc88_tva_envelope_target_q17(rom, (uint16_t)(value + 0.5), &gain_q17))
-    return fallback;
-  return gain_q17;
-}
-
-static uint32_t sc88_tva_stage_between(
-  const struct sc88_rom *rom, const struct sc88_tva_envelope *envelope,
-  unsigned stage, double fraction, uint32_t fallback)
-{
-  if (envelope->start_attenuation == UINT16_MAX &&
-      envelope->target_attenuations[stage] != UINT16_MAX) {
-    uint32_t target;
-    if (!sc88_tva_envelope_target_q17(rom, envelope->target_attenuations[stage],
-                                      &target))
-      return fallback;
-    return sc88_tva_linear_between(0, target, fraction);
-  }
-  return sc88_tva_attenuation_between(
-    rom, envelope->start_attenuation, envelope->target_attenuations[stage],
-    fraction, fallback);
+  double progress = sc88_tva_curve_progress(envelope->curves + stage,
+                                            periods);
+  double start = (double)envelope->start_q17;
+  double value = start +
+    progress * ((double)envelope->targets_q17[stage] - start);
+  if (value <= 0.0)
+    return 0;
+  return (uint32_t)(value + 0.5);
 }
 
 uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
   const struct sc88_tva_envelope *envelope, double period_fraction)
 {
-  double phase;
   if (!envelope)
     return 0;
   if (!envelope->active || envelope->stage >= 4)
@@ -597,12 +605,9 @@ uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
     period_fraction = 0.0;
   else if (period_fraction > 1.0)
     period_fraction = 1.0;
-  phase = envelope->phase +
-    period_fraction * envelope->increments[envelope->stage];
-  if (phase > 65535.0)
-    phase = 65535.0;
-  return sc88_tva_stage_between(rom, envelope, envelope->stage,
-                                phase / 65536.0, envelope->current_q17);
+  (void)rom;
+  return sc88_tva_stage_point(envelope, envelope->stage,
+                              envelope->stage_periods + period_fraction);
 }
 
 bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
@@ -613,9 +618,11 @@ bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
   uint16_t remaining;
   uint16_t working;
   uint16_t increment;
+  double steps = 0.0;
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
       elapsed_periods == 0)
     return false;
+  (void)rom;
   catchup = (uint8_t)(elapsed_periods - 1);
   remaining = (uint16_t)(envelope->saved_count +
     (catchup <= 127 ? (int)catchup : (int)catchup - 256));
@@ -630,6 +637,7 @@ bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
       envelope->start_attenuation =
         envelope->target_attenuations[envelope->stage];
       ++envelope->stage;
+      envelope->stage_periods = 0.0;
       envelope->phase = envelope->stage < 4
         ? envelope->initial_phases[envelope->stage] : 0;
       if (envelope->stage == 4)
@@ -637,15 +645,16 @@ bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
       return true;
     }
     working = next;
+    steps += 1.0;
     --remaining;
     if (remaining == UINT16_MAX)
       break;
   }
   envelope->phase = working;
   envelope->saved_count = 0;
-  envelope->current_q17 = sc88_tva_stage_between(
-    rom, envelope, envelope->stage, working / 65536.0,
-    envelope->current_q17);
+  envelope->stage_periods += steps;
+  envelope->current_q17 = sc88_tva_stage_point(
+    envelope, envelope->stage, envelope->stage_periods);
   return true;
 }
 

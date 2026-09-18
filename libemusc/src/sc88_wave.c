@@ -2,6 +2,7 @@
 #include "sc88_wave.h"
 
 #include <limits.h>
+#include <math.h>
 
 static uint16_t sc88_be16(const uint8_t *p)
 {
@@ -91,6 +92,44 @@ bool sc88_wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
     *out = SC88_WAVE_FORWARD_LOOP;
     return true;
   case 0x10:
+    /* Ping-pong, and the ROM says so by itself.
+
+       Read forward - which is what this returned until TASK-183 - every
+       control-0x10 loop jumps in phase once per traversal, and that is the
+       pop the owner reported on the French Horn for weeks. It is not one
+       instrument: over the whole wave ROM, the correlation ACROSS the join
+       of a loop played forward is +0.968 at the median for the 1518
+       descriptors that carry 0x00 and +0.197 for the 215 that carry 0x10.
+       The 0x00 loops tile; the 0x10 loops do not, and 0x10 is on exactly
+       the material a designer cannot cut to a whole number of periods -
+       Choir, Strings, Church Organ, French Horn, Tremolo Strings,
+       Overdrive, Timpani.
+
+       But a ping-pong turn in a DIFFERENTIAL format is not a time reversal.
+       The decoder is an accumulator over deltas; running the address back
+       down the stream while still adding what it reads gives
+
+           y[m] = x[c] + d[c] + ... + d[c-m+1] = 2*x[c] - x[c-m]
+
+       - the loop backwards AND reflected about the value it turned at,
+       which is continuous in value and in SLOPE. A plain time reversal
+       leaves a corner instead, and measures worse than the forward read,
+       which is how the forward reading came to look right.
+
+       The ROM is cut for the reflected turn: over all 1733 looping
+       descriptors the deltas from address_b to address_c sum to EXACTLY
+       zero, so x[c] == x[b-1] without a single exception. That is what
+       lands the reflected pass on x[b-1] as its address reaches b-1, so
+       the cycle closes with no step and no drift.
+
+       Measured, French Horn C4, worst period-to-period correlation through
+       the sustain: forward 0.780, plain time reversal -0.424, reflected
+       0.987, against the hardware recording's 0.992. Over the eighteen
+       control-0x10 instruments that have an SC-88 recording, p50 goes from
+       +0.370 to +0.941 where the hardware's own is +0.926, and where the
+       hardware dips we now dip with it. The 0x00 renders are unchanged
+       byte for byte, and the corrected 63-instrument audit does not move:
+       median MAD 2.1 dB, 46 within 3 dB, 7 past 6. */
     *out = SC88_WAVE_PING_PONG_LOOP;
     return true;
   case 0x80:
@@ -260,6 +299,89 @@ bool sc88_fce_decode_storage(const uint8_t *bank, size_t bank_size,
   *base_address = base;
   *written = count;
   return true;
+}
+
+/* Goertzel magnitude squared of `x[0..count)` at DFT bin `k` of a
+   `count`-point transform.  Stable where a complex recurrence over several
+   thousand samples is not. */
+static double sc88_wave_bin_power(const int32_t *x, size_t count, size_t k)
+{
+  static const double two_pi = 6.283185307179586476925286766559;
+  double omega = two_pi * (double)k / (double)count;
+  double coeff = 2.0 * cos(omega);
+  double s1 = 0.0;
+  double s2 = 0.0;
+  size_t n;
+
+  for (n = 0; n < count; ++n) {
+    double s0 = (double)x[n] + coeff * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return s1 * s1 + s2 * s2 - coeff * s1 * s2;
+}
+
+/* -15 dB and -7 dB as power ratios; see the note in the header for the
+   measured gaps these sit in the middle of. */
+#define SC88_WAVE_BELOW_POWER 0.0316227766016838
+#define SC88_WAVE_PARTIAL_POWER 0.199526231496888
+
+bool sc88_wave_loop_reads_double(const int32_t *pcm, size_t count,
+                                 uint32_t base_address,
+                                 const struct sc88_wave_descriptor *desc)
+{
+  enum sc88_wave_loop_type mode;
+  double period;
+  double cycles;
+  double rounded;
+  double at_half;
+  double at_root;
+  size_t length;
+  size_t first;
+  size_t half;
+  size_t whole;
+  size_t k;
+
+  if (!pcm || !desc || !sc88_wave_descriptor_loop_type(desc, &mode) ||
+      mode != SC88_WAVE_FORWARD_LOOP || desc->root_key > 127 ||
+      desc->address_c <= desc->address_b || desc->address_b < base_address)
+    return false;
+  first = (size_t)(desc->address_b - base_address);
+  length = (size_t)(desc->address_c - desc->address_b) + 1u;
+  if (length < 16u || first > count || count - first < length)
+    return false;
+
+  /* How many periods of the note the descriptor claims fit in the loop. */
+  period = (double)SC88_WAVE_SAMPLE_RATE /
+    (440.0 * pow(2.0, ((double)desc->root_key - 69.0) / 12.0));
+  cycles = (double)length / period;
+  rounded = floor(cycles + 0.5);
+  if (rounded < 2.0 || fabs(cycles - rounded) > 0.02)
+    return false;
+  whole = (size_t)rounded;
+  if (whole % 2u)
+    return false;
+  half = whole / 2u;
+  if (whole >= length / 2u)
+    return false;
+
+  at_half = sc88_wave_bin_power(pcm + first, length, half);
+  at_root = sc88_wave_bin_power(pcm + first, length, whole);
+  if (at_half <= 0.0)
+    return false;
+
+  /* Nothing below the half-root partial: it is the loop's own fundamental
+     and not a bin of some inharmonic body.  This is what keeps the Melodic
+     Tom out - its loop spans thirty root-key cycles and carries 37 dB more
+     energy below bin fifteen than in it. */
+  for (k = 1u; k < half; ++k) {
+    if (sc88_wave_bin_power(pcm + first, length, k) >
+        at_half * SC88_WAVE_BELOW_POWER)
+      return false;
+  }
+  /* And it is a partial, not a seam artefact: the clean low zones of these
+     same organ sets carry a bin there 30 dB down. */
+  return at_half >= at_root * SC88_WAVE_PARTIAL_POWER;
 }
 
 bool sc88_wave_cursor_init(struct sc88_wave_cursor *cursor,

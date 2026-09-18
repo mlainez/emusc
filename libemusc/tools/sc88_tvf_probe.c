@@ -66,6 +66,7 @@ int main(int argc, char **argv)
   unsigned program = 0, variation = 0, key = 60, velocity = 100;
   unsigned periods = 250;
   bool survey = false;
+  bool keyfollow = false;
   size_t control_size = 0;
   uint8_t *control;
   struct sc88_rom rom;
@@ -79,6 +80,8 @@ int main(int argc, char **argv)
     const char *arg = argv[a];
     if (!strcmp(arg, "--survey"))
       survey = true;
+    else if (!strcmp(arg, "--keyfollow"))
+      keyfollow = true;
     else if (!strcmp(arg, "--control") && a + 1 < argc)
       control_path = argv[++a];
     else if (!strcmp(arg, "--program") && a + 1 < argc)
@@ -104,6 +107,41 @@ int main(int argc, char **argv)
   if (!control || !sc88_rom_init(&rom, control, control_size)) {
     fprintf(stderr, "cannot read %s\n", control_path);
     return 1;
+  }
+  if (keyfollow) {
+    /* The key-follow factor every component scales the played key by, and
+       the key offset added after it.  A component at 0x4000 tracks the
+       keyboard one semitone per key; anything else scales a stimulus error
+       along with everything else, so a reference recorded twelve keys away
+       from the one we play comes back as six semitones at 0x2000 and never
+       lands on an octave.  No octave test can see that, which is why the
+       factor has to be listed rather than inferred from the audio. */
+    unsigned v, pr;
+    printf("variation\tprogram\tcomponent\tname\tfactor\tkeyfollow"
+           "\tkey_offset\n");
+    for (v = 0; v <= 36; ++v) {
+      for (pr = 0; pr < 128; ++pr) {
+        uint32_t offset;
+        struct sc88_tone t;
+        unsigned c;
+        char n[13];
+        if (!sc88_rom_select_melodic(&rom, (uint8_t)v, (uint8_t)pr, &offset) ||
+            !sc88_rom_open_tone(&rom, offset, &t))
+          continue;
+        sc88_rom_tone_name(&t, n);
+        for (c = 0; c < t.component_count; ++c) {
+          struct sc88_component comp;
+          int16_t factor;
+          if (!sc88_rom_open_component(&rom, &t, c, &comp))
+            continue;
+          factor = (int16_t)((comp.bytes[0x14] << 8) | comp.bytes[0x15]);
+          printf("%u\t%u\t%u\t%s\t%d\t%.5f\t%d\n", v, pr, c, n,
+                 factor, factor / 16384.0, (int)(int8_t)comp.bytes[0x16]);
+        }
+      }
+    }
+    free(control);
+    return 0;
   }
   if (survey) {
     /* Every melodic tone of both variation maps, so the spread of the
@@ -203,8 +241,8 @@ int main(int argc, char **argv)
       if (!sc88_rom_open_component(&rom, &tone, c, &comp))
         continue;
       printf("\n  component %u zones by key:\n", c);
-      printf("    %4s %9s %6s %9s %6s %5s %7s %7s %5s\n", "key",
-             "boundary", "root", "address_a", "bank", "atten",
+      printf("    %4s %9s %6s %9s %9s %9s %6s %6s %5s %7s %7s %5s\n", "key",
+             "boundary", "root", "address_a", "loop_b", "end_c", "off16", "bank", "atten",
              "basecor", "altcor", "ctrl");
       for (k = 0; k < sizeof probe_keys / sizeof *probe_keys; ++k) {
         struct sc88_zone_selection zone;
@@ -213,9 +251,12 @@ int main(int argc, char **argv)
           printf("    %4u  (no zone)\n", probe_keys[k]);
           continue;
         }
-        printf("    %4u %9u %6u %9lx %6u %5u %7d %7d %5u\n",
+        printf("    %4u %9u %6u %9lx %9lx %9lx %6u %6u %5u %7d %7d %5u\n",
                probe_keys[k], zone.boundary, zone.descriptor.root_key,
                (unsigned long)zone.descriptor.address_a,
+               (unsigned long)zone.descriptor.address_b,
+               (unsigned long)zone.descriptor.address_c,
+               (unsigned)zone.descriptor.start_offset,
                zone.descriptor.bank_select, zone.static_attenuation,
                zone.descriptor.base_pitch_correction,
                zone.descriptor.alternate_pitch_correction,
@@ -240,6 +281,16 @@ int main(int argc, char **argv)
     controls.part_resonance = 64;
     controls.secondary_resonance = 64;
 
+    if (getenv("SC88_DUMP_BYTES")) {
+      struct sc88_component cdump;
+      if (sc88_rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
+        unsigned b;
+        printf("BYTES\t%u\t%u", (unsigned)program, i);
+        for (b = 0; b < SC88_COMPONENT_SIZE; ++b)
+          printf("\t%u", (unsigned)cdump.bytes[b]);
+        printf("\n");
+      }
+    }
     if (!sc88_rom_open_component(&rom, &tone, i, &component) ||
         !sc88_tvf_key_modulation(&rom, &tone, &component, (uint8_t)key,
                                  &key_modulation) ||
@@ -297,17 +348,17 @@ int main(int argc, char **argv)
                                     (uint8_t)key, (uint8_t)velocity,
                                     &tva, &env)) {
         unsigned st;
-        printf("    TVA stages: %-6s %10s %9s %9s %8s\n", "stage",
-               "atten", "gain q17", "dB", "ms");
+        printf("    TVA stages: %-6s %10s %9s %9s %8s %8s\n", "stage",
+               "atten", "gain q17", "dB", "dwell ms", "curve");
         for (st = 0; st < 4; ++st) {
           double db = env.targets_q17[st] > 0
             ? 20.0 * log10((double)env.targets_q17[st] / 131072.0)
             : -999.0;
           double ms = env.increments[st]
             ? 65536.0 / env.increments[st] * 8.0008 : 0.0;
-          printf("                %-6u %10u %9u %9.1f %8.0f\n",
+          printf("                %-6u %10u %9u %9.1f %8.0f   0x%04x\n",
                  st, env.target_attenuations[st], env.targets_q17[st],
-                 db, ms);
+                 db, ms, env.curve_words[st]);
         }
         printf("                starts at stage %u\n", env.stage);
       }
@@ -325,7 +376,8 @@ int main(int argc, char **argv)
       if (sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
           sc88_tva_static_gain_q17(&rom, &tone, &component, &zone,
                                    (uint8_t)key, (uint8_t)velocity,
-                                   &levels, &static_attenuation, &gain)) {
+                                   &levels, SC88_TVA_NO_DRUM_LEVEL,
+                                   &static_attenuation, &gain)) {
         printf("    pitch env: depth %6d  rates %3u %3u %3u %3u  release %3u\n",
            (int)(int16_t)((comp_bytes_at(&component, 0x1a) << 8) |
                           comp_bytes_at(&component, 0x1b)),

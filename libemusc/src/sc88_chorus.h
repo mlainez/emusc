@@ -53,6 +53,14 @@ struct sc88_chorus {
   bool active;
 };
 
+/* One of the eight macro presets at `0x1587e + 8*macro`: pre-LPF, level,
+ * feedback, delay, rate, depth, send to reverb and send to delay, in that
+ * order. Writing the chorus macro address copies these eight bytes over the
+ * rest of the block - SC88-CTL handler 0x3400 is the reverb handler 0x3388's
+ * sibling and calls the same copy helper. */
+bool sc88_chorus_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[8]);
+
 bool sc88_chorus_init(struct sc88_chorus *ch, double output_rate);
 void sc88_chorus_destroy(struct sc88_chorus *ch);
 void sc88_chorus_reset(struct sc88_chorus *ch);

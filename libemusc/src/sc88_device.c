@@ -36,6 +36,28 @@ static void sc88_device_sync_chorus(struct sc88_device *device)
                          device->chorus_depth, device->chorus_pre_lpf);
 }
 
+/* Writing the chorus macro copies eight bytes over pre-LPF through delay
+   send - handler 0x3400, the reverb handler 0x3388's sibling, through the
+   same copy helper and the same 8-byte record stride. The delay send is
+   single-module only and this engine does not hold it. */
+static bool sc88_device_load_chorus_macro(struct sc88_device *device,
+                                          uint8_t macro)
+{
+  uint8_t p[8];
+  if (macro > 7 || !sc88_chorus_macro(&device->renderer.rom, macro, p))
+    return false;
+  device->chorus_macro = macro;
+  device->chorus_pre_lpf = p[0] > 7 ? 7 : p[0];
+  device->chorus_level = p[1];
+  device->chorus_feedback = p[2];
+  device->chorus_delay = p[3];
+  device->chorus_rate = p[4];
+  device->chorus_depth = p[5];
+  device->chorus_send_to_reverb = p[6];
+  sc88_device_sync_chorus(device);
+  return true;
+}
+
 static void sc88_device_sync_lfo(struct sc88_device *device, uint8_t part)
 {
   const struct sc88_channel_state *channel = device->channels + part;
@@ -130,10 +152,7 @@ static bool sc88_device_init_common(
                           SC88_WAVE_BANK_COUNT, output_rate, wrap))
     goto fail;
   device->output_rate = output_rate;
-  device->dc_pole = (float)(1.0 - 2.0 * 3.14159265358979323846 * 10.0 /
-                            output_rate);
-  device->dc_x[0] = device->dc_x[1] = 0.0f;
-  device->dc_y[0] = device->dc_y[1] = 0.0f;
+  sc88_output_init(&device->output, output_rate);
   sc88_renderer_set_tvf_audio_transfer(
     &device->renderer, sc88_tvf_audio_process_provisional,
     &device->output_rate);
@@ -203,6 +222,9 @@ void sc88_device_destroy(struct sc88_device *device)
   memset(device, 0, sizeof *device);
 }
 
+static bool sc88_device_load_reverb_macro(struct sc88_device *device,
+                                          uint8_t macro);
+
 void sc88_device_reset_controllers(struct sc88_device *device)
 {
   unsigned part;
@@ -211,27 +233,16 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->master_volume = 127;
   device->secondary_level = 127;
   device->master_pan = 64;
-  /* Hall 2 with the manual's own default level, time and pre-LPF. */
-  device->reverb_character = 4;
-  device->reverb_level = 64;
-  device->reverb_time = 64;
-  device->reverb_pre_lpf = 0;
-  device->reverb_predelay = 0;
-  device->reverb_delay_feedback = 0;
-  sc88_reverb_set_predelay(&device->reverb, 0);
-  sc88_reverb_set_params(&device->reverb, device->reverb_level,
-                         device->reverb_time, device->reverb_pre_lpf);
+  /* The reverb block a reset leaves behind is macro 4's own preset row.
+     The power-on image at ROM 0x13104 - the patch common block, recognisable
+     by the default patch name in its first sixteen bytes - holds
+     `04 04 00 40 40 00 00 00` there: the macro, then the seven bytes macro 4
+     copies. So this is a table read, not a second set of constants. */
+  (void)sc88_device_load_reverb_macro(device, 4);
   sc88_reverb_reset(&device->reverb);
-  /* The manual's own chorus defaults. */
-  device->chorus_macro = 2;
-  device->chorus_pre_lpf = 0;
-  device->chorus_level = 64;
-  device->chorus_feedback = 8;
-  device->chorus_delay = 80;
-  device->chorus_rate = 3;
-  device->chorus_depth = 19;
-  device->chorus_send_to_reverb = 0;
-  sc88_device_sync_chorus(device);
+  /* The chorus block a reset leaves behind is macro 2's own preset row, the
+     same way the reverb's is macro 4's; the power-on image carries it. */
+  (void)sc88_device_load_chorus_macro(device, 2);
   sc88_chorus_reset(&device->chorus);
   /* Delay macro 0 and the ten bytes it copies over pre-LPF through reverb
      send, which is what writing the macro address does. */
@@ -244,6 +255,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   device->eq.enabled = true;
   sc88_device_sync_eq(device);
   sc88_eq_reset(&device->eq);
+  sc88_output_reset(&device->output);
   device->delay_macro = 0;
   if (sc88_delay_macro(&device->renderer.rom, 0, device->delay_params))
     (void)sc88_delay_set_params(&device->renderer.rom, &device->delay,
@@ -372,6 +384,35 @@ static bool sc88_device_set_reverb_character(struct sc88_device *device,
   return true;
 }
 
+/* Writing the reverb macro address copies the preset's seven bytes over
+   character, pre-LPF, level, time, delay feedback, the reserved byte and
+   predelay. SC88-CTL handler 0x3388 is the delay handler 0x342b's sibling:
+   both clamp the written byte through a bounds record, store it, and then,
+   only when the index is zero, copy the rest of the block out of a ROM table
+   (`0x1583e + 8*macro` here, `0x158be + 16*macro` there) through the same
+   pair of copy helpers. The power-on loader at 0x4476 reads the same table. */
+static bool sc88_device_load_reverb_macro(struct sc88_device *device,
+                                          uint8_t macro)
+{
+  uint8_t p[7];
+  if (macro > 7 || !sc88_reverb_macro(&device->renderer.rom, macro, p))
+    return false;
+  device->reverb_macro = macro;
+  if (!sc88_device_set_reverb_character(device, p[0] > 7 ? 7 : p[0]))
+    return false;
+  device->reverb_pre_lpf = p[1] > 7 ? 7 : p[1];
+  device->reverb_level = p[2];
+  device->reverb_time = p[3];
+  device->reverb_delay_feedback = p[4];
+  /* p[5] is the block's reserved byte; `40 01 36` has no parameter and the
+     firmware refuses a write to it. */
+  device->reverb_predelay = p[6];
+  sc88_reverb_set_predelay(&device->reverb, device->reverb_predelay);
+  sc88_reverb_set_params(&device->reverb, device->reverb_level,
+                         device->reverb_time, device->reverb_pre_lpf);
+  return true;
+}
+
 /* One address of a DT1 packet. `true` means the write was acted on. */
 static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
                                    uint32_t address, uint8_t value)
@@ -396,12 +437,9 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
   case 0x400006:
     sc88_device_set_master_pan(device, value);
     return true;
-  /* The macro and the character are printed with the same eight names and
-     the same default, so a macro write selects that character. Whether the
-     macro also reloads the rest of the reverb block from a preset - as the
-     delay macro demonstrably does - is not recovered, so nothing else is
-     touched here. A song that means a preset sends its fields anyway. */
   case 0x400130:
+    /* The macro reloads the whole block from its preset; see the loader. */
+    return value <= 7 && sc88_device_load_reverb_macro(device, value);
   case 0x400131:
     return value <= 7 && sc88_device_set_reverb_character(device, value);
   case 0x400132:
@@ -477,8 +515,7 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     return sc88_delay_set_params(&device->renderer.rom, &device->delay,
                                  device->delay_params);
   case 0x400138:
-    device->chorus_macro = value;
-    return true;
+    return sc88_device_load_chorus_macro(device, value);
   case 0x400139:
     if (value > 7)
       return false;
@@ -972,16 +1009,8 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
   if (device->reverb.active)
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
   sc88_eq_process(&device->eq, stereo, frames);
-  {
-    size_t k;
-    unsigned ch;
-    for (k = 0; k < frames; ++k)
-      for (ch = 0; ch < 2; ++ch) {
-        float x = stereo[k * 2 + ch];
-        float y = x - device->dc_x[ch] + device->dc_pole * device->dc_y[ch];
-        device->dc_x[ch] = x;
-        device->dc_y[ch] = y;
-        stereo[k * 2 + ch] = y;
-      }
-  }
+  /* Last: the output stage. Everything above this line is the digital
+     machine; sc88_output.c is the one place that carries behaviour we
+     have measured but not derived. */
+  sc88_output_process(&device->output, stereo, frames);
 }

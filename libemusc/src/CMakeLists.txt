@@ -35,6 +35,8 @@ set(EMUSC_SOURCES
   sc88_engine.h
   sc88_oscillator.c
   sc88_oscillator.h
+  sc88_output.c
+  sc88_output.h
   sc88_lfo.c
   sc88_lfo.h
   sc88_pan.c
@@ -93,10 +95,33 @@ target_include_directories(emusc_static PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION})
 
-# SC-88 specific debug/analysis tools have been removed.
-# Use the multi-device emusc-render renderer in libemusc/tools/ instead.
-# Individual tools (sc88_render, sc88_tvf_probe, sc88_dump_samples) can be built
-# separately from their source files if needed for specialized analysis.
+# SC-88 specific debug/analysis tools. Distinct from the multi-device
+# emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
+# public API, these link the sc88_* sources directly, which is what the
+# TVF/wave diagnostic tools need and what the SC-88 comparison harness in
+# emusc-match (tools/sc88/) has always built and pinned.
+set(SC88_RENDER_SOURCES
+  sc88_chorus.c sc88_delay.c sc88_eq.c sc88_output.c
+  sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
+  sc88_pitch.c sc88_renderer.c sc88_reverb.c sc88_rom.c sc88_tva.c
+  sc88_tvf.c sc88_wave.c)
+
+add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
+target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(sc88_render PRIVATE m)
+set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+
+add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
+  sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
+target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(sc88_tvf_probe PRIVATE m)
+set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+
+add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
+  sc88_oscillator.c sc88_rom.c sc88_wave.c)
+target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(sc88_dump_samples PRIVATE m)
+set_target_properties(sc88_dump_samples PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 if(BUILD_TESTING)
   # Every test here is assertion-driven: the assertions are the test, not a
@@ -141,11 +166,20 @@ if(BUILD_TESTING)
   sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_wave.c)
+  sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
+  sc88_test(sc88_tva_test sc88_tva.c sc88_rom.c sc88_wave.c)
+  # The interpolation word's identity is a property of the SC-88's own
+  # curve and rate tables, so the sweep needs the ROM; without it the test
+  # reports skipped rather than passing while checking only the layout.
+  set_property(TEST sc88_tva_test PROPERTY SKIP_RETURN_CODE 77)
+  if(DEFINED ENV{SC88_CONTROL_ROM})
+    set_property(TEST sc88_tva_test PROPERTY
+      COMMAND $<TARGET_FILE:sc88_tva_test> $ENV{SC88_CONTROL_ROM})
+  endif()
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test sc88_device.c sc88_chorus.c sc88_delay.c sc88_eq.c ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test sc88_device.c sc88_chorus.c sc88_delay.c sc88_eq.c sc88_output.c ${SC88_VOICE_SOURCES})
 endif()

@@ -49,6 +49,78 @@ struct sc88_engine_slot {
   bool allocated;
 };
 
+/* A voice the CPU has taken the slot back from while it was still
+   sounding, carrying on into the chip's stop ramp.
+
+   UNVERIFIED, and it has to be said plainly: `06_voice_engine/allocation.md`
+   separates two things a same-note recycle does, and only one of them is
+   recovered. The slot is freed and prepended through `0x2333` so it is the
+   next slot allocated - independently traced in SC88-CTL, and the free list
+   above keeps it exactly as traced. The other half is
+   `request_voice_recycle` at `0x4c60`, which "either starts an XP stop
+   transaction for an enabled slot or queues it, ... distinct from the
+   normal envelope-release initializer", and
+   `03_disassembly/functions.md` records that stop law as UNRESOLVED. What
+   the chip does to the SOUND when the CPU hands a sounding voice back is
+   not read off the device.
+
+   Clearing the voice along with its slot is one reading of that law, and
+   it is the reading that ends the waveform at whatever sample value the
+   voice stands at. On a roll - one key struck 46 times in five seconds -
+   that is a step per stroke: audible as a crackle under loud material, and
+   5.6x the SCVA oracle's spikiness on the same file at the 99th percentile.
+   These entries are the other reading. The CPU stops servicing the voice
+   the moment it takes the slot, as the trace says, and the chip's amplitude
+   register is given the target zero, the voice sounding on until the
+   register arrives - which is what the note-end path at `7228..7232` does
+   already, with the same interpolation word.
+
+   Nothing here is a new shape: the ramp is `sc88_render_static_gain_q17`,
+   the register model already in `sc88_renderer.h`, evaluated on this
+   voice's own clock instead of the control period's. Its time constant is
+   therefore not fitted - it is `0x2a7`, about 0.75 ms, the word the
+   firmware writes beside every amplitude target, which is long enough to
+   remove a step at 32 kHz and far too short to be heard as a decay.
+
+   What this is not is a claim about the chip's voice channel. The slot is
+   reallocated at once - that is the traced half - so on the device the stop
+   and the note that took the slot contend for the same register block, and
+   which of them the block is carrying while the stop runs is precisely what
+   `0x4c60`'s queue decides and what is not recovered. Here the ramp runs
+   beside the new voice.
+
+   Two sibling devices support the direction and neither settles it: on the
+   SC-55mkII, measured on hardware, a retriggered drum key "lets the older
+   voice ring on to its natural end" (`part.cc`, P-0283), and on the JV-880,
+   traced in firmware, "every drum hit holds its voice until its envelope
+   ends, a repeated key included" (scdb D-44). Both hold the voice for its
+   whole envelope, which is much longer than this; both are other machines.
+   What would settle the SC-88's own law is recovering the XP stop
+   transaction at `0x4c60` (`P-0358`).
+
+   The pool is separate from the slots on purpose: a stopping voice is NOT
+   a slot, is not counted by `sc88_engine_active_slots`, and cannot delay or
+   reorder an allocation. A full pool ends the voice where it stands: the
+   stop is what the song can spare, never the allocation. */
+#define SC88_ENGINE_STOPPING_COUNT 32u
+
+struct sc88_engine_stopping {
+  struct sc88_render_component component;
+  /* Everything the CPU had composed for this voice except the amplitude
+     register - the TVA envelope, the amplitude oscillators and the note's
+     own gain - frozen at the instant of the stop, because after it nothing
+     services the voice. Holding the product is also what makes the first
+     ramped sample continue the last serviced one exactly. */
+  float gain;
+  /* Control periods since the stop was written: the clock the register's
+     approach to zero runs on. */
+  double periods;
+  /* The part whose effect sends the voice still goes through. Kept here
+     because the note record is freed with the slot. */
+  uint8_t part;
+  bool active;
+};
+
 struct sc88_engine_part {
   struct sc88_tva_levels levels;
   struct sc88_pan_controls pan;
@@ -120,6 +192,7 @@ struct sc88_engine {
   struct sc88_engine_note notes[SC88_ENGINE_NOTE_COUNT];
   struct sc88_engine_slot slots[SC88_ENGINE_SLOT_COUNT];
   struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
+  struct sc88_engine_stopping stopping[SC88_ENGINE_STOPPING_COUNT];
   /* one random word shared by every oscillator, as the firmware has */
   uint16_t lfo_seed;
   /* Draws the position a part-pan of zero asks for. Separate from

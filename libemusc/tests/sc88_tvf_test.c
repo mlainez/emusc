@@ -5,6 +5,7 @@
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,8 +15,36 @@ static void put16(uint8_t *p, uint16_t value)
   p[1] = (uint8_t)value;
 }
 
+/* The cutoff word's anchor, from the two limit-table entries that fix it
+   without rounding. f*f + f*q = 2 gives f = sqrt(2) at resonance index 0
+   and f = 1 at index 64; with f = 2*sin(pi*fc/fs) those ceilings are
+   fs/4 and fs/6 exactly. The ROM stores them as 0xf800 and 0xf000, which
+   the firmware expands to the words below, so a word_to_hz that does not
+   return fs/4 and fs/6 there is reading the table at the wrong anchor.
+   Both equations are exact in integers, so the tolerance only has to
+   clear double precision: 1e-6 octave is 60 times tighter than the one
+   word unit that already breaks 28 entries of each table, and 1e9 times
+   looser than the arithmetic's own error. */
+static void check_anchor(void)
+{
+  const double fs = 32000.0;
+  const double tol = 1e-6;                  /* octaves */
+
+  assert(fabs(log2(sc88_tvf_word_to_hz(0x3e000) / (fs / 4.0))) < tol);
+  assert(fabs(log2(sc88_tvf_word_to_hz(0x3c000) / (fs / 6.0))) < tol);
+  assert(sc88_tvf_word_to_hz(0x40000) == fs / 2.0);
+  assert(sc88_tvf_word_to_hz(0x40000 + 1) == fs / 2.0);
+
+  /* One octave of word is one octave of sine, not of frequency: halving
+     the sine from 1/2 does not halve 5333 Hz. */
+  assert(sc88_tvf_word_to_hz(0x3c000 - 16384) <
+         0.5 * sc88_tvf_word_to_hz(0x3c000));
+}
+
 int main(void)
 {
+  check_anchor();
+
   static const uint8_t vectors[16] = {
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
     0x00, 0x00, 0x01, 0xf4, 0x00, 0x00, 0x01, 0xf4
@@ -127,10 +156,48 @@ int main(void)
     {
       struct sc88_tvf_audio_state audio;
       float filtered;
+      unsigned n;
       sc88_tvf_audio_reset(&audio);
+      /* The forward-Euler low-pass reads its integrators before it
+         writes them, so a cleared filter's first output is zero: the
+         section carries one sample of delay and nothing else. Asserting
+         instead that the first sample is already inside (0, 1) tests the
+         trapezoidal form's instantaneous path, which this topology does
+         not have. */
       filtered = sc88_tvf_audio_process_provisional(
         NULL, &audio, &registers, 0.5, 1.0f);
-      assert(filtered > 0.0f && filtered < 1.0f);
+      assert(filtered == 0.0f);
+      /* The corner these registers ask for is low enough that the step
+         takes tens of thousands of samples to arrive; the count is what
+         it takes, not a round number. */
+      for (n = 0; n < 262144; ++n) {
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+        assert(filtered > -1.0f && filtered < 2.0f);
+      }
+      /* Held at one a low-pass settles on one: the section is unity at
+         DC, which is the property that says the coefficients are paired
+         correctly. */
+      assert(filtered > 0.999f && filtered < 1.001f);
+      /* Type code 2 takes the high-pass output of the same section, and
+         a high-pass is zero at DC. Same registers, same input, opposite
+         limit: this is what separates the two readings of the code, and
+         it fails if code 2 ever falls back to the low-pass. */
+      registers.filter_select = 0x0800;
+      sc88_tvf_audio_reset(&audio);
+      for (n = 0; n < 262144; ++n) {
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+        assert(filtered > -1.0f && filtered < 2.0f);
+      }
+      assert(filtered > -0.001f && filtered < 0.001f);
+      /* Code 0 and code 1 keep the low-pass. */
+      registers.filter_select = 0x0400;
+      sc88_tvf_audio_reset(&audio);
+      for (n = 0; n < 262144; ++n)
+        filtered = sc88_tvf_audio_process_provisional(
+          NULL, &audio, &registers, 0.5, 1.0f);
+      assert(filtered > 0.999f && filtered < 1.001f);
     }
     {
       struct sc88_tvf_release release;

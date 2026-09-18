@@ -1,35 +1,118 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_tvf.h"
 
+#include "sc88_tva.h"
+
 #include <limits.h>
 #include <math.h>
 #include <string.h>
 
 #define SC88_TVF_BASE_TABLE 0x78702u
-/* The registers are ROM-exact; this normalisation is not. TVF-Q current
-   is the companion word << 2, i.e. resonance_index << 11, so this unity
-   makes the neutral index 64 a damping of 2.0 - a critically damped
-   section with no peak - and index 3 (Reso Panner) a Q near 10. */
-#define SC88_TVF_Q_UNITY 65536.0
-/* The TVF-F register is a log-frequency word in the XP pitch register's
-   own domain. `07_synthesis/pitch.md` has the pitch word at 16384 units
-   per octave, 18 bits, unity playback at 0x38000; routine 67a8 forms
-   TVF-F as the same 18-bit high/low pair in the same scratch tuple with
-   the same interpolation word 0x4100, and the base table at 0x78702
-   steps by exactly 16384/12 per index once expanded - one semitone per
-   index. The ROM fixes the slope. It does not say which frequency any
-   register value means, so the anchor is inferred: the word one past the
-   18-bit range, 0x40000, is read as the chip's Nyquist, so the base
-   table's saturating top (0xffff, register 0x3fff8) names the highest
-   frequency the filter has and nothing in either table lands above it.
-   Unity (0x38000) is then fs/8, the limit table at 0x78802 spans
-   11.3 kHz (resonance index 0) to 5.9 kHz (index 127), and the corners
-   fitted on seven hardware notes sit within 0.44 octave rms of the
-   computed word (`11_validation/measurements.md` M-136). The word is a
-   frequency, as the pitch word is a rate; the coefficient the chip
-   derives from it is not recovered, so the audio path warps it itself. */
+/* [FW-EXACT] TVF-Q current is the companion word << 2, i.e.
+   resonance_index << 11, and one unit of damping is 131072 - that is,
+   q = resonance_index / 64.
+
+   The scaling is fixed by the chip's own limit table; see the note on
+   SC88_TVF_LIMIT_TABLE. Read with q = index/64 that table is exactly
+   f*f + f*q = 2 on all 128 entries; read with index/32 it spans
+   2.000..3.458 and with index/128 1.270..2.000. The value libEmuSC's
+   SC-55 path uses (svf.cc's set_resonance, q = resonance/64, which the
+   SC-55's own two stability tables fix to a rounding unit in P-0130 and
+   P-0131) is the value the SC-88's ROM asks for too. */
+#define SC88_TVF_Q_UNITY 131072.0
+/* [FW-EXACT] The TVF-F register is a log-frequency word in the XP pitch
+   register's own domain. `07_synthesis/pitch.md` has the pitch word at
+   16384 units per octave, 18 bits, unity playback at 0x38000; routine
+   67a8 forms TVF-F as the same 18-bit high/low pair in the same scratch
+   tuple with the same interpolation word 0x4100, and the base table at
+   0x78702 steps by exactly 16384/12 per index once expanded - one
+   semitone per index. That is the slope. The anchor - which frequency a
+   register value names - is the ROM's too, and the limit table fixes it
+   in integer arithmetic.
+
+   The limit table's law is f*f + f*q = 2 (see SC88_TVF_LIMIT_TABLE),
+   which gives f = sqrt(2) at resonance index 0 and f = 1 at index 64.
+   With f = 2*sin(pi*fc/fs) those two ceilings are fc = fs/4 and fs/6
+   exactly, so their sines are sqrt(2)/2 and 1/2 and their words sit
+   16384/2 and 16384 units below the word whose sine is one. The entries
+   are 0xf800 and 0xf000, which the firmware expands ((e >> 1) << 3) to
+   0x3e000 and 0x3c000:
+
+       0x3e000 + 8192  = 0x40000
+       0x3c000 + 16384 = 0x40000
+
+   Neither equation rounds. Those two are the only entries in either
+   table whose exact word is a multiple of four, so they are the only
+   two the table's floor leaves untouched, and both name 0x40000 - the
+   word one past the 18-bit range - as the chip's Nyquist.
+
+   With that anchor both tables decode to the bit:
+
+       entry = floor((0x40000 + 16384*log2(sin(pi*f/fs))) / 4)
+
+   the base table over f = 440*2^((i - 64)/12) for all 127 indices below
+   Nyquist, and the limit table over the stability law for all 128. So
+   the base table is a note table whose index 64 is A440; index 127 asks
+   for 16744 Hz, past the fold, and holds 0xffff instead. floor is what
+   reproduces them - round gets 64 and 57, ceil 0 and 2 - and moving the
+   anchor by one word unit breaks at least 28 entries per table. The
+   limit table runs fs/4 at resonance index 0 through fs/6 at 64 to
+   3835 Hz at 127, and 0x38000 - unity playback in the pitch register -
+   is 2573.8 Hz here.
+
+   fc and fs enter only as sin(pi*fc/fs), so the ROM fixes their ratio
+   and nothing more. Fit the base table with the anchor and the absolute
+   scale both free and index 64 comes out at 439.9996 Hz, 1sd 0.05 cent,
+   which is a second reading of the 32.000 kHz rate - `M-166` has it from
+   the DAC image mirror. The coefficient the chip derives from the word
+   is recovered as well: see SC88_TVF_LIMIT_TABLE. */
 #define SC88_TVF_OCTAVE_UNITS 16384.0
 #define SC88_TVF_NYQUIST_WORD 0x40000
+/* [FW-EXACT] The limit table is the filter's own topology, written down.
+ *
+ * 0x78802 holds one cutoff ceiling per resonance index. Read in the base
+ * table's domain - f = 2*sin(pi*fc/32000), the Chamberlin coefficient the
+ * base table already is - and with q = resonance_index/64, every one of
+ * its 128 entries satisfies
+ *
+ *     f*f + f*q = 2
+ *
+ * to a rounding unit: the residual against the exact law is -0.53 +- 0.29
+ * table units and lies in [-0.99, 0], which is the signature of a floor(),
+ * not of a fit. In octaves that is 0.33 cent of cutoff.
+ *
+ * That expression is not a general fact about two-pole filters. It is the
+ * trace of the state matrix of the forward-Euler state-variable filter
+ *
+ *     lp[n] = lp[n-1] + f*bp[n-1]
+ *     hp[n] = x[n] - lp[n] - q*bp[n-1]
+ *     bp[n] = bp[n-1] + f*hp[n]
+ *
+ * whose trace is 2 - f*f - f*q and whose determinant is 1 - f*q. Setting
+ * the trace to zero puts the pole pair at exactly +-90 degrees: the chip
+ * refuses to let the filter's realised resonance climb past fs/4, and the
+ * ceiling it writes for each resonance is the cutoff at which that
+ * happens. A trapezoidal (bilinear) realisation is stable for every
+ * positive coefficient and has no such ceiling to tabulate; its own
+ * coefficient g = tan(pi*fc/fs) puts g*g + g*q at 0.906..1.000 over the
+ * same table, and reading the word as a frequency instead of a sine puts
+ * it at 3.211..3.414. The topology is forward-Euler.
+ *
+ * This is the SC-55's filter. libEmuSC's svf.cc is the same three lines,
+ * and the SC-55's control ROM carries the same law twice: TVFResonance[]
+ * is 128*(sqrt(q*q+4) - q) and TVFResonanceFreq[] is 32*(4-f*f)/f, the
+ * two sides of that state matrix's stability edge, with q = r/64 and
+ * f = x/128 (P-0130, P-0131). The SC-88 tabulates the same topology at a
+ * tighter bound.
+ *
+ * Two things follow that the audio path could not have been told any
+ * other way. The coefficient is the ROM's own word and is not warped
+ * again; and a tone whose computed cutoff is clamped to this ceiling is
+ * a tone the chip has been asked to leave alone - at q = 1 the law gives
+ * f = 1 exactly, where the difference equations above collapse to
+ * y[n] = x[n-1], a bare sample of delay. "Wide open" is realised as
+ * transparent, which is what asking for a cutoff above the ceiling
+ * should mean. */
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 /* The sound chip's own sample rate, which the cutoff word is a
    fraction of. */
@@ -74,10 +157,44 @@ static int sc88_tvf_clamp_index(int value)
   return value;
 }
 
+/* The word is the log of sin(pi * f / fs), not the log of f.
+
+   Both machines hold the same cutoff table and the SC-55 holds it in the
+   clear. The SC-55 mk1 CPU ROM at 0x7612 is 32768 * sin(pi * f / 32000)
+   for f = 440 * 2^((index - 64)/12): fitted over its 116 pre-saturation
+   entries the residual is 0.435 LSB rms and the anchor lands on 440.0 Hz
+   at index 64 - one semitone per index, saturating where the sine folds.
+
+   The SC-88's base table at 0x78702 is that same quantity in the XP pitch
+   register's log domain and decodes to the bit; see the note on
+   SC88_TVF_NYQUIST_WORD. Reading the word as a log FREQUENCY instead
+   leaves an sd of 2072 word units and up to 0.67 octave, because it has
+   no account of why the table's steps shrink from 1368 to 0 over its
+   last twelve entries. That compression is the sine approaching one; the
+   frequency underneath it is a clean note table.
+
+   Hardware agrees, on two stimuli each with its own control and with the
+   corner fitted through the realisation the chip has rather than an
+   analog prototype. Hardware corner over computed cutoff is 0.97
+   (quartiles 0.90/1.10, n = 13) measured against our own --no-filter
+   render, and 1.04 (0.99/1.25, n = 9) on a self-differential of two
+   instants inside one held note, which carries no render of ours at all.
+   Their controls - the same fit on our own output, whose corner is at
+   the computed cutoff by construction - read 1.05 and 1.00, so the
+   method's own bias is the size of the disagreement.
+
+   0x40000 still means the top of the range and still means fs/2; what
+   runs exponentially between is sin(pi * f / fs). Below about 4 kHz the
+   two readings differ by exactly pi/2 - 0.651 octave - converging at the
+   top. */
 double sc88_tvf_word_to_hz(uint32_t word)
 {
-  return 0.5 * SC88_TVF_NATIVE_RATE *
-    exp2(((double)word - SC88_TVF_NYQUIST_WORD) / SC88_TVF_OCTAVE_UNITS);
+  double sine = exp2(((double)word - SC88_TVF_NYQUIST_WORD) /
+                     SC88_TVF_OCTAVE_UNITS);
+
+  if (sine >= 1.0)
+    return 0.5 * SC88_TVF_NATIVE_RATE;
+  return (SC88_TVF_NATIVE_RATE / 3.14159265358979323846) * asin(sine);
 }
 
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
@@ -519,37 +636,41 @@ void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
     registers->frequency_current = registers->frequency_target;
 }
 
-/* The registers approach their targets; they are not latched onto them.
+/* [FW-EXACT] The registers approach their targets; they are not latched
+ * onto them, and the word beside the target says how.
  *
- * `07_synthesis/tvf.md` records the TVF-F interpolation word `0x4100`.
- * Read as the fraction of the remaining gap closed per period,
- * `0x4100/65536` is 0.254 - a time constant near 27 ms, the window the
- * hardware's onset centroid moves in. */
-static uint32_t sc88_tvf_approach(uint32_t current, uint32_t target,
-                                  uint16_t interpolation,
-                                  unsigned periods)
+ * One encoding serves every register the chip approaches. `67a8` writes
+ * the TVF-F target at scratch `1a7c+24/+26`, the current value at
+ * `+2c/+2e`, and the interpolation pair at `+28/+2a`: `683b` puts zero in
+ * the high word and `683f: ea 2a 07 41 00` puts `#0x4100` in the low one.
+ * The update path at `6918`/`691c` and the fixed tuple at `67dc`/`67e0`
+ * write the same constant. It is the word the pitch register gets at
+ * `+1c/+1e` as well, and `sc88_tva_curve_decode` is where the packing is
+ * read - `0x4100` is bit 14 set, exponent 0, mantissa 0x100, so the
+ * LINEAR family at value 256 and `q = 4 * periods`.
+ *
+ * Linear covers `min(1, q)` of the gap, so TVF-F arrives a quarter of the
+ * way into a control period - 2.0 ms. That is a de-click on a register the
+ * CPU rewrites every period, the same office `0x2a7` holds for the static
+ * amplitude at 0.75 ms, not a glide with a time constant of its own. */
+static double sc88_tvf_frequency_progress(
+  const struct sc88_tvf_registers *registers, double periods)
 {
-  unsigned i;
-  for (i = 0; i < periods && current != target; ++i) {
-    int64_t gap = (int64_t)target - current;
-    int64_t step = gap * interpolation / 65536;
-    if (step == 0)
-      step = gap > 0 ? 1 : -1;
-    current = (uint32_t)((int64_t)current + step);
-  }
-  return current;
+  struct sc88_tva_curve curve;
+  sc88_tva_curve_decode(registers->frequency_interpolation, &curve);
+  return sc88_tva_curve_progress(&curve, periods);
 }
 
 void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
                                 unsigned periods)
 {
+  double value;
   if (!registers || periods == 0)
     return;
-  if (periods > 64)
-    periods = 64;
-  registers->frequency_current = sc88_tvf_approach(
-    registers->frequency_current, registers->frequency_target,
-    registers->frequency_interpolation, periods);
+  value = (double)registers->frequency_current +
+    sc88_tvf_frequency_progress(registers, (double)periods) *
+    ((double)registers->frequency_target - registers->frequency_current);
+  registers->frequency_current = value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
   /* TVF-Q is not approached: its target is the same value as its current
      with two more fraction bits (see the damping note in the audio path). */
 }
@@ -568,7 +689,6 @@ float sc88_tvf_audio_process_provisional(
   double word;
   double g;
   double damping;
-  double denominator;
   double high;
   double band;
   double low;
@@ -576,23 +696,32 @@ float sc88_tvf_audio_process_provisional(
   if (!state || !registers)
     return input;
   /* A negative mode byte installs the fixed tuple: zero cutoff, type word
-     0x0800. `07_synthesis/tvf.md` reads it as bypass-like, and a filter
-     with no cutoff has nothing to do, so the signal passes untouched. */
+     0x0800 - type code 2, the high-pass. A high-pass at zero cutoff
+     passes everything, so the tuple is a bypass by its own terms; see the
+     type-code note in the filter below. */
   if (registers->fixed_tuple)
     return input;
   if (period_fraction < 0.0)
     period_fraction = 0.0;
   else if (period_fraction > 1.0)
     period_fraction = 1.0;
-  word = registers->frequency_current + period_fraction *
+  /* Where the register stands this far into the period, by its own
+     interpolation word rather than by a ramp spread over the whole of it. */
+  word = (double)registers->frequency_current +
+    sc88_tvf_frequency_progress(registers, period_fraction) *
     ((double)registers->frequency_target - registers->frequency_current);
   {
+    /* The coefficient the ROM's word already is. At the chip's own rate
+       this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
+       taken out of the word by sc88_tvf_word_to_hz and put straight back
+       - and at any other host rate it is the same analog corner retuned
+       to that rate, which is the only part of this that is a choice. */
     double rate = user ? *(const double *)user : SC88_TVF_NATIVE_RATE;
     double cutoff = sc88_tvf_word_to_hz((uint32_t)(word + 0.5));
     double nyquist = rate * 0.5;
     if (cutoff > nyquist * 0.99)
       cutoff = nyquist * 0.99;
-    g = tan(3.14159265358979323846 * cutoff / rate);
+    g = 2.0 * sin(3.14159265358979323846 * cutoff / rate);
   }
   /* Damping from the register the ROM supplies. `07_synthesis/tvf.md`:
    * the companion table at 0x78902 is exactly index * 512, expanded left
@@ -614,39 +743,80 @@ float sc88_tvf_audio_process_provisional(
     damping = 0.05;
   else if (damping > 4.0)
     damping = 4.0;
+  /* The two poles are realised with forward-Euler integrators, the
+     topology the chip's limit table names (see SC88_TVF_LIMIT_TABLE) and
+     the one libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal
+     form this replaced is a bilinear transform: it leaves a double zero
+     at Nyquist, so the two poles the ROM asks for rolled off like three
+     near the top of the band - 0.5 dB darker than its own analog
+     prototype at twice the corner for a tone cut off at 1.6 kHz, 3.0 dB
+     at 3.7 kHz and 7.5 dB at 5.3 kHz. Forward Euler has no zero but the
+     one sample of delay, and its error runs the other way. */
   {
     unsigned section;
     double signal = input;
     for (section = 0; section < SC88_TVF_SECTIONS; ++section) {
       double d = section == 0 ? damping : 2.0;
+      double f = g;
       double sb = section == 0 ? state->integrator_band
                                : state->section_band[section];
       double sl = section == 0 ? state->integrator_low
                                : state->section_low[section];
-      denominator = 1.0 + d * g + g * g;
-      high = (signal - (d + g) * sb - sl) / denominator;
-      band = g * high + sb;
-      low = g * band + sl;
-      sb = 2.0 * band - sb;
-      sl = 2.0 * low - sl;
+      /* The chip's own limit table keeps f*f + f*d at or below 2, which is
+         well inside this bound; the bound is here because the damping floor
+         above and a host sample rate other than the chip's are not the ROM's
+         doing and must not be able to put a pole outside the unit circle. */
+      double bound = 0.99 * (sqrt(d * d + 4.0) - d);
+      if (f > bound)
+        f = bound;
+      low = sl + f * sb;
+      high = signal - low - d * sb;
+      band = sb + f * high;
       if (section == 0) {
-        state->integrator_band = (float)sb;
-        state->integrator_low = (float)sl;
+        state->integrator_band = (float)band;
+        state->integrator_low = (float)low;
       } else {
-        state->section_band[section] = (float)sb;
-        state->section_low[section] = (float)sl;
+        state->section_band[section] = (float)band;
+        state->section_low[section] = (float)low;
       }
-      /* Every type code takes the low-pass output. XP bits 10..11 carry a
-         type code - 0 for 1193 components, 1 for 12, 2 for 38 - and the
-         only name binding on record, LPF/BPF/HPF for 0/1/2, was proposed
-         from JV-1080 documentation without SC-88 audio. The SC-88 audio
-         refutes it for code 2: the Fiddle, code 2 with a cutoff word of
-         8.1 kHz, is recorded on the hardware with its fundamental intact
-         and a low-pass roll-off above 8 kHz, while the high-pass output
-         here removed everything below the cutoff and left a hiss 100 dB
-         above the hardware's balance (`11_validation/measurements.md`
-         M-100). Code 1 has no hardware note to test against. */
-      signal = low;
+      /* XP bits 10..11 carry a type code - 0 on 1193 components, 1 on 12,
+         2 on 38 - and the name binding proposed from JV-1080
+         documentation is LPF/BPF/HPF for 0/1/2. Code 2 takes the
+         high-pass output, which the SC-88's own archive recordings show
+         directly.
+
+         Breath Noise is the case that cannot be read two ways: its one
+         component is code 2 with a static 2.7 kHz cutoff and no envelope,
+         and it is broadband, so the filter's shape is the tone. Against
+         the archive recording at C4, level-matched over 17 log bands, the
+         high-pass output lands within 1.1 dB from 256 Hz to 7.2 kHz. The
+         same render with the filter removed is 36 dB too loud at 256 Hz
+         and 22 dB at 590 Hz: the hardware has less low end than the raw
+         sample, which neither a low-pass nor a bypass can produce, and
+         the low-pass output is 20 dB short at 8.9 kHz on top of that.
+         Seashore, also code 2, moves from 20.0 to 1.6 dB median band
+         error at the same key. In the 63-note set the Fiddle goes from
+         19.19 to 1.75 dB and Halo Pad from 8.34 to 2.24.
+
+         The earlier reading - every code takes the low-pass output -
+         rested on M-100, which put the Fiddle's cutoff at 8.1 kHz, where
+         a high-pass would indeed have removed its fundamental. The
+         firmware-exact cutoff law puts that same component at 439 Hz at
+         C5, where a two-pole high-pass leaves the 523 Hz fundamental at
+         +1.0 dB and everything above it flat. M-100's measurement stands;
+         what it refutes does not survive the law it was read under.
+
+         This also settles the negative-mode tuple, which installs type
+         code 2 with a cutoff word of zero: a high-pass at zero passes
+         everything, so `fixed_tuple` returning the input untouched is the
+         type code's own behaviour rather than an assumption about it.
+
+         Code 1 keeps the low-pass output. No component in any archive
+         recording carries it - the only one in the GM bank is Slap Bass
+         2, which is not in the single-note set - so band-pass is
+         unverified here and is not adopted on the strength of the
+         binding alone. */
+      signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : low;
     }
     return (float)signal;
   }

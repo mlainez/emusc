@@ -50,6 +50,11 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
      0xffff and its tail is silent. */
   put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
+  /* The component's velocity window, +6c..+6d inclusive. A calloc'd
+     fixture states 0..0, which sounds nothing: every note this file
+     plays would be refused. The ROM's own tones all reach 127. */
+  control[0x40000 + 34 + 0x6c] = 0;
+  control[0x40000 + 34 + 0x6d] = 127;
   /* The coarse and fine level tables, as a monotone ramp. The real tables
      are a dB curve; what matters to a fixture is that an intermediate
      attenuation converts to an intermediate gain, because an envelope
@@ -59,11 +64,23 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
     put16(control + 0x1523e + i * 2, (uint16_t)((i + 1) * 256 - 1));
   }
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
-  /* the top of the send/pan curve: control 127 is unity, which is what a
-     fully wet drum key and a part send of 127 both resolve to */
+  /* the top of the pan curve: position 127 is unity on its own side */
   put16(control + 0x15db6 + 126 * 2, 0x8000);
+  /* The send curve is a DIFFERENT table, at 0x15eb6, indexed by the control
+     value whole, and linear where the pan curve is not. The fixture carries
+     the firmware's own expression for it so the reader can see that the two
+     disagree everywhere except three points. */
+  for (i = 0; i < 128; ++i)
+    put16(control + 0x15eb6 + i * 2,
+          (uint16_t)(64u * (((unsigned)i * 512u + 63u) / 127u)));
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
+  /* The stage's interpolation word, which the chip is handed beside the
+     target: the component takes the exponential table at `0x1563e`, and
+     this is the SC-88's own entry at the rate index above. Left at zero a
+     fixture says "never move", and the stage would hold at its start
+     level for its whole dwell. */
+  put16(control + 0x1563e + 2, 0x0517);
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -191,10 +208,16 @@ int main(void)
       }
     assert(found);
   }
-  assert(sc88_engine_active_slots(&engine) == 2);
+  /* The two released voices composed amplitude 0 in the period just
+     rendered and are spending the next one gliding down to it, which is
+     what the chip does with a target (`71c7`); they are still allocated
+     until it ends. */
+  assert(sc88_engine_active_slots(&engine) == 4);
+  assert(sc88_engine_released_slots(&engine) == 2);
   engine.scheduler_clocks = 2.0 * 10001.0;
   sc88_engine_render(&engine, stereo, 1);
   assert(count.calls == 2 && count.periods == 3);
+  assert(sc88_engine_active_slots(&engine) == 2);
   sc88_engine_destroy(&engine);
 
   assert(sc88_engine_init(&engine, &renderer));
@@ -218,6 +241,8 @@ int main(void)
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 1);
   sc88_engine_hold(&engine, 0, false);
+  /* One period for the release to run out, one for the glide to zero. */
+  sc88_engine_render(&engine, stereo, 257);
   sc88_engine_render(&engine, stereo, 257);
   assert(sc88_engine_active_slots(&engine) == 0);
   sc88_engine_destroy(&engine);
@@ -261,14 +286,20 @@ int main(void)
   assert(sc88_send_combine(127, 0) == 0);
   assert(sc88_send_combine(0, 127) == 0);
   assert(sc88_send_combine(40, 50) == 16);
-  /* and the curve is a curve: control 64 is -4.5 dB, not half */
+  /* and the send curve is LINEAR: control 64 is a shade over half, not the
+     pan curve's -4.5 dB. The two tables are only three points apart over
+     the whole range and reading the pan one here opens every send too far
+     (`P-xxxx`). */
   {
     uint16_t gain;
     assert(sc88_control_gain_q15(&renderer.rom, 0, &gain) && gain == 0);
     assert(sc88_control_gain_q15(&renderer.rom, 64, &gain) &&
-           gain == 0x4c00);
+           gain == 0x4080);
     assert(sc88_control_gain_q15(&renderer.rom, 127, &gain) &&
            gain == 0x8000);
+    /* control 1 is a small open send, not a closed one: the pan table's
+       first word is zero and using it here muted the send entirely */
+    assert(sc88_control_gain_q15(&renderer.rom, 1, &gain) && gain == 0x0100);
     assert(!sc88_control_gain_q15(&renderer.rom, 128, &gain));
   }
 

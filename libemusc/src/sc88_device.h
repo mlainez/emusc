@@ -5,6 +5,7 @@
 #include "sc88_chorus.h"
 #include "sc88_delay.h"
 #include "sc88_eq.h"
+#include "sc88_output.h"
 #include "sc88_engine.h"
 #include "sc88_reverb.h"
 
@@ -77,10 +78,12 @@ struct sc88_device {
   struct sc88_chorus chorus;
   struct sc88_delay delay;
   struct sc88_eq eq;
-  /* The reverb's own parameters. A GS reset leaves the character and its
-     level, time and pre-LPF at the values the manual prints for Hall 2. */
+  struct sc88_output output;
+  /* The reverb's own parameters. Writing the macro reloads all of them from
+     a ROM preset, and a GS reset is the same read with macro 4. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
   uint8_t reverb_predelay, reverb_delay_feedback;
+  uint8_t reverb_macro;
   /* The chorus parameters are received and held but not yet rendered: the
      CPU-side transforms are recovered while the DSP's audio algorithm is
      not (`08_effects/chorus.md`), so a chorus here would be invented
@@ -112,8 +115,6 @@ struct sc88_device {
      it: song 1 measured 0.157 of DC against the hardware's 0.001, in
      65 % of its length, and that offset is what pushed the mix into
      clipping. One pole at 10 Hz, which is -0.3 dB by 40 Hz. */
-  float dc_x[2], dc_y[2];
-  float dc_pole;
   float *send_bus;
   float *chorus_bus;
   float *delay_bus;

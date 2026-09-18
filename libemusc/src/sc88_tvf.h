@@ -135,8 +135,9 @@ bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
                                struct sc88_tvf_registers *registers);
 void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers);
 
-/* Move the frequency and resonance registers toward their targets by their
- * own interpolation words, once per elapsed control period. */
+/* Move the frequency register toward its target by its own interpolation
+ * word (`0x4100`, written beside the target at `683f`), for the elapsed
+ * control periods. Resonance does not move; see sc88_tvf.c. */
 void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
                                 unsigned periods);
 

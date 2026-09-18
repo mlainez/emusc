@@ -4,6 +4,17 @@
 #include <limits.h>
 
 #define SC88_PAN_TABLE 0x15db6u
+/* The effect sends do NOT read the pan table. They have their own, and it is
+ * a different shape: 128 words at 0x15eb6, indexed by the control value
+ * WHOLE rather than by `value - 1`, and exactly
+ * `64 * floor((value * 512 + 63) / 127)` on every one of the 128 - a linear
+ * Q15 gain with 0x8000 for unity (`P-xxxx`). The firmware reaches it from a
+ * different routine than the pan pair does. The two tables agree at only
+ * three points, so reading one for the other is audible: it opens the send
+ * 1.4 dB too far around the middle of the range, and at control 1 the pan
+ * table's first word is 0, which closes a send the chip would have left
+ * open. */
+#define SC88_SEND_TABLE 0x15eb6u
 
 static uint16_t sc88_pan_be16(const uint8_t *p)
 {
@@ -74,15 +85,16 @@ bool sc88_pan_component_offset(const struct sc88_rom *rom,
 bool sc88_control_gain_q15(const struct sc88_rom *rom, uint8_t control,
                            uint16_t *gain_q15)
 {
+  uint16_t word;
   if (!rom || !rom->bytes || !gain_q15 || control > 127 ||
-      SC88_PAN_TABLE + 127u * 2 > rom->size)
+      SC88_SEND_TABLE + 128u * 2 > rom->size)
     return false;
-  if (control == 0) {
-    *gain_q15 = 0;
-    return true;
-  }
-  *gain_q15 = sc88_pan_be16(rom->bytes + SC88_PAN_TABLE + (control - 1) * 2);
-  return (*gain_q15 & 0x3f) == 0;
+  /* The word carries the gain in its top ten bits and the XP destination
+     selector in its low six; the table's own low six are zero, and the
+     selector this engine does not plumb. */
+  word = sc88_pan_be16(rom->bytes + SC88_SEND_TABLE + (unsigned)control * 2);
+  *gain_q15 = (uint16_t)(word & 0xffc0u);
+  return (word & 0x3fu) == 0;
 }
 
 uint8_t sc88_send_combine(uint8_t part, uint8_t note)

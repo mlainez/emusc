@@ -86,7 +86,7 @@ static void test_held_rom(const char *path)
           assert(sc88_wave_descriptor_loop_type(&zone.descriptor, &mode));
           if (!sc88_tva_static_gain_q17(
                 &rom, &tone, &component, &zone, (uint8_t)key, 100, &levels,
-                &attenuation, &gain_q17)) {
+                SC88_TVA_NO_DRUM_LEVEL, &attenuation, &gain_q17)) {
             fprintf(stderr, "TVA failed tone=%#x component=%#x key=%u\n",
                     tone.offset, component.offset, key);
             assert(false);

@@ -78,7 +78,36 @@ struct sc88_render_component {
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;
   uint16_t static_attenuation;
+  /* The rhythm kit's own level for this note, or `SC88_TVA_NO_DRUM_LEVEL`
+     on a melodic one. It is a fifth term in the composed amplitude, so it
+     is kept beside the attenuation it is subtracted with: the release and
+     a part-level change both recompose that amplitude from the stored
+     terms, and a note that dropped this one would rise to full kit level
+     the moment either happened. */
+  uint8_t drum_level;
+  /* The composed amplitude is handed to the XP chip as a TARGET with an
+     interpolation word beside it, not as a value to latch: `71a9` writes
+     the four-word block {zero, interpolation, target high, target low} at
+     the voice's register base every control period, with `#0x2a7` as the
+     interpolation word at `71c7`. The register therefore moves toward the
+     composed amplitude over the period; it is never a staircase.
+
+     `static_gain_q17` is that target. `static_gain_current_q17` is where
+     the register stood when the period opened, and the audio path reads
+     the point between them - the same current/target pair, read the same
+     way, that `sc88_tvf_registers` uses for TVF-F.
+
+     `0x2a7` is the exponential family's entry at rate index 2, so the
+     approach is one of about ten time constants per control period:
+     `sc88_tva_curve_decode` gives it `rate = 679/64`, a time constant of
+     0.75 ms. It is a de-click, not a glide. */
   uint32_t static_gain_q17;
+  uint32_t static_gain_current_q17;
+  /* Amplitude 0 has been written as the target and the period it glides
+     over is running. `7228..7232` writes that target when the release
+     counter underflows; the voice ends when the register arrives, not
+     when the CPU composes the zero. */
+  bool release_zeroed;
   struct sc88_tva_envelope envelope;
   struct sc88_tva_release release;
   struct sc88_tvf_registers tvf;
@@ -97,13 +126,34 @@ struct sc88_render_component {
   bool active;
 };
 
+/* The word at `71c7`, the exponential family's entry at rate index 2. */
+#define SC88_STATIC_AMPLITUDE_CURVE_WORD 0x02a7u
+
+/* Where the chip's amplitude register stands `period_fraction` of the way
+   through the control period. */
+static inline uint32_t sc88_render_static_gain_q17(
+  const struct sc88_render_component *component, double period_fraction)
+{
+  struct sc88_tva_curve curve;
+  double from;
+  double to;
+  double value;
+  if (period_fraction <= 0.0)
+    return component->static_gain_current_q17;
+  from = (double)component->static_gain_current_q17;
+  to = (double)component->static_gain_q17;
+  sc88_tva_curve_decode(SC88_STATIC_AMPLITUDE_CURVE_WORD, &curve);
+  value = from +
+    sc88_tva_curve_progress(&curve, period_fraction) * (to - from);
+  return value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
+}
+
 struct sc88_render_voice {
   struct sc88_render_component components[SC88_MAX_TONE_COMPONENTS];
   unsigned component_count;
   uint32_t tone_offset;
   uint8_t key;
   uint8_t velocity;
-  float provisional_gain;
   /* A rhythm note whose kit record clears bit 0 of `+0x480` does not
      receive Note Off and rings to its own end. Every drum in this song is
      written as a 10 ms note, so honouring Note Off turns a crash into a
@@ -118,12 +168,18 @@ struct sc88_render_voice {
 uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
                                    uint8_t midi_key);
 
+/* The remainder that transform drops, in pitch units (0..1364):
+   SC88-CTL 0x611e..0x6121 scale it by 0x555, one semitone. */
+uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
+                                    uint8_t midi_key);
+
 /* Static note-on pitch before controllers, LFOs and the pitch envelope. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
                                      uint8_t selector_key,
+                                     uint16_t key_fraction,
                                      uint32_t *pitch_word);
 
 bool sc88_renderer_init(struct sc88_renderer *renderer,
@@ -145,27 +201,34 @@ void sc88_renderer_set_tvf_audio_transfer(
 void sc88_renderer_set_tvf_controls(
   struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls);
 
-/* The explicit gain is temporary output trim. Static TVA, release, pan and
- * exact TVF control state are native ROM paths; the audio-side TVF callback
- * and effects remain explicit seams. */
+/* There is no gain argument and no gain field on the voice. The firmware
+ * composes a voice's amplitude in exactly one place - `compose_voice_amplitude`
+ * subtracts its five level sources and the component's static attenuation from
+ * one headroom - so a float multiply beside it is an escape hatch with no
+ * counterpart in the device, and anything put through it is not being modelled.
+ * The kit's per-note level was applied that way and, because the engine's mix
+ * reads its own copy of the caller's trim rather than the voice's, it reached
+ * `sc88_renderer_render` and no song. Output trim belongs to the caller.
+ *
+ * Static TVA, release, pan and exact TVF control state are native ROM paths;
+ * the audio-side TVF callback and effects remain explicit seams. */
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity,
-                           float provisional_gain);
+                           uint8_t key, uint8_t velocity);
 bool sc88_renderer_note_on_with_levels(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels);
+  const struct sc88_tva_levels *levels);
 bool sc88_renderer_note_on_with_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan);
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -177,7 +240,7 @@ bool sc88_renderer_note_on_with_part_controls(
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,

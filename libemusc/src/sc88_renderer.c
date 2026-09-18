@@ -49,6 +49,41 @@ uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
   return (uint8_t)key;
 }
 
+/* Fractional remainder of the key transform, in pitch units.
+
+   The transform at SC88-CTL 0x60c7..0x6123 holds `(midi_key - 60) * +0x14`
+   as a 32-bit value shifted left twice (0x60fb..0x6101), so its high word is
+   the integer key and its low word is the remainder in units of 1/65536
+   semitone. 0x611e..0x6121 (`5c 05 55` `mov:i.w #0x555,r4`, `ab ac`
+   `mulxu.w r3,r4`) multiply that remainder by 0x555 - 1365 pitch units, one
+   semitone - and keep the high word of the product. The firmware stores it
+   at RAM 0x197c (0x603f, 0x6072) and adds it into the pitch word at 0x6081
+   (`f9 19 7c 23` plus `addx.w #0,r2`); nothing else reads 0x197c.
+
+   r4 is cleared at 0x610d and the multiply is skipped on both clamp branches
+   (0x6116 key <- 0, 0x611a key <- 0x7f), so a clamped key contributes no
+   fraction. The multiply is unsigned, and the remainder is the distance
+   above the floored key, so the term is 0..1364 and never negative. */
+uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
+                                    uint8_t midi_key)
+{
+  int32_t factor;
+  int32_t product;
+  int32_t key;
+  uint32_t remainder;
+
+  if (!component || !component->bytes || midi_key > 127)
+    return 0;
+  factor = sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x14));
+  product = ((int32_t)midi_key - 60) * factor;
+  key = 60 + sc88_renderer_floor_q14(product) +
+    sc88_renderer_s8(component->bytes[0x16]);
+  if (key < 0 || key > 127)
+    return 0;
+  remainder = ((uint32_t)product << 2) & 0xffffu;
+  return (uint16_t)((0x555u * remainder) >> 16);
+}
+
 static int32_t sc88_renderer_relative_pitch(int difference)
 {
   int32_t value = (int32_t)((difference * 16384) / 12);
@@ -60,6 +95,7 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
                                      uint8_t selector_key,
+                                     uint16_t key_fraction,
                                      uint32_t *pitch_word)
 {
   uint32_t table_offset;
@@ -74,6 +110,9 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
     return false;
   pitch = 0x38000 +
     sc88_renderer_relative_pitch((int)selector_key - desc->root_key) +
+    /* SC88-CTL 0x6081 adds RAM 0x197c into the low word of the pitch the
+       key table just produced, before the 0x6124 offsets land on it. */
+    (int32_t)key_fraction +
     sc88_wave_pitch_correction(desc, false) +
     sc88_renderer_s16(sc88_renderer_be16(
       rom->bytes + table_offset + (uint32_t)selector_key * 2)) +
@@ -213,38 +252,37 @@ void sc88_renderer_voice_destroy(struct sc88_render_voice *voice)
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity,
-                           float provisional_gain)
+                           uint8_t key, uint8_t velocity)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_levels(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     &renderer->levels);
 }
 
 bool sc88_renderer_note_on_with_levels(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels)
+  const struct sc88_tva_levels *levels)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_controls(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     levels, &renderer->pan);
 }
 
 bool sc88_renderer_note_on_with_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan)
 {
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_part_controls(
-    renderer, voice, variation, program, key, velocity, provisional_gain,
+    renderer, voice, variation, program, key, velocity,
     levels, pan, &renderer->tvf_controls, &renderer->tva_controls, NULL);
 }
 
@@ -255,8 +293,8 @@ bool sc88_renderer_note_on_with_controls(
 static bool sc88_renderer_note_on_tone(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint32_t tone_offset, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
+  const struct sc88_tva_levels *levels,
+  uint8_t drum_level, const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls)
@@ -268,22 +306,19 @@ static bool sc88_renderer_note_on_tone(
       levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
       levels->expression > 127 || key > 127 || velocity > 127 ||
-      provisional_gain < 0.0f ||
       !sc88_rom_open_tone(&renderer->rom, tone_offset, &tone))
     return false;
   memset(voice, 0, sizeof *voice);
-  voice->component_count = tone.component_count;
-  /* Instrumentation: sound one component of a multi-component tone, so a
-     defect in how the two are balanced can be separated from a defect in
-     either one. Zero, the default, sounds them all. */
-  if (renderer->only_component > 0 &&
-      renderer->only_component <= tone.component_count)
-    voice->component_count = 1;
+  /* `component_count` is the number of components this note actually
+     sounds, which is not the tone's own count: a component whose velocity
+     window excludes this note is not prepared and takes no slot. It is
+     counted up as the loop below prepares them, and the prepared ones are
+     packed from index zero, so a note that sounds only the tone's second
+     component holds it in `components[0]`. */
   voice->only_component = renderer->only_component;
   voice->tone_offset = tone_offset;
   voice->key = key;
   voice->velocity = velocity;
-  voice->provisional_gain = provisional_gain;
   /* melodic notes always receive Note Off; a kit may say otherwise */
   voice->ignore_note_off = false;
   voice->tvf_audio_transfer = renderer->tvf_audio_transfer;
@@ -291,37 +326,68 @@ static bool sc88_renderer_note_on_tone(
 
   for (i = 0; i < tone.component_count; ++i) {
     struct sc88_render_component *render_component;
-    if (voice->only_component > 0) {
-      if (i + 1 != voice->only_component)
-        continue;
-      render_component = voice->components;
-    } else {
-      render_component = voice->components + i;
-    }
     struct sc88_component component;
     struct sc88_zone_selection zone;
     struct sc88_wave_registers registers;
     enum sc88_wave_loop_type mode;
     const struct sc88_wave_bank *bank;
     uint32_t selector_key;
+    uint16_t key_fraction;
     uint32_t pitch_word;
     uint32_t pcm_base;
     size_t capacity;
     int16_t tvf_key_modulation;
 
+    /* Instrumentation: sound one component of a multi-component tone, so a
+       defect in how the two are balanced can be separated from a defect in
+       either one. The components are numbered from ONE, and zero - the
+       default - sounds every component the tone asks for. Read as a
+       zero-based index instead, `--only-component 0` renders the whole
+       tone and looks like proof that the second component is silent. */
+    if (voice->only_component > 0 && i + 1 != voice->only_component)
+      continue;
     if (!sc88_rom_open_component(&renderer->rom, &tone, i, &component))
       goto fail;
+    /* The component's velocity window, +6c..+6d inclusive. Outside it the
+       component does not sound at all: `sc88_rom_component_sounds` carries
+       the ROM evidence. Ignoring it does not merely add a layer that should
+       be absent, it adds the LOUDEST one - the firmware's velocity index is
+       `(velocity - low) * factor >> 8` on a wrapping byte, so one count
+       below the window the subtraction wraps to 255 and the index saturates
+       at the top of the curve. French Horns at velocity 100 sounded its
+       101..127 component, six cutoff indices brighter than the one the note
+       asks for, at full level. */
+    if (!sc88_rom_component_sounds(&component, velocity))
+      continue;
+    render_component = voice->components + voice->component_count;
     selector_key = sc88_renderer_selector_key(&component, key);
+    key_fraction = sc88_renderer_key_fraction(&component, key);
     if (!sc88_rom_select_zone(&renderer->rom, &component,
                               (uint8_t)selector_key, &zone) ||
         !sc88_wave_descriptor_loop_type(&zone.descriptor, &mode) ||
-        !sc88_wave_prepare_registers(&zone.descriptor, false, &registers) ||
+        // The descriptor's +16 word is NOT added to the start address. Adding it
+        // skipped the first 4608 samples of every sample this tone plays -
+        // 144 ms, which on a struck instrument is the whole strike: the
+        // Xylophone's onset centroid read 1403 Hz against the reference's
+        // 4603, and its timbre travel over the first 400 ms was 356 Hz against
+        // 3548. Suppressed, they are 4863 Hz and 3816.
+        //
+        // `02_rom/wave_metadata.md` says the word is added "unless per-voice
+        // state +187d bit 7 suppresses it", and that condition is NOT
+        // recovered. Both branches are therefore a guess about when; this one
+        // is the guess the measurements support - over seven demo songs the
+        // onset excursion goes 0.54 to 0.72 and the static centroid to within
+        // 45 Hz on both paths, and the 76-instrument set is unchanged at 65
+        // within 6 dB, because the loop points are separate from the start
+        // address and the sustain never moves.
+        !sc88_wave_prepare_registers(&zone.descriptor, true, &registers) ||
         !sc88_renderer_static_pitch_word(&renderer->rom, &tone, &component,
                                          &zone.descriptor,
-                                         (uint8_t)selector_key, &pitch_word) ||
+                                         (uint8_t)selector_key, key_fraction,
+                                         &pitch_word) ||
         !sc88_tva_static_gain_q17(&renderer->rom, &tone, &component, &zone,
                                   (uint8_t)selector_key, velocity,
-                                  levels,
+                                  levels, drum_level,
                                   &render_component->static_attenuation,
                                   &render_component->static_gain_q17) ||
         !sc88_pan_static_q15(&renderer->rom, &tone, &component,
@@ -366,9 +432,16 @@ static bool sc88_renderer_note_on_tone(
           &render_component->tvf))
       goto fail;
     sc88_tvf_latch_frequency(&render_component->tvf);
+    /* The amplitude register opens the note already at the composed
+       amplitude, the way `sc88_tvf_latch_frequency` opens TVF-F: only the
+       periods after note-on are an approach. Opening it at zero would make
+       every note fade in over a control period. */
+    render_component->static_gain_current_q17 =
+      render_component->static_gain_q17;
     sc88_tvf_audio_reset(&render_component->tvf_audio);
     render_component->tvf_key_modulation = tvf_key_modulation;
     render_component->rom_component_offset = component.offset;
+    render_component->drum_level = drum_level;
     render_component->reverb_send = 127;
     /* Neutral part and user modifiers: the part-level rate and delay
        offsets are a controller-matrix destination this does not model
@@ -431,9 +504,6 @@ static bool sc88_renderer_note_on_tone(
         ((int)lfo_controls->depth - 64) * 2);
     render_component->chorus_send = 127;
     render_component->pan_target_position = render_component->pan_position;
-    render_component->static_pitch_word = pitch_word;
-    pitch_word = sc88_pitch_current_word(
-      pitch_word, 0, render_component->pitch_envelope.current);
     render_component->keep_release_scale_at_zero = tone.common[0x14] != 0;
     render_component->continuous_hold_release = tone.common[0x15] != 0;
     bank = sc88_renderer_find_bank(renderer, zone.descriptor.bank_select);
@@ -448,15 +518,43 @@ static bool sc88_renderer_note_on_tone(
     if (!render_component->pcm24 ||
         !sc88_fce_decode_storage(bank->bytes, bank->size, &zone.descriptor,
                                  render_component->pcm24, capacity, &pcm_base,
-                                 &render_component->pcm_count) ||
-        !sc88_oscillator_init(&render_component->oscillator,
+                                 &render_component->pcm_count))
+      goto fail;
+    /* Thirty descriptors are read at twice the rate, and the pitch word is
+       the only place that can say so: 0x4000 is one octave in the SC-88's
+       own 16384-per-octave domain (`07_synthesis/pitch.md`).  The predicate
+       is decided from the sample that was just decoded, never from a table
+       of offsets - see `sc88_wave_loop_reads_double` for the arithmetic, the
+       gaps it sits in the middle of, and the standing of the claim.  It is
+       applied to the static word, so the per-period recomposition carries it
+       for the life of the note. */
+    if (sc88_wave_loop_reads_double(render_component->pcm24,
+                                    render_component->pcm_count, pcm_base,
+                                    &zone.descriptor)) {
+      pitch_word += 0x4000u;
+      if (pitch_word > 0x3ffffu)
+        pitch_word = 0x3ffffu;
+    }
+    render_component->static_pitch_word = pitch_word;
+    pitch_word = sc88_pitch_current_word(
+      pitch_word, 0, render_component->pitch_envelope.current);
+    if (!sc88_oscillator_init(&render_component->oscillator,
                               render_component->pcm24,
                               render_component->pcm_count, pcm_base,
                               &registers, mode, pitch_word,
                               renderer->output_rate, renderer->wrap))
       goto fail;
     render_component->active = true;
+    ++voice->component_count;
   }
+  /* Every tone in the ROM covers every velocity: all 201 single-component
+     melodic tones and every single-component rhythm tone carry the window
+     0..127, and no two-component tone leaves a velocity uncovered. So zero
+     here is not a ROM tone at all - it is `--only-component` naming a
+     component the tone does not have. Refuse the note rather than allocate
+     slots that sound nothing. */
+  if (voice->component_count == 0)
+    goto fail;
   return true;
 
 fail:
@@ -467,7 +565,7 @@ fail:
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -479,7 +577,8 @@ bool sc88_renderer_note_on_with_part_controls(
                                &tone_offset))
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
-                                    velocity, provisional_gain, levels, pan,
+                                    velocity, levels,
+                                    SC88_TVA_NO_DRUM_LEVEL, pan,
                                     tvf_controls, tva_controls,
                                     lfo_controls);
 }
@@ -487,7 +586,7 @@ bool sc88_renderer_note_on_with_part_controls(
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  float provisional_gain, const struct sc88_tva_levels *levels,
+  const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
@@ -498,6 +597,7 @@ bool sc88_renderer_note_on_drum(
   struct sc88_drum_note slot;
   struct sc88_tva_levels drum_levels;
   struct sc88_pan_controls drum_pan;
+  uint8_t drum_level;
   uint32_t kit;
   unsigned i;
   if (!renderer || !levels || !pan ||
@@ -511,22 +611,26 @@ bool sc88_renderer_note_on_drum(
      The level is a **per-note** property, so it does not belong in any of
      the four part-level sources, all of which are part or global controls;
      hijacking the secondary level for it both under-drove the kit and threw
-     away whatever that control was doing. Where in the amplitude chain the
-     firmware applies it is not yet traced, so it is applied to the
-     provisional gain, which this codebase already labels provisional. */
+     away whatever that control was doing. It is a fifth source of its own:
+     `72a3..72ab` subtracts it from the same headroom, through the same
+     table, before the component's static attenuation at `72b2`, so it
+     travels to `sc88_tva_gain_from_headroom_q17` beside the other four.
+     `4d76` gates it on bit 7 of this note's `+0x280` assign-group byte
+     being clear, which is the state of every sounding slot in all 24
+     kits. */
   drum_levels = *levels;
   drum_pan = *pan;
-  if (slot.level <= 127)
-    provisional_gain *= (float)slot.level / 127.0f;
+  drum_level = ((slot.assign_group & 0x80u) == 0u && slot.level <= 127)
+    ? slot.level : (uint8_t)SC88_TVA_NO_DRUM_LEVEL;
   if (slot.pan >= 1 && slot.pan <= 127)
     drum_pan.part = slot.pan;
   if (note)
     *note = slot;
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
                                   slot.play_note <= 127 ? slot.play_note : key,
-                                  velocity, provisional_gain, &drum_levels,
-                                  &drum_pan, tvf_controls, tva_controls,
-                                  lfo_controls))
+                                  velocity, &drum_levels,
+                                  drum_level, &drum_pan, tvf_controls,
+                                  tva_controls, lfo_controls))
     return false;
   for (i = 0; i < voice->component_count; ++i) {
     voice->components[i].reverb_send = slot.reverb_send;
@@ -568,7 +672,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
           sample = voice->tvf_audio_transfer(
             voice->tvf_audio_user, &component->tvf_audio, &component->tvf,
             1.0, sample);
-        float gained = sample * (component->static_gain_q17 / 131072.0f);
+        float gained = sample *
+          (sc88_render_static_gain_q17(component, 1.0) / 131072.0f);
         left += gained * (component->left_gain_q15 / 32768.0f);
         right += gained * (component->right_gain_q15 / 32768.0f);
         active = true;
@@ -580,8 +685,8 @@ size_t sc88_renderer_render(struct sc88_render_voice *voice,
     }
     if (!active)
       break;
-    stereo[frame * 2] = left * voice->provisional_gain;
-    stereo[frame * 2 + 1] = right * voice->provisional_gain;
+    stereo[frame * 2] = left;
+    stereo[frame * 2 + 1] = right;
   }
   return frame;
 }

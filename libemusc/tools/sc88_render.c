@@ -311,7 +311,7 @@ static void usage(void)
     "                   [--rate HZ] [--raw] [--tail SECONDS]\n"
     "                   [--wrap carry|reset|fraction] [--trace]\n"
     "                   [--no-filter] [--stages PREFIX]\n"
-    "                   [--only-component N]\n"
+    "                   [--only-component N]   N is 1 or 2\n"
     "  --raw   the wave images are undescrambled chip dumps\n"
     "  --wrap  oscillator fractional wrap, an open question: state it\n");
 }
@@ -381,8 +381,20 @@ int main(int argc, char **argv)
       no_filter = true;
     else if (!strcmp(a, "--stages") && i + 1 < argc)
       stages = argv[++i];
-    else if (!strcmp(a, "--only-component") && i + 1 < argc)
+    else if (!strcmp(a, "--only-component") && i + 1 < argc) {
+      /* Numbered from ONE. Zero is not "the first component", it is the
+         default, and accepting it silently rendered the whole tone under a
+         name that reads as a selection - which is how a full render came to
+         be compared against itself and reported as a silent second
+         component. */
       only_component = (unsigned)strtoul(argv[++i], NULL, 10);
+      if (only_component < 1 || only_component > SC88_MAX_TONE_COMPONENTS) {
+        fprintf(stderr, "sc88_render: --only-component takes 1..%u; "
+                "components are numbered from one, and omitting the option "
+                "sounds them all\n", SC88_MAX_TONE_COMPONENTS);
+        return 2;
+      }
+    }
     else if (!strcmp(a, "--no-effects"))
       no_effects = true;
     else if (!strcmp(a, "--wrap") && (int)i + 1 < argc) {

@@ -216,6 +216,18 @@ bool sc88_rom_open_component(const struct sc88_rom *rom,
   return true;
 }
 
+bool sc88_rom_component_sounds(const struct sc88_component *component,
+                               uint8_t velocity)
+{
+  uint8_t low, high;
+
+  if (!component || !component->bytes)
+    return false;
+  low = component->bytes[0x6c];
+  high = component->bytes[0x6d];
+  return velocity >= low && velocity <= high;
+}
+
 bool sc88_rom_select_zone(const struct sc88_rom *rom,
                           const struct sc88_component *component,
                           uint8_t selector_key,

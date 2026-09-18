@@ -60,6 +60,11 @@ static void make_control(uint8_t *control)
      0xffff and its tail is silent. */
   put16(control + 0x40000 + 34 + 0x78, 0x0000);
   control[0x40000 + 34 + 0x80] = 1;
+  /* The component's velocity window, +6c..+6d inclusive. A calloc'd
+     fixture states 0..0, which sounds nothing: every note this file
+     plays would be refused. The ROM's own tones all reach 127. */
+  control[0x40000 + 34 + 0x6c] = 0;
+  control[0x40000 + 34 + 0x6d] = 127;
   control[0x30010] = 127;
   control[0x30011] = 0xff;
   put16(control + 0x30014, 0x6100);
@@ -78,6 +83,12 @@ static void make_control(uint8_t *control)
   put16(control + 0x15db6 + 63 * 2, 0x4c00);
   put16(control + 0x1573e + 64 * 2, 0xffff);
   put16(control + 0x1543e + 2, 0xffff);
+  /* The stage's interpolation word, which the chip is handed beside the
+     target: the component takes the exponential table at `0x1563e`, and
+     this is the SC-88's own entry at the rate index above. Left at zero a
+     fixture says "never move", and the stage would hold at its start
+     level for its whole dwell. */
+  put16(control + 0x1563e + 2, 0x0517);
 }
 
 static void test_held_raw(char **paths)
@@ -164,16 +175,19 @@ int main(int argc, char **argv)
 
   put16(device.control_rom + 0x14f3e, 0xffff);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 0));
-  /* Silencing the part silences the voices, but the output is AC-coupled
-     and a high-pass rings briefly on any step, so what is asserted is that
-     it settles rather than that it is zero on the next sample. */
+  /* Silencing the part silences the voices, but the output stage is
+     AC-coupled and rings briefly on any step, so what is asserted is that
+     it settles rather than that it is zero on the next sample. The
+     settled level is asserted against an absolute bound: comparing two
+     samples of the tail against each other compares float noise once
+     more than one section is in the path. */
   sc88_device_render(&device, output, 64);
   {
     unsigned s;
     for (s = 0; s < 64; ++s)
       assert(fabs(output[s * 2]) < 0.2f &&
              output[s * 2] == output[s * 2 + 1]);
-    assert(fabs(output[126]) < fabs(output[0]) || output[0] == 0.0f);
+    assert(fabs(output[126]) < 1e-3f);
   }
   put16(device.control_rom + 0x14f3e, 0);
   assert(sc88_device_midi(&device, 0, 0xb0, 7, 100));
@@ -182,6 +196,9 @@ int main(int argc, char **argv)
   sc88_device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 1);
   assert(sc88_device_midi(&device, 0, 0xb0, 64, 0));
+  /* Two control periods: one for the release to run out and compose
+     amplitude 0, one for the chip's register to glide to it. */
+  sc88_device_render(&device, output, 257);
   sc88_device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 0);
   assert(sc88_device_midi(&device, 1, 0xc0, 0, 0));
