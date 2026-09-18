@@ -13,23 +13,25 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest,  cc: g++-10,  dep: 'build-essential cmake g++-10' }
-          - { os: macos-latest,   cc: clang++, dep: '' }
-          - { os: windows-latest, cc: g++,     dep: '' }
+          - { os: ubuntu-latest,  cxx: g++,      cc: gcc,    dep: 'build-essential cmake' }
+          - { os: macos-latest,   cxx: clang++,  cc: clang,  dep: '' }
+          - { os: windows-latest, cxx: g++,      cc: gcc,    dep: '' }
     runs-on: ${{matrix.os}}
     steps:
     - name: Install Dependencies (Ubuntu)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y ${{matrix.dep}}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ${{matrix.dep}}
 
     - name: Checkout Repo
       uses: actions/checkout@v4
 
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{matrix.cxx}} -DCMAKE_C_COMPILER=${{matrix.cc}}
 
     - name: Build
-      run: cmake --build build
+      run: cmake --build build --config Release
 
     - name: Test
-      run: cmake --build build --target test
+      run: cmake --build build --config Release --target test
