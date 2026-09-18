@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8...3.30)
 
 configure_file(config.h.in config.h)
 
-add_library(emusc
+set(EMUSC_SOURCES
   analog_stage.cc
   analog_stage.h
   chorus.cc
@@ -79,10 +79,19 @@ add_library(emusc
   wave_rom.cc
   wave_rom.h)
 
+add_library(emusc SHARED ${EMUSC_SOURCES})
+add_library(emusc_static STATIC ${EMUSC_SOURCES})
+
 target_compile_features(emusc PUBLIC cxx_std_17)
 target_compile_features(emusc PRIVATE c_std_99)
+target_compile_features(emusc_static PUBLIC cxx_std_17)
+target_compile_features(emusc_static PRIVATE c_std_99)
+
 target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(emusc_static PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
+set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION})
 
 # SC-88 specific debug/analysis tools have been removed.
 # Use the multi-device emusc-render renderer in libemusc/tools/ instead.
