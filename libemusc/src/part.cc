@@ -684,9 +684,9 @@ int Part::control_change(uint8_t msgId, uint8_t value)
   } else if (msgId == 64) {                            // Hold1
     if (_settings->get_param(PatchParam::RxHold1, _id)) {
       if (value < 64) {
-	_settings->set_param(PatchParam::Hold1, (uint8_t) 0, _id);
+	_settings->set_param(PatchParam::Hold1, (uint8_t) 0, (int8_t) _id);
       } else {
-	_settings->set_param(PatchParam::Hold1, (uint8_t) 1, _id);
+	_settings->set_param(PatchParam::Hold1, (uint8_t) 1, (int8_t) _id);
       }
 
       for (auto &n : _notes)
@@ -697,17 +697,17 @@ int Part::control_change(uint8_t msgId, uint8_t value)
   } else if (msgId == 65) {                            // Portamento
     if (_settings->get_param(PatchParam::RxPortamento, _id)) {
       if (value < 64)
-	_settings->set_param(PatchParam::Portamento, (uint8_t)0,_id);
+	_settings->set_param(PatchParam::Portamento, (uint8_t)0,(int8_t)_id);
       else
-	_settings->set_param(PatchParam::Portamento, (uint8_t)1,_id);
+	_settings->set_param(PatchParam::Portamento, (uint8_t)1,(int8_t)_id);
     }
 
   } else if (msgId == 66) {                            // Sostenuto
     if (_settings->get_param(PatchParam::RxSostenuto, _id)) {
       if (value < 64)
-	_settings->set_param(PatchParam::Sostenuto, (uint8_t)0,_id);
+	_settings->set_param(PatchParam::Sostenuto, (uint8_t)0,(int8_t)_id);
       else
-	_settings->set_param(PatchParam::Sostenuto, (uint8_t)1,_id);
+	_settings->set_param(PatchParam::Sostenuto, (uint8_t)1,(int8_t)_id);
 
       for (auto &n : _notes)
 	n->sustain(_settings->get_param(PatchParam::Sostenuto, _id));
@@ -716,9 +716,9 @@ int Part::control_change(uint8_t msgId, uint8_t value)
   } else if (msgId == 67) {                            // Soft
     if (_settings->get_param(PatchParam::RxSoft, _id)) {
       if (value < 64)
-	_settings->set_param(PatchParam::Soft, (uint8_t)0,_id);
+	_settings->set_param(PatchParam::Soft, (uint8_t)0,(int8_t)_id);
       else
-	_settings->set_param(PatchParam::Soft, (uint8_t)1,_id);
+	_settings->set_param(PatchParam::Soft, (uint8_t)1,(int8_t)_id);
     }
 
   } else if (msgId == 84) {                            // Portamento control

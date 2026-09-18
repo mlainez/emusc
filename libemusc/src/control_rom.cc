@@ -30,7 +30,7 @@
 // SC55_Soundfont generator written by Kitrinx and NewRisingSun.
 // For more information, see [ https://github.com/Kitrinx/SC55_Soundfont ]
 
-
+#define _USE_MATH_DEFINES
 #include <cstdlib>
 #include "control_rom.h"
 

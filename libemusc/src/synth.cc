@@ -24,10 +24,7 @@
 
 #include <cstring>
 #include <ctime>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <fcntl.h>
+#include <cstdlib>
 
 #include <algorithm>
 #include <cmath>

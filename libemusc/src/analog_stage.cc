@@ -6,6 +6,7 @@
  *
  *  See analog_stage.h for what this is and why it is not device-specific code.
  */
+#define _USE_MATH_DEFINES
 #include "analog_stage.h"
 
 #include <cmath>

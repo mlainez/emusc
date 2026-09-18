@@ -585,7 +585,7 @@ void TVF::_iterate_phase(void)
   lfoDepth = std::min(lfoDepth, 0x1800);
   int lfoProd = (_LFO1->value() << 1) * lfoDepth;
   int lfoMod = (lfoProd + 0x8000) >> 16;
-  accDepth = std::clamp(accDepth + lfoMod, 0, INT16_MAX);
+  accDepth = (uint16_t) std::clamp((int) accDepth + lfoMod, 0, (int) INT16_MAX);
 
   lfoDepth = std::abs(_lfo2Depth +
                       _settings->get_acc_control_param(Settings::ControllerParam::LFO2TVFDepth, _partId));
