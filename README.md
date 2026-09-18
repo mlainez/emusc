@@ -4,29 +4,60 @@ This is a separate fork of [skjelten/emusc](https://github.com/skjelten/emusc) f
 
 ---
 
-## libEmuSC — Headless SC-88 Emulation Library
+## emuscd — Headless Roland Sound Canvas Emulation
 
-**libEmuSC** is a C library that implements low-level emulation of the Roland Sound Canvas SC-88 (and related modules). It extracts and reimplements the behavior of the synthesizer's ROM-based voice engine, including oscillator waveforms, TVA (Time Variant Amplifier) envelopes, pan behavior, and pitch control.
+**emuscd** (the library `libEmuSC` + headless tools) emulates the low-level synthesis behavior of Roland's Sound Canvas family of synthesizers. It extracts and reimplements ROM-based voice engines, including oscillator waveforms, TVA (Time Variant Amplifier) envelopes, effects processing, and MIDI voice allocation.
 
-This fork was created to explore SC-88 emulation at a deep technical level, with substantial AI assistance in reverse engineering ROM structures and envelope dynamics. The library serves as the research output, with a focus on understanding the original hardware behavior rather than achieving bit-perfect audio reproduction.
+This fork was created to explore Sound Canvas emulation at a deep technical level, with substantial AI assistance in reverse engineering ROM structures, envelope dynamics, and oscillator characteristics. The library serves as the research output, with a focus on understanding the original hardware behavior rather than achieving bit-perfect reproduction.
 
-The upstream EmuSC project may be better suited if you want a polished, end-user GUI application for SC-55 emulation.
+---
+
+## Supported Devices
+
+The following Roland Sound Canvas and synthesizer modules are emulated:
+
+| Device | Status | Details |
+|--------|--------|---------|
+| **SC-55** | Partial | Firmware 1.21; oscillator and TVA working; TVF/reverb incomplete |
+| **SC-55mkII** | Partial | Firmware 1.01; enhanced from SC-55; GM mode support |
+| **SC-88** | Partial | Full ROM-driven engine with 64-voice polyphony; SC-88's own synthesis path |
+| **JV-880** | Partial | Sampled sound module; device profile extracted; synthesis in progress |
+
+**Emulation scope:**
+- ✅ ROM-based voice waveforms and tables
+- ✅ MIDI channel and note-on/off control
+- ✅ Pitch bend, modulation, volume, pan, expression
+- ✅ Program change and bank selection
+- ✅ TVA envelope (attack, decay, sustain, release)
+- ✅ Oscillator frequency and modulation
+- ⏳ TVF (filter) envelope curves (in progress)
+- ⏳ Reverb and chorus effects (partial)
+- ⏳ LFO shape and routing
+- ⏳ Velocity response curves (partial)
 
 ---
 
 ## What's Here
 
 - **`libemusc/`** — The core C library implementing:
-  - ROM-based voice tables and waveforms
-  - SC-88 oscillator and synthesis engine
+  - ROM-based voice tables, waveforms, and device profiles
+  - Synthesis engines (SC-55 generation and SC-88)
   - TVA envelope tracking with parameterized stages
-  - Pan and pitch control
-  - MIDI device interface for 64-note polyphonic playback
+  - Pan, pitch, and expression control
+  - MIDI device interface for polyphonic playback
   
-- **`libemusc/tools/`** — Utility programs:
+- **`libemusc/tools/emusc-render`** — Headless MIDI-to-WAV renderer:
+  - Parse Standard MIDI Files (SMF format 0 & 1)
+  - Deterministic, sample-accurate event scheduling
+  - Load SC-55/SC-88 ROM sets automatically
+  - Configurable output rate and GM/GS reset mode
+  - Reproducible output via fixed random seed
+  
+- **`libemusc/tools/`** — Analysis and test utilities:
   - ROM dumping and sample extraction
-  - Oscillator testing and analysis
-  - Envelope tracing and validation
+  - Oscillator testing and validation
+  - Envelope tracing and curve fitting
+  - TVF probe and characterization
   
 - **`libemusc/tests/`** — Unit tests for core synthesis components
 
@@ -84,10 +115,46 @@ This fork respects the upstream's open-source licenses (LGPL/GPL) and retains pr
 
 ---
 
+## Current Development Focus
+
+This research fork is actively exploring:
+- SC-88 immutable ROM graph and parameterized voice engine
+- TVA envelope behavior across different devices
+- TVF (filter) curve extraction and modeling
+- Oscillator stage interpolation and coefficient precision
+- MIDI voice allocation and priority behavior
+- Effects processing (reverb, chorus, EQ)
+
+---
+
+## Example: Render a MIDI File
+
+Once ROMs are obtained (not included), render a Standard MIDI File to WAV:
+
+```bash
+./build/libemusc/tools/emusc-render \
+  --romset sc88 \
+  --rom-dir /path/to/sc88/roms \
+  --rate 44100 \
+  input.mid output.wav
+```
+
+For SC-55:
+```bash
+./build/libemusc/tools/emusc-render \
+  --romset mk1 \
+  --rate 44100 \
+  input.mid output.wav
+```
+
+---
+
 ## Questions?
 
-This is exploratory research code. If you're looking for:
-- **A usable SC-55 emulator:** Try [Nuked SC-55](https://github.com/nukeykt/Nuked-SC55) or [SC-55 Soundfont](https://github.com/Kitrinx/SC55_Soundfont)
-- **A polished EmuSC GUI:** See the upstream [EmuSC project](https://github.com/skjelten/emusc)
-- **Library integration:** Study `libemusc/` and its public headers in `libemusc/src/`
-- **Reverse engineering details:** Check git history and commit messages for research notes
+This is exploratory research code. For questions about:
+- **The library API:** Read `libemusc/src/synth.h` (public interface)
+- **ROM extraction:** See the corpus and PROVENANCE documentation
+- **Reverse engineering:** Check git history and commit messages for detailed analysis notes
+- **SC-88 specific:** Look at `libemusc/src/sc88_*.c` files and their corresponding research artifacts
+- **Alternatives:** [Nuked SC-55](https://github.com/nukeykt/Nuked-SC55) or [SC-55 Soundfont](https://github.com/Kitrinx/SC55_Soundfont) for other approaches
+- **Upstream EmuSC:** See https://github.com/skjelten/emusc for the polished GUI application
