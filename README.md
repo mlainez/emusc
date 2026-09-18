@@ -1,87 +1,93 @@
-![EmuSC_logo](https://raw.githubusercontent.com/wiki/skjelten/emusc/images/emusc-logo.png)
+⚠️ **Research Fork — Not the Upstream Project**
+
+This is a separate fork of [skjelten/emusc](https://github.com/skjelten/emusc) focused on library development, reverse engineering exploration, and AI-assisted analysis of Roland Sound Canvas emulation. **This is not the main upstream EmuSC project.** This fork diverges significantly and will remain independent.
+
 ---
 
-EmuSC is a software synthesizer that aims to emulate the Roland Sound Canvas SC-55 lineup to recreate the original sounds of these '90s era synthesizers. Emulation is done by extracting relevant information from the original control and PCM ROMs and reimplement the synth's behavior in modern C++.
+## libEmuSC — Headless SC-88 Emulation Library
 
-This project has been in development since 2022 and is currently able to reproduce audio that is relatively similar to the original synths. There are still some significant shortcomings in the generated audio, varying on which instruments and settings are being used, but the goal is to be able to reproduce sounds that will make it very difficult to notice the difference.
+**libEmuSC** is a C library that implements low-level emulation of the Roland Sound Canvas SC-88 (and related modules). It extracts and reimplements the behavior of the synthesizer's ROM-based voice engine, including oscillator waveforms, TVA (Time Variant Amplifier) envelopes, pan behavior, and pitch control.
 
-If you are looking for the best possible SC-55 emulation today you might want to try the [Nuked SC-55](https://github.com/nukeykt/Nuked-SC55) project, or to use a sound font based on the SC-55, such as [SC-55 sound font](https://github.com/Kitrinx/SC55_Soundfont) made by Kitrinx and NewRisingSun.
+This fork was created to explore SC-88 emulation at a deep technical level, with substantial AI assistance in reverse engineering ROM structures and envelope dynamics. The library serves as the research output, with a focus on understanding the original hardware behavior rather than achieving bit-perfect audio reproduction.
 
-The EmuSC project is split into two parts:
-* [EmuSC](./emusc): A desktop application that serves as a frontend to libEmuSC.
-* [libEmuSC](./libemusc): A library that implements all the Sound Canvas emulation.
+The upstream EmuSC project may be better suited if you want a polished, end-user GUI application for SC-55 emulation.
 
-Note that this project is in no way endorsed by or affiliated with Roland Corp.
+---
 
-![Screenshot of EmuSC v0.1.0](https://raw.githubusercontent.com/wiki/skjelten/emusc/images/Screenshot_EmuSC_0_1_0.png)
+## What's Here
 
+- **`libemusc/`** — The core C library implementing:
+  - ROM-based voice tables and waveforms
+  - SC-88 oscillator and synthesis engine
+  - TVA envelope tracking with parameterized stages
+  - Pan and pitch control
+  - MIDI device interface for 64-note polyphonic playback
+  
+- **`libemusc/tools/`** — Utility programs:
+  - ROM dumping and sample extraction
+  - Oscillator testing and analysis
+  - Envelope tracing and validation
+  
+- **`libemusc/tests/`** — Unit tests for core synthesis components
 
-## Getting started
+---
 
-The quickest way to test EmuSC is to install precompiled packages of the [latest release](https://github.com/skjelten/emusc/releases/latest). If no packages are available for your platform, or you want to test the latest code changes, have a look at the detailed build instructions in the [Wiki](https://github.com/skjelten/emusc/wiki/Build-Instructions).
+## Building
 
-If you run into any problems please read the [troubleshooting guide](https://github.com/skjelten/emusc/wiki/Troubleshooting-Guide). If that did not help, or you have any other questions or feedback, feel free to start a new [discussion](https://github.com/skjelten/emusc/discussions) or create a [new issue](https://github.com/skjelten/emusc/issues).
+**Requirements:**
+- CMake 3.12+
+- A C compiler (GCC, Clang, MSVC)
+- Optional: C++ compiler for tests/tools
 
+**Build:**
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --build build --target test  # Run tests
+```
 
-## Contributing
+The library is built as `build/libemusc/libemusc.a` (or `.so`/`.dylib`/`.lib` depending on platform).
 
-Interested in C++ programming, reverse engineering, audio synthesis or synthesizers in general? We welcome anyone who wants to learn more and perhaps could contribute to the project. To get started we suggest that you:
-* Download or fork the source code and have a look
-* Read the [wiki](https://github.com/skjelten/emusc/wiki) for more information about the ROM files and other core parts of the emulator
-* Create an issue if you have any questions or suggestions and we will do our best to help you out getting the hang of how it all works!
+---
 
+## About This Fork
 
-## License
+This fork exists because exploration of the SC-88 emulation required detailed ROM analysis, measurement of envelope behavior, and reverse engineering of oscillator characteristics. This work was substantially assisted by Claude (an AI assistant), which helped:
 
-EmuSC is free software and released under the GNU general public license:
-* EmuSC is released under the GPLv3+ license.
-* libEmuSC is released under the LGPLv2.1+ license.
+- Analyze ROM structures and extract device profiles
+- Test and validate TVA envelope curve fitting
+- Implement parameterized oscillator stages
+- Trace MIDI voice allocation behavior
 
-### Copyright in this fork
+**AI Involvement:** Following the [kernel.org coding-assistants convention](https://www.kernel.org/doc/html/latest/process/coding-assistants.html), all commits carrying AI assistance include an `Assisted-by: Claude:<model>` trailer. The human author retains full responsibility and is listed as the author of record.
 
-Those licences stand, and the combined work keeps them. What follows describes
-only the files this fork added, so a reader can tell whose work is whose.
+**Why separate from upstream?** The upstream EmuSC project focuses on a polished GUI application for end-users. This fork prioritizes library development, low-level analysis, and exploration driven by reverse engineering. The two projects have different goals and audiences.
 
-**Files carried over from upstream, and files that relocate upstream code,
-keep their original notice** — `Copyright (C) 2022-2026  Håkon Skjelten`,
-LGPL-2.1-or-later. Modifying a file does not change who wrote it, and neither
-does moving its contents into a new filename. That includes
-`libemusc/src/device_profile.h`, `libemusc/src/devices/sc55.cc`,
-`devices/sc55mkii.cc` and `devices/sound_canvas_default.cc`, which exist
-because device constants were lifted out of the engine into per-device
-profiles.
+---
 
-**Files written from scratch here are dedicated to the public domain** under
-CC0 1.0 and carry `SPDX-License-Identifier: CC0-1.0`:
+## Licensing
 
-* `libemusc/src/analog_stage.cc` and `.h` — the post-chip output stage
-* `libemusc/src/devices/jv880.cc` — the JV-880 device profile
-* `libemusc/src/jv_velocity.h`, `libemusc/src/jv_ctrl_matrix.h` — JV tables
-  read out of ROM
-* `libemusc/src/sc88_wave.c` / `.h`, `libemusc/src/sc88_rom.c` / `.h`,
-  `libemusc/src/sc88_oscillator.c` / `.h`, `libemusc/src/sc88_renderer.c` /
-  `.h`, `libemusc/src/sc88_tva.c` / `.h`, `libemusc/src/sc88_pan.c` / `.h`,
-  `libemusc/src/sc88_engine.c` / `.h`, `libemusc/src/sc88_device.c` / `.h`,
-  and their tests — the SC-88 immutable
-  ROM graph, descriptor, FCE-DPCM, parameterized oscillator, first dry-render
-  path, ROM-table static TVA/pan gains, four-stage TVA targets/rates/curve
-  words with a replaceable XP interpolation seam, release countdown, and the
-  64-slot note/voice engine and owned-ROM MIDI device frontend with live
-  level, pedal, one-step-per-service pan and pitch-bend control
+- **`libemusc/` library:** LGPL-2.1-or-later (from upstream)
+- **New code in this fork:** Dedicated to the public domain under CC0 1.0
 
-CC0 is compatible with the GNU licences. It grants no patent rights, which the
-FSF notes as a reason to prefer a permissive software licence instead; that is
-an accepted trade here rather than an oversight.
+See `libemusc/COPYING` and `README.md` in that directory for detailed attribution.
 
-Two of those files are largely Roland ROM content tabulated. CC0 there waives
-whatever rights might attach to the tabulation — it asserts no authorship of
-Roland's data.
+---
 
-**AI involvement is disclosed, not credited as authorship.** Much of this
-fork's work was produced by an AI assistant under human direction. Commits
-carry a single `Assisted-by:` trailer, following the kernel's
-coding-assistants convention; the human contributor is the author of record
-and takes responsibility. `Co-Authored-By:` is deliberately not used.
+## Relationship to Upstream
 
-The research behind these changes — ROM maps, measurements, and the divergence
-register that drove them — is a separate repository under CC0.
+This is **not** affiliated with or endorsed by:
+- Roland Corporation (original hardware manufacturer)
+- The upstream EmuSC project (https://github.com/skjelten/emusc)
+
+This fork respects the upstream's open-source licenses (LGPL/GPL) and retains proper attribution to original code and authors.
+
+---
+
+## Questions?
+
+This is exploratory research code. If you're looking for:
+- **A usable SC-55 emulator:** Try [Nuked SC-55](https://github.com/nukeykt/Nuked-SC55) or [SC-55 Soundfont](https://github.com/Kitrinx/SC55_Soundfont)
+- **A polished EmuSC GUI:** See the upstream [EmuSC project](https://github.com/skjelten/emusc)
+- **Library integration:** Study `libemusc/` and its public headers in `libemusc/src/`
+- **Reverse engineering details:** Check git history and commit messages for research notes
