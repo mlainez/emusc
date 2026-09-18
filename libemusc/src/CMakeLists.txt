@@ -84,28 +84,10 @@ target_compile_features(emusc PRIVATE c_std_99)
 target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 
-set(SC88_RENDER_SOURCES
-  sc88_chorus.c sc88_delay.c sc88_eq.c
-  sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
-  sc88_pitch.c sc88_renderer.c sc88_reverb.c sc88_rom.c sc88_tva.c
-  sc88_tvf.c sc88_wave.c)
-
-add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
-target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_render PRIVATE m)
-set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-
-add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
-  sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
-target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_tvf_probe PRIVATE m)
-set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-
-add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
-  sc88_oscillator.c sc88_rom.c sc88_wave.c)
-target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_dump_samples PRIVATE m)
-set_target_properties(sc88_dump_samples PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+# SC-88 specific debug/analysis tools have been removed.
+# Use the multi-device emusc-render renderer in libemusc/tools/ instead.
+# Individual tools (sc88_render, sc88_tvf_probe, sc88_dump_samples) can be built
+# separately from their source files if needed for specialized analysis.
 
 if(BUILD_TESTING)
   # Every test here is assertion-driven: the assertions are the test, not a
