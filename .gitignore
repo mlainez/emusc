@@ -32,3 +32,4 @@ libemusc*.deb
 emusc*.rpm
 libemusc*.rpm
 emusc*.exe
+build-diag/
