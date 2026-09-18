@@ -248,6 +248,20 @@ int main(int argc, char **argv) {
   std::srand(o.seed);
   synth.set_audio_format(o.rate, 2);   // also instantiates the 16 parts
 
+  // Power-on reset, before the first event is queued. --reset selects the sound
+  // MAP, which the constructor above already applied; it does not put the parts
+  // on their default instrument, and only reset(map, resetParts=true) does.
+  //
+  // On this engine that is redundant here: Settings::reset() runs exactly the
+  // four _initialize_*/_apply_device_performance calls the Settings constructor
+  // runs, so the synth already holds bank 0 program 0 on every part and Drum1
+  // on part 10, and Part::reset() only clears notes and counters that are
+  // already clear on a part built moments ago. Renders are unchanged by it. It
+  // is here because the tool should start the device the way the device starts
+  // itself, so that a file which plays a note before its first program change
+  // is rendered from a stated default rather than an implied one.
+  synth.reset(map, true);
+
   // ---- Schedule -------------------------------------------------------------
   struct Sched { uint64_t frame; const smf::Event *ev; };
   std::vector<Sched> sched;

@@ -20,6 +20,14 @@ namespace {
 
 const char *SUPPORTED_DEVICES[] = { "sc55", "sc55mkii", "sc88", "jv880" };
 
+// The sound map emuscd runs in. Named once so that the value handed to the
+// Synth constructor and the value handed to its power-on reset cannot drift
+// apart: reset(sm, ...) re-applies the map, so passing a different one there
+// would silently switch the device into another mode. GS is the Synth default
+// and the mode all four supported devices are addressed in; emuscd exposes no
+// option to change it.
+const EmuSC::Synth::SoundMap SOUND_MAP = EmuSC::Synth::SoundMap::GS;
+
 bool device_supported(const std::string &dev) {
   for (const char *d : SUPPORTED_DEVICES)
     if (dev == d) return true;
@@ -69,19 +77,63 @@ inline int16_t to_i16(float x) {
 // status so a stream of note-on/note-off pairs (which omit the repeated
 // status byte) is parsed correctly instead of misreading data as a status.
 // System real-time bytes (0xF8-0xFF) pass through without disturbing state,
-// since they can be interleaved into another message. SysEx payload bytes are
-// swallowed: emuscd has no SysEx path (yet), and passing them through as
-// channel data would corrupt whatever message follows.
+// since they can be interleaved into another message.
+//
+// SysEx is assembled whole, 0xF0 through the terminating 0xF7, and handed over
+// with both framing bytes: Synth::_apply_midi_sysex rejects any message whose
+// first byte is not 0xF0 and whose last is not 0xF7. This is how a GS reset and
+// every part parameter a song states up front reach the synth; on the Sound
+// Canvas family that is most of how a song describes itself.
+//
+// A status byte other than 0xF7 arriving mid-message abandons the SysEx rather
+// than terminating it, which is what the receiver is meant to do when a sender
+// is interrupted, and keeps a truncated message from being acted on. Messages
+// longer than the uint16_t length Synth::midi_input_sysex takes are dropped for
+// the same reason: forwarding a prefix would apply a partial parameter block.
 class MidiParser {
 public:
-  template <typename F>
-  void feed(uint8_t byte, F &&on_message) {
+  template <typename F, typename G>
+  void feed(uint8_t byte, F &&on_message, G &&on_sysex) {
     if (byte >= 0xf8)
       return;
-    if (byte == 0xf7) { _inSysex = false; return; }
-    if (byte == 0xf0) { _inSysex = true; return; }
-    if (_inSysex)
+
+    if (_inSysex) {
+      if (byte == 0xf7) {
+        _inSysex = false;
+        if (!_sysexOverflow) {
+          _sysex.push_back(0xf7);
+          on_sysex(_sysex.data(), static_cast<uint16_t>(_sysex.size()));
+        }
+        _sysex.clear();
+        return;
+      }
+      if (byte & 0x80) {           // abandoned by the sender
+        _inSysex = false;
+        _sysex.clear();
+        // fall through and parse this byte as the status it is
+      } else {
+        if (_sysex.size() >= 0xffff)
+          _sysexOverflow = true;
+        else
+          _sysex.push_back(byte);
+        return;
+      }
+    }
+
+    if (byte == 0xf0) {
+      // A System Common message cancels running status (MIDI 1.0), so the next
+      // data byte cannot be taken for a continuation of whatever preceded it.
+      _runningStatus = 0;
+      _data.clear();
+      _inSysex = true;
+      _sysexOverflow = false;
+      _sysex.clear();
+      _sysex.push_back(0xf0);
       return;
+    }
+    if (byte == 0xf7)              // stray end-of-exclusive
+      return;
+
     if (byte & 0x80) {
       if (byte >= 0xf1 && byte <= 0xf6) {
         _runningStatus = 0;
@@ -113,6 +165,8 @@ private:
   uint8_t _runningStatus = 0;
   std::vector<uint8_t> _data;
   bool _inSysex = false;
+  bool _sysexOverflow = false;
+  std::vector<uint8_t> _sysex;
 };
 
 }  // namespace
@@ -216,8 +270,22 @@ public:
     }
 
     std::unique_ptr<EmuSC::Synth> new_synth(
-      new EmuSC::Synth(*new_ctrl, *new_wave));
+      new EmuSC::Synth(*new_ctrl, *new_wave, SOUND_MAP));
     new_synth->set_audio_format(sample_rate, 2);
+
+    // Power-on reset, which is what the hardware does when it is switched on
+    // and what a GS reset in the stream asks for later. It must follow
+    // set_audio_format(), which is where the 16 parts are instantiated: called
+    // before that, the resetParts loop has nothing to walk.
+    //
+    // On this engine the reset is redundant at startup - Settings::reset()
+    // runs exactly the four _initialize_*/_apply_device_performance calls the
+    // Settings constructor runs, so a freshly built Synth already holds the
+    // same defaults, bank 0 program 0 on every part and Drum1 on part 10. It
+    // is here because a real device resets at power-on regardless, and because
+    // the same call has to be correct when Synth::_apply_midi_sysex reaches it
+    // from a GS reset mid-song, where the parts are no longer fresh.
+    new_synth->reset(SOUND_MAP, true);
 
     // Destroy the old Synth before its ControlRom/WaveRom, which it holds by
     // reference, are replaced out from under it.
@@ -256,6 +324,9 @@ public:
           midi_parser.feed(midi_buf[i],
             [this](uint8_t status, uint8_t d1, uint8_t d2) {
               synth->midi_input(status, d1, d2);
+            },
+            [this](uint8_t *data, uint16_t length) {
+              synth->midi_input_sysex(data, length);
             });
         }
       }
