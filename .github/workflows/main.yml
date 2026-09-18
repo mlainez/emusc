@@ -32,11 +32,28 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
+    - name: Collect Windows binaries
+      if: runner.os == 'Windows'
+      run: |
+        mkdir -p release
+        cp build/libemusc/src/Release/emusc.dll release/
+      shell: bash
+
+    - name: Collect Linux binaries
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p release
+        cp build/libemusc/src/libemusc.a release/
+        if [ -f build/emuscd/emuscd ]; then
+          cp build/emuscd/emuscd release/
+        fi
+      shell: bash
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ runner.os }}-library
-        path: build/libemusc/src/${{ runner.os == 'Windows' && 'Release/emusc.dll' || 'libemusc.a' }}
+        name: ${{ runner.os }}-binaries
+        path: release/
         retention-days: 7
 
   release:
