@@ -16,7 +16,7 @@ add_executable(emusc-render
   wav.h)
 
 target_link_libraries(emusc-render PRIVATE emusc_static)
-target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../src")
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
