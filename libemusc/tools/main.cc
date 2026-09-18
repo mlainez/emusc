@@ -31,16 +31,11 @@ const char *USAGE = R"(usage: emusc-render [options] <input.mid> <output.wav>
 
 Renders a Standard MIDI File through libEmuSC to a 16-bit stereo WAV.
 
-ROM selection (either --romset, or the three explicit options):
-  --romset mk1|mk2       Use the file names of the sc55-oracle ROM directories:
-                           mk1: control=mk1_rom2.bin cpu=mk1_rom1.bin
-                                wave=mk1_waverom1.bin,mk1_waverom2.bin,mk1_waverom3.bin
-                           mk2: control=mk2_rom2.bin cpu=mk2_rom1.bin
-                                wave=mk2_waverom1.bin,mk2_waverom2.bin
-  --rom-dir DIR          Directory holding those files
-                         (default: $SC55_ORACLE_HOME/roms/<romset>, else
-                          ~/.local/share/sc55-oracle/roms/<romset>)
-  --control-rom FILE     External program EPROM (256 kB SC-55 / 512 kB SC-55mkII)
+ROM selection (either --device with --rom-dir, or the three explicit options):
+  --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
+  --rom-dir DIR          Directory holding device ROM files
+                         Files: <device>_rom*.bin, <device>_wave*.bin
+  --control-rom FILE     External program EPROM
   --cpu-rom FILE         Internal CPU EPROM (32 kB)
   --wave-rom FILE        PCM/wave ROM; repeat in bank order (each a multiple of 1 MB)
 
@@ -58,7 +53,7 @@ Exit status: 0 success, 1 usage error, 2 ROM load failure, 3 MIDI/IO error.
 
 struct Options {
   std::string in, out;
-  std::string romset, rom_dir, control_rom, cpu_rom;
+  std::string device, rom_dir, control_rom, cpu_rom;
   std::vector<std::string> wave_roms;
   uint32_t rate = 0;
   std::string reset = "gs";
@@ -92,7 +87,7 @@ Options parse_args(int argc, char **argv) {
       if (i + 1 >= argc) die(1, std::string(name) + " requires an argument");
       return argv[++i];
     };
-    if      (a == "--romset")      o.romset = need("--romset");
+    if      (a == "--device")      o.device = need("--device");
     else if (a == "--rom-dir")     o.rom_dir = need("--rom-dir");
     else if (a == "--control-rom") o.control_rom = need("--control-rom");
     else if (a == "--cpu-rom")     o.cpu_rom = need("--cpu-rom");
@@ -129,24 +124,28 @@ Options parse_args(int argc, char **argv) {
   if (o.reset != "gm" && o.reset != "gs") die(1, "--reset must be gm or gs");
   if (o.tail < 0) die(1, "--tail must be >= 0");
 
-  if (!o.romset.empty()) {
-    if (o.romset != "mk1" && o.romset != "mk2") die(1, "--romset must be mk1 or mk2");
-    std::string dir = o.rom_dir.empty() ? default_rom_dir(o.romset) : o.rom_dir;
-    if (o.control_rom.empty()) o.control_rom = dir + "/" + o.romset + "_rom2.bin";
-    if (o.cpu_rom.empty())     o.cpu_rom     = dir + "/" + o.romset + "_rom1.bin";
+  if (!o.device.empty()) {
+    if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
+      die(1, "--device must be sc55, sc55mkii, sc88, or jv880");
+    std::string dir = o.rom_dir.empty() ? default_rom_dir(o.device) : o.rom_dir;
+    if (o.control_rom.empty()) {
+      if (o.device == "sc55" || o.device == "sc55mkii")
+        o.control_rom = dir + "/" + o.device + "_rom2.bin";
+      else if (o.device == "sc88" || o.device == "jv880")
+        o.control_rom = dir + "/" + o.device + "_rom1.bin";
+    }
+    if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii")) {
+      o.cpu_rom = dir + "/" + o.device + "_rom1.bin";
+    }
     if (o.wave_roms.empty()) {
-      int n = (o.romset == "mk1") ? 3 : 2;
+      int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 : (o.device == "sc88") ? 2 : 1;
+      std::string wavename = (o.device == "jv880") ? "wave" : "waverom";
       for (int k = 1; k <= n; k++)
-        o.wave_roms.push_back(dir + "/" + o.romset + "_waverom" + std::to_string(k) + ".bin");
+        o.wave_roms.push_back(dir + "/" + o.device + "_" + wavename + std::to_string(k) + ".bin");
     }
   }
-  // The SC-88 has no SECOND image to give: its 512 kB ROM is both the H8/510
-  // program and the data tables - a vector table at 0, reset code at 0x200 -
-  // where the Sound Canvas keeps its program in a separate internal EPROM.
-  // libEmuSC decides what it needs once the control ROM identifies the device,
-  // and a Sound Canvas without its CPU ROM still fails there.
   if (o.control_rom.empty() || o.wave_roms.empty())
-    die(1, "ROMs not specified: give --romset, or --control-rom and --wave-rom");
+    die(1, "ROMs not specified: give --device with --rom-dir, or --control-rom and --wave-rom");
   return o;
 }
 
