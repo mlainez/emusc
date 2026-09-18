@@ -33,10 +33,15 @@ Renders a Standard MIDI File through libEmuSC to a 16-bit stereo WAV.
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
-  --rom-dir DIR          Directory holding device ROM files
-                         Files: <device>_rom*.bin, <device>_wave*.bin
+  --rom-dir DIR          Directory holding device ROM files, named:
+                           sc55:     sc55_rom1.bin sc55_rom2.bin
+                                     sc55_waverom{1,2,3}.bin
+                           sc55mkii: sc55mkii_rom1.bin sc55mkii_rom2.bin
+                                     sc55mkii_waverom{1,2}.bin
+                           sc88:     sc88_rom1.bin sc88_waverom{1,2,3,4}.bin
+                           jv880:    jv880_rom2.bin jv880_waverom{1,2}.bin
   --control-rom FILE     External program EPROM
-  --cpu-rom FILE         Internal CPU EPROM (32 kB)
+  --cpu-rom FILE         Internal CPU EPROM (32 kB; SC-55/SC-55mkII only)
   --wave-rom FILE        PCM/wave ROM; repeat in bank order (each a multiple of 1 MB)
 
 Rendering:
@@ -131,17 +136,24 @@ Options parse_args(int argc, char **argv) {
     if (o.control_rom.empty()) {
       if (o.device == "sc55" || o.device == "sc55mkii")
         o.control_rom = dir + "/" + o.device + "_rom2.bin";
-      else if (o.device == "sc88" || o.device == "jv880")
+      else if (o.device == "sc88")
         o.control_rom = dir + "/" + o.device + "_rom1.bin";
+      else if (o.device == "jv880")
+        // JV-880's control ROM is its 256 kB table image (DeviceProfile::romSize
+        // in devices/jv880.cc); the 32 kB rom1 image is not read for this device.
+        o.control_rom = dir + "/" + o.device + "_rom2.bin";
     }
     if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii")) {
       o.cpu_rom = dir + "/" + o.device + "_rom1.bin";
     }
     if (o.wave_roms.empty()) {
-      int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 : (o.device == "sc88") ? 2 : 1;
-      std::string wavename = (o.device == "jv880") ? "wave" : "waverom";
+      // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
+      // (SC88_WAVE_CHIP_COUNT in sc88_device.h), JV-880 2 (DeviceProfile
+      // waveRomBanks in devices/jv880.cc).
+      int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 :
+              (o.device == "sc88") ? 4 : 2;
       for (int k = 1; k <= n; k++)
-        o.wave_roms.push_back(dir + "/" + o.device + "_" + wavename + std::to_string(k) + ".bin");
+        o.wave_roms.push_back(dir + "/" + o.device + "_waverom" + std::to_string(k) + ".bin");
     }
   }
   if (o.control_rom.empty() || o.wave_roms.empty())
