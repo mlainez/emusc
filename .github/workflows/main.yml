@@ -37,6 +37,9 @@ jobs:
       run: |
         mkdir -p release
         cp build/libemusc/src/Release/emusc.dll release/
+        if [ -f build/libemusc/tools/Release/emusc-render.exe ]; then
+          cp build/libemusc/tools/Release/emusc-render.exe release/
+        fi
       shell: bash
 
     - name: Collect Linux binaries
@@ -53,6 +56,10 @@ jobs:
         # Copy daemon if built
         if [ -f build/emuscd/emuscd ]; then
           cp build/emuscd/emuscd release/
+        fi
+        # Copy renderer if built
+        if [ -f build/libemusc/tools/emusc-render ]; then
+          cp build/libemusc/tools/emusc-render release/
         fi
       shell: bash
 

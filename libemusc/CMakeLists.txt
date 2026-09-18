@@ -10,6 +10,7 @@ project(
 option(BUILD_SHARED_LIBS "Build libemusc as a shared library" ON)
 
 add_subdirectory(src)
+add_subdirectory(tools)
 
 # TODO: Find a better way to handle pkg-config file generation
 #       Challenge is that the correct path is first known in the install-phase
