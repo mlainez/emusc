@@ -33,3 +33,5 @@ emusc*.rpm
 libemusc*.rpm
 emusc*.exe
 build-diag/
+.claude/worktrees/
+libemusc/tools/build*
