@@ -8,3 +8,4 @@ project(
 include(CTest)
 
 add_subdirectory(libemusc)
+add_subdirectory(emuscd)
