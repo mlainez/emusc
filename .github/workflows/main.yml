@@ -2,7 +2,7 @@ name: emuscd CI
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   push:
     branches: [ '*' ]
   create:
@@ -13,14 +13,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest,  cc: g++-10,  dep: 'cmake g++-10' }
-          - { os: macos-latest,   cc: clang++, dep: 'cmake' }
-          - { os: windows-latest, cc: g++,     dep: 'cmake' }
+          - { os: ubuntu-latest,  cc: g++-10,  dep: 'build-essential cmake g++-10' }
+          - { os: macos-latest,   cc: clang++, dep: '' }
+          - { os: windows-latest, cc: g++,     dep: '' }
     runs-on: ${{matrix.os}}
     steps:
-    - name: Install Dependencies
-      run: |
-        ${{ matrix.os == 'ubuntu-latest' && 'sudo apt-get update && sudo apt-get install -y' || 'echo Skipping' }} ${{matrix.dep}}
+    - name: Install Dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y ${{matrix.dep}}
 
     - name: Checkout Repo
       uses: actions/checkout@v4
