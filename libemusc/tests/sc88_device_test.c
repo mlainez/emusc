@@ -23,6 +23,19 @@ static void put24(uint8_t *p, uint32_t value)
   p[2] = (uint8_t)value;
 }
 
+/* One GS DT1 write, framed as the wire carries it. */
+static bool dt1(struct sc88_device *device, uint8_t a, uint8_t b, uint8_t c,
+                uint8_t value)
+{
+  uint8_t packet[10];
+  unsigned sum = (unsigned)a + b + c + value;
+  packet[0] = 0xf0; packet[1] = 0x41; packet[2] = 0x10;
+  packet[3] = 0x42; packet[4] = 0x12;
+  packet[5] = a; packet[6] = b; packet[7] = c; packet[8] = value;
+  packet[9] = (uint8_t)((0u - sum) & 0x7fu);
+  return sc88_device_sysex(device, 0, packet, 10);
+}
+
 static uint8_t *read_exact(const char *path, size_t size)
 {
   FILE *file = fopen(path, "rb");
@@ -174,6 +187,66 @@ int main(int argc, char **argv)
     assert(fabs(device.engine.slots[0].component.oscillator.step -
                 unity_step) < 1e-12);
   }
+  /* The controller destination matrix. Its reset depths are the part
+     image at SC88-CTL 0x13184: every group's cutoff depth is the neutral
+     0x40, so a controller at any position leaves the cached word at zero
+     and the filter exactly where it was. That is why wiring this moves
+     no render of a song that never writes `40 2x`. */
+  {
+    struct sc88_channel_state *state = device.channels;
+    unsigned source;
+    for (source = 0; source < SC88_MATRIX_SOURCE_COUNT; ++source)
+      assert(state->matrix_depth[source][SC88_MATRIX_CUTOFF] == 0x40);
+    assert(state->matrix_depth[SC88_MATRIX_MODULATION]
+                              [SC88_MATRIX_LFO1_PITCH_DEPTH] == 0x0a);
+    assert(state->matrix_depth[SC88_MATRIX_PITCH_BEND]
+                              [SC88_MATRIX_PITCH] == 0x42);
+    assert(sc88_device_midi(&device, 0, 0xb0, 1, 127));
+    assert(sc88_device_midi(&device, 0, 0xd0, 127, 0));
+    assert(device.channels[0].channel_pressure == 127);
+    assert(sc88_device_midi(&device, 0, 0xb0, 16, 127));
+    assert(sc88_device_midi(&device, 0, 0xb0, 17, 127));
+    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
+    assert(sc88_device_matrix_cutoff_word(state) == 0);
+    assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 0);
+
+    /* `40 21 01`: modulation to cutoff on part 1, at full positive
+       depth. 63 * 127 halved is 4000, which is exactly where the
+       consumer's clamp sits, so the term reaches its own full scale. */
+    assert(dt1(&device, 0x40, 0x21, 0x01, 0x7f));
+    assert(state->matrix_depth[SC88_MATRIX_MODULATION]
+                              [SC88_MATRIX_CUTOFF] == 0x7f);
+    assert(sc88_device_matrix_cutoff_word(state) == 4000);
+    assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 4000);
+    assert(sc88_tvf_matrix_cutoff_term(4000) == 8191);
+    /* Released, the wheel puts it back where it was. */
+    assert(sc88_device_midi(&device, 0, 0xb0, 1, 0));
+    assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 0);
+    assert(sc88_device_midi(&device, 0, 0xb0, 1, 127));
+    /* A depth below centre darkens instead. */
+    assert(dt1(&device, 0x40, 0x21, 0x01, 0x00));
+    assert(sc88_device_matrix_cutoff_word(state) == -4064);
+    /* Neutral again, and the wheel goes back to moving nothing. */
+    assert(dt1(&device, 0x40, 0x21, 0x01, 0x40));
+    assert(sc88_device_matrix_cutoff_word(state) == 0);
+    /* `40 4x 20` is the equaliser switch and `40 2x 20` the channel
+       aftertouch group's pitch depth. The two are distinct addresses and
+       neither reaches the other. */
+    assert(dt1(&device, 0x40, 0x21, 0x20, 0x00));
+    assert(device.eq.enabled);
+    assert(state->matrix_depth[SC88_MATRIX_CHANNEL_PRESSURE]
+                              [SC88_MATRIX_PITCH] == 0);
+    assert(dt1(&device, 0x40, 0x41, 0x20, 0x00));
+    assert(!device.eq.enabled);
+    assert(dt1(&device, 0x40, 0x41, 0x20, 0x01));
+    assert(device.eq.enabled);
+    /* Put every source back at rest for the tests that follow. */
+    assert(sc88_device_midi(&device, 0, 0xb0, 1, 0));
+    assert(sc88_device_midi(&device, 0, 0xd0, 0, 0));
+    assert(sc88_device_midi(&device, 0, 0xb0, 16, 0));
+    assert(sc88_device_midi(&device, 0, 0xb0, 17, 0));
+    assert(sc88_device_midi(&device, 0, 0xb0, 121, 0));
+  }
   assert(sc88_device_midi(&device, 0, 0xb0, 99, 1));
   assert(sc88_device_midi(&device, 0, 0xb0, 98, 0x20));
   assert(sc88_device_midi(&device, 0, 0xb0, 6, 127));
@@ -219,6 +292,39 @@ int main(int argc, char **argv)
   assert(sc88_engine_active_slots(&device.engine) == 0);
   assert(sc88_device_midi(&device, 1, 0xc0, 0, 0));
   assert(!sc88_device_midi(&device, 2, 0x90, 60, 100));
+  /* The tone map reaches a melodic part, not only a rhythm one: this image
+     fills both rows of the variation lookup with the same bank, so a part
+     forced onto the SC-55 row sounds its tone rather than dropping the
+     note. Thirteen corpus files send exactly this. */
+  assert(sc88_device_midi(&device, 0, 0xb0, 32, 1));
+  assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
+  assert(sc88_device_midi(&device, 0, 0x90, 62, 100));
+  assert(sc88_engine_active_slots(&device.engine) == 1);
+  assert(sc88_device_midi(&device, 0, 0x80, 62, 64));
+  /* `40 4x 00` writes the byte CC32 writes and `40 4x 01` the part's own
+     map, which the forcing byte defers to when it is zero. Block 1 is
+     part 1; the last byte of each packet is its checksum. */
+  {
+    static const uint8_t forced_sc88[] = {
+      0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x00, 0x02, 0x7d };
+    static const uint8_t forced_off[] = {
+      0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x00, 0x00, 0x7f };
+    static const uint8_t selected_sc55[] = {
+      0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x01, 0x01, 0x7d };
+    static const uint8_t selected_bad[] = {
+      0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x01, 0x00, 0x7e };
+    assert(sc88_device_sysex(&device, 0, forced_sc88, sizeof forced_sc88));
+    assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
+    assert(sc88_device_sysex(&device, 0, selected_sc55,
+                             sizeof selected_sc55));
+    assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
+    assert(sc88_device_sysex(&device, 0, forced_off, sizeof forced_off));
+    assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
+    /* `46e9` carries the range 01..02 and refuses anything else, so the
+       selected map stays where it was. */
+    assert(sc88_device_sysex(&device, 0, selected_bad, sizeof selected_bad));
+    assert(device.channels[0].tone_map_selected == SC88_TONE_MAP_SC55);
+  }
   sc88_device_destroy(&device);
   free(chip);
   free(control);

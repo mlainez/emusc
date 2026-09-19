@@ -125,7 +125,8 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!sc88_rom_select_melodic(&rom, (uint8_t)v, (uint8_t)pr, &offset) ||
+        if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+                                     (uint8_t)pr, &offset) ||
             !sc88_rom_open_tone(&rom, offset, &t))
           continue;
         sc88_rom_tone_name(&t, n);
@@ -163,8 +164,8 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!sc88_rom_select_melodic(&rom, (uint8_t)v, (uint8_t)pr,
-                                     &offset) ||
+        if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+                                     (uint8_t)pr, &offset) ||
             !sc88_rom_open_tone(&rom, offset, &t))
           continue;
         sc88_rom_tone_name(&t, n);
@@ -178,6 +179,7 @@ int main(int argc, char **argv)
           ctl.secondary_cutoff = 64;
           ctl.part_resonance = 64;
           ctl.secondary_resonance = 64;
+          ctl.matrix_cutoff = 0;
           if (!sc88_rom_open_component(&rom, &t, c, &comp))
             continue;
           (void)sc88_tvf_key_modulation(&rom, &t, &comp, 36, &k36);
@@ -215,7 +217,8 @@ int main(int argc, char **argv)
     free(control);
     return 0;
   }
-  if (!sc88_rom_select_melodic(&rom, (uint8_t)variation, (uint8_t)program,
+  if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88,
+                               (uint8_t)variation, (uint8_t)program,
                                &tone_offset) ||
       !sc88_rom_open_tone(&rom, tone_offset, &tone)) {
     fprintf(stderr, "no tone for variation %u program %u\n",
@@ -280,6 +283,7 @@ int main(int argc, char **argv)
     controls.secondary_cutoff = 64;
     controls.part_resonance = 64;
     controls.secondary_resonance = 64;
+    controls.matrix_cutoff = 0;
 
     if (getenv("SC88_DUMP_BYTES")) {
       struct sc88_component cdump;

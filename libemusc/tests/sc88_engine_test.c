@@ -191,7 +191,7 @@ int main(void)
   }
 
   {
-    const struct sc88_tvf_controls tvf = {127, 64, 32, 64};
+    const struct sc88_tvf_controls tvf = {127, 64, 32, 64, 0};
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
           engine.notes[engine.slots[i].note].part == 1) {

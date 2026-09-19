@@ -197,6 +197,28 @@ double sc88_tvf_word_to_hz(uint32_t word)
   return (SC88_TVF_NATIVE_RATE / 3.14159265358979323846) * asin(sine);
 }
 
+/* `0x6ad0`..`0x6aff`. The matrix's cached word is a controller reading,
+   not yet a cutoff term: the firmware clamps it to `0xf060..0x0fa0`
+   (`0x6ad4`, `0x6ade`), shifts it left three (`0x6ae6`), multiplies by
+   `0x8312` keeping only the signed high word (`0x6aec`..`0x6afb`) and
+   halves that (`0x6afd`). Full scale reaches 8191, which is two octaves
+   in the base table's 4096-per-octave word - the constant was chosen for
+   exactly that, as were the LFO paths' own `+-0xfc0` and `0x8208`.
+
+   A cached word of zero short-circuits at `0x6ad2`, which this returns
+   the same value for, so the branch is arithmetic rather than a case. */
+int16_t sc88_tvf_matrix_cutoff_term(int16_t cached)
+{
+  int32_t value = cached;
+
+  if (value < -4000)
+    value = -4000;
+  else if (value > 4000)
+    value = 4000;
+  value = sc88_tvf_floor_div_pow2((value << 3) * INT32_C(0x8312), 16);
+  return (int16_t)sc88_tvf_floor_div_pow2(value, 1);
+}
+
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 const struct sc88_component *component,
                                 int16_t pre_base_modulation,
@@ -207,6 +229,7 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
   int cutoff_index;
   int resonance_index;
   int resonance_floor;
+  int16_t accumulator;
   int32_t combined;
   uint16_t limit;
 
@@ -246,9 +269,17 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
    * the unsigned compare. Halved on both sides the base spans
    * 12561..32767 against a limit of 29811..31744, so the clamp bites
    * only for the top dozen indices. */
+  /* `0x6cbd`..`0x6cc9` builds RAM 30da as the controller term, the two
+     LFO terms and the key term added into one another with plain 16-bit
+     `add:g.w`, so the accumulator wraps before the table entry is added
+     to it. The caller supplies the key term; the controller term is the
+     matrix's. */
+  accumulator = sc88_tvf_s16(
+    (uint16_t)((uint16_t)pre_base_modulation +
+               (uint16_t)sc88_tvf_matrix_cutoff_term(controls->matrix_cutoff)));
   combined = sc88_tvf_be16(rom->bytes + SC88_TVF_BASE_TABLE +
                            (unsigned)cutoff_index * 2u);
-  combined += pre_base_modulation;
+  combined += accumulator;
   if (combined < 0)
     combined = 0;
   else if (combined > UINT16_MAX)

@@ -294,6 +294,7 @@ bool sc88_renderer_init(struct sc88_renderer *renderer,
   renderer->tvf_controls.secondary_cutoff = 64;
   renderer->tvf_controls.part_resonance = 64;
   renderer->tvf_controls.secondary_resonance = 64;
+  renderer->tvf_controls.matrix_cutoff = 0;
   renderer->tva_controls.part_attack = 64;
   renderer->tva_controls.secondary_attack = 64;
   renderer->tva_controls.part_decay = 64;
@@ -397,7 +398,7 @@ bool sc88_renderer_note_on_with_controls(
   if (!renderer)
     return false;
   return sc88_renderer_note_on_with_part_controls(
-    renderer, voice, variation, program, key, velocity,
+    renderer, voice, SC88_TONE_MAP_SC88, variation, program, key, velocity,
     levels, pan, &renderer->tvf_controls, &renderer->tva_controls, NULL);
 }
 
@@ -693,8 +694,8 @@ fail:
 
 bool sc88_renderer_note_on_with_glide(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t zone_key,
-  uint8_t velocity,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t zone_key, uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
@@ -703,7 +704,7 @@ bool sc88_renderer_note_on_with_glide(
 {
   uint32_t tone_offset;
   if (!renderer ||
-      !sc88_rom_select_melodic(&renderer->rom, variation, program,
+      !sc88_rom_select_melodic(&renderer->rom, map, variation, program,
                                &tone_offset))
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
@@ -715,17 +716,18 @@ bool sc88_renderer_note_on_with_glide(
 
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls)
 {
-  return sc88_renderer_note_on_with_glide(renderer, voice, variation, program,
-                                          key, key, velocity, levels, pan,
-                                          tvf_controls, tva_controls,
-                                          lfo_controls);
+  return sc88_renderer_note_on_with_glide(renderer, voice, map, variation,
+                                          program, key, key, velocity,
+                                          levels, pan, tvf_controls,
+                                          tva_controls, lfo_controls);
 }
 
 bool sc88_renderer_note_on_drum(

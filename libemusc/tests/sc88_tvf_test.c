@@ -59,7 +59,7 @@ int main(void)
   struct sc88_component component = {component_bytes, 0, 0};
   uint8_t tone_common[SC88_TONE_COMMON_SIZE] = {0};
   struct sc88_tone tone = {tone_common, 0x40000, 1};
-  const struct sc88_tvf_controls neutral = {64, 64, 64, 64};
+  const struct sc88_tvf_controls neutral = {64, 64, 64, 64, 0};
   struct sc88_tvf_registers registers;
 
   assert(bytes);
@@ -89,6 +89,52 @@ int main(void)
   assert(registers.resonance_interpolation == 0x095f);
   assert(registers.filter_select == 0x0400);
   assert(!registers.fixed_tuple);
+
+  /* `0x6ad0`..`0x6aff`, the matrix's cutoff term. The clamp is signed and
+     symmetric at +-4000; full scale is two octaves of the base table's
+     4096-per-octave word, which is what the constant 0x8312 was chosen
+     for (`07_synthesis/tvf.md`). */
+  assert(sc88_tvf_matrix_cutoff_term(0) == 0);
+  assert(sc88_tvf_matrix_cutoff_term(4000) == 8191);
+  assert(sc88_tvf_matrix_cutoff_term(-4000) == -8192);
+  assert(sc88_tvf_matrix_cutoff_term(32767) == 8191);
+  assert(sc88_tvf_matrix_cutoff_term(-32768) == -8192);
+  assert(sc88_tvf_matrix_cutoff_term(2000) == 4095);
+  assert(sc88_tvf_matrix_cutoff_term(-2000) == -4096);
+  /* Both shifts floor, so the two signs are not mirror images; an
+     implementation that rounded toward zero would read -2 and -4 here. */
+  assert(sc88_tvf_matrix_cutoff_term(1) == 2);
+  assert(sc88_tvf_matrix_cutoff_term(-1) == -3);
+  assert(sc88_tvf_matrix_cutoff_term(-2) == -5);
+
+  /* It enters where the key term does, before the base table's entry is
+     added and before the halving - `0x6cbd`..`0x6cc9` builds RAM 30da
+     from both. So one unit of matrix cutoff weighs exactly what one unit
+     of key modulation does. */
+  {
+    struct sc88_tvf_controls matrix = {64, 64, 64, 64, 0};
+    struct sc88_tvf_registers with_key;
+    struct sc88_tvf_registers with_matrix;
+    component_bytes[0x3e] = 4;
+    /* 0x6ad4..0x6afd turns 1000 into 2047. */
+    matrix.matrix_cutoff = 1000;
+    assert(sc88_tvf_matrix_cutoff_term(1000) == 2047);
+    assert(sc88_tvf_prepare_registers(&rom, &component, 2047, &neutral,
+                                      &with_key));
+    assert(sc88_tvf_prepare_registers(&rom, &component, 0, &matrix,
+                                      &with_matrix));
+    assert(with_key.base_unshifted == with_matrix.base_unshifted);
+    assert(with_key.base_value == with_matrix.base_value);
+    /* And the two add, wrapping, rather than one replacing the other. */
+    assert(sc88_tvf_prepare_registers(&rom, &component, -2047, &matrix,
+                                      &with_matrix));
+    assert(with_matrix.base_unshifted == 0x6000);
+    /* A neutral matrix leaves the word exactly where it was. */
+    matrix.matrix_cutoff = 0;
+    assert(sc88_tvf_prepare_registers(&rom, &component, -0x1000, &matrix,
+                                      &with_matrix));
+    assert(with_matrix.combined == 0x2800);
+  }
 
   component_bytes[0x3e] = 0xff;
   assert(sc88_tvf_prepare_registers(&rom, &component, 0, &neutral,

@@ -5,7 +5,7 @@
 
 #define SC88_POINTER_TABLE_BASE 0x20000u
 #define SC88_POINTER_BANK_SIZE 384u
-#define SC88_NATIVE_VARIATION_MAP 0x2fc80u
+#define SC88_MELODIC_MAP_BASE 0x2fc00u
 #define SC88_DIRECTORY_BASE 0x30000u
 #define SC88_DIRECTORY_END 0x3606cu
 #define SC88_DESCRIPTOR_BASE 0x36100u
@@ -144,21 +144,27 @@ bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
   return true;
 }
 
-bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t variation,
-                             uint8_t program, uint32_t *tone_offset)
+bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
+                             uint8_t variation, uint8_t program,
+                             uint32_t *tone_offset)
 {
   uint8_t physical;
   uint32_t pointer_position;
   uint32_t pointer;
 
-  if (!rom || !rom->bytes || !tone_offset || program > 127)
+  /* `2d3e` refuses a resolved map of 2 or above at `2d59` and returns no
+     tone at all, which is what a false here is. */
+  if (!rom || !rom->bytes || !tone_offset || program > 127 ||
+      variation > 127 || map < SC88_TONE_MAP_SC55 ||
+      map > SC88_TONE_MAP_SC88)
     return false;
-  physical = rom->bytes[SC88_NATIVE_VARIATION_MAP + variation];
+  physical = rom->bytes[SC88_MELODIC_MAP_BASE + ((unsigned)map - 1u) * 128u +
+                        variation];
   if (physical == 0xff)
     return false;
   pointer_position = SC88_POINTER_TABLE_BASE +
     (uint32_t)physical * SC88_POINTER_BANK_SIZE + (uint32_t)program * 3;
-  if (pointer_position + 3 > SC88_NATIVE_VARIATION_MAP)
+  if (pointer_position + 3 > SC88_MELODIC_MAP_BASE)
     return false;
   pointer = sc88_rom_be24(rom->bytes + pointer_position);
   if (pointer == 0xffffff || pointer < SC88_TONE_BASE ||

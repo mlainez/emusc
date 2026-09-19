@@ -833,7 +833,8 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
               &engine->drum_overlay, engine->parts[part].rhythm_setup,
               NULL)
           : sc88_renderer_note_on_with_glide(
-              engine->renderer, &voice, variation, program, key,
+              engine->renderer, &voice, engine->parts[part].tone_map,
+              variation, program, key,
               /* `0x6052`: the zone is the higher of the glide's two ends. */
               (glide && (glide_from >> 16) > key)
                 ? (uint8_t)(glide_from >> 16) : key,

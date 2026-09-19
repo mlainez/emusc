@@ -255,9 +255,14 @@ bool sc88_renderer_note_on_with_controls(
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan);
+/* `map` is the tone map, which chooses the row of the variation lookup the
+ * bank is taken from, exactly as it chooses a rhythm part's kit set. The
+ * three entry points above have no part state to take it from and use the
+ * reset default, `SC88_TONE_MAP_SC88`. */
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
@@ -268,8 +273,8 @@ bool sc88_renderer_note_on_with_part_controls(
  * `0x602e` computes and `0x4e2c` is given. */
 bool sc88_renderer_note_on_with_glide(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t zone_key,
-  uint8_t velocity,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t zone_key, uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,

@@ -16,6 +16,14 @@ struct sc88_tvf_controls {
   uint8_t secondary_cutoff;
   uint8_t part_resonance;
   uint8_t secondary_resonance;
+  /* The controller destination matrix's cached cutoff word, held at
+     DP:1c34 + part and composed by SC88-CTL 0x11871..0x11982 from
+     modulation, pitch bend, channel pressure and the two assignable
+     controllers (`04_protocol/controllers.md`). It is not an index term
+     like part_cutoff above: 0x6ad0..0x6aff clamps it, scales it and
+     halves it into the word accumulated at RAM 30da, so its units are
+     the cutoff word's own. Zero when every depth is at its reset 0x40. */
+  int16_t matrix_cutoff;
 };
 
 /* Exact CPU-prepared XP register state. The physical cutoff, resonance and
@@ -89,13 +97,21 @@ typedef float (*sc88_tvf_audio_transfer_fn)(
   double period_fraction, float input);
 
 /* pre_base_modulation is the wrapped key/dynamic word prepared before the
- * base-table lookup. Envelope and release modulation are added afterward by
- * sc88_tvf_update_frequency. */
+ * base-table lookup; the controller matrix's cutoff term is added to it
+ * from controls->matrix_cutoff. Envelope and release modulation are added
+ * afterward by sc88_tvf_update_frequency. */
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 const struct sc88_component *component,
                                 int16_t pre_base_modulation,
                                 const struct sc88_tvf_controls *controls,
                                 struct sc88_tvf_registers *registers);
+
+/* The controller matrix's cached cutoff word, as routine 0x6ad0..0x6aff
+ * turns it into a term of the pre-base accumulator: clamped to
+ * -4000..+4000, shifted left three, multiplied by 0x8312 keeping the
+ * signed high word, and halved. Full scale is 8191 word units, two
+ * octaves at the base table's 4096 per octave. */
+int16_t sc88_tvf_matrix_cutoff_term(int16_t cached);
 
 /* Signed key-table word times signed component factor, retaining the product
  * high word and applying the firmware's final doubling. */

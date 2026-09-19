@@ -86,6 +86,82 @@ static void sc88_device_sync_pitch(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_pitch_offset(&device->engine, part, offset);
 }
 
+/* An H8 arithmetic right shift, written as a division so that shifting a
+   negative value does not depend on the C implementation's choice. */
+static int32_t sc88_device_shift_right(int32_t value, unsigned bits)
+{
+  int32_t divisor = INT32_C(1) << bits;
+  int32_t quotient = value / divisor;
+  if (value < 0 && value % divisor != 0)
+    --quotient;
+  return quotient;
+}
+
+static int16_t sc88_device_s16(uint16_t value)
+{
+  return value <= INT16_MAX
+    ? (int16_t)value
+    : (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
+}
+
+/* `sub.b #0x40:8` on the depth byte, read back as the signed byte the
+   multiply that follows treats it as. */
+static int sc88_device_centred_depth(uint8_t depth)
+{
+  uint8_t byte = (uint8_t)(depth - 0x40u);
+  return byte <= 0x7fu ? (int)byte : (int)byte - 0x100;
+}
+
+/* One source's contribution to a bipolar destination: the centred depth
+   times the source's own value, wrapping into the destination word.
+   `0x11876`..`0x1189e` is one of the four, written in the ROM as a
+   magnitude multiply with the sign reapplied afterwards. */
+static uint16_t sc88_device_matrix_term(uint8_t depth, uint8_t value)
+{
+  return (uint16_t)(sc88_device_centred_depth(depth) * (int)value);
+}
+
+/* The matrix's cached cutoff word, SC88-CTL 0x11871..0x11982, stored at
+   DP:1c34 + part. The four byte-controller products are summed with
+   wrapping word adds and halved by one arithmetic shift (`0x1191e`);
+   pitch bend takes its own path, forming `(bend - 0x2000) * 4`, keeping
+   bits 23..8 of its product with the centred depth (`0x11958`) and adding
+   the signed high word of that times `0x7f00` (`0x1195c`). The final add
+   wraps. Pitch is the one destination that does not halve and whose bend
+   constant is 0xfe16 instead; amplitude and the two LFO rates share this
+   shape exactly, and would be wired from here. */
+int16_t sc88_device_matrix_cutoff_word(
+  const struct sc88_channel_state *channel)
+{
+  uint16_t sum;
+  int32_t bend;
+  int32_t product;
+
+  sum = sc88_device_matrix_term(
+    channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_CUTOFF],
+    channel->modulation);
+  sum = (uint16_t)(sum + sc88_device_matrix_term(
+    channel->matrix_depth[SC88_MATRIX_CHANNEL_PRESSURE][SC88_MATRIX_CUTOFF],
+    channel->channel_pressure));
+  sum = (uint16_t)(sum + sc88_device_matrix_term(
+    channel->matrix_depth[SC88_MATRIX_CC1][SC88_MATRIX_CUTOFF],
+    channel->cc1_value));
+  sum = (uint16_t)(sum + sc88_device_matrix_term(
+    channel->matrix_depth[SC88_MATRIX_CC2][SC88_MATRIX_CUTOFF],
+    channel->cc2_value));
+  sum = (uint16_t)sc88_device_shift_right(sc88_device_s16(sum), 1);
+
+  bend = ((int32_t)channel->pitch_bend - INT32_C(0x2000)) * 4;
+  product = (int32_t)sc88_device_centred_depth(
+    channel->matrix_depth[SC88_MATRIX_PITCH_BEND][SC88_MATRIX_CUTOFF]) * bend;
+  /* Bits 23..8, assembled at `0x11958` from the product's high byte and
+     the high byte of its low word, then read as a signed word. */
+  product = sc88_device_s16(
+    (uint16_t)(sc88_device_shift_right(product, 8) & 0xffff));
+  product = sc88_device_shift_right(product * INT32_C(0x7f00), 16);
+  return sc88_device_s16((uint16_t)(sum + (uint16_t)product));
+}
+
 static void sc88_device_sync_tvf(struct sc88_device *device, uint8_t part)
 {
   const struct sc88_channel_state *channel = device->channels + part;
@@ -94,7 +170,23 @@ static void sc88_device_sync_tvf(struct sc88_device *device, uint8_t part)
   controls.secondary_cutoff = 64;
   controls.part_resonance = channel->resonance;
   controls.secondary_resonance = 64;
+  controls.matrix_cutoff = sc88_device_matrix_cutoff_word(channel);
   sc88_engine_set_part_tvf_controls(&device->engine, part, &controls);
+}
+
+/* The one LFO-depth destination this engine consumes. Those depths are
+   unsigned and their four byte-controller products are shifted right two
+   rather than one (`04_protocol/controllers.md`); modulation is the only
+   source modelled, so the sum is the one term. */
+static void sc88_device_sync_lfo1_pitch_depth(struct sc88_device *device,
+                                              uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  unsigned depth =
+    channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_LFO1_PITCH_DEPTH];
+  sc88_engine_set_part_lfo1_pitch_depth(
+    &device->engine, part,
+    (uint16_t)((depth * channel->modulation) >> 2));
 }
 
 static void sc88_device_sync_tva(struct sc88_device *device, uint8_t part)
@@ -108,6 +200,20 @@ static void sc88_device_sync_tva(struct sc88_device *device, uint8_t part)
   sc88_engine_set_part_tva_controls(&device->engine, part, &controls);
 }
 
+/* The part's bank word, resolved the way `2d3e` and `2e7a` resolve it: the
+   forced byte governs unless it is zero, and then the part's own selected
+   map does. A forced byte above 2 resolves to no tone at all on the device;
+   it is refused where it is received instead, so nothing ever reaches this
+   holding a map the ROM lookup has no row for. */
+static void sc88_device_sync_tone_map(struct sc88_device *device, uint8_t part)
+{
+  const struct sc88_channel_state *channel = device->channels + part;
+  sc88_engine_set_part_tone_map(&device->engine, part,
+                                channel->tone_map_forced
+                                  ? channel->tone_map_forced
+                                  : channel->tone_map_selected);
+}
+
 static bool sc88_device_init_common(
   struct sc88_device *device, const uint8_t *control_rom,
   size_t control_rom_size,
@@ -116,6 +222,7 @@ static bool sc88_device_init_common(
   enum sc88_fractional_wrap wrap, bool raw)
 {
   unsigned chip;
+  unsigned part;
   if (!device || !control_rom || !chips || !sizes ||
       control_rom_size != SC88_CONTROL_ROM_SIZE)
     return false;
@@ -171,6 +278,10 @@ static bool sc88_device_init_common(
   (void)sc88_reverb_init(&device->reverb, &device->renderer.rom, 4,
                          output_rate);
   device->initialized = true;
+  /* The selected tone map is set here and not in the reset, because it is
+     the one part parameter a GS Reset leaves alone. */
+  for (part = 0; part < SC88_ENGINE_PART_COUNT; ++part)
+    device->channels[part].tone_map_selected = SC88_TONE_MAP_SC88;
   sc88_device_reset_controllers(device);
   return true;
 
@@ -228,6 +339,7 @@ static bool sc88_device_load_reverb_macro(struct sc88_device *device,
 void sc88_device_reset_controllers(struct sc88_device *device)
 {
   unsigned part;
+  unsigned source;
   if (!device || !device->initialized)
     return;
   device->master_volume = 127;
@@ -264,7 +376,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
   for (part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
     struct sc88_channel_state *channel = device->channels + part;
     channel->variation = 0;
-    channel->map_lsb = 0;
+    channel->tone_map_forced = 0;
     channel->program = 0;
     channel->volume = 100;
     channel->expression = 127;
@@ -304,9 +416,32 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     sc88_engine_set_part_portamento_time(&device->engine, (uint8_t)part, 0);
     sc88_engine_set_part_portamento_control(&device->engine, (uint8_t)part,
                                             0xffu);
-    /* SC88-OM's initial modulation depths: LFO1 pitch 0x0a, the rest zero */
-    channel->mod_lfo1_pitch_depth = 0x0a;
-    sc88_engine_set_part_lfo1_pitch_depth(&device->engine, (uint8_t)part, 0);
+    /* The matrix's reset depths are ROM data: the part image at SC88-CTL
+       0x13184, whose alignment is pinned by +0x26/+0x27 = 10/11 (the CC1
+       and CC2 assignments), +0x08 = 0x64 (part level 100), +0x0f = 0x28
+       (reverb send 40) and +0x12/+0x13 = 0x40/0x40. Its six matrix groups
+       sit twelve bytes apart from +0x28 and every one of them resets
+       pitch, cutoff, amplitude and both LFO rates to the neutral 0x40 and
+       the six LFO depths to zero. Two bytes differ: modulation's LFO1
+       pitch depth is 0x0a, which is the manual's 47 cents, and pitch
+       bend's pitch depth is 0x42, its two semitones.
+
+       So a controller moves nothing but pitch until a song sends `40 2x`,
+       which is why wiring the cutoff destination leaves every render of
+       this corpus untouched. */
+    memset(channel->matrix_depth, 0, sizeof channel->matrix_depth);
+    for (source = 0; source < SC88_MATRIX_SOURCE_COUNT; ++source) {
+      channel->matrix_depth[source][SC88_MATRIX_PITCH] = 0x40;
+      channel->matrix_depth[source][SC88_MATRIX_CUTOFF] = 0x40;
+      channel->matrix_depth[source][SC88_MATRIX_AMPLITUDE] = 0x40;
+      channel->matrix_depth[source][SC88_MATRIX_LFO1_RATE] = 0x40;
+      channel->matrix_depth[source][SC88_MATRIX_LFO2_RATE] = 0x40;
+    }
+    channel->matrix_depth[SC88_MATRIX_MODULATION]
+                         [SC88_MATRIX_LFO1_PITCH_DEPTH] = 0x0a;
+    channel->matrix_depth[SC88_MATRIX_PITCH_BEND][SC88_MATRIX_PITCH] = 0x42;
+    channel->channel_pressure = 0;
+    sc88_device_sync_lfo1_pitch_depth(device, (uint8_t)part);
     channel->pitch_bend = 8192;
     channel->pitch_bend_sensitivity = 2;
     channel->rpn_msb = 127;
@@ -329,8 +464,7 @@ void sc88_device_reset_controllers(struct sc88_device *device)
        ETHNIC, which exists in the SC-88 map alone. */
     sc88_engine_set_part_rhythm(&device->engine, (uint8_t)part,
                                 (part % 16u) == 9u ? 1u : 0u);
-    sc88_engine_set_part_tone_map(&device->engine, (uint8_t)part,
-                                  SC88_TONE_MAP_SC88);
+    sc88_device_sync_tone_map(device, (uint8_t)part);
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
     sc88_engine_hold(&device->engine, (uint8_t)part, false);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
@@ -577,12 +711,61 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
     return sc88_engine_set_drum_parameter(&device->engine, setup, field,
                                           note, value);
   }
-  if ((address & 0xf0ff00u) == 0x402000u && (address & 0xffu) == 0x20u) {
-    /* `40 4x 20`, the equaliser switch. It is one global effect, so any
-       block's write governs it. */
-    if (value > 1)
+  /* The `40 4x` block, the part parameters the SC-88 adds. */
+  if ((address & 0xf0f000u) == 0x404000u) {
+    if ((address & 0xffu) == 0x20u) {
+      /* The equaliser switch. It is one global effect, so any block's
+         write governs it. */
+      if (value > 1)
+        return false;
+      device->eq.enabled = value != 0;
+      return true;
+    }
+    if (sc88_device_block_part((uint8_t)((address >> 8) & 0x0f), port,
+                               &part)) {
+      switch (address & 0xffu) {
+      case 0x00:
+        /* The same forcing byte CC32 writes: `46de` and `317c` store it in
+           the same place. */
+        if (value > 2)
+          return false;
+        device->channels[part].tone_map_forced = value;
+        sc88_device_sync_tone_map(device, part);
+        return true;
+      case 0x01:
+        /* The part's own map, which the forcing byte defers to. `46e9`
+           carries the range 01..02 in its parameter-table entry at
+           `13e94` and refuses anything else. */
+        if (value < SC88_TONE_MAP_SC55 || value > SC88_TONE_MAP_SC88)
+          return false;
+        device->channels[part].tone_map_selected = value;
+        sc88_device_sync_tone_map(device, part);
+        return true;
+      default:
+        return false;
+      }
+    }
+    return false;
+  }
+  /* `40 2x ss`, the controller destination matrix: six source groups
+     sixteen apart, eleven destinations each. Every depth is held; only
+     the cutoff column and modulation's LFO1 pitch depth are consumed so
+     far, and the sync below recomposes the cached cutoff word whichever
+     one moved, because a depth the matrix does not read yet still has to
+     survive to the merge that reads it. */
+  if ((address & 0xf0f000u) == 0x402000u &&
+      sc88_device_block_part((uint8_t)((address >> 8) & 0x0f), port, &part)) {
+    struct sc88_channel_state *state = device->channels + part;
+    uint8_t group = (uint8_t)((address & 0xffu) >> 4);
+    uint8_t destination = (uint8_t)(address & 0x0fu);
+    if (group >= SC88_MATRIX_SOURCE_COUNT ||
+        destination >= SC88_MATRIX_DEST_COUNT || value > 127)
       return false;
-    device->eq.enabled = value != 0;
+    state->matrix_depth[group][destination] = value;
+    sc88_device_sync_tvf(device, part);
+    if (group == SC88_MATRIX_MODULATION &&
+        destination == SC88_MATRIX_LFO1_PITCH_DEPTH)
+      sc88_device_sync_lfo1_pitch_depth(device, part);
     return true;
   }
   /* Patch-part block. Family 40 addresses the group on the same side as the
@@ -750,11 +933,6 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
   case 0x90:
     if (data2 == 0)
       return sc88_engine_note_off(&device->engine, part, data1);
-    /* A melodic part forced onto the SC-55 map has no tone to play: that
-       map's bank is not implemented. A rhythm part does - the ten SC-55
-       kits are in the same ROM table as the SC-88's fourteen. */
-    if (state->map_lsb == 1 && !device->engine.parts[part].rhythm_setup)
-      return false;
     return sc88_engine_note_on(
       &device->engine, part, state->variation, state->program, data1, data2,
       0, state->same_note_mode, 1.0f);
@@ -764,14 +942,12 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       state->variation = data2;
       return true;
     case 1:
-      /* The controller matrix forms each LFO depth destination as the sum
-         of `depth * value` over its sources, shifted right by two
-         (`04_protocol/controllers.md`). Modulation is the only source
-         modelled, so the sum is the one term. */
+      /* Modulation is a matrix source, not a vibrato control: the depth
+         each of its eleven destinations gets is a separate parameter, and
+         after a reset only LFO1 pitch depth is nonzero. */
       state->modulation = data2;
-      sc88_engine_set_part_lfo1_pitch_depth(
-        &device->engine, part,
-        (uint16_t)(((unsigned)state->mod_lfo1_pitch_depth * data2) >> 2));
+      sc88_device_sync_lfo1_pitch_depth(device, part);
+      sc88_device_sync_tvf(device, part);
       return true;
     case 91:
       state->reverb_send = data2;
@@ -890,15 +1066,18 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       return true;
     case 32:
       /* The tone map, 0 the part's selected map and 1 and 2 forcing the
-       * SC-55 and SC-88 maps. Nothing resets the selected map, so 0 is the
-       * SC-88 here. A rhythm part renders either map - both kit sets are
-       * in the ROM and the lookup takes the map - while a melodic part on
-       * map 1 still cannot be rendered, and its notes are dropped below. */
+       * SC-55 and SC-88 maps. `317c` stores the value in the high byte of
+       * the part's bank word, which both the melodic selector `2d3e` and
+       * the drum one `2e7a` read, so this moves either kind of part onto
+       * either map.
+       * The device stores 3..127 as well and lets the next Program Change
+       * resolve no tone at all, which is a silenced part rather than a
+       * changed one; this refuses the message instead, and no corpus file
+       * sends one. */
       if (data2 > 2)
         return false;
-      state->map_lsb = data2;
-      sc88_engine_set_part_tone_map(&device->engine, part,
-                                    data2 ? data2 : SC88_TONE_MAP_SC88);
+      state->tone_map_forced = data2;
+      sc88_device_sync_tone_map(device, part);
       return true;
     case 64:
       /* Two things, and only the second was being done: the pedal both
@@ -942,6 +1121,7 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       sc88_engine_sostenuto(&device->engine, part, false);
       sc88_device_sync_part(device, part);
       sc88_device_sync_pitch(device, part);
+      sc88_device_sync_tvf(device, part);
       return true;
     default:
       /* An ordinary controller below CC120 is compared with this part's
@@ -952,10 +1132,12 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       if (data1 < 120) {
         if (data1 == state->cc1_assign) {
           state->cc1_value = data2;
+          sc88_device_sync_tvf(device, part);
           return true;
         }
         if (data1 == state->cc2_assign) {
           state->cc2_value = data2;
+          sc88_device_sync_tvf(device, part);
           return true;
         }
       }
@@ -978,9 +1160,17 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
        orchestra playing a pop kit (`M-024`). */
     state->program = data1;
     return true;
+  case 0xd0:
+    /* Channel aftertouch. Handler `0x30f7` stores the byte at DP:d6a0 and
+       arms the matrix; every destination it reaches is a matrix depth, so
+       nothing else here consumes it. */
+    state->channel_pressure = data1;
+    sc88_device_sync_tvf(device, part);
+    return true;
   case 0xe0:
     state->pitch_bend = (uint16_t)(data1 | ((uint16_t)data2 << 7));
     sc88_device_sync_pitch(device, part);
+    sc88_device_sync_tvf(device, part);
     return true;
   default:
     return false;

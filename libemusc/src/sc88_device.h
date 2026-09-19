@@ -20,9 +20,51 @@ extern "C" {
 #define SC88_WAVE_CHIP_COUNT 4u
 #define SC88_MIDI_PORT_COUNT 2u
 
+/* The controller destination matrix at `40 2x ss`, in the order
+ * `04_protocol/sysex.md` prints: six source groups of eleven destinations.
+ * The wire address is `group * 0x10 + destination`; the matrix's own part
+ * structure holds the same six groups twelve bytes apart at +0x28, with a
+ * byte at +3 this routine does not read (`05_data_model/part_state.md`). */
+enum sc88_matrix_source {
+  SC88_MATRIX_MODULATION = 0,
+  SC88_MATRIX_PITCH_BEND = 1,
+  SC88_MATRIX_CHANNEL_PRESSURE = 2,
+  SC88_MATRIX_POLY_PRESSURE = 3,
+  SC88_MATRIX_CC1 = 4,
+  SC88_MATRIX_CC2 = 5
+};
+#define SC88_MATRIX_SOURCE_COUNT 6u
+
+enum sc88_matrix_destination {
+  SC88_MATRIX_PITCH = 0,
+  SC88_MATRIX_CUTOFF = 1,
+  SC88_MATRIX_AMPLITUDE = 2,
+  SC88_MATRIX_LFO1_RATE = 3,
+  SC88_MATRIX_LFO1_PITCH_DEPTH = 4,
+  SC88_MATRIX_LFO1_TVF_DEPTH = 5,
+  SC88_MATRIX_LFO1_TVA_DEPTH = 6,
+  SC88_MATRIX_LFO2_RATE = 7,
+  SC88_MATRIX_LFO2_PITCH_DEPTH = 8,
+  SC88_MATRIX_LFO2_TVF_DEPTH = 9,
+  SC88_MATRIX_LFO2_TVA_DEPTH = 10
+};
+#define SC88_MATRIX_DEST_COUNT 11u
+
 struct sc88_channel_state {
   uint8_t variation;
-  uint8_t map_lsb;
+  /* The two halves of the part's bank word at `d820 + 2*part`, which is
+     what the tone map is: `tone_map_forced` is the byte CC32 and
+     `40 4x 00` both write, 0 to defer to the part's own map and 1 or 2 to
+     force the SC-55 or SC-88 one, and `tone_map_selected` is that own map,
+     which only `40 4x 01` writes. `2d3e` and `2e7a` resolve the pair
+     identically for melodic and rhythm parts: the forced byte when it is
+     nonzero, the selected map otherwise.
+     Their reset behaviour differs, which is why they are held apart: GS
+     Reset clears the forced byte, while the selected map survives it, GM
+     On, System Mode Set and power-on with the printed default of 02,
+     SC-88 (SC88-OM printed 7-31). */
+  uint8_t tone_map_forced;
+  uint8_t tone_map_selected;
   uint8_t program;
   uint8_t volume;
   uint8_t expression;
@@ -39,10 +81,12 @@ struct sc88_channel_state {
   uint8_t attack;
   uint8_t decay;
   uint8_t release;
-  /* CC1, and the matrix depth it drives. The manual's initial
-     modulation-to-LFO1-pitch depth is 0x0a. */
+  /* The five part-level sources the controller destination matrix reads,
+     at DP:d6a1, d660, d6a0, d760 and d761 (`05_data_model/part_state.md`).
+     Channel pressure is held here; poly pressure is per key and is not
+     received yet. */
   uint8_t modulation;
-  uint8_t mod_lfo1_pitch_depth;
+  uint8_t channel_pressure;
   /* Part key shift, 0x28..0x58 about 0x40, so +/-24 semitones. Applied
      to the pitch rather than to the note number, which leaves zone and
      kit selection alone. TOXOPLASMA shifts a part down an octave. */
@@ -65,6 +109,12 @@ struct sc88_channel_state {
   uint8_t rpn_lsb;
   uint8_t nrpn_msb;
   uint8_t nrpn_lsb;
+  /* The controller destination matrix, `40 2x ss`: six source groups in
+     the published order, eleven depths each. Only the cutoff column is
+     applied so far; the rest are held so a song's settings are not lost,
+     and so the one consumer that does exist - modulation to LFO1 pitch
+     depth - reads the same bytes every other destination will. */
+  uint8_t matrix_depth[SC88_MATRIX_SOURCE_COUNT][SC88_MATRIX_DEST_COUNT];
   enum sc88_same_note_mode same_note_mode;
 };
 
@@ -171,6 +221,12 @@ bool sc88_device_sysex(struct sc88_device *device, uint8_t port,
 
 bool sc88_device_midi(struct sc88_device *device, uint8_t port,
                       uint8_t status, uint8_t data1, uint8_t data2);
+
+/* One part's cached controller-matrix cutoff word, the value the firmware
+ * holds at DP:1c34 + part. Exposed so the arithmetic can be checked on its
+ * own; the device recomposes it whenever one of its inputs moves. */
+int16_t sc88_device_matrix_cutoff_word(
+  const struct sc88_channel_state *channel);
 
 void sc88_device_render(struct sc88_device *device, float *stereo,
                         size_t frames);

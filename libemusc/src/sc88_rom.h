@@ -68,7 +68,14 @@ struct sc88_drum_note {
  * SC-88 - the part image the firmware copies at reset begins `00 02`
  * (`131f4`), and SC88-OM printed 7-31 gives `40 4x 01` the same default.
  * It is NOT the Use For Rhythm Part setting, which selects a drum setup
- * and is a different axis; see `sc88_engine_part`. */
+ * and is a different axis; see `sc88_engine_part`.
+ *
+ * Both lookups take it, and the firmware resolves it once for both: the
+ * melodic selector `2d3e` and the drum selector `2e7a` share the five
+ * instructions that turn the part's bank word into it - subtract 0x0101,
+ * take the low byte if that goes negative and the high byte otherwise,
+ * refuse anything at 2 or above - so map 1 is as reachable melodically as
+ * it is rhythmically, over CC32 or `40 4x 00`/`40 4x 01`. */
 #define SC88_TONE_MAP_SC55 1u
 #define SC88_TONE_MAP_SC88 2u
 
@@ -100,8 +107,15 @@ bool sc88_rom_open_drum_note_overlaid(
 bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
                              uint8_t note, struct sc88_drum_note *out);
 
-bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t variation,
-                             uint8_t program, uint32_t *tone_offset);
+/* `map` is `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`, the row of the
+ * lookup at `0x2fc00` the variation indexes. The two rows hold different
+ * banks: the SC-55 row's fifteen physical banks are 0..14 and the SC-88
+ * row's twenty-two are 15..36, so 259 of the 677 melodic tones - the
+ * CM-64/CM-32L banks at variations 126 and 127 among them - exist on the
+ * SC-55 row alone. */
+bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
+                             uint8_t variation, uint8_t program,
+                             uint32_t *tone_offset);
 bool sc88_rom_open_tone(const struct sc88_rom *rom, uint32_t tone_offset,
                         struct sc88_tone *tone);
 bool sc88_rom_open_component(const struct sc88_rom *rom,
