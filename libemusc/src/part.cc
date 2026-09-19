@@ -468,7 +468,7 @@ int Part::choke_assign_group(uint8_t key, float dBPerMillisecond)
 // and k = 2 and 6 under MODE 2. The default render is MODE 0's to 0.01 dB,
 // and on a melodic part (Tubular Bells, key 60) the default is MODE 1's, so
 // the GS defaults settings.cc already stores - 0 on the rhythm channel, 1
-// elsewhere - are the ones the device runs. P-0284.
+// elsewhere - are the ones the device runs. P-0370.
 int Part::assign_mode_cut(uint8_t key, float dBPerMillisecond)
 {
   // The JV-880 has no such parameter: its rhythm note-on re-uses a sounding

@@ -402,7 +402,7 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
     // the rhythm part's default and what makes a drum roll one voice deep,
     // LIMITED-MULTI takes it on the third strike, FULL-MULTI never. Like the
     // choke this runs before the pool is consulted, as ROM1 0x17B8 runs
-    // before 0x1737 (Part::assign_mode_cut, PROVENANCE.md P-0284).
+    // before 0x1737 (Part::assign_mode_cut, PROVENANCE.md P-0370).
     p.assign_mode_cut(key, _ctrlRom.voice_damp_rate());
 
     // A JV-880 part whose patch is Key Assign SOLO plays one note at a time:
