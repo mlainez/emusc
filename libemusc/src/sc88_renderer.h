@@ -236,7 +236,10 @@ bool sc88_renderer_note_on_with_part_controls(
 /* A rhythm-part note. The kit record supplies the tone, the key it is played
  * at, and this key's own level and pan, so a kick is not a sample transposed
  * to whatever key triggered it. `note` receives the whole record when the
- * caller wants its sends or assign group. */
+ * caller wants its sends or assign group.
+ * `map` is the tone map, which chooses the kit set; `setup` is the drum
+ * setup the part plays from, which chooses the half of `overlay` its own
+ * `41 mf rr` edits are in. They are separate axes on this machine. */
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
@@ -245,7 +248,7 @@ bool sc88_renderer_note_on_drum(
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls,
-  const struct sc88_drum_overlay *overlay,
+  const struct sc88_drum_overlay *overlay, uint8_t setup,
   struct sc88_drum_note *note);
 
 void sc88_renderer_voice_destroy(struct sc88_render_voice *voice);

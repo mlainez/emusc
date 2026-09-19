@@ -270,7 +270,7 @@ int main(void)
      Every drum in demo song 1 is written as a 10 ms note, so releasing on
      Note Off cuts a crash to a tick (`M-015`). */
   assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_rhythm(&engine, 0, 1);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
   assert(sc88_engine_note_off(&engine, 0, 36));
@@ -282,12 +282,38 @@ int main(void)
 
   /* and the one whose kit does set the bit is released as usual */
   assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_rhythm(&engine, 0, 1);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
   assert(sc88_engine_note_off(&engine, 0, 38));
   assert(engine.slots[0].component.release.active);
   sc88_engine_destroy(&engine);
+
+  /* A `41 mf rr` edit reaches the drum setup it names and no other. Demo
+     song 3 addresses its kick's panpot to MAP1, which is the setup a part
+     on MIDI channel 10 plays from, so a part reading the wrong half of the
+     overlay loses the edit silently. Play note is the observable here
+     because it moves the oscillator. */
+  {
+    double edited;
+    double plain;
+    assert(sc88_engine_init(&engine, &renderer));
+    sc88_engine_set_part_rhythm(&engine, 0, 1);
+    assert(sc88_engine_set_drum_parameter(&engine, 1, 1, 36, 72));
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    edited = engine.slots[0].component.oscillator.step;
+    sc88_engine_destroy(&engine);
+
+    assert(sc88_engine_init(&engine, &renderer));
+    sc88_engine_set_part_rhythm(&engine, 0, 2);
+    assert(sc88_engine_set_drum_parameter(&engine, 1, 1, 36, 72));
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    plain = engine.slots[0].component.oscillator.step;
+    sc88_engine_destroy(&engine);
+    assert(edited > plain * 1.5);
+  }
 
   /* a melodic note is never exempt */
   assert(sc88_engine_init(&engine, &renderer));
@@ -326,7 +352,7 @@ int main(void)
      it while still being heard, which is what makes STANDARD 1's kick a
      kick and not a kick in a hall (`M-009`). */
   assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_rhythm(&engine, 0, 1);
   sc88_engine_set_part_reverb_send(&engine, 0, 127);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
@@ -336,7 +362,7 @@ int main(void)
   sc88_engine_destroy(&engine);
 
   assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_rhythm(&engine, 0, 1);
   sc88_engine_set_part_reverb_send(&engine, 0, 127);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
@@ -348,7 +374,7 @@ int main(void)
   /* and the part send still scales it, so CC91 keeps authority over the
      whole kit */
   assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, SC88_RHYTHM_MAP_SC88);
+  sc88_engine_set_part_rhythm(&engine, 0, 1);
   sc88_engine_set_part_reverb_send(&engine, 0, 0);
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));

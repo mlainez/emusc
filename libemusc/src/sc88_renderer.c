@@ -591,7 +591,7 @@ bool sc88_renderer_note_on_drum(
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls,
-  const struct sc88_drum_overlay *overlay,
+  const struct sc88_drum_overlay *overlay, uint8_t setup,
   struct sc88_drum_note *note)
 {
   struct sc88_drum_note slot;
@@ -603,7 +603,7 @@ bool sc88_renderer_note_on_drum(
   if (!renderer || !levels || !pan ||
       !sc88_rom_select_drum(&renderer->rom, map, program, &kit) ||
       !sc88_rom_open_drum_note_overlaid(&renderer->rom, kit, key, overlay,
-                                       map, &slot))
+                                       setup, &slot))
     return false;
   /* The kit record carries this key's own level and pan, and the key the
      tone is actually played at - a kick is not the sample transposed to the

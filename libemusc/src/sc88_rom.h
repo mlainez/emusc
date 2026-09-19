@@ -62,15 +62,20 @@ struct sc88_drum_note {
   uint8_t flags;                 /* +0x480, receive and exclusivity bits */
 };
 
-/* Which drum kit set a rhythm part's program indexes. Which one a reset
- * leaves active is not recovered, so the caller chooses. */
-#define SC88_RHYTHM_MAP_SC55 1u
-#define SC88_RHYTHM_MAP_SC88 2u
+/* The tone map, which selects the kit set a rhythm part's program indexes
+ * exactly as it selects a melodic part's bank: map 1 holds the ten SC-55
+ * kits and map 2 the fourteen of the SC-88. A reset leaves it on the
+ * SC-88 - the part image the firmware copies at reset begins `00 02`
+ * (`131f4`), and SC88-OM printed 7-31 gives `40 4x 01` the same default.
+ * It is NOT the Use For Rhythm Part setting, which selects a drum setup
+ * and is a different axis; see `sc88_engine_part`. */
+#define SC88_TONE_MAP_SC55 1u
+#define SC88_TONE_MAP_SC88 2u
 
 bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
                           uint8_t program, uint32_t *kit_offset);
 /* A song may override any kit note's own parameters over SysEx, at
- * `41 mf rr` where m selects the map, f the field and rr the note
+ * `41 mf rr` where m selects the drum setup, f the field and rr the note
  * (`04_protocol/sysex.md`). The kit record in ROM is read first and these
  * replace what the song has written, field by field; changing the kit
  * clears them, as the firmware does.
@@ -84,10 +89,12 @@ struct sc88_drum_overlay {
   uint8_t present[2][SC88_DRUM_FIELDS][128];
 };
 
-/* `overlay` and `map` may be NULL and zero: then only the ROM is read. */
+/* `setup` is the drum setup the part is using, 1 or 2, which is the half
+ * of the overlay a song's `41 mf rr` writes landed in. `overlay` and
+ * `setup` may be NULL and zero: then only the ROM is read. */
 bool sc88_rom_open_drum_note_overlaid(
   const struct sc88_rom *rom, uint32_t kit_offset, uint8_t note,
-  const struct sc88_drum_overlay *overlay, uint8_t map,
+  const struct sc88_drum_overlay *overlay, uint8_t setup,
   struct sc88_drum_note *out);
 
 bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,

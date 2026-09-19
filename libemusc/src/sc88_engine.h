@@ -133,11 +133,23 @@ struct sc88_engine_part {
   bool sostenuto;
   uint8_t sostenuto_keys[16];
   uint8_t hold_value;
-  /* Nonzero makes this a rhythm part, and selects which kit set its program
-     indexes: 1 for the SC-55 kits, 2 for the SC-88's own. GS calls this Use
-     For Rhythm Part, and it is a property of the part rather than of a note,
-     which is why it lives here. */
-  uint8_t rhythm_map;
+  /* Nonzero makes this a rhythm part, and names which of the machine's two
+     drum setups it plays from: GS's Use For Rhythm Part, `40 1x 15`,
+     00 off / 01 MAP1 / 02 MAP2. A drum setup is a working copy of a kit
+     with its own per-note overrides, so this is what `41 mf rr` and the
+     NRPN drum block address - it does NOT choose between the SC-55 and
+     SC-88 kits, which is `tone_map` below. The firmware keeps the two
+     apart the same way: `474b` turns the value into bits 4 and 5 of the
+     part's flags byte and `4789` uses bit 5 alone to point the part at one
+     of two kit working areas. */
+  uint8_t rhythm_setup;
+  /* Which kit set a rhythm part's program indexes, and which bank a
+     melodic one's does: `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`.
+     The firmware derives it from the part's bank word at `d820` - the
+     forcing byte CC32 writes if that is nonzero, otherwise the part's
+     selected map - and the drum lookup at `2e7a` indexes
+     `0x2fd00 + (map - 1) * 128 + program` with it. */
+  uint8_t tone_map;
   /* The part's reverb send, 0..127 as received. The kit records carry a
      per-note send too (`M-009`), which is why this is applied per slot
      rather than to the finished mix. */
@@ -235,15 +247,18 @@ void sc88_engine_set_part_tvf_controls(
   struct sc88_engine *engine, uint8_t part,
   const struct sc88_tvf_controls *controls);
 
+/* `setup` is Use For Rhythm Part: 0 off, 1 MAP1, 2 MAP2. */
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
-                                 uint8_t map);
-/* One `41 mf rr` write: `map` 1 or 2, `field` 1..9, `note` 0..127. */
+                                 uint8_t setup);
+void sc88_engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
+                                   uint8_t map);
+/* One `41 mf rr` write: `setup` 1 or 2, `field` 1..9, `note` 0..127. */
 bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
-                                    uint8_t map, uint8_t field,
+                                    uint8_t setup, uint8_t field,
                                     uint8_t note, uint8_t value);
 /* Changing a rhythm part's kit clears them, as the firmware does. */
 void sc88_engine_clear_drum_overlay(struct sc88_engine *engine,
-                                    uint8_t map);
+                                    uint8_t setup);
 void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
                                      uint8_t part, uint8_t send);
 void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,

@@ -308,12 +308,22 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     channel->nrpn_lsb = 127;
     channel->same_note_mode = SC88_SAME_NOTE_LIMITED_MULTI;
     /* GS puts the rhythm part on MIDI channel 10, i.e. part 9 of each port,
-       and a GS reset restores exactly that. Which kit set a reset leaves
-       selected is not recovered - the active map selector goes to zero and
-       zero is not documented to mean the SC-88 - so an SC-88 device defaults
-       to its own kits and says so. */
+       and a GS reset restores exactly that. It plays from drum setup MAP1:
+       `04_protocol/sysex.md` records the manual's "part 10 initially map
+       1", every `41 mf rr` edit in the corpus is addressed to MAP1 - demo
+       song 3 sets its kick's panpot with `41 04 23` - and the firmware
+       agrees, since `474b` maps the value 01 to the flags byte 0x30 whose
+       bit 5 points the part at the first of the two kit working areas.
+       Which kit set it plays is a different axis: the tone map, which the
+       part image the firmware copies at reset (`131f4`, first word 0002)
+       and SC88-OM printed 7-31 both leave on the SC-88. Map 1 would be
+       wrong as well as different - it holds only the ten SC-55 kits, and
+       three of the seven demo songs ask channel 10 for wire program 49,
+       ETHNIC, which exists in the SC-88 map alone. */
     sc88_engine_set_part_rhythm(&device->engine, (uint8_t)part,
-                                (part % 16u) == 9u ? SC88_RHYTHM_MAP_SC88 : 0);
+                                (part % 16u) == 9u ? 1u : 0u);
+    sc88_engine_set_part_tone_map(&device->engine, (uint8_t)part,
+                                  SC88_TONE_MAP_SC88);
     sc88_engine_hold_value(&device->engine, (uint8_t)part, 0);
     sc88_engine_hold(&device->engine, (uint8_t)part, false);
     sc88_engine_sostenuto(&device->engine, (uint8_t)part, false);
@@ -548,16 +558,16 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
   default:
     break;
   }
-  /* `41 mf rr`: one per-note kit parameter. m is the map, f the field,
-     rr the note; `41 m0 00` is the kit's twelve-byte name, which has no
-     bearing on the sound. */
+  /* `41 mf rr`: one per-note kit parameter. m is the drum setup, f the
+     field, rr the note; `41 m0 00` is the setup's twelve-byte name, which
+     has no bearing on the sound. */
   if ((address & 0xff0000u) == 0x410000u) {
-    uint8_t map = (uint8_t)(((address >> 12) & 0x0fu) + 1u);
+    uint8_t setup = (uint8_t)(((address >> 12) & 0x0fu) + 1u);
     uint8_t field = (uint8_t)((address >> 8) & 0x0fu);
     uint8_t note = (uint8_t)(address & 0xffu);
     if (field == 0)
       return true;                     /* the name */
-    return sc88_engine_set_drum_parameter(&device->engine, map, field,
+    return sc88_engine_set_drum_parameter(&device->engine, setup, field,
                                           note, value);
   }
   if ((address & 0xf0ff00u) == 0x402000u && (address & 0xffu) == 0x20u) {
@@ -583,9 +593,9 @@ static bool sc88_device_sysex_write(struct sc88_device *device, uint8_t port,
         : SC88_SAME_NOTE_FULL_MULTI;
       return true;
     case 0x15:
-      /* Off, kit set 1 or kit set 2 - the same switch CC32 reaches from
-         the channel side, and the only way a song can put drums on a part
-         other than 10. */
+      /* Off, drum setup MAP1 or MAP2 - the only way a song can put drums
+         on a part other than 10, and the switch that says which of the two
+         working copies of a kit the part's own `41 mf rr` edits reach. */
       if (value > 2)
         return false;
       sc88_engine_set_part_rhythm(&device->engine, part, value);
@@ -733,7 +743,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
   case 0x90:
     if (data2 == 0)
       return sc88_engine_note_off(&device->engine, part, data1);
-    if (state->map_lsb == 1)
+    /* A melodic part forced onto the SC-55 map has no tone to play: that
+       map's bank is not implemented. A rhythm part does - the ten SC-55
+       kits are in the same ROM table as the SC-88's fourteen. */
+    if (state->map_lsb == 1 && !device->engine.parts[part].rhythm_setup)
       return false;
     return sc88_engine_note_on(
       &device->engine, part, state->variation, state->program, data1, data2,
@@ -829,10 +842,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
           9u    /* 1f delay send */
         };
         uint8_t field = field_of[state->nrpn_msb - 0x18u];
-        uint8_t map = device->engine.parts[part].rhythm_map;
-        if (!field || !map)
+        uint8_t setup = device->engine.parts[part].rhythm_setup;
+        if (!field || !setup)
           return false;
-        return sc88_engine_set_drum_parameter(&device->engine, map, field,
+        return sc88_engine_set_drum_parameter(&device->engine, setup, field,
                                               state->nrpn_lsb, data2);
       }
       if (state->nrpn_msb == 1 && state->nrpn_lsb == 0x08) {
@@ -864,11 +877,16 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       sc88_device_sync_part(device, part);
       return true;
     case 32:
-      /* The native renderer currently treats map 0 and explicit map 2 as
-       * SC-88. Explicit SC-55 map 1 is preserved but cannot be rendered. */
+      /* The tone map, 0 the part's selected map and 1 and 2 forcing the
+       * SC-55 and SC-88 maps. Nothing resets the selected map, so 0 is the
+       * SC-88 here. A rhythm part renders either map - both kit sets are
+       * in the ROM and the lookup takes the map - while a melodic part on
+       * map 1 still cannot be rendered, and its notes are dropped below. */
       if (data2 > 2)
         return false;
       state->map_lsb = data2;
+      sc88_engine_set_part_tone_map(&device->engine, part,
+                                    data2 ? data2 : SC88_TONE_MAP_SC88);
       return true;
     case 64:
       /* Two things, and only the second was being done: the pedal both
@@ -932,10 +950,10 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       return false;
     }
   case 0xc0:
-    if (device->engine.parts[part].rhythm_map &&
+    if (device->engine.parts[part].rhythm_setup &&
         data1 != state->program)
-      sc88_engine_clear_drum_overlay(&device->engine,
-                                     device->engine.parts[part].rhythm_map);
+      sc88_engine_clear_drum_overlay(
+        &device->engine, device->engine.parts[part].rhythm_setup);
     /* A rhythm part's program change is honoured whatever the bank MSB is.
        `04_protocol/program_bank.md` records the firmware as ignoring it
        while the MSB is nonzero, but the music contradicts that: Brass

@@ -89,6 +89,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].pan.part = 64;
     engine->parts[i].pan.random_position = 64;
     engine->parts[i].delay_send = 0;
+    engine->parts[i].tone_map = SC88_TONE_MAP_SC88;
     engine->parts[i].lfo1_pitch_depth = 0;
     engine->parts[i].lfo_controls.rate = 64;
     engine->parts[i].lfo_controls.delay = 64;
@@ -271,11 +272,20 @@ static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
 }
 
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
-                                 uint8_t map)
+                                 uint8_t setup)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || map > 2)
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || setup > 2)
     return;
-  engine->parts[part].rhythm_map = map;
+  engine->parts[part].rhythm_setup = setup;
+}
+
+void sc88_engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
+                                   uint8_t map)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT ||
+      map < SC88_TONE_MAP_SC55 || map > SC88_TONE_MAP_SC88)
+    return;
+  engine->parts[part].tone_map = map;
 }
 
 void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
@@ -295,23 +305,23 @@ void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
 }
 
 bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
-                                    uint8_t map, uint8_t field,
+                                    uint8_t setup, uint8_t field,
                                     uint8_t note, uint8_t value)
 {
-  if (!engine || map < 1 || map > 2 || field < 1 ||
+  if (!engine || setup < 1 || setup > 2 || field < 1 ||
       field > SC88_DRUM_FIELDS || note > 127)
     return false;
-  engine->drum_overlay.value[map - 1u][field - 1u][note] = value;
-  engine->drum_overlay.present[map - 1u][field - 1u][note] = 1u;
+  engine->drum_overlay.value[setup - 1u][field - 1u][note] = value;
+  engine->drum_overlay.present[setup - 1u][field - 1u][note] = 1u;
   return true;
 }
 
-void sc88_engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t map)
+void sc88_engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t setup)
 {
-  if (!engine || map < 1 || map > 2)
+  if (!engine || setup < 1 || setup > 2)
     return;
-  memset(engine->drum_overlay.present[map - 1u], 0,
-         sizeof engine->drum_overlay.present[map - 1u]);
+  memset(engine->drum_overlay.present[setup - 1u], 0,
+         sizeof engine->drum_overlay.present[setup - 1u]);
 }
 
 void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
@@ -691,15 +701,16 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
     engine->parts[part].pan.random_position = sc88_engine_pan_draw(engine);
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
-      !(engine->parts[part].rhythm_map
+      !(engine->parts[part].rhythm_setup
           ? sc88_renderer_note_on_drum(
-              engine->renderer, &voice, engine->parts[part].rhythm_map,
+              engine->renderer, &voice, engine->parts[part].tone_map,
               program, key, velocity,
               &engine->parts[part].levels, &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
               &engine->parts[part].tva_controls,
               &engine->parts[part].lfo_controls,
-              &engine->drum_overlay, NULL)
+              &engine->drum_overlay, engine->parts[part].rhythm_setup,
+              NULL)
           : sc88_renderer_note_on_with_part_controls(
               engine->renderer, &voice, variation, program, key, velocity,
               &engine->parts[part].levels,

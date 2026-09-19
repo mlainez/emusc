@@ -142,6 +142,22 @@ int main(int argc, char **argv)
                                   SC88_WRAP_FULL_CARRY));
   assert(device.channels[0].volume == 100);
   assert(device.channels[0].cutoff == 64);
+  /* A reset makes MIDI channel 10 of each port a rhythm part playing from
+     drum setup MAP1, and leaves every part's tone map on the SC-88, which
+     is the kit set channel 10's programs index. The two are separate
+     axes: the setup says where a song's `41 mf rr` edits land, the tone
+     map says which kits exist. */
+  assert(device.engine.parts[9].rhythm_setup == 1);
+  assert(device.engine.parts[25].rhythm_setup == 1);
+  assert(device.engine.parts[0].rhythm_setup == 0);
+  assert(device.engine.parts[9].tone_map == SC88_TONE_MAP_SC88);
+  assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
+  /* CC32 forces a map; 0 goes back to the selected one, which nothing
+     resets off the SC-88. */
+  assert(sc88_device_midi(&device, 0, 0xb0, 32, 1));
+  assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
+  assert(sc88_device_midi(&device, 0, 0xb0, 32, 0));
+  assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
   assert(sc88_device_midi(&device, 0, 0x90, 60, 100));
   assert(sc88_engine_active_slots(&device.engine) == 1);
   {
