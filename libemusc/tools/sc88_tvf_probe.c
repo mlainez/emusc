@@ -364,6 +364,23 @@ int main(int argc, char **argv)
       }
     }
 
+    /* The TVA release counter. `sc88_tva_release_advance` subtracts the
+       increment from 0xffff once per control period, so 0xffff/increment
+       is the whole release in periods and the headroom falls by the
+       increment each one. Printed because that step, not the release
+       length, is what a note-off costs: the composed amplitude is a new
+       target every period and the chip's ramp to it is 0.75 ms long. */
+    {
+      struct sc88_tva_release rel;
+      if (sc88_tva_release_prepare(&rom, &tone, &component, (uint8_t)key,
+                                   &rel) && rel.increment) {
+        double periods = 65535.0 / rel.increment;
+        printf("    TVA release: increment %u  %.2f periods  %.1f ms"
+               "  step %.1f dB\n", rel.increment, periods,
+               periods * 8.0008, rel.increment / 4096.0 * 5.26);
+      }
+    }
+
     /* The static balance between a tone's components. A two-component
        tone whose layers sit at different levels moves timbrally as they
        cross over; if they are rendered at the wrong relative level the
