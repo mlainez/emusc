@@ -47,6 +47,11 @@ struct sc88_engine_slot {
   uint8_t next_free;
   uint64_t serial;
   bool allocated;
+  /* The filter LFO term standing in the slot's pre-base accumulator.
+     The base recompose reads it to tell a period that changed it from
+     one that did not; a note opens at zero because the oscillators open
+     with a cleared waveform word (`0x250d`, `0x257a`). */
+  int16_t tvf_lfo_term;
 };
 
 /* A voice the CPU has taken the slot back from while it was still

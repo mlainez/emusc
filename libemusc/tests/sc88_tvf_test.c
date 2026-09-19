@@ -136,6 +136,44 @@ int main(void)
     assert(with_matrix.combined == 0x2800);
   }
 
+  /* The two LFO filter terms, `0x6b7a`..`0x6bd7` and `0x6c58`..`0x6cbb`.
+     Full depth against a full-scale waveform reaches 4095, one octave in
+     the accumulator and half an octave after its shift right one; the
+     clamp is exactly the range the ROM's own tone bytes occupy, which
+     span -4032..+4032 over all 1246 components and never wider. */
+  assert(sc88_tvf_lfo_filter_term(0, 32767) == 0);
+  assert(sc88_tvf_lfo_filter_term(4032, 32767) == 4095);
+  assert(sc88_tvf_lfo_filter_term(32767, 32767) == 4095);
+  assert(sc88_tvf_lfo_filter_term(-4032, 32767) == -4096);
+  assert(sc88_tvf_lfo_filter_term(-32768, 32767) == -4096);
+  assert(sc88_tvf_lfo_filter_term(4032, -32768) == -4096);
+  assert(sc88_tvf_lfo_filter_term(2000, 32767) == 2031);
+  assert(sc88_tvf_lfo_filter_term(2000, 16384) == 1015);
+  /* A waveform word of zero leaves no borrow behind, so the term is zero
+     and not the -1 the mixed-sign path would otherwise carry. */
+  assert(sc88_tvf_lfo_filter_term(4032, 0) == 0);
+  assert(sc88_tvf_lfo_filter_term(-4032, 0) == 0);
+  /* Both shifts and the product's high word floor, so the signs are not
+     mirror images. */
+  assert(sc88_tvf_lfo_filter_term(1, 32767) == 0);
+  assert(sc88_tvf_lfo_filter_term(-1, 32767) == -2);
+
+  /* It joins the accumulator where the key and matrix terms do, before
+     the base entry and before the halving (`0x6bd7`, `0x6cbb`), so one
+     unit of it weighs exactly what one unit of key modulation does. */
+  {
+    struct sc88_tvf_registers with_key;
+    struct sc88_tvf_registers with_lfo;
+    component_bytes[0x3e] = 4;
+    assert(sc88_tvf_prepare_registers(&rom, &component, 2031, &neutral,
+                                      &with_key));
+    assert(sc88_tvf_prepare_registers(
+             &rom, &component, sc88_tvf_lfo_filter_term(2000, 32767),
+             &neutral, &with_lfo));
+    assert(with_key.base_unshifted == with_lfo.base_unshifted);
+    assert(with_key.base_value == with_lfo.base_value);
+  }
+
   component_bytes[0x3e] = 0xff;
   assert(sc88_tvf_prepare_registers(&rom, &component, 0, &neutral,
                                     &registers));

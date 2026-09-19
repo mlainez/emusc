@@ -231,19 +231,36 @@ static float sc88_engine_lfo_amplitude(const struct sc88_engine_slot *slot)
   return (float)pow(10.0, -attenuation * 0.001284 / 20.0);
 }
 
-/* The filter modulation, in cutoff-word units. */
-static int32_t sc88_engine_lfo_filter(const struct sc88_engine_slot *slot)
+/* One oscillator's filter term. The fade reaches this path as the high
+   word of the tone's depth times the ramp (`0x6b11`, `0x6be9`), not as
+   the fraction the pitch and amplitude paths take, and the clamp, scale
+   and waveform multiply that follow are `sc88_tvf_lfo_filter_term`. The
+   part-level depth the controller matrix adds between the two
+   (`0x6b23`, `0x6c01`) is not wired. */
+static int16_t sc88_engine_lfo_filter_term(const struct sc88_lfo *lfo,
+                                           int16_t depth)
 {
-  double term =
-    sc88_engine_lfo_term(&slot->component.lfo1,
-                         slot->component.lfo1_tvf_depth) +
-    sc88_engine_lfo_term(&slot->component.lfo2,
-                         slot->component.lfo2_tvf_depth);
-  if (term > 32767.0)
-    term = 32767.0;
-  else if (term < -32768.0)
-    term = -32768.0;
-  return (int32_t)term;
+  int32_t faded;
+  if (!depth)
+    return 0;
+  faded = (int32_t)depth * (int32_t)lfo->ramp.fade;
+  faded = faded >= 0 ? faded / 65536
+                     : -(int32_t)(((uint32_t)(-faded) + 65535u) >> 16);
+  return sc88_tvf_lfo_filter_term((int16_t)faded, lfo->output);
+}
+
+/* The filter modulation, in the pre-base accumulator's units. Both terms
+   are added into the word at RAM 30da beside the key and controller
+   terms (`0x6bd7`, `0x6cbb`) with plain 16-bit adds, so the sum wraps -
+   the accumulator is the same register either term alone would reach. */
+static int16_t sc88_engine_lfo_filter(const struct sc88_engine_slot *slot)
+{
+  return (int16_t)((uint16_t)sc88_engine_lfo_filter_term(
+                     &slot->component.lfo1,
+                     slot->component.lfo1_tvf_depth) +
+                   (uint16_t)sc88_engine_lfo_filter_term(
+                     &slot->component.lfo2,
+                     slot->component.lfo2_tvf_depth));
 }
 
 static int sc88_engine_shared_lfo_slot(struct sc88_engine *engine,
@@ -877,6 +894,7 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
     slot->allocated = true;
     slot->note = note_index;
     slot->serial = engine->next_serial++;
+    slot->tvf_lfo_term = 0;
     slot->component = voice.components[i];
     /* A nonzero share byte means this voice joins its tone's oscillator
        rather than starting one of its own, so overlapping notes of the
@@ -1221,10 +1239,11 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
        its whole gap to a target the period has not begun with. */
     sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
     /* `0x6a27`, the base recompose. The firmware runs it every serviced
-       period (`0x695b` `1e 00 c9`, unconditional); we run it only when a
-       part controller has moved, which is the same thing here because its
-       inputs - the component's own bytes, the note's key modulation and
-       the part's cutoff and resonance controls - do not change otherwise.
+       period (`0x695b` `1e 00 c9`, unconditional); we run it when a part
+       controller has moved or the filter LFO term has, which is the same
+       thing here because its other inputs - the component's own bytes,
+       the note's key modulation and the part's cutoff and resonance
+       controls - do not change otherwise.
 
        It clears the register struct, so the two values the CPU does not
        rewrite mid-note are carried across it by hand. The firmware writes
@@ -1233,21 +1252,27 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
        the 0x4100 interpolation word beside it and nothing else. So a
        retarget leaves the chip's register exactly where it stood and the
        approach carries its own progress. */
-    if (engine->parts[note->part].tvf_dirty) {
-      struct sc88_component component;
-      uint32_t previous_current = slot->component.tvf.frequency_current;
-      uint32_t previous_resonance = slot->component.tvf.resonance_current;
-      component.bytes = engine->renderer->rom.bytes +
-        slot->component.rom_component_offset;
-      component.offset = slot->component.rom_component_offset;
-      component.directory_offset = 0;
-      if (sc88_tvf_prepare_registers(
-            &engine->renderer->rom, &component,
-            slot->component.tvf_key_modulation,
-            &engine->parts[note->part].tvf_controls,
-            &slot->component.tvf)) {
-        slot->component.tvf.frequency_current = previous_current;
-        slot->component.tvf.resonance_current = previous_resonance;
+    {
+      int16_t lfo_filter = sc88_engine_lfo_filter(slot);
+      if (engine->parts[note->part].tvf_dirty ||
+          lfo_filter != slot->tvf_lfo_term) {
+        struct sc88_component component;
+        uint32_t previous_current = slot->component.tvf.frequency_current;
+        uint32_t previous_resonance = slot->component.tvf.resonance_current;
+        component.bytes = engine->renderer->rom.bytes +
+          slot->component.rom_component_offset;
+        component.offset = slot->component.rom_component_offset;
+        component.directory_offset = 0;
+        if (sc88_tvf_prepare_registers(
+              &engine->renderer->rom, &component,
+              (int16_t)((uint16_t)slot->component.tvf_key_modulation +
+                        (uint16_t)lfo_filter),
+              &engine->parts[note->part].tvf_controls,
+              &slot->component.tvf)) {
+          slot->component.tvf.frequency_current = previous_current;
+          slot->component.tvf.resonance_current = previous_resonance;
+        }
+        slot->tvf_lfo_term = lfo_filter;
       }
     }
     /* `0x6e6b`, called from `0x6964` when the envelope depth at 0x32da is
@@ -1261,12 +1286,12 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
       (void)sc88_tvf_release_advance(&slot->component.tvf_release,
                                      elapsed);
     /* `0x6967`..`0x69af`: one composition per serviced period, carrying
-       the filter LFO along with the envelope and the release, written as
-       the chip's target with 0x4100 beside it. */
+       the envelope and the release, written as the chip's target with
+       0x4100 beside it. The filter LFO is not here - it reached the
+       accumulator above, before the shift right one. */
     (void)sc88_tvf_update_frequency(
       &engine->renderer->rom,
-      (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
-                (uint16_t)slot->component.tvf_envelope.current +
+      (int16_t)((uint16_t)slot->component.tvf_envelope.current +
                 (uint16_t)slot->component.tvf_release.current),
       &slot->component.tvf);
     if (!slot->component.release.active)

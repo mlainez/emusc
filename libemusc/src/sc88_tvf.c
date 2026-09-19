@@ -219,6 +219,53 @@ int16_t sc88_tvf_matrix_cutoff_term(int16_t cached)
   return (int16_t)sc88_tvf_floor_div_pow2(value, 1);
 }
 
+/* `0x6bb3`..`0x6bd3` and `0x6c97`..`0x6cb7`. The firmware multiplies by
+   magnitude and keeps the unsigned product's high word. Where exactly
+   one operand is negative it negates that word and then subtracts the
+   borrow left by restoring the register it negated, so the result is one
+   below the magnitude's high word negated - floor, except where the
+   product is an exact multiple of 65536. Restoring a zero leaves no
+   borrow, so a zero waveform gives a zero term rather than -1. */
+static int32_t sc88_tvf_signed_product_high(int32_t left, int16_t right)
+{
+  uint32_t magnitude =
+    (uint32_t)(left < 0 ? -left : left) *
+    (uint32_t)(right < 0 ? -(int32_t)right : (int32_t)right);
+
+  if ((left < 0) == (right < 0))
+    return (int32_t)(magnitude >> 16);
+  if (right == 0)
+    return 0;
+  return -(int32_t)(magnitude >> 16) - 1;
+}
+
+/* `0x6b7a`..`0x6bd7` and `0x6c58`..`0x6cbb`, the two LFO filter terms.
+   Each oscillator's faded depth word is a modulation reading, not yet a
+   cutoff term: the firmware short-circuits a zero (`0x6b7c`, `0x6c5a`),
+   clamps to `0xf040..0x0fc0` (`0x6b7e`, `0x6b88`), shifts left three
+   (`0x6b90`), multiplies by `0x8208` keeping the signed high word
+   (`0x6b96`..`0x6ba5`), halves that (`0x6ba7`) and multiplies the result
+   by the oscillator's own waveform word.
+
+   The clamped depth reaches 8191, two octaves in the base table's 4096
+   per octave, and a full-scale waveform brings the term to 4095 - one
+   octave before the accumulator's shift right one, half an octave
+   after it. */
+int16_t sc88_tvf_lfo_filter_term(int16_t faded_depth, int16_t waveform)
+{
+  int32_t value = faded_depth;
+
+  if (value == 0)
+    return 0;
+  if (value < -4032)
+    value = -4032;
+  else if (value > 4032)
+    value = 4032;
+  value = sc88_tvf_floor_div_pow2((value << 3) * INT32_C(0x8208), 16);
+  value = sc88_tvf_floor_div_pow2(value, 1);
+  return (int16_t)sc88_tvf_signed_product_high(value, waveform);
+}
+
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 const struct sc88_component *component,
                                 int16_t pre_base_modulation,
@@ -269,11 +316,11 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
    * the unsigned compare. Halved on both sides the base spans
    * 12561..32767 against a limit of 29811..31744, so the clamp bites
    * only for the top dozen indices. */
-  /* `0x6cbd`..`0x6cc9` builds RAM 30da as the controller term, the two
+  /* `0x6aff`..`0x6cc9` builds RAM 30da as the controller term, the two
      LFO terms and the key term added into one another with plain 16-bit
      `add:g.w`, so the accumulator wraps before the table entry is added
-     to it. The caller supplies the key term; the controller term is the
-     matrix's. */
+     to it. The caller supplies the key and LFO terms; the controller
+     term is the matrix's. */
   accumulator = sc88_tvf_s16(
     (uint16_t)((uint16_t)pre_base_modulation +
                (uint16_t)sc88_tvf_matrix_cutoff_term(controls->matrix_cutoff)));

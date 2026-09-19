@@ -97,8 +97,9 @@ typedef float (*sc88_tvf_audio_transfer_fn)(
   double period_fraction, float input);
 
 /* pre_base_modulation is the wrapped key/dynamic word prepared before the
- * base-table lookup; the controller matrix's cutoff term is added to it
- * from controls->matrix_cutoff. Envelope and release modulation are added
+ * base-table lookup, carrying the two LFO filter terms alongside the key
+ * term; the controller matrix's cutoff term is added to it from
+ * controls->matrix_cutoff. Envelope and release modulation are added
  * afterward by sc88_tvf_update_frequency. */
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
                                 const struct sc88_component *component,
@@ -112,6 +113,14 @@ bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
  * signed high word, and halved. Full scale is 8191 word units, two
  * octaves at the base table's 4096 per octave. */
 int16_t sc88_tvf_matrix_cutoff_term(int16_t cached);
+
+/* One oscillator's filter term, as routine 0x6b7a..0x6bd7 turns its
+ * already-faded depth word and its waveform word into a term of the same
+ * pre-base accumulator: clamped to -4032..+4032, shifted left three,
+ * multiplied by 0x8208 keeping the signed high word, halved, and
+ * multiplied by the waveform the firmware's own way. Full scale is 4095
+ * word units, one octave at the base table's 4096 per octave. */
+int16_t sc88_tvf_lfo_filter_term(int16_t faded_depth, int16_t waveform);
 
 /* Signed key-table word times signed component factor, retaining the product
  * high word and applying the firmware's final doubling. */
