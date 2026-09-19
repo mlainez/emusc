@@ -101,7 +101,6 @@ bool sc88_pitch_release_activate(const struct sc88_rom *rom,
                                  uint8_t hold1, bool continuous_hold,
                                  bool keep_scale_at_zero,
                                  bool sostenuto_retained,
-                                 int16_t envelope_current,
                                  struct sc88_pitch_release *release);
 bool sc88_pitch_release_advance(struct sc88_pitch_release *release,
                                 unsigned elapsed_periods);

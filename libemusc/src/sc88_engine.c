@@ -483,9 +483,8 @@ static void sc88_engine_start_release(struct sc88_engine *engine,
       continue;
     component = &engine->slots[slot_index].component;
     if (!component->release.active) {
-      sc88_tva_envelope_freeze(
-        &engine->renderer->rom, &component->envelope,
-        engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
+      /* `58b7`, `58bb`, `58bf`: the three release ramps go up for every
+         tone, whatever follows. */
       (void)sc88_tva_release_set_pedal(
         &engine->renderer->rom, engine->parts[note->part].hold_value,
         component->continuous_hold_release,
@@ -500,9 +499,36 @@ static void sc88_engine_start_release(struct sc88_engine *engine,
         &engine->renderer->rom, engine->parts[note->part].hold_value,
         component->continuous_hold_release,
         component->keep_release_scale_at_zero, false,
-        component->pitch_envelope.current, &component->pitch_release);
-      component->pitch_envelope.stage = 4;
-      component->pitch_envelope.active = false;
+        &component->pitch_release);
+      /* `58c3`, the guard on everything from `58c9`. Tone-common `+0x15`
+         raises bit 1 of the voice's flag byte at `0x1ef4` (`58a4..58a9`),
+         and a voice carrying that bit branches straight to the tail: the
+         envelope stages are NOT forced to 4 and the level deltas below are
+         not taken, so the envelopes keep running underneath the release
+         ramp instead of stopping where the key left them. 23 of the ROM's
+         922 tones set the byte and all but two are piano or electric
+         piano; on those, the tail sits up to 1.3 dB lower than it did.
+
+         `58f5..58f7` guards the TVA arm a second time, on Hold 1 being
+         up. It is unreachable from here: a note released under a held
+         pedal is `hold_retained` and this function has returned above.
+
+         The TVF arm, `58da` and `58df`, has nothing here to guard - this
+         engine forces no TVF stage and computes no TVF release delta at
+         all, for any tone. */
+      if (!component->continuous_hold_release) {
+        /* `58c9`, and `58ce..58d6`: the word that carried the release
+           destination becomes the distance the ramp has left to cover. */
+        component->pitch_envelope.stage = 4;
+        component->pitch_envelope.active = false;
+        component->pitch_release.delta = (int16_t)(
+          (uint16_t)component->pitch_release.destination -
+          (uint16_t)component->pitch_envelope.current);
+        /* `58f9`: TVA stage 4, which is this envelope standing still. */
+        sc88_tva_envelope_freeze(
+          &engine->renderer->rom, &component->envelope,
+          engine->scheduler_clocks / SC88_CONTROL_PERIOD_CLOCKS);
+      }
     }
   }
 }

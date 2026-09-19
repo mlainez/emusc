@@ -208,6 +208,12 @@ bool sc88_pitch_release_prepare(const struct sc88_rom *rom,
   release->phase = phase;
   release->destination = scale_target(
     s16(be16(component->bytes + 0x28)), envelope_depth);
+  /* `6559` and `58ce` write ONE word, `0x2a5a`: the destination at note on,
+     and the distance left to it at note off. `delta` is that word and
+     `destination` is kept beside it, so a note off that does not reach
+     `58ce` - the `+0x15` tones, `sc88_engine_start_release` - ramps toward
+     the destination exactly as the machine does. */
+  release->delta = release->destination;
   return true;
 }
 
@@ -215,15 +221,12 @@ bool sc88_pitch_release_activate(const struct sc88_rom *rom,
                                  uint8_t hold1, bool continuous_hold,
                                  bool keep_scale_at_zero,
                                  bool sostenuto_retained,
-                                 int16_t envelope_current,
                                  struct sc88_pitch_release *release)
 {
   unsigned effective;
   uint32_t offset;
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
-  release->delta = s16((uint16_t)((uint16_t)release->destination -
-                                  (uint16_t)envelope_current));
   release->current = 0;
   release->scale_enabled = true;
   if (sostenuto_retained) {

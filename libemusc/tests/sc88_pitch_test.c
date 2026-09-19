@@ -56,8 +56,16 @@ int main(void)
   assert(sc88_pitch_release_prepare(&rom, &tone, &component, 60,
                                     envelope.depth, &release));
   assert(release.destination == -0x1000);
+  /* `6559` writes the destination into the same word `58ce` later turns
+     into the distance left to it, so prepare leaves the two equal and a
+     note off that never reaches `58ce` ramps toward the destination. */
+  assert(release.delta == release.destination);
   assert(sc88_pitch_release_activate(&rom, 0, false, false, false,
-                                     envelope.current, &release));
+                                     &release));
+  /* `58ce..58d6`, which `sc88_engine_start_release` performs for a tone
+     whose tone-common `+0x15` is clear. */
+  release.delta = (int16_t)((uint16_t)release.destination -
+                            (uint16_t)envelope.current);
   envelope.active = false;
   envelope.stage = 4;
   assert(sc88_pitch_release_advance(&release, 1));

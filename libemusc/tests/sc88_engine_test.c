@@ -359,6 +359,66 @@ int main(void)
   assert(engine.slots[0].component.release.active);
   sc88_engine_destroy(&engine);
 
+  /* Tone-common `+0x15`, the guard `58c3` reads: the release ramps go up
+     either way, but a tone carrying the byte skips the whole block from
+     `58c9` - its envelopes keep running underneath the ramp instead of
+     being forced to stage 4, and its pitch release ramps toward the
+     destination rather than the distance from where the envelope stands.
+     23 of the ROM's 922 tones carry it, nearly all of them pianos.
+
+     The pitch envelope is given a depth for this block only, because with
+     the fixture's depth of zero every pitch quantity is zero and the two
+     halves below would agree while modelling nothing. */
+  {
+    struct sc88_render_component *released;
+    put16(control + 0x40000 + 34 + 0x1a, 0x4000);
+    put16(control + 0x40000 + 34 + 0x1e, 0x1000);
+    put16(control + 0x40000 + 34 + 0x28, 0xc000);
+    /* A zero stage-1 rate makes the envelope open at stage 1 and so at the
+       level the fixture leaves at zero; a nonzero one opens it at the
+       initial level above, which is what gives the delta something to be
+       the distance from. */
+    control[0x40000 + 34 + 0x2a] = 1;
+
+    assert(sc88_engine_init(&engine, &renderer));
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    assert(engine.slots[0].component.envelope.active);
+    assert(sc88_engine_note_off(&engine, 0, 60));
+    released = &engine.slots[0].component;
+    assert(released->release.active && released->pitch_release.active);
+    assert(!released->envelope.active);
+    assert(released->pitch_envelope.stage == 4);
+    assert(!released->pitch_envelope.active);
+    assert(released->pitch_release.delta ==
+           (int16_t)((uint16_t)released->pitch_release.destination -
+                     (uint16_t)released->pitch_envelope.current));
+    assert(released->pitch_release.delta !=
+           released->pitch_release.destination);
+    sc88_engine_destroy(&engine);
+
+    control[0x40000 + 0x15] = 1;
+    assert(sc88_engine_init(&engine, &renderer));
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    assert(engine.slots[0].component.continuous_hold_release);
+    assert(sc88_engine_note_off(&engine, 0, 60));
+    released = &engine.slots[0].component;
+    assert(released->release.active && released->pitch_release.active);
+    assert(released->envelope.active);
+    assert(released->pitch_envelope.stage != 4);
+    assert(released->pitch_envelope.active);
+    assert(released->pitch_release.delta ==
+           released->pitch_release.destination);
+    sc88_engine_destroy(&engine);
+
+    control[0x40000 + 0x15] = 0;
+    put16(control + 0x40000 + 34 + 0x1a, 0);
+    put16(control + 0x40000 + 34 + 0x1e, 0);
+    put16(control + 0x40000 + 34 + 0x28, 0);
+    control[0x40000 + 34 + 0x2a] = 0;
+  }
+
   /* The send combination law, on its own: the firmware's rounded product
      maps a full note send to the part's own control and a zero note send
      to silence, and 127 against 127 must not overflow to 0. */
