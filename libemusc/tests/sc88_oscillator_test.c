@@ -13,22 +13,28 @@ static int sample_value(float sample)
 }
 
 /* The sequences below fix the POSITION progression, which is what these
-   cases are about.  The read is three-tap, so the value the oscillator
-   emits at a position is that position mixed with its two neighbours; the
+   cases are about.  The read is four-tap, so the value the oscillator
+   emits at a position is that position mixed with its neighbours; the
    kernel is applied here rather than baked into the sequences, so a change
    of kernel touches this one function and the addressing cases stay
-   readable.  Each sequence carries one position beyond the samples it
-   asserts, because the last sample needs a neighbour after it, and the tap
-   before the first position falls back to the first, as the oscillator
-   does. */
+   readable.
+
+   These cases all step a whole position at a time, where the cubic
+   B-spline's weights are [1/6, 2/3, 1/6, 0] - so it is a SMOOTHER even
+   here, where an interpolating kernel would hand the position through
+   untouched, and the fourth tap's weight is fraction^3/6 = 0, so each
+   sequence still needs only the one position beyond the samples it
+   asserts.  The tap before the first position falls back to the first, as
+   the oscillator does.  The two-away taps are exercised at a fractional
+   phase at the end of main(), where they carry weight. */
 static void expect(struct sc88_oscillator *oscillator,
                    const int *values, size_t count)
 {
   size_t i;
   float sample;
   for (i = 0; i + 1 < count; ++i) {
-    double want = 0.125 * values[i ? i - 1 : 0] + 0.75 * values[i] +
-      0.125 * values[i + 1];
+    double want = (values[i ? i - 1 : 0] + 4.0 * values[i] +
+                   values[i + 1]) / 6.0;
     assert(sc88_oscillator_next(oscillator, &sample));
     assert(fabs((double)sample * 8388608.0 - want) < 1e-4);
   }
@@ -59,6 +65,7 @@ int main(void)
      final sample is that position again. */
   static const int one_shot[] = {8, 9, 10, 11, 12, 12};
   float sample;
+  size_t i;
 
   assert(fabs(sc88_pitch_word_rate(0x38000, 32000.0) - 1.0) < 1e-12);
   assert(fabs(sc88_pitch_word_rate(0x3c000, 32000.0) - 2.0) < 1e-12);
@@ -87,13 +94,53 @@ int main(void)
   assert(sc88_oscillator_init(&oscillator, pcm, 5, 8, &registers,
                               SC88_WAVE_FORWARD_LOOP, 0x34000, 32000.0,
                               SC88_WRAP_FULL_CARRY));
-  /* Half-step: the first read sits on position 0 with the tap before it
-     folded back, and the second sits exactly between 0 and 1, where the
-     three-tap weights are (1/2, 1/2, 0). */
+  /* Half-step.  The first read sits on position 0 with the tap before it
+     folded back, weights [1/6, 2/3, 1/6, 0] over 8, 8, 9 and a zero.  The
+     second sits exactly between 0 and 1, where all four weights are
+     nonzero - [1/48, 23/48, 23/48, 1/48] over the folded 8, then 8, 9 and
+     position 2's 10.  A kernel that read only three taps, or one that
+     passed position 0 through at fraction 0, fails both. */
+  assert(sc88_oscillator_next(&oscillator, &sample));
+  assert(fabs((double)sample * 8388608.0 - (8 + 4 * 8 + 9) / 6.0) < 1e-4);
   assert(sc88_oscillator_next(&oscillator, &sample));
   assert(fabs((double)sample * 8388608.0 -
-              (0.125 * 8 + 0.75 * 8 + 0.125 * 9)) < 1e-4);
+              (8 + 23 * 8 + 23 * 9 + 10) / 48.0) < 1e-4);
+
+  /* THE TWO-AWAY FORWARD TAP, which the three-tap read never had to
+     answer.  Half-step through a one-shot: at phase 3.5 the tap at
+     index + 2 is position 5, past the note's last position, and the
+     one-shot holds there exactly as the mandatory tap at index + 1
+     already did.  At 4.5, the last read before the note ends, both
+     forward taps are that held last position. */
+  assert(sc88_oscillator_init(&oscillator, pcm, 5, 8, &registers,
+                              SC88_WAVE_FORWARD_ONE_SHOT, 0x34000, 32000.0,
+                              SC88_WRAP_FULL_CARRY));
+  for (i = 0; i < 8; ++i)
+    assert(sc88_oscillator_next(&oscillator, &sample));
+  assert(fabs((double)sample * 8388608.0 -
+              (10 + 23 * 11 + 23 * 12 + 12) / 48.0) < 1e-4);
+  for (i = 0; i < 2; ++i)
+    assert(sc88_oscillator_next(&oscillator, &sample));
+  assert(fabs((double)sample * 8388608.0 -
+              (11 + 23 * 12 + 23 * 12 + 12) / 48.0) < 1e-4);
+  assert(!sc88_oscillator_next(&oscillator, &sample));
+
+  /* THE TWO-AWAY BACKWARD TAP AT THE LOOP SEAM.  Every pitch word that is
+     a whole number of octaves lands on fraction 0 exactly where the cycle
+     restarts, so standing at a FRACTIONAL phase on cycle position zero -
+     the one place the backward tap is not simply index - 1 - means putting
+     the oscillator there.  Position zero is address b (value 10) and its
+     predecessor is the cycle's LAST position, address c (value 12), not a
+     fold back onto position zero: at fraction 1/4 the weights are
+     [27, 235, 121, 1]/384, so folding would read 10 there and land on
+     3963/384 instead of 4017/384 - a step of 0.14 into every loop turn. */
+  assert(sc88_oscillator_init(&oscillator, pcm, 5, 8, &registers,
+                              SC88_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
+                              SC88_WRAP_FULL_CARRY));
+  oscillator.initial = false;
+  oscillator.phase = 0.25;
   assert(sc88_oscillator_next(&oscillator, &sample));
-  assert(fabs((double)sample * 8388608.0 - (0.5 * 8 + 0.5 * 9)) < 1e-4);
+  assert(fabs((double)sample * 8388608.0 -
+              (27 * 12 + 235 * 10 + 121 * 11 + 12) / 384.0) < 1e-4);
   return 0;
 }

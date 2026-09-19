@@ -206,7 +206,8 @@ static bool sc88_oscillator_value(const struct sc88_oscillator *oscillator,
   return true;
 }
 
-/* THE THREE-POINT READ, and the response is measured rather than chosen.
+/* THE FOUR-POINT READ.  The response is measured on the SC-88's own
+   recordings; the kernel that realises it is measured on the silicon.
 
    The wave is read with a kernel, and a kernel is one fixed filter in the
    WAVE's own time base.  A tone transposed by `ratio` puts output
@@ -219,74 +220,118 @@ static bool sc88_oscillator_value(const struct sc88_oscillator *oscillator,
    same answer.  That over-determination is what separates a measurement
    from a curve fitted to a residual.
 
-   63 archive single notes against our render, every band the reference
-   carries above its own noise floor, 1101 points.  At FIXED theta the
-   excess does not depend on output frequency at all - the slope is +0.15,
-   -0.02 and -0.95 dB per octave in three theta bands, every |t| <= 0.3,
-   over f from 726 Hz to 13.5 kHz.  At FIXED output frequency it depends
-   strongly on the transposition: -2.76 dB per octave of ratio from 5 to
-   9.5 kHz and -5.36 above.  Fitting both at once over every band above
-   1 kHz gives +0.90 +- 0.21 dB per octave of frequency and -1.25 +- 0.43
-   per octave of ratio; an output-stage response requires the second to be
-   zero and it is 2.9 sigma away, while a kernel in the wave's time base
-   requires it to be the negative of the first, which it is.
-
-   The reference's own response then follows from ours, because ours is
-   known exactly: the two-point linear read is the unit triangle, whose
-   power response is 40*log10|sinc(theta)|.  Recovered on the r < 0.90
-   group alone and expressed against theta, it PREDICTS the held-out
-   0.90 <= r < 1.25 group to a mean 0.81 dB over nine shared bins, eight of
-   nine 68 % intervals overlapping, at output frequencies an octave apart
-   - and the same points binned by output frequency instead miss by
-   2.56 dB with none of ten overlapping.
+   THE RESPONSE, off the SC-88 itself, indirectly.  63 archive single notes
+   against our render, every band the reference carries above its own noise
+   floor, 1101 points.  At FIXED theta the excess does not depend on output
+   frequency at all - the slope is +0.15, -0.02 and -0.95 dB per octave in
+   three theta bands, every |t| <= 0.3, over f from 726 Hz to 13.5 kHz.  At
+   FIXED output frequency it depends strongly on the transposition: -2.76
+   dB per octave of ratio from 5 to 9.5 kHz and -5.36 above.  Fitting both
+   at once over every band above 1 kHz gives +0.90 +- 0.21 dB per octave of
+   frequency and -1.25 +- 0.43 per octave of ratio; an output-stage
+   response requires the second to be zero and it is 2.9 sigma away, while
+   a kernel in the wave's time base requires it to be the negative of the
+   first, which it is.  Recovered on the r < 0.90 group alone and expressed
+   against theta it PREDICTS the held-out 0.90 <= r < 1.25 group to a mean
+   0.81 dB over nine shared bins, eight of nine 68 % intervals overlapping,
+   at output frequencies an octave apart; the same points binned by output
+   frequency instead miss by 2.56 dB with none of ten overlapping.
 
        theta         0.12   0.16   0.20   0.24   0.28   0.32   0.43   0.50
        reference dB  -0.74  -1.02  -1.64  -2.45  -3.78  -5.12  -9.74 -11.08
-       our linear    -0.43  -0.75  -1.18  -1.71  -2.35  -3.10  -5.79  -7.53
+       two-point     -0.43  -0.75  -1.18  -1.71  -2.35  -3.10  -5.79  -7.53
 
-   Written as sinc**n the recovered curve is n = 3.25 [2.99, 3.42] at 68 %,
-   resampled over tones.  Two-point linear is n = 2.  The same recovery run
-   on renders made with n = 3 and with n = 4 returns 3.24 and 3.34, so the
-   curve does not move with the kernel that produced the residual, which a
-   fit to that residual would.
+   Written as sinc**n that curve is n = 3.25 [2.99, 3.42] at 68 %,
+   resampled over tones; two-point linear is n = 2.  It names a RESPONSE
+   and not a kernel, and the SC-88's own ROM names no kernel either: the
+   control ROM holds no phase-indexed unity-summing table under any of four
+   numeric readings, against a search that recovers three of three and four
+   of four planted ones, and the 28-register XP voice upload carries pitch,
+   TVF, TVA, pan and sends - no coefficient bank, no interpolation-mode
+   field.  The interpolation is XP silicon.
 
-   The kernel below is the three-tap quadratic B-spline, which is exactly
-   n = 3 and the shortest kernel inside the interval.  It is a CHOICE among
-   the kernels that realise the measured response, not itself a recovered
-   fact: the control ROM holds no interpolation coefficients (no
-   phase-indexed unity-summing table exists in it under any of four numeric
-   readings, against a search that recovers three of three and four of four
-   planted ones), and the 28-register XP voice upload has no coefficient
-   bank and no interpolation-mode field.  The interpolation is XP silicon
-   and the response is what this project can have.  Identical-XP measurement
-   M-087 preferred linear over four-point Hermite and windowed sinc, but
-   every candidate it tried was SHARPER than linear; the SC-88's is softer.
+   THE KERNEL, off that silicon, directly.  The JV-1080 carries the same
+   part - MBCS30109, Roland 15239239 - and its wave ROM is dumped and
+   decoded, so on that machine the source spectrum is KNOWN instead of
+   being differenced away.  Two single-element, filter-off,
+   neutral-fine-tune waves, 13-16 slots at ratio 0.25-0.60, each candidate
+   compared against the recovered response over 42 dB of span and allowed
+   only its own constant offset:
 
-   Whole board, 63 single notes against the archive, wet at CC91 24:
-   median MAD 1.2 -> 0.9 dB, within 3 dB 57 -> 59 of 63, past 6 dB 2
-   unchanged, tilted bright 8 -> 3, no drift outlier either way.  Dry, the
-   same 63 read median MAD 1.5 -> 1.0 and tilted bright 11 -> 6, but within
-   3 dB 53 -> 51: the tones it moves the wrong way are the struck ones
-   whose defect is their decay, not their brightness.  Per-band median
-   residual, ours minus the archive, 3.1 to 13.5 kHz:
+       cubic B-spline      0.63 / 0.59 dB rms
+       quartic B-spline    2.77 / 1.83
+       quadratic B-spline  2.80 / 2.28
+       Catmull-Rom         5.15 / 4.47
+       two-point linear    5.48 / 4.23
+       nearest sample      8.18 / 6.19
 
-       linear sinc^2   0.2  0.3  0.4  0.7  1.1  1.9  2.8  4.8 dB
-       this   sinc^3   0.1  0.0 -0.0  0.1  0.1  0.7  0.8  2.0
-       cubic  sinc^4  -0.2 -0.2 -0.5 -0.9 -0.8 -1.0 -1.5 -1.1
+   Two independent waves, one winner, by a factor of three to nine.  The
+   cubic B-spline's response is |sinc|^4 - n = 3, inside the interval the
+   SC-88's own recordings give - and its weights at fraction 0 are
+   [1/6, 2/3, 1/6, 0], which is the SC-55 PCM chip's own four-point table
+   [0.174, 0.653, 0.173, 0] to 0.007.  One kernel across both chip
+   families.  In silicon it is three linear interpolations (de Boor), so it
+   is nothing exotic for a 1994 ASIC.
 
-   and the correlation of the excess against log2(ratio), which is what
-   named the wave's time base in the first place, collapses with it: -0.29
-   to -0.13 at 11.0 kHz and -0.32 to -0.05 at 13.5.  So the answer is
-   bracketed and not merely improved.  The remaining
-   +2.0 dB at 13.5 kHz is the n = 3.25 the curve actually wants, and above
-   theta 0.6 - deep in the imaging region, eight points - the reference
-   falls off faster still than any single exponent.  [MEASURED].  */
+   [MEASURED ON A JV-1080] (P-xxxx).  The SC-88 shares the part, and the
+   SC-88's own response interval contains this kernel, but a JV-1080 is
+   still another device: this is a strong lead for the SC-88 and it is NOT
+   firmware-exact for it.
+
+   IT DOES NOT INTERPOLATE.  At fraction 0 it does not hand value0 through,
+   it convolves by [1/6, 2/3, 1/6].  So it runs at EVERY ratio, unity
+   included, and a sample played at its own root key is smoothed like any
+   other; there is deliberately no fast path for fraction 0.  That is also
+   how an earlier measurement on this same silicon read the chip as
+   two-point linear and had to be withdrawn - all of its candidates were
+   interpolating ones, identity at fraction 0, so the integer-ratio control
+   where they all agree was precisely the case none of them could see.
+
+   Whole board, 63 archive single notes, dry, all three kernels rendered
+   from this engine.  Per-band median residual, ours minus the archive:
+
+       band Hz          3.1k  3.9k  4.8k  5.9k  7.2k  8.9k 11.0k 13.5k
+       two-point linear  0.1   0.2   0.4   0.6   1.1   1.7   2.8   4.9
+       quadratic         0.0  -0.0   0.0   0.1   0.1   0.4   0.7   2.0
+       this, cubic      -0.2  -0.4  -0.5  -0.7  -0.8  -0.9  -1.2  -0.9
+
+   On the r < 0.90 group alone - the transposed-down tones the excess was
+   found on - 0.3 0.2 0.5 0.8 1.8 2.8 4.6 8.6 becomes -0.2 -0.5 -0.8 -1.0
+   -1.2 -1.5 -3.2 -1.2, and the correlation of the excess against
+   log2(ratio) that named the wave's time base in the first place
+   collapses with it: -0.38 -> -0.12 -> +0.20 at 13.5 kHz and
+   -0.31 -> -0.14 -> +0.05 at 11.0 across the three kernels.  The whole
+   board's spectral audit reads the last step as level: median MAD
+   1.3 -> 0.9 -> 0.9 dB, 55 of 63 within 3 dB under both B-splines,
+   tilted bright 10 -> 4 -> 4.
+
+   AND IT GOES PAST THE ARCHIVE, which is worth saying plainly.  Recovered
+   from this very render the archive's curve is sinc^n with
+   n = 3.28 [3.12, 3.48], and a quadratic render returns the same number
+   (3.20 [3.03, 3.38]) as it must - so the SC-88's own recordings want
+   something BETWEEN sinc^3 and sinc^4, nearer the quadratic, and this
+   kernel sits about 0.7 dB past them: median miss +0.72 dB against the
+   quadratic's -0.15.  Per tone, 18 of 63 improve and 33 worsen, the
+   improvements concentrated in the deeply transposed-down tones the
+   response was found on.  The kernel stays, because the two numbers are
+   not the same class of evidence.  The JV-1080 figure is a structural
+   measurement of THIS quantity against a source spectrum that is known;
+   the archive figure is a residual of our WHOLE render against recordings
+   whose own provenance is not established, so it carries every other
+   high-end error we still have.  If one of those is found later, this
+   residual should move towards the cubic rather than away from it.  */
 
 /* The position before this one.  Inside a cycle, position zero's
    predecessor is the cycle's LAST position and not something before the
-   note: a three-tap read that folded back there would put a step into
-   every loop turn, at the loop's own rate.  Before the note's first
-   position there is genuinely nothing, and the caller folds back. */
+   note: a read that folded back there would put a step into every loop
+   turn, at the loop's own rate.  It answers the four-point read's left
+   outer tap unchanged, because at the initial-to-cycle handover the
+   cycle's last position and the initial pass's last position are the same
+   address - `end` - for both the forward and the ping-pong loop.
+
+   Before the note's FIRST position there is genuinely nothing: the zone's
+   decode starts at `start`, and in a differential format the frame before
+   it is not a sample of this wave at all.  The caller folds back. */
 static bool sc88_oscillator_previous(const struct sc88_oscillator *oscillator,
                                      size_t index, size_t *out)
 {
@@ -300,35 +345,50 @@ static bool sc88_oscillator_previous(const struct sc88_oscillator *oscillator,
   return true;
 }
 
-/* An outer tap of the three-point read.  It is optional: when it falls
-   before the first position, or on an address the zone does not contain,
-   the centre tap stands in.  The two inner taps stay mandatory so the
-   one-shot termination test is exactly the one the two-point read used. */
+/* One of the four-point read's two outer taps, two positions apart across
+   the fraction.  Both are optional and the INNER tap on the same side
+   stands in for a missing one, which repeats a sample the note really has
+   rather than inventing one, and leaves the four weights summing to one so
+   a boundary cannot put a gain step or a DC offset into the output.  The
+   two inner taps stay mandatory, so the one-shot termination test is
+   exactly the one the two-point read used.
+
+   Which of the two can actually be missing is not symmetric.  The forward
+   tap, index + 2, is answered for every zone `sc88_oscillator_init`
+   accepts: a loop wraps it modulo the cycle, a one-shot holds it at `end`
+   (`end + 1` reversed) and init has already checked that address is inside
+   the zone, and the ping-pong's one unreadable position is answered by the
+   ROM's zero-sum invariant in `sc88_oscillator_value`.  Its fallback is a
+   guard, not a case that arises.  The backward tap goes missing exactly
+   once per note - at position zero of the initial pass - and the value it
+   falls back to is a CHOICE, not a recovered one: nothing measured here
+   says what the chip reads when its address counter is still on the zone's
+   first frame.  It costs at most the note's first 1/step output samples
+   and weight (1-f)^3/6 of one of them. */
 static double sc88_oscillator_outer(const struct sc88_oscillator *oscillator,
-                                    size_t index, bool back, double centre)
+                                    size_t index, bool back, double inner)
 {
   size_t at;
   double value;
 
   if (back) {
     if (!sc88_oscillator_previous(oscillator, index, &at))
-      return centre;
+      return inner;
   } else {
     at = index + 1;
   }
-  return sc88_oscillator_value(oscillator, at, &value) ? value : centre;
+  return sc88_oscillator_value(oscillator, at, &value) ? value : inner;
 }
 
 bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 {
   size_t index;
   double fraction;
+  double rest;
   double value0;
   double value1;
   double left;
-  double centre;
   double right;
-  double offset;
 
   if (!oscillator || !sample || oscillator->ended)
     return false;
@@ -337,23 +397,27 @@ bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
   if (!sc88_oscillator_value(oscillator, index, &value0) ||
       !sc88_oscillator_value(oscillator, index + 1, &value1))
     return false;
-  /* Three-point read, centred on whichever of the two inner positions the
-     phase is nearer, so `offset` is the signed distance to the centre and
-     the weights below are symmetric in it. */
-  if (fraction < 0.5) {
-    offset = fraction;
-    centre = value0;
-    right = value1;
-    left = sc88_oscillator_outer(oscillator, index, true, centre);
-  } else {
-    offset = fraction - 1.0;
-    centre = value1;
-    left = value0;
-    right = sc88_oscillator_outer(oscillator, index + 1, false, centre);
-  }
-  *sample = (float)((0.5 * (0.5 - offset) * (0.5 - offset) * left +
-                     (0.75 - offset * offset) * centre +
-                     0.5 * (0.5 + offset) * (0.5 + offset) * right) /
+  /* The four-point read is always centred on the span the phase is in, so
+     unlike a three-tap read it needs no folding to a nearer position:
+     `fraction` and its complement carry the whole symmetry.  The uniform
+     cubic B-spline basis, with `rest` = 1 - fraction:
+
+       index - 1   rest^3 / 6
+       index       2/3 - fraction^2 + fraction^3 / 2
+       index + 1   2/3 - rest^2     + rest^3 / 2
+       index + 2   fraction^3 / 6
+
+     which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
+     identity - and sums to one at every fraction. */
+  left = sc88_oscillator_outer(oscillator, index, true, value0);
+  right = sc88_oscillator_outer(oscillator, index + 1, false, value1);
+  rest = 1.0 - fraction;
+  *sample = (float)((rest * rest * rest / 6.0 * left +
+                     (2.0 / 3.0 - fraction * fraction *
+                      (1.0 - fraction * 0.5)) * value0 +
+                     (2.0 / 3.0 - rest * rest *
+                      (1.0 - rest * 0.5)) * value1 +
+                     fraction * fraction * fraction / 6.0 * right) /
                     8388608.0);
 
   oscillator->phase += oscillator->step;
