@@ -40,6 +40,107 @@ static void expect(struct sc88_oscillator *oscillator,
   }
 }
 
+/* HORN_B'S KEY-60 ZONE, THE SHORTEST LOOP ANYTHING AUDIBLE USES (emusc-match
+   TASK-162).  The descriptor at SC88-CTL 0x3820c is a forward loop with
+   A = 0x0fbc41, B = 0x0fbc60, C = 0x0fbcb5, root key 66 and a base pitch
+   correction of -136 in the 16384-units-per-octave domain - 86 logical
+   samples of loop, 2.7 ms at its own rate, so whatever the wrap does recurs
+   370 times a second and is heard as a buzz rather than a pop.
+
+   The ROM decides what the wrap does, at `sc88_oscillator_wrapped_phase`.
+   These two cases are the arithmetic that decision rests on, on the real
+   geometry, so it cannot quietly reopen:
+
+   - at the root key the descriptor's own correction has to land the 86-sample
+     loop on that root key's pitch, and it only does so if the traversal lasts
+     `86 / step` output samples.  Clearing the phase makes it 87 and puts the
+     zone ten cents flat of the F# it is cut for;
+   - at key 60, the case the task names, the renderer's pitch word is 0x364a6
+     and the traversal is 115.651 output samples.  Clearing the phase makes it
+     exactly 116, which is a sustain 5.22 cents flat of the attack.
+
+   The oscillator is stepped for real rather than having its phase inspected,
+   because it is the sounding period that the ROM constrains. */
+static double traversal(uint32_t pitch_word, enum sc88_fractional_wrap wrap,
+                        const int32_t *pcm, size_t count,
+                        const struct sc88_wave_registers *registers)
+{
+  struct sc88_oscillator oscillator;
+  double previous;
+  size_t i, wraps = 0, first = 0, last = 0;
+  float sample;
+
+  assert(sc88_oscillator_init(&oscillator, pcm, count, registers->start,
+                              registers, SC88_WAVE_FORWARD_LOOP, pitch_word,
+                              32000.0, wrap));
+  assert(oscillator.cycle_count == 86);
+  assert(oscillator.initial_count == 117);
+  previous = oscillator.phase;
+  for (i = 0; i < 32000 * 2; ++i) {
+    assert(sc88_oscillator_next(&oscillator, &sample));
+    if (!oscillator.initial && oscillator.phase < previous) {
+      ++wraps;
+      if (wraps == 1)
+        first = i;
+      last = i;
+    }
+    previous = oscillator.phase;
+  }
+  assert(wraps > 100);
+  return (double)(last - first) / (double)(wraps - 1);
+}
+
+static void short_loop_wrap(void)
+{
+  /* Addresses are the descriptor's; the values are not, because what these
+     cases fix is the POSITION progression and not what is read at it. */
+  static const uint32_t start = 0x0fbc41, loop = 0x0fbc60, end = 0x0fbcb5;
+  const struct sc88_wave_registers registers = {0, start, loop, end, 0, 0x18};
+  int32_t pcm[117];
+  size_t i;
+  double period;
+  /* The root key's own rate: the pitch word is the unity anchor plus the
+     descriptor's +4 correction, and nothing else. */
+  const uint32_t root_word = 0x38000u - 136u;
+  /* What the renderer computes for program 60, variation 1, key 60. */
+  const uint32_t key60_word = 0x364a6u;
+  const double fsharp4 = 369.99442271163446;
+
+  assert(end - loop + 1 == 86);
+  assert(end - start + 1 == 117);
+  for (i = 0; i < sizeof pcm / sizeof pcm[0]; ++i)
+    pcm[i] = (int32_t)(i * 1000);
+
+  /* The +4 correction tunes this loop to its own root key, and only if the
+     traversal is 86/step output samples. */
+  period = traversal(root_word, SC88_WRAP_FULL_CARRY, pcm,
+                     sizeof pcm / sizeof pcm[0], &registers);
+  assert(fabs(period - 86.0 / pow(2.0, -136.0 / 16384.0)) < 1e-3);
+  assert(fabs(1200.0 * log2((32000.0 / period) / fsharp4)) < 0.25);
+
+  /* Cleared, the traversal has to end on an output sample, and the zone is
+     ten cents flat of the key it is cut for. */
+  period = traversal(root_word, SC88_WRAP_FULL_RESET, pcm,
+                     sizeof pcm / sizeof pcm[0], &registers);
+  assert(fabs(period - 87.0) < 1e-9);
+  assert(1200.0 * log2((32000.0 / period) / fsharp4) < -10.0);
+
+  /* Key 60, the case the task names. */
+  period = traversal(key60_word, SC88_WRAP_FULL_CARRY, pcm,
+                     sizeof pcm / sizeof pcm[0], &registers);
+  assert(fabs(period - 115.65092) < 1e-3);
+  period = traversal(key60_word, SC88_WRAP_FULL_RESET, pcm,
+                     sizeof pcm / sizeof pcm[0], &registers);
+  assert(fabs(period - 116.0) < 1e-9);
+
+  /* Dropping only the integer part of the overshoot is the same as carrying
+     it whenever the rate is at or below unity, which every key in this zone
+     is; it separates from carrying only above. */
+  assert(fabs(traversal(key60_word, SC88_WRAP_FRACTION_ONLY, pcm,
+                        sizeof pcm / sizeof pcm[0], &registers) -
+              115.65092) < 1e-3);
+}
+
 int main(void)
 {
   const int32_t pcm[] = {8, 9, 10, 11, 12};
@@ -142,5 +243,7 @@ int main(void)
   assert(sc88_oscillator_next(&oscillator, &sample));
   assert(fabs((double)sample * 8388608.0 -
               (27 * 12 + 235 * 10 + 121 * 11 + 12) / 384.0) < 1e-4);
+
+  short_loop_wrap();
   return 0;
 }

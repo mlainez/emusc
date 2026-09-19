@@ -112,6 +112,10 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
   }
 
   _sc88 = new struct sc88_device();
+  /* The wrap is not a choice: the wave directory's own pitch corrections are
+     cut against a loop traversal of `span / step` output samples, which is
+     what carrying the remainder gives. `sc88_oscillator_wrapped_phase` holds
+     the evidence and `sc88_oscillator_test` holds the arithmetic. */
   if (!sc88_device_init_raw(_sc88, ctrl.data(), ctrl.size(), raw, sizes,
                             (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
     delete _sc88;

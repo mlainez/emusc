@@ -159,6 +159,57 @@ bool sc88_oscillator_init(struct sc88_oscillator *oscillator,
      sc88_oscillator_contains(oscillator, registers->loop));
 }
 
+/* THE PHASE CARRIES ACROSS A LOOP WRAP, and the ROM says so.
+
+   THE FIRMWARE IS SILENT, and that is worth establishing rather than
+   assuming.  Exactly four routines in the 0x80000 image select the XP's
+   address domain - `ldc.b #0xe:8,ep` at SC88-CTL 0x4f51, 0x51cd, 0x5278 and
+   0x559b.  0x51cd and 0x5278 write only the voice enable bitmap at XP
+   `0x3900`; 0x559b is the per-period service and rewrites only the TVF and
+   TVA triplets.  The voice uploader at 0x4f51 is the only one that writes a
+   wave address at all, and it runs once, at note start: `0x0100` at 0x4f9e,
+   `0x0200` at 0x4fbd, `0x0300` at 0x4fcb, the per-voice state `0x0c00` at
+   0x4fd9, and `0x0e00` cleared to zero at 0x4f82/0x4f87.  So no instruction
+   rewrites an address register while a voice sounds: the wrap happens inside
+   the XP and the control ROM cannot express a rule for it.  The identical XP
+   part in the JV-1080 is written the same way, once per note start.
+
+   THE WAVE DIRECTORY IS NOT SILENT.  A loop of `span` logical samples read
+   at `step` samples per output sample lasts `span / step` output samples if
+   the accumulator carries its remainder, and `ceil(span / step)` if the
+   remainder is thrown away - because then the loop has to end on an output
+   sample.  The ROM's own descriptors are cut for one of those two.
+
+   Each descriptor carries a root key at +6 and a base pitch correction at
+   +4, 16384 units to the octave.  Read the correction as the rate at the
+   root key and the loop as `span / step`: on 1005 of the 1520 forward-loop
+   descriptors that is within ONE CENT of a whole number of periods of that
+   descriptor's own root key - median residual 0.28 cent, 85.5 % within five.
+   Zero the +4 correction and 4.0 % are, median 16.35 cents.  So the field is
+   cut to make that identity hold, at 0.0732 cent per unit.  Take the loop as
+   `ceil(span / step)` instead and only 20.5 % of those same 1005 survive a
+   cent; the median residual becomes 7.49 cents and the 99th percentile 182.6.
+   A correction finer than the grid it is quantised onto is not a correction.
+
+   The same arithmetic over the 51166 (zone, key) pairs the 549 directories
+   name: clearing the phase puts 18.2 % of them more than 20 cents flat and
+   6.9 % more than a semitone, always flat, worst -5800 cents on a loop the
+   ROM cuts at four samples.  Dropping only the integer part of the overshoot
+   is identical to carrying whenever `step <= 1`, and leaves 26.9 % of the
+   upward-transposed pairs more than 20 cents flat.  Carrying the whole
+   remainder is the only one of the three that plays every zone at the rate
+   its own descriptor asks for.
+
+   HORN_B's key-60 zone is the short loop this was opened on (emusc-match
+   TASK-162; descriptor at 0x3820c, span 86, forward, 2.7 ms at its own
+   rate).  Carrying gives 115.651 output samples a traversal; clearing gives
+   exactly 116, which is the sustain 5.22 cents flat of the attack it grew
+   out of, and a fresh discontinuity at every one of its 1103 wraps -
+   45 times the note's own departure from its neighbours, where carrying is
+   5.9 against the 4.2 the same waveform reaches at other phases.  The
+   opposite reading came from a metric that rewarded an output for repeating
+   on the integer sample grid, which is exactly what clearing the phase
+   manufactures. */
 static double sc88_oscillator_wrapped_phase(
   const struct sc88_oscillator *oscillator, double overflow)
 {

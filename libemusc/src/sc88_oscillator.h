@@ -12,6 +12,10 @@
 extern "C" {
 #endif
 
+/* What the phase accumulator does at a loop wrap.  The ROM says
+   SC88_WRAP_FULL_CARRY, and the evidence is at
+   `sc88_oscillator_wrapped_phase`.  The other two are kept only so that
+   arithmetic stays testable; neither is a candidate. */
 enum sc88_fractional_wrap {
   SC88_WRAP_FULL_CARRY,
   SC88_WRAP_FULL_RESET,
