@@ -14,7 +14,13 @@
    records, checked against the held ROM rather than against a fixture: at
    the centre gain the recurrence is an identity, a low-band row's DC gain
    is its labelled gain while its Nyquist gain is unity, and a high-band
-   row is the other way round. */
+   row is the other way round.
+
+   The ROM's path is read from the environment at run time, so ctest's own
+   environment carries it whatever the tree was configured with:
+     SC88_CONTROL_ROM  the control ROM
+   Without it the test reports skipped rather than passing while checking
+   nothing. */
 static double dc_gain(const struct sc88_eq_band *b)
 {
   return (b->c0 + b->c1) / (1.0 - b->c2);
@@ -25,17 +31,19 @@ static double nyquist_gain(const struct sc88_eq_band *b)
   return (b->c0 - b->c1) / (1.0 + b->c2);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
+  const char *romPath;
   uint8_t *bytes;
   size_t size;
   struct sc88_rom rom;
   struct sc88_eq eq;
   FILE *file;
   unsigned gain;
-  if (argc < 2)
+  romPath = getenv("SC88_CONTROL_ROM");
+  if (!romPath)
     return 77;                          /* no ROM given: skip */
-  file = fopen(argv[1], "rb");
+  file = fopen(romPath, "rb");
   if (!file)
     return 77;
   bytes = (uint8_t *)malloc(SC88_CONTROL_ROM_SIZE);

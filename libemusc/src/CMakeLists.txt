@@ -150,12 +150,10 @@ if(BUILD_TESTING)
   sc88_test(sc88_eq_test sc88_eq.c sc88_rom.c sc88_wave.c)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
-  # while checking nothing.
+  # while checking nothing. The path is read from SC88_CONTROL_ROM by the
+  # test itself, at run time, so ctest's own environment carries it
+  # whatever the tree was configured with.
   set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
-  if(DEFINED ENV{SC88_CONTROL_ROM})
-    set_property(TEST sc88_eq_test PROPERTY
-      COMMAND $<TARGET_FILE:sc88_eq_test> $ENV{SC88_CONTROL_ROM})
-  endif()
   sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
   sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
   sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
@@ -164,11 +162,8 @@ if(BUILD_TESTING)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.
+  # The path is read from SC88_CONTROL_ROM by the test itself, at run time.
   set_property(TEST sc88_tva_test PROPERTY SKIP_RETURN_CODE 77)
-  if(DEFINED ENV{SC88_CONTROL_ROM})
-    set_property(TEST sc88_tva_test PROPERTY
-      COMMAND $<TARGET_FILE:sc88_tva_test> $ENV{SC88_CONTROL_ROM})
-  endif()
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})

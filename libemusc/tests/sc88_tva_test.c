@@ -10,6 +10,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The layout is checked without a ROM; the sweep over the curve and rate
+   tables needs one, and its path is read from the environment at run time,
+   so ctest's own environment carries it whatever the tree was configured
+   with:
+     SC88_CONTROL_ROM  the control ROM
+   Without it the test reports skipped rather than passing while checking
+   only the layout. */
+
 #define RATE_TABLE 0x1543eu
 #define LINEAR_TABLE 0x1553eu
 #define EXPONENTIAL_TABLE 0x1563eu
@@ -34,12 +42,13 @@ static double dwell(uint16_t increment)
   return 65536.0 / (double)increment;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
   static const unsigned firmware_shift[4] = {0, 3, 5, 7};
   static const unsigned control_shift[3][4] = {
     {0, 2, 4, 6}, {0, 3, 6, 9}, {0, 4, 8, 12}
   };
+  const char *romPath;
   struct sc88_tva_curve curve;
   uint8_t *bytes;
   size_t size;
@@ -81,9 +90,10 @@ int main(int argc, char **argv)
   sc88_tva_curve_decode(0x4fff, &curve);
   assert(sc88_tva_curve_progress(&curve, 1.0) == 1.0);
 
-  if (argc < 2)
+  romPath = getenv("SC88_CONTROL_ROM");
+  if (!romPath)
     return 77;                          /* no ROM given: skip the sweep */
-  file = fopen(argv[1], "rb");
+  file = fopen(romPath, "rb");
   if (!file)
     return 77;
   if (fseek(file, 0, SEEK_END) != 0) {
