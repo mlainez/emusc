@@ -110,11 +110,14 @@ int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
                                 const struct sc88_pitch_release *release);
 
 /* The pitch word uploaded as the XP's current value: the static word plus
- * every signed contribution, with the envelope's own doubled, capped at
+ * every signed contribution, with the envelope's own doubled, saturated to
  * 0x0003ffff, and with bit 0 cleared. All three are firmware law rather than
- * XP behaviour - the doubling and the cap at 0x5e59..0x5e6a and
- * 0x5f11..0x5f25, and the low bit cleared before upload. Both the engine and
- * a renderer used on its own must arrive at the same word, so they share
+ * XP behaviour - the doubling and the saturation at 0x5e59..0x5e6a and
+ * 0x5f11..0x5f25 (byte-identical clamps), and the low bit cleared before
+ * upload. The saturation is one-sided on purpose: the compare is unsigned
+ * and on the high word alone, so a sum that has gone negative saturates to
+ * the MAXIMUM like an overlarge one, not to zero. Both the engine and a
+ * renderer used on its own must arrive at the same word, so they share
  * this. */
 uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
                                  int16_t envelope_sum);

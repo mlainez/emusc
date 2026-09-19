@@ -282,12 +282,22 @@ int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
 uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
                                  int16_t envelope_sum)
 {
-  int64_t value = (int64_t)base + offset + 2 * (int64_t)envelope_sum;
-  if (value < 0)
-    return 0;
-  if (value > 0x3ffff)
-    value = 0x3ffff;
-  return (uint32_t)value & ~UINT32_C(1);
+  /* `0x5e41`..`0x5e58` sign-extends the envelope sum into the register pair
+     {r4,r5} and doubles it (`ad 18` `ac 1e` twice), then adds the base and
+     offset pair with `add:g.w`/`addx.w` - one 32-bit sum that wraps rather
+     than saturating.
+
+     `0x5e59` `4c 00 03` `cmp:i.w #3,r4` and `0x5e5c` `23 06` `bls.b` test
+     the HIGH WORD alone, UNSIGNED. Everything the branch does not take -
+     which is every sum outside 0x00000..0x3ffff, including every negative
+     one, whose high word is 0xffff - falls into `0x5e5e` `5c 00 03` and
+     `0x5e61` `5d ff ff`: r4 = 3, r5 = 0xffff. The saturation is to the
+     MAXIMUM at both ends. */
+  uint32_t value = base + (uint32_t)offset +
+    2u * (uint32_t)(int32_t)envelope_sum;
+  if ((value >> 16) > 3u)
+    value = 0x3ffffu;
+  return value & ~UINT32_C(1);
 }
 
 uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time)

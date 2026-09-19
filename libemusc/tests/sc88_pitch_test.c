@@ -75,11 +75,39 @@ int main(void)
   /* an odd result is rounded down, never up */
   assert(sc88_pitch_current_word(0x38001, 0, 0) == 0x38000);
   assert(sc88_pitch_current_word(0x38003, 0, 0) == 0x38002);
-  /* and both ends saturate rather than wrapping */
+  /* and BOTH ends saturate to the same place - the top.
+
+     `0x5e59` compares the high word of the 32-bit sum against 3 UNSIGNED
+     (`4c 00 03` `cmp:i.w #3,r4`, `23 06` `bls.b`) and the not-taken path
+     writes r4 = 3, r5 = 0xffff. A sum that has gone below zero has a high
+     word of 0xffff, fails that compare like an overlarge one, and is given
+     the MAXIMUM. Saturating such a sum to zero instead drops the note an
+     octave or more, once, on the one period the sum is negative - a single
+     wrong note rather than a steady error, which is what makes it worth a
+     test of its own. The same clamp, byte for byte, is at 0x5f11. */
   assert(sc88_pitch_current_word(0x3fffe, 0, 0x4000) == 0x3fffe);
   assert(sc88_pitch_current_word(0x3ffff, 0, 0) == 0x3fffe);
-  assert(sc88_pitch_current_word(0x100, -0x4000, 0) == 0);
-  assert(sc88_pitch_current_word(0, 0, -0x4000) == 0);
+  assert(sc88_pitch_current_word(0x100, -0x4000, 0) == 0x3fffe);
+  assert(sc88_pitch_current_word(0, 0, -0x4000) == 0x3fffe);
+  /* One unit either side of the top of the unsaturated range, and one unit
+     either side of zero, so a clamp written as a signed compare fails here. */
+  assert(sc88_pitch_current_word(0x3ffff, 0, 0) == 0x3fffe);
+  assert(sc88_pitch_current_word(0x40000, 0, 0) == 0x3fffe);
+  assert(sc88_pitch_current_word(1, -1, 0) == 0);
+  assert(sc88_pitch_current_word(0, -1, 0) == 0x3fffe);
+  /* The combination the board can actually reach: a component sitting low
+     in the range, a full downward bend in the part offset and a pitch
+     envelope still pulling down. The sum is negative, so the chip is given
+     the top of the range. */
+  {
+    /* base + offset + 2 * envelope_sum = 0x02000 - 0x03000 - 0x02000 */
+    uint32_t low_base = 0x02000;
+    int32_t full_bend_down = -0x3000;
+    int16_t envelope_down = -0x1000;
+    assert((int64_t)low_base + full_bend_down + 2 * (int64_t)envelope_down < 0);
+    assert(sc88_pitch_current_word(low_base, full_bend_down,
+                                   envelope_down) == 0x3fffe);
+  }
 
   /* Portamento. The table's four-byte stride and big-endian halves, the
      zero entry that is never reached, and the glide itself: one semitone
