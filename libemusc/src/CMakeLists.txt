@@ -175,4 +175,22 @@ if(BUILD_TESTING)
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_device_test sc88_device.c sc88_chorus.c sc88_delay.c sc88_eq.c sc88_output.c ${SC88_VOICE_SOURCES})
+
+  # Synth::reset() is reached through the public C++ API, so this one links the
+  # library rather than the engine sources. ControlRom and WaveRom read files
+  # and have no public constructor that takes bytes, so it needs the SC-88's
+  # own ROM images and reports skipped without them. The paths are read from
+  # the environment by the test itself, at run time, so ctest's own environment
+  # carries them whatever the tree was configured with.
+  add_executable(synth_reset_test ../tests/synth_reset_test.cc)
+  target_include_directories(synth_reset_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(synth_reset_test PRIVATE emusc_static)
+  if(MSVC)
+    target_compile_options(synth_reset_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(synth_reset_test PRIVATE -UNDEBUG)
+  endif()
+  set_target_properties(synth_reset_test PROPERTIES CXX_EXTENSIONS OFF)
+  add_test(NAME synth_reset_test COMMAND synth_reset_test)
+  set_property(TEST synth_reset_test PROPERTY SKIP_RETURN_CODE 77)
 endif()

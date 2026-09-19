@@ -151,10 +151,28 @@ void Synth::_init_parts(void)
 // The queue is deliberately left alone here. A reset arrives as an event of
 // its own and is applied in order with the rest, so anything still queued
 // belongs after it -- a file whose GS reset is followed by a program change
-// may well have both in hand at once. It also runs with midiMutex already
-// held, from midi_input_sysex()'s own locking.
+// may well have both in hand at once. On the Sound Canvas path it also runs
+// with midiMutex already held, from _apply_midi_sysex()'s own locking.
 void Synth::reset(SoundMap sm, bool resetParts)
 {
+  // The SC-88 holds its state in its own engine and leaves _parts empty for
+  // its whole life, so the loop below reaches none of it. This is the call
+  // sc88_device_sysex() makes for the GS reset address 40 00 7F, so a host
+  // reset and a GS reset leave the device in the same state: controllers and
+  // parameters back to their defaults, voices already sounding left alone.
+  // It returns without doing anything on a device that is not yet
+  // initialized, which is what a Synth holds until set_audio_format().
+  //
+  // The lock matches panic(). The two callers that already hold midiMutex,
+  // _apply_midi_sysex() and _midi_input_sysex_DT1(), are reachable on the
+  // Sound Canvas path alone: get_next_frame() returns before _process_samples()
+  // for an SC-88, so nothing dispatches a SysEx through them here.
+  if (_sc88) {
+    midiMutex.lock();
+    sc88_device_reset_controllers(_sc88);
+    midiMutex.unlock();
+  }
+
   if (resetParts)
     for (auto &p : _parts) p.reset();   //? TODO: CLEAN UP
 
