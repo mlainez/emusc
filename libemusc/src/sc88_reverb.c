@@ -156,6 +156,9 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
   for (i = 0; i < SC88_REVERB_TAPS; ++i)
     out->tap[i] = (uint16_t)(addr[sc88_reverb_tap_word[i]] - lo);
   out->extent = (uint16_t)(hi - lo);
+  /* word 52, the one value the loader writes to a control register: this
+     character's own return trim. See the field's note in the header. */
+  out->return_trim = sc88_reverb_be16(rom->bytes + block + 2u * 52u);
   return hi > lo;
 }
 
@@ -384,12 +387,24 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
      which are not recovered. */
   rv->damp[0] = rv->character.damp_input[0];
   rv->damp[1] = rv->character.damp_input[1];
+  /* The character's own return trim, the record's 53rd word, read against
+     the 512 full scale the reverb's register bank runs on (`M-175`). Room
+     1/2/3, Hall 2 and Plate carry 32 and Hall 1 carries 64, so this factor
+     is exactly 1 on five of the six reverb characters and exactly 2 on
+     Hall 1 - and on Delay and Panning Delay, which carry 64 as well.
+     The 16 is the ROM's, not a reference chosen here to leave the other
+     characters where they are: the output tap chain ends on CRAM 0xe000 =
+     -16.0 at PRAM 153 of the single-module image, and 32/512 * 16 is 1.0
+     exactly. What the engine does not have is the accumulator scaling
+     between the two, so the absolute level still rests on the tap
+     normalisation below; the ratio between characters does not. */
+  rv->trim = (float)rv->character.return_trim * 16.0f / 512.0f;
   /* Normalised by the square root of the number of taps summed, which is
      the form `M-018` settled: the taps are mutually decorrelated, so their
      sum grows as the root of the count and not as the count, and the root
      of the total rather than of each side's is what measures right against
      the hardware recording of demo song 1. */
-  rv->wet_gain_left = rv->level / sqrtf((float)SC88_REVERB_TAPS);
+  rv->wet_gain_left = rv->level * rv->trim / sqrtf((float)SC88_REVERB_TAPS);
   rv->wet_gain_right = rv->wet_gain_left;
 }
 

@@ -94,6 +94,8 @@ int main(void)
           (uint16_t)(head[b] + (i < 4 ? 17 : 29)));
   }
 
+  put16(bytes + block + 2 * 52, 32);     /* the character's return trim */
+
   assert(sc88_reverb_read_character(&rom, 0, &ch));
   assert(ch.allpasses == 7);
   /* the enabled pairs land on the eight buffers whose write carries +0.5,
@@ -131,6 +133,13 @@ int main(void)
      silence out however long it runs. */
   sc88_reverb_set_params(&rv, 128, 64, 3);
   assert(fabsf(rv.level - 127.0f * 4.0f / 512.0f) < 1e-6f);
+  /* The character's own return trim, the record's 53rd word against the
+     same 512 full scale: 32 is unity, which is what five of the six
+     reverb characters carry. */
+  assert(ch.return_trim == 32);
+  assert(fabsf(rv.trim - 1.0f) < 1e-6f);
+  assert(fabsf(rv.wet_gain_left - rv.level / sqrtf((float)SC88_REVERB_TAPS))
+         < 1e-6f);
   {
     float send[64], stereo[128];
     unsigned pass;
@@ -182,6 +191,30 @@ int main(void)
     }
     assert(total > 0.0 && early > 0.01 * total);
     sc88_reverb_destroy(&rv);
+  }
+
+  /* Hall 1's record carries 64 where the other five reverb characters
+     carry 32, so its return is exactly twice theirs at the same Level -
+     and a record carrying 0, which is what the two transition characters
+     hold, returns nothing at all. */
+  {
+    float unity;
+    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
+    sc88_reverb_set_params(&rv, 100, 64, 0);
+    unity = rv.wet_gain_left;
+    sc88_reverb_destroy(&rv);
+    put16(bytes + block + 2 * 52, 64);
+    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
+    sc88_reverb_set_params(&rv, 100, 64, 0);
+    assert(fabsf(rv.trim - 2.0f) < 1e-6f);
+    assert(fabsf(rv.wet_gain_left - 2.0f * unity) < 1e-6f);
+    sc88_reverb_destroy(&rv);
+    put16(bytes + block + 2 * 52, 0);
+    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
+    sc88_reverb_set_params(&rv, 100, 64, 0);
+    assert(rv.wet_gain_left == 0.0f && rv.wet_gain_right == 0.0f);
+    sc88_reverb_destroy(&rv);
+    put16(bytes + block + 2 * 52, 32);
   }
 
   /* The macro preset table: eight records of eight bytes at 0x1583e, of

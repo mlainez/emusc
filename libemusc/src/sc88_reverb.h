@@ -58,6 +58,24 @@ struct sc88_reverb_character {
      is `y = -damp_pole*x + damp_input*y'`: the POSITIVE word is the pole
      and the negative one multiplies the input (`P-0360`). */
   float damp_input[2], damp_pole[2];
+  /* The record's 53rd word, word 52, which the loader writes to an XP
+     control register rather than to coefficient or program memory: the
+     character's own return trim. `load_effect_character` (0x1216b) ends
+     with one final direct write to `final_destination` of the layout's
+     destination map - 0x3376, 0x336a and 0x3378 for layouts 0, 2 and 4 -
+     which in every layout is the register two bytes below that layout's
+     reverb Level (0x3378, 0x336c, 0x337a). `update_reverb_character`
+     (0x121a6) clears exactly that pair, the two-word list at 0x1655e, to
+     mute the module before reprogramming, and `update_effect_block_a`
+     (0x12057) then restores the block with Level written LAST. So the two
+     are one return path: Level carries the parameter, this word carries
+     the character.
+     Room 1, Room 2, Room 3, Hall 2 and Plate carry 32; Hall 1, Delay and
+     Panning Delay carry 64; the two transition records carry 0, which is
+     what holds the module silent across a program swap. The register's
+     full scale is 512 = unity (`M-175`), so Hall 1 returns exactly twice
+     what the other five reverb characters return. */
+  uint16_t return_trim;
 };
 
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
@@ -103,6 +121,7 @@ struct sc88_reverb {
   /* the decay the parameters ask for, in seconds, for reporting */
   double target_t60;
   float level;
+  float trim;                    /* the character's own return trim */
   float wet_gain_left, wet_gain_right;
   double output_rate;
   bool active;
