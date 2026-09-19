@@ -296,7 +296,14 @@ void sc88_device_reset_controllers(struct sc88_device *device)
     sc88_device_sync_lfo(device, (uint8_t)part);
     channel->portamento_time = 0;
     channel->portamento_switch = 0;
-    channel->portamento_control = 0;
+    /* 0xff, not 0: the source key is a one-shot and 0xff is its "unset",
+       which `0x3569` and `0x4606` write on the reset paths. Zero would name
+       key 0 and glide every note up from it. */
+    channel->portamento_control = 0xffu;
+    sc88_engine_set_part_portamento(&device->engine, (uint8_t)part, false);
+    sc88_engine_set_part_portamento_time(&device->engine, (uint8_t)part, 0);
+    sc88_engine_set_part_portamento_control(&device->engine, (uint8_t)part,
+                                            0xffu);
     /* SC88-OM's initial modulation depths: LFO1 pitch 0x0a, the rest zero */
     channel->mod_lfo1_pitch_depth = 0x0a;
     sc88_engine_set_part_lfo1_pitch_depth(&device->engine, (uint8_t)part, 0);
@@ -776,12 +783,17 @@ bool sc88_device_midi(struct sc88_device *device, uint8_t port,
       return true;
     case 5:
       state->portamento_time = data2;
+      sc88_engine_set_part_portamento_time(&device->engine, part, data2);
       return true;
     case 65:
+      /* `0x31e4` tests the receive switch, then bit 6 of the value: the
+         64 threshold, on at or above it. */
       state->portamento_switch = data2;
+      sc88_engine_set_part_portamento(&device->engine, part, data2 >= 64);
       return true;
     case 84:
       state->portamento_control = data2;
+      sc88_engine_set_part_portamento_control(&device->engine, part, data2);
       return true;
     case 126:
       state->mono_mode = 0;

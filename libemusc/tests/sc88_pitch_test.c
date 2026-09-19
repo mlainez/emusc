@@ -81,6 +81,67 @@ int main(void)
   assert(sc88_pitch_current_word(0x100, -0x4000, 0) == 0);
   assert(sc88_pitch_current_word(0, 0, -0x4000) == 0);
 
+  /* Portamento. The table's four-byte stride and big-endian halves, the
+     zero entry that is never reached, and the glide itself: one semitone
+     per period at a rate of 0x10000, direction fixed at the start, and a
+     snap to the target rather than an overshoot. */
+  bytes[0x78502 + 4 * 1] = 0x00;
+  bytes[0x78502 + 4 * 1 + 1] = 0x12;
+  bytes[0x78502 + 4 * 1 + 2] = 0x34;
+  bytes[0x78502 + 4 * 1 + 3] = 0x56;
+  put16(bytes + 0x78502 + 4 * 70, 0x0001);
+  put16(bytes + 0x78502 + 4 * 70 + 2, 0x0000);
+  assert(sc88_portamento_rate(&rom, 1) == 0x00123456u);
+  assert(sc88_portamento_rate(&rom, 70) == 0x00010000u);
+  assert(sc88_portamento_rate(&rom, 0) == 0);
+
+  {
+    struct sc88_portamento glide;
+    memset(&glide, 0, sizeof glide);
+    glide.current = 40u << 16;
+    glide.target = 76u << 16;
+    glide.rate = 0x00010000u;
+    glide.ascending = true;
+    glide.active = true;
+    sc88_portamento_advance(&glide, 10);
+    assert(glide.current == 50u << 16);
+    assert(glide.active);
+    /* the catch-up count is periods, not periods minus one */
+    sc88_portamento_advance(&glide, 1);
+    assert(glide.current == 51u << 16);
+    /* and the far end snaps exactly, whatever the step would have done */
+    sc88_portamento_advance(&glide, 100);
+    assert(glide.current == glide.target);
+    assert(!glide.active);
+    /* a further service does nothing at all */
+    sc88_portamento_advance(&glide, 10);
+    assert(glide.current == glide.target);
+
+    memset(&glide, 0, sizeof glide);
+    glide.current = 76u << 16;
+    glide.target = 40u << 16;
+    glide.rate = 0x00008000u;
+    glide.ascending = false;
+    glide.active = true;
+    sc88_portamento_advance(&glide, 4);
+    assert(glide.current == 74u << 16);
+    sc88_portamento_advance(&glide, 1000);
+    assert(glide.current == glide.target);
+    assert(!glide.active);
+
+    /* CC5 = 0 does not glide: the firmware tests the time byte before it
+       ever reaches the table, whose entry 0 is 0xffffffff. */
+    memset(&glide, 0, sizeof glide);
+    glide.current = 40u << 16;
+    glide.target = 76u << 16;
+    glide.rate = 0;
+    glide.ascending = true;
+    glide.active = true;
+    sc88_portamento_advance(&glide, 1);
+    assert(glide.current == glide.target);
+    assert(!glide.active);
+  }
+
   free(bytes);
   return 0;
 }

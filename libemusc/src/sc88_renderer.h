@@ -48,6 +48,14 @@ struct sc88_render_component {
   uint32_t static_pitch_word;
   struct sc88_pitch_envelope pitch_envelope;
   struct sc88_pitch_release pitch_release;
+  /* The glide, and the terms its moving key is recomposed through. It is
+     per SLOT because the device holds it per slot: both components of a
+     two-component tone are given the same source, target and rate at note
+     on, so they glide together. The SC-55 path had to be fixed twice for
+     letting one partial glide and the other start at the target
+     (emusc-match TASK-088, TASK-113); nothing here can drift apart, because
+     no per-partial write feeds the next note's source. */
+  struct sc88_portamento portamento;
   /* A rhythm note's own reverb send from its kit record, 127 for a
      melodic note. The kits are not uniformly treated - STANDARD 1 sends
      its snare and cymbals at 127 and its kick at 0 - and flattening them
@@ -173,6 +181,24 @@ uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
 uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
                                     uint8_t midi_key);
 
+/* Everything `sc88_renderer_pitch_word_at` needs to recompose the static
+   pitch word for a key that is moving, taken from the same note-on inputs
+   `sc88_renderer_static_pitch_word` is given. */
+bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
+                                    const struct sc88_tone *tone,
+                                    const struct sc88_component *component,
+                                    const struct sc88_wave_descriptor *desc,
+                                    struct sc88_portamento *portamento);
+
+/* The static pitch word for a fractional MIDI key, 16.16 - what SC88-CTL
+   `0x6063` and `0x6077` recompose every control period while a glide runs.
+   At a whole key it returns exactly what `sc88_renderer_static_pitch_word`
+   composed for that key, so a finished glide lands on the note-on value
+   rather than near it. */
+bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
+                                 const struct sc88_portamento *portamento,
+                                 uint32_t key_q16, uint32_t *pitch_word);
+
 /* Static note-on pitch before controllers, LFOs and the pitch envelope. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
@@ -228,6 +254,18 @@ bool sc88_renderer_note_on_with_controls(
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls,
+  const struct sc88_tva_controls *tva_controls,
+  const struct sc88_lfo_controls *lfo_controls);
+/* As above, and `zone_key` chooses the zone instead of `key`. A portamento
+ * note hands in the higher of the glide's two ends, which is what SC88-CTL
+ * `0x602e` computes and `0x4e2c` is given. */
+bool sc88_renderer_note_on_with_glide(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t zone_key,
+  uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,

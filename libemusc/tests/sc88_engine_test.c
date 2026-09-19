@@ -394,6 +394,96 @@ int main(void)
   assert(send[0] == wet);
   sc88_engine_destroy(&engine);
 
+  /* Portamento. The switch, the time and the source all have to be there
+     for a glide to start; every component of the note glides, on one
+     shared source, target and rate; and the second note's source is where
+     the first one's pitch stands, not where it was aimed. */
+  assert(sc88_engine_init(&engine, &renderer));
+  {
+    unsigned slot;
+    unsigned glides;
+    uint8_t newest;
+    uint32_t first = 0;
+    /* one semitone per control period, so the arithmetic is readable */
+    put16(control + 0x78502 + 4 * 40, 0x0001);
+    put16(control + 0x78502 + 4 * 40 + 2, 0x0000);
+
+    /* portamento off: the first note leaves its key behind and nothing
+       glides */
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
+      assert(!engine.slots[slot].component.portamento.active);
+
+    /* the switch alone is not enough: CC5 = 0 is the firmware's own
+       no-glide exit */
+    sc88_engine_set_part_portamento(&engine, 0, true);
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
+      assert(!engine.slots[slot].component.portamento.active);
+
+    sc88_engine_set_part_portamento_time(&engine, 0, 40);
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    /* EVERY component of the note glides, not one of them: the SC-55 path
+       shipped twice with one partial starting at the target while the
+       other glided (TASK-088, then TASK-113). */
+    newest = SC88_ENGINE_NONE;
+    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+      if (engine.notes[i].allocated && engine.notes[i].part == 0 &&
+          (newest == SC88_ENGINE_NONE ||
+           engine.notes[i].serial > engine.notes[newest].serial))
+        newest = (uint8_t)i;
+    assert(newest != SC88_ENGINE_NONE);
+    assert(engine.notes[newest].slot_count >= 1);
+    glides = 0;
+    for (i = 0; i < engine.notes[newest].slot_count; ++i) {
+      const struct sc88_portamento *g =
+        &engine.slots[engine.notes[newest].slots[i]].component.portamento;
+      assert(g->active);
+      assert(g->current == 40u << 16);
+      assert(g->target == 76u << 16);
+      assert(g->ascending);
+      assert(g->rate == 0x00010000u);
+      ++glides;
+    }
+    assert(glides == engine.notes[newest].slot_count);
+    /* and they stay together: one shared source, target and rate leaves
+       nothing that could make one component arrive before the other */
+    for (i = 0; i < engine.notes[newest].slot_count; ++i)
+      sc88_portamento_advance(
+        &engine.slots[engine.notes[newest].slots[i]].component.portamento, 7);
+    first = engine.slots[engine.notes[newest].slots[0]]
+              .component.portamento.current;
+    assert(first == 47u << 16);
+    for (i = 0; i < engine.notes[newest].slot_count; ++i)
+      assert(engine.slots[engine.notes[newest].slots[i]]
+               .component.portamento.current == first);
+
+    /* a note arriving mid-glide starts from where the glide stands, not
+       from where the note it follows was aimed */
+    assert(sc88_engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
+                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+    newest = SC88_ENGINE_NONE;
+    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+      if (engine.notes[i].allocated && engine.notes[i].part == 0 &&
+          (newest == SC88_ENGINE_NONE ||
+           engine.notes[i].serial > engine.notes[newest].serial))
+        newest = (uint8_t)i;
+    assert(newest != SC88_ENGINE_NONE);
+    for (i = 0; i < engine.notes[newest].slot_count; ++i) {
+      const struct sc88_portamento *g =
+        &engine.slots[engine.notes[newest].slots[i]].component.portamento;
+      assert(g->active);
+      assert(g->current == 47u << 16);
+      assert(g->target == 100u << 16);
+    }
+  }
+  sc88_engine_destroy(&engine);
+
   free(wave);
   free(control);
   return 0;

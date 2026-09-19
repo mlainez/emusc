@@ -31,6 +31,16 @@ static int32_t sc88_renderer_floor_q14(int32_t value)
   return -(int32_t)(((uint32_t)(-value) + 16383u) / 16384u);
 }
 
+/* The same floor, one binade coarser: the key-follow product is held shifted
+   left twice, so its whole-key part is the high word rather than the value
+   divided by 16384. */
+static int32_t sc88_renderer_floor_q16(int32_t value)
+{
+  if (value >= 0)
+    return value / 65536;
+  return -(int32_t)(((uint32_t)(-(int64_t)value) + 65535u) / 65536u);
+}
+
 uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
                                    uint8_t midi_key)
 {
@@ -88,6 +98,76 @@ static int32_t sc88_renderer_relative_pitch(int difference)
 {
   int32_t value = (int32_t)((difference * 16384) / 12);
   return value > 32767 ? 32767 : value;
+}
+
+bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
+                                    const struct sc88_tone *tone,
+                                    const struct sc88_component *component,
+                                    const struct sc88_wave_descriptor *desc,
+                                    struct sc88_portamento *portamento)
+{
+  uint32_t table;
+  if (!rom || !rom->bytes || !tone || !tone->common || !component ||
+      !component->bytes || !desc || !portamento)
+    return false;
+  table = ((uint32_t)tone->common[0x21] << 16) |
+    sc88_renderer_be16(tone->common + 0x10);
+  /* Bounded once, for the highest key the table can be indexed with. */
+  if (table + 127u * 2u + 2u > rom->size)
+    return false;
+  portamento->key_table = table;
+  portamento->fixed = 0x38000 + sc88_wave_pitch_correction(desc, false) +
+    sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x10));
+  portamento->key_factor =
+    sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x14));
+  portamento->key_transpose = sc88_renderer_s8(component->bytes[0x16]);
+  portamento->root_key = desc->root_key;
+  return true;
+}
+
+bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
+                                 const struct sc88_portamento *portamento,
+                                 uint32_t key_q16, uint32_t *pitch_word)
+{
+  int32_t product;
+  int32_t key;
+  int32_t pitch;
+  uint32_t selector;
+  uint16_t fraction;
+
+  if (!rom || !rom->bytes || !portamento || !pitch_word ||
+      portamento->key_table == 0)
+    return false;
+  /* SC88-CTL 0x60c7..0x6123 with a fractional key. The key-follow product is
+     held shifted left twice - its high word the key, its low word the
+     position between keys - and 0x6103 adds the incoming fraction into that
+     low word, unscaled: key follow acts on the whole part of the key and the
+     glide's sub-semitone position passes through it untouched. */
+  product = (int32_t)((uint32_t)(((int32_t)(key_q16 >> 16) - 60) *
+                                 (int32_t)portamento->key_factor) << 2);
+  product = (int32_t)((uint32_t)product + (key_q16 & 0xffffu));
+  key = 60 + sc88_renderer_floor_q16(product) + portamento->key_transpose;
+  if (key < 0) {
+    selector = 0;
+    fraction = 0;
+  } else if (key > 127) {
+    selector = 127;
+    fraction = 0;
+  } else {
+    selector = (uint32_t)key;
+    fraction = (uint16_t)((0x555u * ((uint32_t)product & 0xffffu)) >> 16);
+  }
+  pitch = portamento->fixed +
+    sc88_renderer_relative_pitch((int)selector - (int)portamento->root_key) +
+    (int32_t)fraction +
+    sc88_renderer_s16(sc88_renderer_be16(
+      rom->bytes + portamento->key_table + selector * 2u));
+  if (pitch < 0)
+    pitch = 0;
+  if (pitch > 0x3ffff)
+    pitch = 0x3ffff;
+  *pitch_word = (uint32_t)pitch;
+  return true;
 }
 
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
@@ -292,7 +372,7 @@ bool sc88_renderer_note_on_with_controls(
  * hand in here. */
 static bool sc88_renderer_note_on_tone(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint32_t tone_offset, uint8_t key, uint8_t velocity,
+  uint32_t tone_offset, uint8_t key, uint8_t zone_key, uint8_t velocity,
   const struct sc88_tva_levels *levels,
   uint8_t drum_level, const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
@@ -305,7 +385,8 @@ static bool sc88_renderer_note_on_tone(
   if (!renderer || !voice || !levels || !pan || !tvf_controls ||
       levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
-      levels->expression > 127 || key > 127 || velocity > 127 ||
+      levels->expression > 127 || key > 127 || zone_key > 127 ||
+      velocity > 127 ||
       !sc88_rom_open_tone(&renderer->rom, tone_offset, &tone))
     return false;
   memset(voice, 0, sizeof *voice);
@@ -362,8 +443,18 @@ static bool sc88_renderer_note_on_tone(
     render_component = voice->components + voice->component_count;
     selector_key = sc88_renderer_selector_key(&component, key);
     key_fraction = sc88_renderer_key_fraction(&component, key);
+    /* The zone is chosen for the HIGHER of a glide's two ends, not for the
+       note's own key: `0x602e` runs the key transform a second time on the
+       target at `0x6049` and hands the zone lookup at `0x4e2c` whichever of
+       the two came out higher (`0x6052`). Without that rule a downward
+       glide would start above the chosen sample's root key, where the
+       relative-pitch table saturates 24 semitones up, and the first part of
+       the glide would not move at all. `zone_key` is the note's own key
+       whenever there is no glide, which is every note in six of the seven
+       demo songs. */
     if (!sc88_rom_select_zone(&renderer->rom, &component,
-                              (uint8_t)selector_key, &zone) ||
+                              sc88_renderer_selector_key(&component,
+                                                         zone_key), &zone) ||
         !sc88_wave_descriptor_loop_type(&zone.descriptor, &mode) ||
         // The descriptor's +16 word is NOT added to the start address. Adding it
         // skipped the first 4608 samples of every sample this tone plays -
@@ -385,6 +476,9 @@ static bool sc88_renderer_note_on_tone(
                                          &zone.descriptor,
                                          (uint8_t)selector_key, key_fraction,
                                          &pitch_word) ||
+        !sc88_renderer_portamento_terms(&renderer->rom, &tone, &component,
+                                        &zone.descriptor,
+                                        &render_component->portamento) ||
         !sc88_tva_static_gain_q17(&renderer->rom, &tone, &component, &zone,
                                   (uint8_t)selector_key, velocity,
                                   levels, drum_level,
@@ -562,9 +656,10 @@ fail:
   return false;
 }
 
-bool sc88_renderer_note_on_with_part_controls(
+bool sc88_renderer_note_on_with_glide(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t zone_key,
+  uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan,
   const struct sc88_tvf_controls *tvf_controls,
@@ -577,10 +672,25 @@ bool sc88_renderer_note_on_with_part_controls(
                                &tone_offset))
     return false;
   return sc88_renderer_note_on_tone(renderer, voice, tone_offset, key,
-                                    velocity, levels,
+                                    zone_key, velocity, levels,
                                     SC88_TVA_NO_DRUM_LEVEL, pan,
                                     tvf_controls, tva_controls,
                                     lfo_controls);
+}
+
+bool sc88_renderer_note_on_with_part_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
+  const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvf_controls,
+  const struct sc88_tva_controls *tva_controls,
+  const struct sc88_lfo_controls *lfo_controls)
+{
+  return sc88_renderer_note_on_with_glide(renderer, voice, variation, program,
+                                          key, key, velocity, levels, pan,
+                                          tvf_controls, tva_controls,
+                                          lfo_controls);
 }
 
 bool sc88_renderer_note_on_drum(
@@ -627,6 +737,7 @@ bool sc88_renderer_note_on_drum(
   if (note)
     *note = slot;
   if (!sc88_renderer_note_on_tone(renderer, voice, slot.tone_offset,
+                                  slot.play_note <= 127 ? slot.play_note : key,
                                   slot.play_note <= 127 ? slot.play_note : key,
                                   velocity, &drum_levels,
                                   drum_level, &drum_pan, tvf_controls,

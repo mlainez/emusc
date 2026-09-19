@@ -102,6 +102,7 @@ bool sc88_engine_init(struct sc88_engine *engine,
     engine->parts[i].tvf_controls.secondary_cutoff = 64;
     engine->parts[i].tvf_controls.part_resonance = 64;
     engine->parts[i].tvf_controls.secondary_resonance = 64;
+    engine->parts[i].portamento_control = 0xffu;
   }
   return true;
 }
@@ -257,12 +258,23 @@ static void sc88_engine_update_slot_pitch(struct sc88_engine *engine,
 {
   const struct sc88_engine_note *note;
   uint32_t word;
+  uint32_t base;
   if (!engine || !slot || !slot->allocated ||
       slot->note >= SC88_ENGINE_NOTE_COUNT)
     return;
   note = engine->notes + slot->note;
+  base = slot->component.static_pitch_word;
+  /* While the glide runs the key itself is moving, so the static word is
+     recomposed from it rather than offset - SC88-CTL 0x6063 and 0x6077 do
+     exactly that every control period. The glide ends on the target key,
+     where the recomposition returns the note-on word unchanged. */
+  if (slot->component.portamento.active &&
+      !sc88_renderer_pitch_word_at(&engine->renderer->rom,
+                                   &slot->component.portamento,
+                                   slot->component.portamento.current, &base))
+    base = slot->component.static_pitch_word;
   word = sc88_pitch_current_word(
-    slot->component.static_pitch_word,
+    base,
     engine->parts[note->part].pitch_offset +
       sc88_engine_lfo_pitch_offset(engine, slot, note->part),
     sc88_pitch_envelope_sum(&slot->component.pitch_envelope,
@@ -302,6 +314,30 @@ void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
   if (!engine || part >= SC88_ENGINE_PART_COUNT || send > 127)
     return;
   engine->parts[part].reverb_send = send;
+}
+
+void sc88_engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
+                                     bool enabled)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].portamento = enabled;
+}
+
+void sc88_engine_set_part_portamento_time(struct sc88_engine *engine,
+                                          uint8_t part, uint8_t time)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT || time > 127)
+    return;
+  engine->parts[part].portamento_time = time;
+}
+
+void sc88_engine_set_part_portamento_control(struct sc88_engine *engine,
+                                             uint8_t part, uint8_t key)
+{
+  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+    return;
+  engine->parts[part].portamento_control = key;
 }
 
 bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
@@ -685,6 +721,58 @@ static uint8_t sc88_engine_pan_draw(struct sc88_engine *engine)
   return 64u;
 }
 
+/* Where the next note on this part glides FROM, as a 16.16 key.
+ *
+ * On the device the source is not looked up at all: `0x5fb0` takes it from
+ * `0x245a + slot`, the voice slot's own current key, and it is the previous
+ * note's because the mono/portamento allocation path hands the new note that
+ * part's sounding voice. That path (`0x1c09..0x1e80`) is listed as
+ * unrecovered in scdb `06_voice_engine/note_lifecycle.md` - "the exact
+ * portamento glide inputs through those paths remain to be recovered" - and
+ * it is not reproduced here. What is reproduced is its outcome for the case
+ * portamento exists for: the newest note still allocated on the part, read
+ * at its live glide position so that a note arriving mid-glide continues
+ * from where the glide stands rather than from where it was aimed.
+ *
+ * For overlapping notes on one part the device's answer depends on which
+ * slot the allocator hands over and ours does not, so ours is A source and
+ * not necessarily THE source. It is stated here rather than in a comment
+ * somewhere downstream because it is the one part of this that is not read
+ * off the ROM.
+ *
+ * CC84 overrides it and is consumed here, whatever the switch says, because
+ * `0x2c76` clears `d8a0 + part` on every melodic Note On. */
+static bool sc88_engine_glide_source(struct sc88_engine *engine, uint8_t part,
+                                     uint32_t *from)
+{
+  uint8_t control = engine->parts[part].portamento_control;
+  uint8_t newest = SC88_ENGINE_NONE;
+  uint64_t serial = 0;
+  unsigned i;
+
+  engine->parts[part].portamento_control = 0xffu;
+  if (!engine->parts[part].portamento || !engine->parts[part].portamento_time)
+    return false;
+  if (control <= 127) {
+    *from = (uint32_t)control << 16;
+    return true;
+  }
+  for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    const struct sc88_engine_note *note = engine->notes + i;
+    if (!note->allocated || note->part != part || note->slot_count == 0)
+      continue;
+    if (newest == SC88_ENGINE_NONE || note->serial > serial) {
+      newest = (uint8_t)i;
+      serial = note->serial;
+    }
+  }
+  if (newest == SC88_ENGINE_NONE)
+    return false;
+  *from = engine->slots[engine->notes[newest].slots[0]].component
+            .portamento.current;
+  return true;
+}
+
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
                          uint8_t variation, uint8_t program,
                          uint8_t key, uint8_t velocity, uint8_t context,
@@ -694,11 +782,18 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
   struct sc88_render_voice voice = {0};
   struct sc88_engine_note *note;
   uint8_t note_index;
+  uint32_t glide_from = 0;
+  bool glide = false;
   unsigned i;
 
   if (engine && part < SC88_ENGINE_PART_COUNT &&
       engine->parts[part].pan.part == 0)
     engine->parts[part].pan.random_position = sc88_engine_pan_draw(engine);
+  /* Read before anything is allocated: the note the glide starts from can be
+     the one a same-note recycle or a slot reclaim is about to take. */
+  if (engine && part < SC88_ENGINE_PART_COUNT && key <= 127 &&
+      !engine->parts[part].rhythm_setup)
+    glide = sc88_engine_glide_source(engine, part, &glide_from);
   if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
       mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
       !(engine->parts[part].rhythm_setup
@@ -711,8 +806,12 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
               &engine->parts[part].lfo_controls,
               &engine->drum_overlay, engine->parts[part].rhythm_setup,
               NULL)
-          : sc88_renderer_note_on_with_part_controls(
-              engine->renderer, &voice, variation, program, key, velocity,
+          : sc88_renderer_note_on_with_glide(
+              engine->renderer, &voice, variation, program, key,
+              /* `0x6052`: the zone is the higher of the glide's two ends. */
+              (glide && (glide_from >> 16) > key)
+                ? (uint8_t)(glide_from >> 16) : key,
+              velocity,
               &engine->parts[part].levels,
               &engine->parts[part].pan,
               &engine->parts[part].tvf_controls,
@@ -762,6 +861,22 @@ bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
       sc88_engine_shared_lfo_join(engine, voice.tone_offset,
                                   slot->component.rom_component_offset, 2,
                                   &slot->component.lfo2);
+    /* `0x5f89`: the target is stored whether or not a glide starts, which
+       is what makes the slot's own key the source for the next note. The
+       glide runs only when the source differs from it (`0x5f8f`), the
+       switch is on and the time is not zero (`0x5fa2`); the direction is
+       fixed here (`0x5fbe`) and never revisited. */
+    slot->component.portamento.target = (uint32_t)key << 16;
+    slot->component.portamento.current = slot->component.portamento.target;
+    if (glide && glide_from != slot->component.portamento.target &&
+        slot->component.portamento.key_table != 0) {
+      slot->component.portamento.current = glide_from;
+      slot->component.portamento.ascending =
+        glide_from < slot->component.portamento.target;
+      slot->component.portamento.rate = sc88_portamento_rate(
+        &engine->renderer->rom, engine->parts[part].portamento_time);
+      slot->component.portamento.active = true;
+    }
     sc88_engine_update_slot_pitch(engine, slot);
     voice.components[i].pcm24 = NULL;
     voice.components[i].active = false;
@@ -1060,6 +1175,7 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
     if (slot->component.pitch_release.active)
       (void)sc88_pitch_release_advance(&slot->component.pitch_release,
                                        elapsed);
+    sc88_portamento_advance(&slot->component.portamento, elapsed);
     if (getenv("SC88_TRACE_PITCH")) {
       static unsigned n;
       if (n < 10)

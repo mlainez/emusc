@@ -7,6 +7,7 @@
 #define SC88_ENVELOPE_RATE_TABLE 0x1543eu
 #define SC88_RATE_SCALE_TABLE 0x1573eu
 #define SC88_RELEASE_PEDAL_TABLE 0x78a02u
+#define SC88_PORTAMENTO_RATE_TABLE 0x78502u
 
 static uint16_t be16(const uint8_t *p)
 {
@@ -287,4 +288,46 @@ uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
   if (value > 0x3ffff)
     value = 0x3ffff;
   return (uint32_t)value & ~UINT32_C(1);
+}
+
+uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time)
+{
+  uint32_t at;
+  if (!rom || !rom->bytes || time == 0 || time > 127)
+    return 0;
+  at = SC88_PORTAMENTO_RATE_TABLE + (uint32_t)time * 4u;
+  if (at + 4u > rom->size)
+    return 0;
+  return ((uint32_t)be16(rom->bytes + at) << 16) | be16(rom->bytes + at + 2);
+}
+
+void sc88_portamento_advance(struct sc88_portamento *portamento,
+                             unsigned elapsed_periods)
+{
+  unsigned i;
+  if (!portamento || !portamento->active)
+    return;
+  /* `0x5fdf`: a time byte of zero ends the glide where it stands rather
+     than stepping by the table's 0xffffffff entry. */
+  if (portamento->rate == 0) {
+    portamento->current = portamento->target;
+    portamento->active = false;
+    return;
+  }
+  for (i = 0; i < elapsed_periods; ++i) {
+    if (portamento->ascending) {
+      portamento->current += portamento->rate;
+      if (portamento->current >= portamento->target)
+        break;
+    } else {
+      portamento->current -= portamento->rate;
+      if (portamento->current <= portamento->target)
+        break;
+    }
+  }
+  if (portamento->ascending ? portamento->current >= portamento->target
+                            : portamento->current <= portamento->target) {
+    portamento->current = portamento->target;
+    portamento->active = false;
+  }
 }

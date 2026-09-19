@@ -159,6 +159,16 @@ struct sc88_engine_part {
   /* `(depth * value) >> 2` summed over the controller matrix's
      sources, of which only modulation is modelled. */
   uint16_t lfo1_pitch_depth;
+  /* Portamento, as the firmware holds it: the switch is bit 5 of the part
+     flags at `DP:e59e + part` (`0x1eb0`/`0x1eb5`), the time is the raw CC5
+     byte at `DP:d6e0 + part` (`0x31a6`) and `portamento_control` is CC84's
+     source key at `DP:d8a0 + part` (`0x3224`), 0xff when unset. That one is
+     a ONE-SHOT: `0x2c72` reads it into the queued note event and `0x2c76`
+     puts 0xff back the same instant, so it names the source of exactly one
+     note. */
+  bool portamento;
+  uint8_t portamento_time;
+  uint8_t portamento_control;
 };
 
 typedef void (*sc88_control_service_fn)(void *user,
@@ -267,6 +277,13 @@ void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
                                            uint8_t part, uint16_t depth);
 void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
                                       uint8_t part, uint8_t send);
+/* CC65 past its 64 threshold, CC5 raw, and CC84's source key (0xff none). */
+void sc88_engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
+                                     bool enabled);
+void sc88_engine_set_part_portamento_time(struct sc88_engine *engine,
+                                          uint8_t part, uint8_t time);
+void sc88_engine_set_part_portamento_control(struct sc88_engine *engine,
+                                             uint8_t part, uint8_t key);
 bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
                          uint8_t variation, uint8_t program,
                          uint8_t key, uint8_t velocity, uint8_t context,

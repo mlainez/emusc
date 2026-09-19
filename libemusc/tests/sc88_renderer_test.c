@@ -194,6 +194,43 @@ int main(int argc, char **argv)
   control[0x40000 + 34 + 0x6c] = 0;
   control[0x40000 + 34 + 0x6d] = 127;
 
+  /* The glide's recomposition has to land on the note-on word at every
+     whole key, or a finished glide would step to the pitch it was aiming
+     at instead of arriving at it. Checked for all 128, on the note's own
+     terms, with the half-semitone point required to sit strictly between
+     its neighbours so the fraction is actually reaching the word. */
+  {
+    unsigned k;
+    struct sc88_render_voice probe;
+    for (k = 0; k < 128; ++k) {
+      uint32_t here, above, half;
+      memset(&probe, 0, sizeof probe);
+      assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, (uint8_t)k, 100));
+      assert(probe.component_count > 0);
+      assert(sc88_renderer_pitch_word_at(&renderer.rom,
+                                         &probe.components[0].portamento,
+                                         (uint32_t)k << 16, &here));
+      assert(here == probe.components[0].static_pitch_word);
+      if (k + 1 < 128) {
+        assert(sc88_renderer_pitch_word_at(&renderer.rom,
+                                           &probe.components[0].portamento,
+                                           (uint32_t)(k + 1) << 16, &above));
+        assert(sc88_renderer_pitch_word_at(&renderer.rom,
+                                           &probe.components[0].portamento,
+                                           ((uint32_t)k << 16) | 0x8000u,
+                                           &half));
+        /* Strict only where the relative-pitch term has not saturated:
+           it caps at 32767, i.e. 24 semitones above the zone's root key,
+           and a key past that produces the same word as its neighbour. */
+        if (above > here)
+          assert(half > here && half < above);
+        else
+          assert(half == here);
+      }
+      sc88_renderer_voice_destroy(&probe);
+    }
+  }
+
   memset(&voice, 0, sizeof voice);
   assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
   assert(sc88_renderer_voice_active(&voice));
