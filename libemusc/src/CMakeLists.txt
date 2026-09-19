@@ -108,19 +108,25 @@ set(SC88_RENDER_SOURCES
 
 add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
 target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_render PRIVATE m)
+if(NOT MSVC)
+  target_link_libraries(sc88_render PRIVATE m)
+endif()
 set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
   sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_tvf_probe PRIVATE m)
+if(NOT MSVC)
+  target_link_libraries(sc88_tvf_probe PRIVATE m)
+endif()
 set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
   sc88_oscillator.c sc88_rom.c sc88_wave.c)
 target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(sc88_dump_samples PRIVATE m)
+if(NOT MSVC)
+  target_link_libraries(sc88_dump_samples PRIVATE m)
+endif()
 set_target_properties(sc88_dump_samples PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 if(BUILD_TESTING)
