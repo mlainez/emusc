@@ -49,6 +49,10 @@ Rendering:
   --reset gm|gs          Initial sound-map / reset state (default: gs)
   --tail SECONDS         Silence rendered after the last MIDI event (default: 2)
   --seed N               Seed for libEmuSC's use of std::rand() (default: 1)
+  --float                Write IEEE float32 samples instead of 16-bit PCM.
+                         For measurement: 16 bits floors a decaying tail at
+                         about -101 dBFS, which is above where a reverb's
+                         top octave has to be fitted.
   --verbose              Let libEmuSC's own stdout diagnostics through
   --version              Print tool and libEmuSC version and exit
   --help                 This text
@@ -64,6 +68,7 @@ struct Options {
   std::string reset = "gs";
   double tail = 2.0;
   unsigned seed = 1;
+  bool as_float = false;
   bool verbose = false;
 };
 
@@ -101,6 +106,7 @@ Options parse_args(int argc, char **argv) {
     else if (a == "--reset")       o.reset = need("--reset");
     else if (a == "--tail")        o.tail = std::stod(need("--tail"));
     else if (a == "--seed")        o.seed = static_cast<unsigned>(std::stoul(need("--seed")));
+    else if (a == "--float")       o.as_float = true;
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
@@ -296,9 +302,11 @@ int main(int argc, char **argv) {
 
   // ---- Render ---------------------------------------------------------------
   try {
-    WavWriter wav(o.out, o.rate, 2);
+    WavWriter wav(o.out, o.rate, 2, o.as_float);
     std::vector<int16_t> buf;
+    std::vector<float> fbuf;
     buf.reserve(2 * 4096);
+    fbuf.reserve(2 * 4096);
     // Enough lead for one control period (256 samples at 32 kHz, at most
     // 1024 output frames up to 128 kHz) plus the synth's own note-on delay,
     // so every event is queued before the period it belongs to is generated.
@@ -355,11 +363,18 @@ int main(int argc, char **argv) {
       }
       float l = 0.0f, r = 0.0f;
       synth.get_next_frame(l, r);
-      buf.push_back(to_i16(l));
-      buf.push_back(to_i16(r));
-      if (buf.size() >= 2 * 4096) { wav.write(buf.data(), buf.size() / 2); buf.clear(); }
+      if (o.as_float) {
+        fbuf.push_back(l);
+        fbuf.push_back(r);
+        if (fbuf.size() >= 2 * 4096) { wav.write(fbuf.data(), fbuf.size() / 2); fbuf.clear(); }
+      } else {
+        buf.push_back(to_i16(l));
+        buf.push_back(to_i16(r));
+        if (buf.size() >= 2 * 4096) { wav.write(buf.data(), buf.size() / 2); buf.clear(); }
+      }
     }
     if (!buf.empty()) wav.write(buf.data(), buf.size() / 2);
+    if (!fbuf.empty()) wav.write(fbuf.data(), fbuf.size() / 2);
     wav.close();
     std::cerr << "emusc-render: wrote " << wav.frames() << " frames to " << o.out
               << "; libEmuSC reported " << synth.get_num_clipped_samples(false)
