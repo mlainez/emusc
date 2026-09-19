@@ -537,6 +537,9 @@ static uint8_t sc88_engine_oldest_slot(const struct sc88_engine *engine,
   return candidate;
 }
 
+static void sc88_engine_stop_voice(struct sc88_engine *engine,
+                                   uint8_t slot_index);
+
 static void sc88_engine_reclaim_slots(struct sc88_engine *engine,
                                       unsigned count)
 {
@@ -546,6 +549,12 @@ static void sc88_engine_reclaim_slots(struct sc88_engine *engine,
       slot = sc88_engine_oldest_slot(engine, false);
     if (slot == SC88_ENGINE_NONE)
       return;
+    /* A stolen voice is still sounding when the CPU takes its slot back
+       for a different note - the same circumstance same-note recycle
+       hands to the stop ramp below, and the same traced routine (0x4c60)
+       serves both (P-0358). free_slot's memset would end it here, the
+       hard cut TASK-189 AC#1 is about; run it down instead. */
+    sc88_engine_stop_voice(engine, slot);
     sc88_engine_free_slot(engine, slot, false);
   }
 }

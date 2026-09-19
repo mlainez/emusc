@@ -225,12 +225,31 @@ int main(void)
     assert(sc88_engine_note_on(&engine, 0, 0, 0, (uint8_t)i, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 0.25f));
   assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+  /* One period so every voice's amplitude register has actually risen off
+     zero - stopping a voice that has never been rendered has nothing to
+     ramp down from, which would make the stolen-voice check below pass
+     whether or not the steal path ever calls the stop ramp at all. */
+  sc88_engine_render(&engine, stereo, 257);
+  assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
   assert(sc88_engine_note_off(&engine, 0, 0));
   assert(sc88_engine_released_slots(&engine) == 1);
+  /* All 64 slots are full, so this note-on can only be served by stealing
+     the one just released (TASK-189 AC#2: a stimulus that forces voice
+     stealing). */
   assert(sc88_engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 0.25f));
   assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
   assert(sc88_engine_released_slots(&engine) == 0);
+  /* The stolen voice must be handed to the chip's stop ramp rather than
+     memset mid-note (TASK-189 AC#1, P-0358): it is still sounding down in
+     engine.stopping[], not simply gone. */
+  {
+    unsigned stopping = 0;
+    for (i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i)
+      if (engine.stopping[i].active)
+        ++stopping;
+    assert(stopping == 1);
+  }
   sc88_engine_destroy(&engine);
 
   assert(sc88_engine_init(&engine, &renderer));
