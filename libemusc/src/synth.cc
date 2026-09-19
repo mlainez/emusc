@@ -397,6 +397,14 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
     // it (SC-55mkII OM p.88-89; PROVENANCE.md P-0085)
     p.choke_assign_group(key, _ctrlRom.voice_damp_rate());
 
+    // And the part's ASSIGN MODE decides what a Note On does to the notes it
+    // is already sounding on this very key: SINGLE takes the oldest, which is
+    // the rhythm part's default and what makes a drum roll one voice deep,
+    // LIMITED-MULTI takes it on the third strike, FULL-MULTI never. Like the
+    // choke this runs before the pool is consulted, as ROM1 0x17B8 runs
+    // before 0x1737 (Part::assign_mode_cut, PROVENANCE.md P-0284).
+    p.assign_mode_cut(key, _ctrlRom.voice_damp_rate());
+
     // A JV-880 part whose patch is Key Assign SOLO plays one note at a time:
     // the note it is sounding gives up its voices to the new key before the
     // pool is consulted (ROM1 0x9D6 path; scdb devices/jv880/06_voice_engine/

@@ -64,6 +64,11 @@ public:
   uint32_t serial(void) { return _serial; }
   bool is_releasing(void) { return _releasing; }
   bool is_damped(void) { return _damped; }
+  // ASSIGN MODE 1 marks a note the first time its key is struck again and
+  // takes it the second time. Test-and-set, returning what the mark was, as
+  // the firmware's BSET does through the Z flag (Part::assign_mode_cut).
+  bool mark_repeat(void) { bool was = _repeatMarked; _repeatMarked = true;
+                           return was; }
   // Key up, but the hold pedal keeps the note sounding
   bool is_pedal_held(void) { return _stopped && !_releasing; }
   bool partial_released(int p)
@@ -103,6 +108,7 @@ private:
 
   void _release_unheld(bool heldOnly);
   bool _damped;              // Partials handed over to another note
+  bool _repeatMarked = false;   // ASSIGN MODE 1: its key has been struck again
   uint8_t _releaseVelocity = 64;  // From the note off; 64 is neutral
 
   const uint32_t _serial;    // Note on order, for voice allocation

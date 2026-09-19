@@ -29,6 +29,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <bitset>
 #include <functional>
 #include <list>
 #include <mutex>
@@ -91,6 +92,11 @@ public:
   // the new key's assign group. Returns the number of partials released.
   int choke_assign_group(uint8_t key, float dBPerMillisecond);
 
+  // GS ASSIGN MODE (40 1n 14, part record +0x05 bits 0-1): what a part does
+  // with a Note On whose key it is already sounding. Returns the number of
+  // partials released. See part.cc for the firmware and the measurement.
+  int assign_mode_cut(uint8_t key, float dBPerMillisecond);
+
   // MIDI Channel Voice Messages
   int set_program(uint8_t index, int8_t bank = -1, bool ignRxPC = false);
   // startDelay: where inside the current control period the note starts, in
@@ -147,6 +153,13 @@ private:
 
   struct std::list<Note*> _notes;
   std::mutex *_notesMutex;
+
+  // The keys this part has DOWN, which ASSIGN MODE 1 consults before it cuts
+  // anything: the firmware keeps the same thing as a 16-entry list at
+  // @0xA090 + 16*part and walks it at ROM1 0x17FE..0x1808. It is the MIDI key
+  // state and not the note's envelope state - a drum whose kit clears Rx Note
+  // Off never releases, and its key still leaves this set on the note off.
+  std::bitset<128> _keysDown;
 
   ControlRom &_ctrlRom;
   WaveRom &_waveRom;

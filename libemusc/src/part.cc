@@ -21,7 +21,6 @@
 
 #include <algorithm>
 #include <array>
-#include <map>
 #include <cmath>
 #include <iostream>
 
@@ -202,52 +201,29 @@ int Part::get_last_peak_sample(void)
 }
 
 
-// How many partials this part occupies for VOICE ALLOCATION. On a normal
-// part every sounding (non-damped) note counts. On a rhythm part only the
-// NEWEST sounding voice of each drum key counts: when a drum key is
-// retriggered, the machine lets the older voice ring on to its natural end
-// but no longer counts it against the polyphony budget, on any gap from
-// 0.1 s to 2 s and for every older voice of the key, while a lone drum
-// voice is counted for its whole life (about 5.2 s for Ride Cymbal 1) and
-// voices on DIFFERENT drum keys are all counted. Measured on the SC-55mkII
-// with a refusal probe whose every verdict was cross-checked against this
-// code's own allocation log (PROVENANCE.md P-0283): 26 reserved sines plus
-// ride+ride left room for a 27th-reserve probe note where ride+crash and a
-// restruck melodic vibraphone did not, and with four ride voices and 24
-// sines the machine accepted exactly three more notes before its self-steal
-// began - the arithmetic of "newest per key", not "all" (ours before this
-// change) and not "none". The reference demonstrably RENDERS more than 28
-// voices at once in these scenes, so the 28 is an allocation budget, not a
-// render limit, and the uncounted voices must keep sounding.
+// How many partials this part occupies for VOICE ALLOCATION. Every sounding
+// (non-damped) note counts; the reserve accounting in the firmware is per
+// voice and has no per-key rule anywhere in it (ROM1 0x1BAB increments
+// @0xA1F0[part] once per partial, scdb sc55 06_voice_engine/allocation.md).
+//
+// A retriggered drum key is why that used to need an exception here: on the
+// SC-55mkII the older voice of a repeated drum key stops counting at once
+// (PROVENANCE.md P-0283 - 26 reserved sines plus ride+ride left room for a
+// 27th-reserve probe note where ride+crash and a restruck melodic vibraphone
+// did not; four strikes of one ride key beside 24 sines left room for exactly
+// three). That is not an accounting rule: it is ASSIGN MODE releasing the
+// older voice, which both silences it and hands its voice back
+// (assign_mode_cut below). is_damped() therefore skips it here, and every one
+// of P-0283's counts comes out the same as it did from the special case.
 int Part::get_num_partials(void)
 {
   const std::scoped_lock lock(*_notesMutex);
 
-  if (_notes.size() == 0)
-    return 0;
-
   int numPartials = 0;
 
-  // On the JV-880 every drum hit holds its voice until its envelope ends, a
-  // repeated key included: the rhythm note-on path (ROM1 0xB4D -> 0xBCD ->
-  // 0xCA4) re-uses a sounding voice only for a Mute Group sibling (@0x8419),
-  // never for the same key. So its rhythm part is counted like a tonal one
-  // (scdb D-44).
-  if (_settings->get_param(PatchParam::UseForRhythm, _id) == mode_Norm ||
-      _settings->generation() == ControlRom::SynthGen::JV880) {
-    for (auto &n: _notes)
-      if (!n->is_damped())
-        numPartials += n->get_num_partials();
-  } else {
-    // _notes is kept in note-on order, so the last sounding note of a key
-    // is the newest and its partial count survives.
-    std::map<uint8_t, int> newestOfKey;
-    for (auto &n: _notes)
-      if (!n->is_damped())
-        newestOfKey[n->key()] = n->get_num_partials();
-    for (auto &kv : newestOfKey)
-      numPartials += kv.second;
-  }
+  for (auto &n: _notes)
+    if (!n->is_damped())
+      numPartials += n->get_num_partials();
 
   return numPartials;
 }
@@ -451,6 +427,99 @@ int Part::choke_assign_group(uint8_t key, float dBPerMillisecond)
 }
 
 
+// GS ASSIGN MODE (40 1n 14, part record +0x05 bits 0-1): what a Note On does
+// to the notes this part is already sounding on the same key. Returns the
+// number of partials it released.
+//
+// FIRMWARE, mk1 ROM1 0x17B8, run BEFORE the availability check at 0x1737 so
+// that whatever it frees is available to the note that asked for it:
+//
+//   0x17C6  btst #7,@(5,r2) / beq  - the dispatch runs in POLY mode only.
+//           Bit 7 is set by CC127 at 0x285E and cleared by CC126 at 0x2837.
+//   0x17D0  mode = part[+5] & 3.
+//   mode 0  0x183A: walk the part's note list from the oldest; the FIRST note
+//           with the same note number goes to 0x1A53 -> 0x1B10, which is the
+//           chip voice-off at 0x53E6 (amplitude target 0 at rate 0xB6),
+//           phase byte 4 and the free-voice count incremented; then stop.
+//   mode 1  0x17E2: if the key is in the part's held-key list at
+//           0xA090 + 16*part (0x17FE..0x1808) nothing is cut at all.
+//           Otherwise walk the list and bset #2,@(0xA288,note) on each note
+//           matching key and assign group, taking (0x1A3B) only the first
+//           note whose mark was ALREADY set. So the second strike of a key
+//           marks and the third takes.
+//   mode 2  and the unreachable 3: nothing is cut.
+//
+// The mode-1 walk also compares the note's assign group with the incoming
+// one (0x181A). On this device that condition cannot fail once the keys are
+// equal: a rhythm part's assign group is a property of the key, and a
+// melodic part's is the same for every note of the part. It is therefore not
+// reproduced separately.
+//
+// The rate is the same voice_damp_rate() the allocator's steal uses: 0x53E6
+// is the one chip voice-off, reached identically from the steal at 0x1A69
+// and the release at 0x1B10, and there is no separate damp rate for either
+// (scdb sc55 06_voice_engine/allocation.md, M-47).
+//
+// MEASURED on the SC-55mkII reference, Chinese Cymbal (STANDARD 1, key 52)
+// struck n times at 100 ms, dry, 3-14 kHz, 2-6 s: comparing each render with
+// the superposition of the k newest strikes taken from its OWN single strike
+// gives k = 1 at n = 2 and n = 6 under ASSIGN MODE 0, k = 2 and 3 under
+// MODE 1 - which is what marking and taking on alternate strikes predicts -
+// and k = 2 and 6 under MODE 2. The default render is MODE 0's to 0.01 dB,
+// and on a melodic part (Tubular Bells, key 60) the default is MODE 1's, so
+// the GS defaults settings.cc already stores - 0 on the rhythm channel, 1
+// elsewhere - are the ones the device runs. P-0284.
+int Part::assign_mode_cut(uint8_t key, float dBPerMillisecond)
+{
+  // The JV-880 has no such parameter: its rhythm note-on re-uses a sounding
+  // voice only for a Mute Group sibling, never for the same key, and its
+  // patch Key Assign SOLO is handled in Synth::_add_note (scdb D-44).
+  if (_settings->generation() == ControlRom::SynthGen::JV880)
+    return 0;
+
+  uint8_t mode = _settings->get_param(PatchParam::AssignMode, _id);
+  if (mode >= 2)                                // FULL-MULTI: nothing is cut
+    return 0;
+
+  if (!_settings->get_param(PatchParam::PolyMode, _id))
+    return 0;                       // mono mode takes the other path entirely
+
+  const std::scoped_lock lock(*_notesMutex);
+
+  if (mode == 0) {                              // SINGLE
+    for (auto &n : _notes) {                    // _notes is in note on order
+      if (n->is_damped() || n->key() != key)
+        continue;
+
+      int numPartials = n->get_num_partials();
+      n->damp(dBPerMillisecond);
+      return numPartials;
+    }
+
+    return 0;
+  }
+
+  // LIMITED-MULTI. A key that is still down is left alone, however many
+  // times it is struck.
+  if (_keysDown[key])
+    return 0;
+
+  for (auto &n : _notes) {
+    if (n->is_damped() || n->key() != key)
+      continue;
+
+    if (!n->mark_repeat())                      // first repetition: mark only
+      continue;
+
+    int numPartials = n->get_num_partials();
+    n->damp(dBPerMillisecond);
+    return numPartials;
+  }
+
+  return 0;
+}
+
+
 // Note: Mute cancels all active keys in part, and all new keys are ignored
 int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
                    int startDelay)
@@ -483,6 +552,7 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
 
   {
     const std::scoped_lock lock(*_notesMutex);
+    _keysDown[key] = true;
     Note *n = new Note(key, velocity, _ctrlRom, _waveRom, _settings, _id,
                        serial, startDelay);
     _notes.push_back(n);
@@ -505,6 +575,8 @@ int Part::stop_note(uint8_t key, uint8_t releaseVelocity)
 {
   const std::scoped_lock lock(*_notesMutex);
 
+  _keysDown[key] = false;
+
   for (auto &n : _notes)
     n->stop(key, releaseVelocity);
 
@@ -517,6 +589,7 @@ int Part::stop_all_notes(void)
   const std::scoped_lock lock(*_notesMutex);
 
   int i = _notes.size();
+  _keysDown.reset();
   for (auto n : _notes)
     n->stop();
 
@@ -529,6 +602,7 @@ int Part::delete_all_notes(void)
   const std::scoped_lock lock(*_notesMutex);
 
   int i = _notes.size();
+  _keysDown.reset();
   for (auto n : _notes)
     delete n;
 
