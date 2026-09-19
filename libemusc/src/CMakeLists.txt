@@ -97,22 +97,9 @@ set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE
 
 # SC-88 specific debug/analysis tools. Distinct from the multi-device
 # emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
-# public API, these link the sc88_* sources directly, which is what the
-# TVF/wave diagnostic tools need and what the SC-88 comparison harness in
-# emusc-match (tools/sc88/) has always built and pinned.
-set(SC88_RENDER_SOURCES
-  sc88_chorus.c sc88_delay.c sc88_eq.c sc88_output.c
-  sc88_device.c sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c
-  sc88_pitch.c sc88_renderer.c sc88_reverb.c sc88_rom.c sc88_tva.c
-  sc88_tvf.c sc88_wave.c)
-
-add_executable(sc88_render ../tools/sc88_render.c ${SC88_RENDER_SOURCES})
-target_include_directories(sc88_render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-if(NOT MSVC)
-  target_link_libraries(sc88_render PRIVATE m)
-endif()
-set_target_properties(sc88_render PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
-
+# public API, these link the sc88_* sources directly, because the values they
+# report are internal to the engine and no measurement of the rendered audio
+# can separate them.
 add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
   sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
