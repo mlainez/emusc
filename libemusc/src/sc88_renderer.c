@@ -116,7 +116,9 @@ bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
   if (table + 127u * 2u + 2u > rom->size)
     return false;
   portamento->key_table = table;
-  portamento->fixed = 0x38000 + sc88_wave_pitch_correction(desc, false) +
+  /* Both of the descriptor's pitch corrections, as in the static word; the
+     evidence and the open condition are on `sc88_wave_pitch_correction`. */
+  portamento->fixed = 0x38000 + sc88_wave_pitch_correction(desc, true) +
     sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x10));
   portamento->key_factor =
     sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x14));
@@ -222,7 +224,11 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
     /* SC88-CTL 0x6081 adds RAM 0x197c into the low word of the pitch the
        key table just produced, before the 0x6124 offsets land on it. */
     (int32_t)key_fraction +
-    sc88_wave_pitch_correction(desc, false) +
+    /* The descriptor's `+4` AND its `+14`: 0x612c loads one and 0x6135 adds
+       the other, and the ROM's own loop lengths say the tuning is the sum.
+       `sc88_wave_pitch_correction` carries the measurement and says plainly
+       what about the firmware's gate is not recovered. */
+    sc88_wave_pitch_correction(desc, true) +
     sc88_renderer_s16(sc88_renderer_be16(
       rom->bytes + table_offset + (uint32_t)midi_key * 2)) +
     sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x10));

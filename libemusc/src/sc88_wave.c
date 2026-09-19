@@ -143,6 +143,58 @@ bool sc88_wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
   }
 }
 
+/* THE DESCRIPTOR CARRIES TWO PITCH CORRECTIONS AND THE TUNING IS THEIR SUM.
+
+   A looping descriptor's `+4` and `+14` are both signed words in the pitch
+   domain where one octave is 16384 units.  `+4` alone is what the voice path
+   used, and it leaves 686 of the ROM's 1713 looping descriptors out of tune.
+
+   The ROM says so by itself, because a looping wave's period is not a matter
+   of opinion: the loop from `address_b` to `address_c` is cut to a whole
+   number of cycles of the note the descriptor names as its root key.  Predict
+   the loop's own rate as `32000 / (c - b + 1) * 2**(correction / 16384)`,
+   take the nearest whole number of root-key cycles it spans, and read off the
+   error in cents.  Over every looping descriptor in 0x36100..0x3f714:
+
+       group                       correction   median  p90   within 2 cents
+       +14 == 0   (n = 1024)       base          0.22   7.10      82.7 %
+       +14 != 0   (n =  685)       base          1.77  10.10      53.6 %
+       +14 != 0   (n =  685)       base + alt    0.13   0.36      97.1 %
+       |+14| >= 20 (n =  392)      base          3.80  12.69      22.2 %
+       |+14| >= 20 (n =  392)      base + alt    0.21   0.37      98.2 %
+       |+14| >= 20 (n =  392)      base - alt    7.67  25.11       2.3 %
+
+   The first row is the null and it validates the method: where `+14` is
+   already zero the two readings are the same expression and the loops land
+   on their root key to a fifth of a cent.  The `base - alt` row is the same
+   magnitude with the wrong sign and it is twice as bad as doing nothing, so
+   the measurement can fail and does.  Paired on the 379 descriptors whose
+   whole-cycle count is the same under both readings, `base + alt` is the
+   closer of the two on 377.
+
+   THE FIRMWARE ADDS IT, UNDER A CONDITION THAT IS NOT RECOVERED.  `0x612c`
+   `ed 04 83` loads the descriptor's `+4` into the pitch sum; `0x612f`
+   `f1 25 da f0` tests bit 0 of the per-voice byte at DP:`0x25da` + slot and
+   `0x6133` skips over `0x6135` `ed 0e 23`, which adds `+14`, when it is
+   clear.  That flag is cleared for every slot at power-on (`0x1154f`) and
+   again at `0x5dfc`, three instructions before the same routine calls the
+   pitch composition at `0x6077`; it is SET at `0x5334` `f1 25 da c0`.  The
+   corrected listing desynchronises across both `0x5334` and `0x5dfc` - it
+   reads them as `bcs.b` and `bclr.w` inside other instructions - so the
+   setter was believed not to exist; the raw bytes are unambiguous.  What
+   reaches `0x5334` is not traced, so WHEN the chip applies the alternate
+   correction is open, and adding it always is a choice rather than a
+   recovered condition.
+
+   It is the choice the ROM's own tuning supports, and the hardware agrees on
+   the tone that raised the question.  `Charang` (program 84) sounds a
+   `DIST_GT` zone whose `+14` is zero beside a `SITAR` zone at 0x3b4ac whose
+   `+14` is +132.  At C5 the first plays at 523.99 Hz; the second plays at
+   519.65 Hz on `+4` alone and at 522.56 Hz with both, so the pair beats at
+   8.4 Hz or at 2.8 Hz at the octave.  The hardware recording of that note
+   carries no 8.4 Hz modulation in its 1.0-1.1 kHz band at all, and the
+   render on `+4` alone carries it as the strongest line after the note's own
+   envelope. */
 int16_t sc88_wave_pitch_correction(const struct sc88_wave_descriptor *desc,
                                    bool alternate)
 {

@@ -40,6 +40,32 @@ static void test_descriptor(void)
   assert(registers.initial_state == 0x18);
 }
 
+/* The tuning of a zone is BOTH of the descriptor's pitch corrections, and
+   both of them are signed and wrap in a 16-bit accumulator. The descriptor
+   here is the ROM's own 0x3b4ac - the `SITAR` zone `Charang` sounds at C5 -
+   whose `+4` is -559 and whose `+14` is +132; -427 is what puts its 45-frame
+   loop on F5 to a fifth of a cent, where -559 alone leaves it 9.8 cents
+   flat. */
+static void test_pitch_correction(void)
+{
+  static const uint8_t raw[20] = {
+    0x31, 0x0b, 0x04, 0x40, 0xfd, 0xd1, 0x4d, 0x0b, 0x09, 0x88,
+    0x00, 0x0b, 0x09, 0xb4, 0x00, 0x84, 0x04, 0x5b, 0x09, 0xf8
+  };
+  struct sc88_wave_descriptor desc;
+
+  assert(sc88_wave_descriptor_parse(raw, sizeof raw, &desc));
+  assert(desc.root_key == 77);
+  assert(desc.base_pitch_correction == -559);
+  assert(desc.alternate_pitch_correction == 132);
+  assert(sc88_wave_pitch_correction(&desc, false) == -559);
+  assert(sc88_wave_pitch_correction(&desc, true) == -427);
+
+  desc.base_pitch_correction = -1365;
+  desc.alternate_pitch_correction = -442;
+  assert(sc88_wave_pitch_correction(&desc, true) == -1807);
+}
+
 static void test_decoder(void)
 {
   uint8_t *bank = (uint8_t *)calloc(SC88_WAVE_BANK_SIZE, 1);
@@ -151,6 +177,7 @@ static void test_cursors(void)
 int main(int argc, char **argv)
 {
   test_descriptor();
+  test_pitch_correction();
   test_descramble();
   test_decoder();
   test_cursors();

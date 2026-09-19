@@ -345,7 +345,7 @@ int main(int argc, char **argv)
             : loop == SC88_WAVE_FORWARD_ONE_SHOT ? "one-shot"
             : "reverse-one-shot";
           correction = pitch_correction
-            ? sc88_wave_pitch_correction(&desc, false) : 0;
+            ? sc88_wave_pitch_correction(&desc, true) : 0;
           pitch_word = 0x38000 + (long)correction + pitch_word_offset;
           if (pitch_word < 0)
             pitch_word = 0;
