@@ -199,11 +199,15 @@ bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
                                  const struct sc88_portamento *portamento,
                                  uint32_t key_q16, uint32_t *pitch_word);
 
-/* Static note-on pitch before controllers, LFOs and the pitch envelope. */
+/* Static note-on pitch before controllers, LFOs and the pitch envelope.
+ * It needs BOTH keys: `0x6124` indexes the tone-common pitch table with the
+ * raw key at RAM `0x245a`, while `0x609a` takes the root key off the
+ * transformed one at `0x19fc`. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
+                                     uint8_t midi_key,
                                      uint8_t selector_key,
                                      uint16_t key_fraction,
                                      uint32_t *pitch_word);

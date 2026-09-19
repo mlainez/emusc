@@ -194,6 +194,52 @@ int main(int argc, char **argv)
   control[0x40000 + 34 + 0x6c] = 0;
   control[0x40000 + 34 + 0x6d] = 127;
 
+  /* The tone-common pitch table is indexed with the RAW key, not the
+     transformed one. `0x6124` reads the key word at RAM `0x245a` (`f8 24
+     5a 86`) and doubles it for the word stride; `0x245a` is what `0x6063`
+     feeds INTO the transform, and the transform's result goes to `0x19fc`,
+     which is read only by the other contributor, `0x609a`.
+
+     With a key-follow factor of 0x2000 the transform takes key 72 to 66,
+     so an entry parked at 72 must reach the word and the same entry parked
+     at 66 must not. Both probes hold every other term fixed, so the
+     difference is the index and nothing else. */
+  {
+    /* The tone common's own pointer: page byte `+0x21` (2) over the word at
+       `+0x10` (0xb6d0), exactly as `0x614b`/`0x6146` assemble it. */
+#define SC88_TEST_KEY_TABLE 0x2b6d0u
+    struct sc88_render_voice probe;
+    uint32_t with_raw, with_transformed, flat;
+    assert((((uint32_t)control[0x40000 + 0x21] << 16) |
+            (uint32_t)((control[0x40000 + 0x10] << 8) |
+                       control[0x40000 + 0x11])) == SC88_TEST_KEY_TABLE);
+    put16(control + 0x40000 + 34 + 0x14, 0x2000);
+    assert(sc88_renderer_selector_key(&component, 72) == 66);
+    memset(&probe, 0, sizeof probe);
+    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    flat = probe.components[0].static_pitch_word;
+    sc88_renderer_voice_destroy(&probe);
+    put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 1000);
+    memset(&probe, 0, sizeof probe);
+    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    with_raw = probe.components[0].static_pitch_word;
+    sc88_renderer_voice_destroy(&probe);
+    put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 0);
+    put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 1000);
+    memset(&probe, 0, sizeof probe);
+    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    with_transformed = probe.components[0].static_pitch_word;
+    sc88_renderer_voice_destroy(&probe);
+    put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 0);
+    /* The entry at the raw key moves the word by its own value; the entry
+       at the transformed key is not read at all. Both are asserted, so a
+       fixture that had stopped reaching the table would fail rather than
+       pass by reading nothing. */
+    assert(with_raw == flat + 1000);
+    assert(with_transformed == flat);
+    put16(control + 0x40000 + 34 + 0x14, 0x4000);
+  }
+
   /* The glide's recomposition has to land on the note-on word at every
      whole key, or a finished glide would step to the pitch it was aiming
      at instead of arriving at it. Checked for all 128, on the note's own

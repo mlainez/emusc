@@ -133,10 +133,19 @@ bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
   int32_t key;
   int32_t pitch;
   uint32_t selector;
+  uint32_t raw_key;
   uint16_t fraction;
 
   if (!rom || !rom->bytes || !portamento || !pitch_word ||
       portamento->key_table == 0)
+    return false;
+  /* The table is indexed with the key the glide is standing on, not the
+     transformed one - see the note in `sc88_renderer_static_pitch_word`.
+     `0x6124` reads it from `0x245a`, which is the same word `0x6063` feeds
+     into the transform a few instructions earlier, so both keys of the pair
+     come from the glide's current position. */
+  raw_key = key_q16 >> 16;
+  if (raw_key > 127)
     return false;
   /* SC88-CTL 0x60c7..0x6123 with a fractional key. The key-follow product is
      held shifted left twice - its high word the key, its low word the
@@ -161,7 +170,7 @@ bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
     sc88_renderer_relative_pitch((int)selector - (int)portamento->root_key) +
     (int32_t)fraction +
     sc88_renderer_s16(sc88_renderer_be16(
-      rom->bytes + portamento->key_table + selector * 2u));
+      rom->bytes + portamento->key_table + raw_key * 2u));
   if (pitch < 0)
     pitch = 0;
   if (pitch > 0x3ffff)
@@ -170,10 +179,29 @@ bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
   return true;
 }
 
+/* The two keys the pitch word is composed from are NOT the same key.
+
+   `0x6077` calls the two contributors in turn. `0x6124` is the tone-common
+   pitch table: `f8 24 5a 86` reads the key word at RAM `0x245a`, `ae 1a`
+   doubles it for the word stride, `ed 10 84` takes the table's base from
+   tone-common `+0x10` and `e5 21 8c` its page from `+0x21`, and `dc 23`
+   adds the entry. `0x245a` is the key BEFORE the component's key-follow
+   transform - `0x6063` reads that same word, runs it through `0x60c7` and
+   stores the result somewhere else.
+
+   Where it stores it is `0x19fc`, and that is what the other contributor
+   gets: `0x607a` (`f1 19 fc 83`) loads the byte at `0x19fc` and hands it to
+   `0x609a`, which subtracts the root key at `0x19fd` (`f1 19 fd 3b`, the
+   descriptor's `+6` byte, put there by `0x4f10`/`0x4f13`), clamps the
+   difference at 24 semitones and indexes the key-to-pitch table with it.
+
+   So the key-difference term uses the TRANSFORMED key and the tone-common
+   table uses the RAW one. We used the transformed key for both. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
                                      const struct sc88_component *component,
                                      const struct sc88_wave_descriptor *desc,
+                                     uint8_t midi_key,
                                      uint8_t selector_key,
                                      uint16_t key_fraction,
                                      uint32_t *pitch_word)
@@ -182,11 +210,12 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
   int32_t pitch;
 
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
-      !component->bytes || !desc || !pitch_word || selector_key > 127)
+      !component->bytes || !desc || !pitch_word || selector_key > 127 ||
+      midi_key > 127)
     return false;
   table_offset = ((uint32_t)tone->common[0x21] << 16) |
     sc88_renderer_be16(tone->common + 0x10);
-  if (table_offset + (uint32_t)selector_key * 2 + 2 > rom->size)
+  if (table_offset + (uint32_t)midi_key * 2 + 2 > rom->size)
     return false;
   pitch = 0x38000 +
     sc88_renderer_relative_pitch((int)selector_key - desc->root_key) +
@@ -195,7 +224,7 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
     (int32_t)key_fraction +
     sc88_wave_pitch_correction(desc, false) +
     sc88_renderer_s16(sc88_renderer_be16(
-      rom->bytes + table_offset + (uint32_t)selector_key * 2)) +
+      rom->bytes + table_offset + (uint32_t)midi_key * 2)) +
     sc88_renderer_s16(sc88_renderer_be16(component->bytes + 0x10));
   if (pitch < 0)
     pitch = 0;
@@ -473,7 +502,7 @@ static bool sc88_renderer_note_on_tone(
         // address and the sustain never moves.
         !sc88_wave_prepare_registers(&zone.descriptor, true, &registers) ||
         !sc88_renderer_static_pitch_word(&renderer->rom, &tone, &component,
-                                         &zone.descriptor,
+                                         &zone.descriptor, key,
                                          (uint8_t)selector_key, key_fraction,
                                          &pitch_word) ||
         !sc88_renderer_portamento_terms(&renderer->rom, &tone, &component,
