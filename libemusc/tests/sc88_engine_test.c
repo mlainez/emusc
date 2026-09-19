@@ -143,6 +143,8 @@ int main(void)
   float send[514];
   float wet;
   unsigned i;
+  unsigned retarget_slot = SC88_ENGINE_SLOT_COUNT;
+  uint32_t standing_target;
 
   assert(control && wave);
   make_fixture(control, wave, banks);
@@ -190,6 +192,21 @@ int main(void)
 
   {
     const struct sc88_tvf_controls tvf = {127, 64, 32, 64};
+    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+      if (engine.slots[i].allocated &&
+          engine.notes[engine.slots[i].note].part == 1) {
+        retarget_slot = i;
+        break;
+      }
+    assert(retarget_slot < SC88_ENGINE_SLOT_COUNT);
+    standing_target =
+      engine.slots[retarget_slot].component.tvf.frequency_target;
+    /* The cutoff base for index 63 and the limit for resonance index 64,
+       so the retarget composes a target that is not zero. Restored below:
+       every note in this file was started with the tables empty and the
+       rest of it reads them as it found them. */
+    put16(control + 0x78702 + 63 * 2, 0x4000);
+    put16(control + 0x78802 + 64 * 2, 0xffff);
     sc88_engine_set_part_tvf_controls(&engine, 1, &tvf);
     assert(engine.parts[1].tvf_dirty);
   }
@@ -208,6 +225,25 @@ int main(void)
       }
     assert(found);
   }
+  /* The order the registers are serviced in, which `0x695b` fixes: the
+     chip's approach closes out the period that has just ended, and only
+     then does the CPU compose the target for the period about to start.
+     So at the boundary the register stands on the target that was
+     STANDING during the period just rendered - `0x4100` covers the whole
+     gap - and the newly composed target is somewhere else, with the 2 ms
+     approach to it still ahead.
+
+     Composing first and approaching afterwards puts the register on the
+     new target instead, which is a cutoff step with no ramp on every
+     period a part controller moved. The two asserts pin both halves: the
+     register is where the old target was, and the new target is not the
+     same value, so neither can pass by the retarget having done nothing. */
+  assert(engine.slots[retarget_slot].component.tvf.frequency_current ==
+         standing_target);
+  assert(engine.slots[retarget_slot].component.tvf.frequency_target !=
+         standing_target);
+  put16(control + 0x78702 + 63 * 2, 0);
+  put16(control + 0x78802 + 64 * 2, 0);
   /* The two released voices composed amplitude 0 in the period just
      rendered and are spending the next one gliding down to it, which is
      what the chip does with a target (`71c7`); they are still allocated

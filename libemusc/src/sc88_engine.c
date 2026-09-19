@@ -1077,7 +1077,6 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     struct sc88_engine_note *note;
-    bool tvf_retargeted = false;
     if (!slot->allocated)
       continue;
     /* The period that has just ended is the one the chip's amplitude
@@ -1100,33 +1099,6 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
                             slot->component.pan_position,
                             &slot->component.left_gain_q15,
                             &slot->component.right_gain_q15);
-    if (engine->parts[note->part].tvf_dirty) {
-      struct sc88_component component;
-      uint32_t previous_current = slot->component.tvf.frequency_current;
-      uint32_t previous_resonance = slot->component.tvf.resonance_current;
-      component.bytes = engine->renderer->rom.bytes +
-        slot->component.rom_component_offset;
-      component.offset = slot->component.rom_component_offset;
-      component.directory_offset = 0;
-      if (sc88_tvf_prepare_registers(
-            &engine->renderer->rom, &component,
-            slot->component.tvf_key_modulation,
-            &engine->parts[note->part].tvf_controls,
-            &slot->component.tvf) &&
-          sc88_tvf_update_frequency(
-            &engine->renderer->rom,
-            (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
-                      (uint16_t)slot->component.tvf_envelope.current +
-                      (uint16_t)slot->component.tvf_release.current),
-            &slot->component.tvf)) {
-        /* prepare_registers clears the struct, so the approach carries
-           its own progress across a retarget rather than restarting. */
-        slot->component.tvf.frequency_current = previous_current;
-        slot->component.tvf.resonance_current = previous_resonance;
-        sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
-        tvf_retargeted = true;
-      }
-    }
     /* A shared oscillator was advanced once for the whole tone above; this
        voice reads it rather than running its own, which is what keeps an
        ensemble's vibrato coherent. The ramp is always the voice's own: it
@@ -1211,18 +1183,59 @@ static void sc88_engine_run_scheduler(struct sc88_engine *engine)
        own interpolation and runs every period; it does not wait for the
        CPU's envelope. A tone with envelope depth 0 has no active envelope
        or release at all, and gating the approach on them left such a
-       tone's resonance at the quarter-target the note opens with. */
-    if (!tvf_retargeted)
-      sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
+       tone's resonance at the quarter-target the note opens with.
+
+       It runs FIRST, and once, because it closes out the period that has
+       just ended: the register spent that period approaching the target
+       standing during it, and that target is still the one in the struct.
+       Everything below composes the target for the period about to start,
+       which is what the audio path then reads through `period_fraction`.
+       Composing first and approaching afterwards makes the register cover
+       its whole gap to a target the period has not begun with. */
+    sc88_tvf_advance_registers(&slot->component.tvf, elapsed);
+    /* `0x6a27`, the base recompose. The firmware runs it every serviced
+       period (`0x695b` `1e 00 c9`, unconditional); we run it only when a
+       part controller has moved, which is the same thing here because its
+       inputs - the component's own bytes, the note's key modulation and
+       the part's cutoff and resonance controls - do not change otherwise.
+
+       It clears the register struct, so the two values the CPU does not
+       rewrite mid-note are carried across it by hand. The firmware writes
+       the TVF-F current value only at note on (`0x68d0`/`0x68d3`); every
+       serviced period after that, `0x69a1`..`0x69af` writes the target and
+       the 0x4100 interpolation word beside it and nothing else. So a
+       retarget leaves the chip's register exactly where it stood and the
+       approach carries its own progress. */
+    if (engine->parts[note->part].tvf_dirty) {
+      struct sc88_component component;
+      uint32_t previous_current = slot->component.tvf.frequency_current;
+      uint32_t previous_resonance = slot->component.tvf.resonance_current;
+      component.bytes = engine->renderer->rom.bytes +
+        slot->component.rom_component_offset;
+      component.offset = slot->component.rom_component_offset;
+      component.directory_offset = 0;
+      if (sc88_tvf_prepare_registers(
+            &engine->renderer->rom, &component,
+            slot->component.tvf_key_modulation,
+            &engine->parts[note->part].tvf_controls,
+            &slot->component.tvf)) {
+        slot->component.tvf.frequency_current = previous_current;
+        slot->component.tvf.resonance_current = previous_resonance;
+      }
+    }
+    /* `0x6e6b`, called from `0x6964` when the envelope depth at 0x32da is
+       nonzero. It follows the base recompose and precedes the
+       composition, so the word the chip is given carries this period's
+       envelope, not last period's. */
     if (slot->component.tvf_envelope.active)
       (void)sc88_tvf_envelope_advance(&slot->component.tvf_envelope,
                                       elapsed);
     if (slot->component.tvf_release.active)
       (void)sc88_tvf_release_advance(&slot->component.tvf_release,
                                      elapsed);
-    /* The filter LFO belongs in every update, not only the ones a
-       control change made dirty: left out here it reached the cutoff
-       only on the periods a part parameter happened to change. */
+    /* `0x6967`..`0x69af`: one composition per serviced period, carrying
+       the filter LFO along with the envelope and the release, written as
+       the chip's target with 0x4100 beside it. */
     (void)sc88_tvf_update_frequency(
       &engine->renderer->rom,
       (int16_t)((uint16_t)sc88_engine_lfo_filter(slot) +
