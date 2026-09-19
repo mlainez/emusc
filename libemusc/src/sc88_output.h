@@ -83,6 +83,13 @@ extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
 /* The converter's hold, in hertz: the rate the DAC is clocked at. */
 #define SC88_OUTPUT_DAC_RATE 32000.0
 
+/* The analog board's own poles, as the R and C that make them. See
+   sc88_output.c for the schematic they are read from. */
+#define SC88_OUTPUT_ANALOG_SECTIONS 5
+struct sc88_output_rc { double r_ohm, c_farad; };
+extern const struct sc88_output_rc
+  SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS];
+
 #ifdef __cplusplus
 }
 #endif

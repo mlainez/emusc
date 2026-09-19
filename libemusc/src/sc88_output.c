@@ -91,6 +91,87 @@ const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
    [MEASURED]. It is the converter, not the chip, so it is here and not in
    the engine. Delete it the day libEmuSC's SC-88 path emits at 32 kHz and
    reconstructs properly, because then it is already in the signal. */
+/* THE ANALOG BOARD, read off the schematic and not fitted to anything.
+
+   Roland's SC-88 Service Manual (Jun. 1994), page 15, CIRCUIT DIAGRAM
+   (ANALOG, SWITCH, TRANS, PHONES HOLDER), "SC-88 ANALOG & POWER SUPPLY
+   BOARD". The whole path from the converter to the OUTPUT jacks, in
+   order, with the parts as the sheet names them:
+
+     IC111  PCM69AU, current out per channel, LOUT/LCOM and ROUT/RCOM
+     IC110  NJM4570, I/V, feedback R146 4k7 (M472) || C152 100p (101P)
+            with the same network R150 || C155 on the LCOM leg
+     C147   47u/16 into R144 100k (M104)
+     IC109  NJM4570 inverting, R142 12k (M123) in, R140 22k (M223) ||
+            C144 100p (101P) feedback
+     R138   100R (M101) with C141 680p (681PR) to AGND
+     C139   47u/16 into R136 100k (M104), out over CN101 to the VR board
+     VR501  RK097121, the volume pot, and nothing else on that board
+     IC108  NJM4570 inverting, R133 12k (M123) in, R127 12k (M123) ||
+            C131 120p (121P) feedback
+     IC102  M5218 inverting, R119 12k in, R113 12k feedback
+     Q101   2SK363 source follower
+     C122   47u/16 into R106 100k (M104)
+     R101   1k8 (M182) with C113 1000p (102PR) to AGND
+     L102   391CA three-terminal EMI filter, then JK101B
+
+   The sheet is a 400 dpi bilevel scan and its 6 and 8 glyphs are one
+   stroke apart, so the designators above are as good as the scan gets and
+   page 11's block diagram numbers the same amplifiers differently again.
+   The values are what this file uses and they are legible: the closest
+   call is R127, read M123, and 12k against 22k moves its pole between
+   110 and 60 kHz, which is 0.03 dB at 16 kHz either way.
+
+   Five poles, every one of them decades above the audio band: 338.6 kHz,
+   72.3 kHz, 2.34 MHz, 110.5 kHz, 88.4 kHz. Together they are -0.06 dB at
+   10 kHz and -0.33 dB at 16 kHz relative to 8 kHz. THERE IS NO
+   RECONSTRUCTION FILTER on this board - the SC-88 puts a 32 kHz
+   zero-order hold through an amplifier chain that is flat past 70 kHz and
+   out of the jack. That is also why the DAC images survive into the
+   recordings at all, and it is what makes the hold above measurable.
+
+   The SC-88 Pro's board (Roland SC-88 Pro Service Manual, Nov. 1996,
+   page 14) does carry one - 6k8/2700p, 6k8/2200p, 6k8 into 13k6 || 390p
+   around IC104, third order, -5.1 dB at 16 kHz re 8 kHz. That is a
+   different machine two years later. It is named here because the
+   SC-88's own renders run about 5 dB bright at 16 kHz against the seven
+   demo-song recordings, which is what the Pro's filter is worth there to
+   within half a decibel, and the one thing that must not happen is for
+   it to be borrowed on that resemblance. Most of that 5 dB is the
+   recordings: the SCVA oracle, put through the identical path, is itself
+   +4.4 dB at 16 kHz and +21 dB at 20 kHz against them, and the images in
+   those same recordings sit 18 to 27 dB below an unfiltered hold from
+   17 to 20 kHz while the single-note archive's sit within 1 dB of it.
+
+   [DOCUMENT], a tier above [MEASURED]: component values read off
+   Roland's published service manual, not recovered from audio.
+   The poles are folded into the hold FIR's design target below rather
+   than run as biquads: all five sit above the engine's own Nyquist,
+   where a bilinear transform has no pole to place, and the FIR is
+   designed by frequency sampling, which does not care. */
+const struct sc88_output_rc SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS] = {
+  { 4.7e3, 100e-12 },   /* IC110 R146 || C152 */
+  { 22.0e3, 100e-12 },  /* IC109 R140 || C144 */
+  { 100.0, 680e-12 },   /* R138 + C141        */
+  { 12.0e3, 120e-12 },  /* IC108 R127 || C131 */
+  { 1.8e3, 1000e-12 },  /* R101 + C113        */
+};
+
+/* |H(f)| of the five one-pole sections above, at DC gain one. */
+static double sc88_output_analog_mag(double f)
+{
+  const double pi = 3.14159265358979323846;
+  double mag = 1.0;
+  unsigned i;
+  for (i = 0; i < SC88_OUTPUT_ANALOG_SECTIONS; ++i) {
+    double fc = 1.0 / (2.0 * pi * SC88_OUTPUT_ANALOG[i].r_ohm *
+                       SC88_OUTPUT_ANALOG[i].c_farad);
+    double r = f / fc;
+    mag /= sqrt(1.0 + r * r);
+  }
+  return mag;
+}
+
 static double sc88_output_i0(double x)
 {
   double sum = 1.0, term = 1.0, xh = 0.5 * x;
@@ -103,8 +184,9 @@ static double sc88_output_i0(double x)
 }
 
 /* The zero-phase filter whose magnitude is |sin(pi f / 32000) /
-   (pi f / 32000)| over the whole output band, by frequency sampling, then
-   a Kaiser window so a 31-tap truncation does not ripple. */
+   (pi f / 32000)| times the analog board's own response over the whole
+   output band, by frequency sampling, then a Kaiser window so a 31-tap
+   truncation does not ripple. */
 static void sc88_output_design_hold(struct sc88_output *out, double rate)
 {
   const double pi = 3.14159265358979323846;
@@ -123,6 +205,7 @@ static void sc88_output_design_hold(struct sc88_output *out, double rate)
       double x = pi * f / SC88_OUTPUT_DAC_RATE;
       double mag = (x > 1e-12) ? fabs(sin(x) / x) : 1.0;
       double w = (j == 0 || j == steps) ? 0.5 : 1.0;
+      mag *= sc88_output_analog_mag(f);
       acc += w * mag * cos(2.0 * pi * f * (double)k / rate);
     }
     acc *= (0.5 * rate / (double)steps) * 2.0 / rate;
