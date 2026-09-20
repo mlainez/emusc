@@ -167,6 +167,32 @@ jobs:
         path: emusc-${{matrix.name}}.tar.gz
         retention-days: 7
 
+  # Separate from the build matrix above on purpose: 5 of its 6 legs
+  # cross-compile from this x86_64 runner and can't execute test binaries
+  # for their own target architecture, so this is the one job that builds
+  # natively with BUILD_TESTING left at its default (ON) and actually runs
+  # the suite. The three tests that need a real SC-88 ROM (copyrighted,
+  # can't be committed) report SKIPPED rather than failing.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libasound2-dev
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build build --parallel
+
+    - name: Run tests
+      run: ctest --test-dir build --output-on-failure
+
   release:
     needs: build
     runs-on: ubuntu-latest
