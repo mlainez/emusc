@@ -37,8 +37,8 @@ set(EMUSC_SOURCES
   engines/xp/oscillator.h
   engines/xp/sc88_output.c
   engines/xp/sc88_output.h
-  engines/xp/sc88_lfo.c
-  engines/xp/sc88_lfo.h
+  engines/xp/lfo.cc
+  engines/xp/lfo.h
   engines/xp/sc88_pan.c
   engines/xp/sc88_pan.h
   engines/xp/sc88_pitch.c
@@ -123,7 +123,7 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
-    engines/xp/sc88_engine.c engines/xp/sc88_lfo.c engines/xp/oscillator.cc
+    engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/sc88_pan.c engines/xp/sc88_pitch.c
     engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
@@ -157,7 +157,7 @@ if(BUILD_TESTING)
   # whatever the tree was configured with.
   set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_drum_test engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_lfo_test engines/xp/sc88_lfo.c engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_lfo_test engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_pitch_test engines/xp/sc88_pitch.c engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_tvf_test engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/wave.cc)
   sc88_test(sc88_tva_test engines/xp/sc88_tva.c engines/xp/rom.cc engines/xp/wave.cc)

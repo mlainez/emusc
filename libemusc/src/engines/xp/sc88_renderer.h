@@ -4,7 +4,7 @@
 
 #include "oscillator.h"
 #include "sc88_pan.h"
-#include "sc88_lfo.h"
+#include "lfo.h"
 #include "sc88_pitch.h"
 #include "rom.h"
 #include "sc88_tva.h"
