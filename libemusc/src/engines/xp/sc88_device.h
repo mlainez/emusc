@@ -4,7 +4,7 @@
 
 #include "chorus.h"
 #include "delay.h"
-#include "sc88_eq.h"
+#include "eq.h"
 #include "sc88_output.h"
 #include "engine.h"
 #include "reverb.h"

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "engines/xp/sc88_eq.h"
+#include "engines/xp/eq.h"
 
 #include <assert.h>
 #ifdef NDEBUG
