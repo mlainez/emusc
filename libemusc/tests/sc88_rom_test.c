@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/rom.h"
 #include "engines/xp/pan.h"
-#include "engines/xp/sc88_pitch.h"
+#include "engines/xp/pitch.h"
 #include "engines/xp/sc88_tva.h"
 #include "engines/xp/sc88_tvf.h"
 

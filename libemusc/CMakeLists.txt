@@ -29,7 +29,7 @@ install(FILES
   src/engines/xp/lfo.h
   src/engines/xp/oscillator.h
   src/engines/xp/pan.h
-  src/engines/xp/sc88_pitch.h
+  src/engines/xp/pitch.h
   src/engines/xp/sc88_renderer.h
   src/engines/xp/sc88_reverb.h
   src/engines/xp/rom.h

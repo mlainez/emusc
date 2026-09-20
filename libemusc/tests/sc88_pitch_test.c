@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "engines/xp/sc88_pitch.h"
+#include "engines/xp/pitch.h"
 
 #include <assert.h>
 #ifdef NDEBUG

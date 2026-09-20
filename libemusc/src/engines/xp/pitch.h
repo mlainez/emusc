@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_PITCH_H
-#define EMUSC_SC88_PITCH_H
+#ifndef EMUSC_XP_PITCH_H
+#define EMUSC_XP_PITCH_H
 
 #include "rom.h"
 
@@ -56,23 +56,6 @@ struct sc88_portamento {
   bool ascending;               /* 0x177c bit 6 */
 };
 
-/* The rate table: 128 big-endian 32-bit entries at SC88-CTL 0x78502, indexed
- * by the raw CC5 byte (`0x5fdb` loads it from `DP:d6e0 + part`, `extu.b`s it
- * and shifts left twice for the four-byte stride, then reads `@(0x8502,r5)`
- * and `@(0x8504,r5)` with EP = 7). The table ends at 0x78702, where unrelated
- * data begins. Entry 0 is 0xffffffff and is never reached: both `0x5fa2` and
- * `0x5fdf` test the time byte for zero first and take the no-glide exit, so
- * CC5 = 0 does not glide at all. This returns 0 there, which
- * `sc88_portamento_advance` treats as that same exit. */
-uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time);
-
-/* One service of the glide, `0x5fd1..0x602d`, over `elapsed_periods` control
- * periods. The device compares only the high words, which is the same test as
- * comparing the pair while the target's own fraction is zero - it always is,
- * a target being a whole key. */
-void sc88_portamento_advance(struct sc88_portamento *portamento,
-                             unsigned elapsed_periods);
-
 struct sc88_pitch_release {
   int16_t destination;
   int16_t delta;
@@ -84,7 +67,13 @@ struct sc88_pitch_release {
   bool active;
 };
 
-/* The unresolved XP random readback is neutral (zero) in this entry point. */
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sibling engines/xp/*.c modules and sc88_pitch_test.c, which read
+ * these structs' fields directly). Each forwards to the real
+ * implementation in namespace EmuSC::Xp. */
+uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time);
+void sc88_portamento_advance(struct sc88_portamento *portamento,
+                             unsigned elapsed_periods);
 bool sc88_pitch_envelope_prepare(const struct sc88_rom *rom,
                                  const struct sc88_tone *tone,
                                  const struct sc88_component *component,
@@ -104,9 +93,57 @@ bool sc88_pitch_release_activate(const struct sc88_rom *rom,
                                  struct sc88_pitch_release *release);
 bool sc88_pitch_release_advance(struct sc88_pitch_release *release,
                                 unsigned elapsed_periods);
-
 int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
                                 const struct sc88_pitch_release *release);
+uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
+                                 int16_t envelope_sum);
+
+#ifdef __cplusplus
+}
+
+namespace EmuSC { namespace Xp {
+
+// Pitch envelope, release and portamento for the XP-generation-1 engine
+// (see engines/xp/README.md). The plain C types above are shared,
+// unrenamed, with sibling engines/xp/*.c modules not yet ported.
+
+/* The rate table: 128 big-endian 32-bit entries at SC88-CTL 0x78502, indexed
+ * by the raw CC5 byte (`0x5fdb` loads it from `DP:d6e0 + part`, `extu.b`s it
+ * and shifts left twice for the four-byte stride, then reads `@(0x8502,r5)`
+ * and `@(0x8504,r5)` with EP = 7). The table ends at 0x78702, where unrelated
+ * data begins. Entry 0 is 0xffffffff and is never reached: both `0x5fa2` and
+ * `0x5fdf` test the time byte for zero first and take the no-glide exit, so
+ * CC5 = 0 does not glide at all. This returns 0 there, which
+ * `portamento_advance` treats as that same exit. */
+uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time);
+
+/* One service of the glide, `0x5fd1..0x602d`, over `elapsedPeriods` control
+ * periods. The device compares only the high words, which is the same test as
+ * comparing the pair while the target's own fraction is zero - it always is,
+ * a target being a whole key. */
+void portamento_advance(struct sc88_portamento *portamento,
+                         unsigned elapsedPeriods);
+
+/* The unresolved XP random readback is neutral (zero) in this entry point. */
+bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
+                             const struct sc88_component *component,
+                             uint8_t selectorKey, uint8_t velocity,
+                             struct sc88_pitch_envelope *envelope);
+bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
+                             unsigned elapsedPeriods);
+bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
+                            const struct sc88_component *component,
+                            uint8_t selectorKey, uint16_t envelopeDepth,
+                            struct sc88_pitch_release *release);
+bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
+                             bool continuousHold, bool keepScaleAtZero,
+                             bool sostenutoRetained,
+                             struct sc88_pitch_release *release);
+bool pitch_release_advance(struct sc88_pitch_release *release,
+                            unsigned elapsedPeriods);
+
+int16_t pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
+                            const struct sc88_pitch_release *release);
 
 /* The pitch word uploaded as the XP's current value: the static word plus
  * every signed contribution, with the envelope's own doubled, saturated to
@@ -118,11 +155,9 @@ int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
  * the MAXIMUM like an overlarge one, not to zero. Both the engine and a
  * renderer used on its own must arrive at the same word, so they share
  * this. */
-uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
-                                 int16_t envelope_sum);
+uint32_t pitch_current_word(uint32_t base, int32_t offset, int16_t envelopeSum);
 
-#ifdef __cplusplus
-}
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

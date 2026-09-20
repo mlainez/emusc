@@ -41,8 +41,8 @@ set(EMUSC_SOURCES
   engines/xp/lfo.h
   engines/xp/pan.cc
   engines/xp/pan.h
-  engines/xp/sc88_pitch.c
-  engines/xp/sc88_pitch.h
+  engines/xp/pitch.cc
+  engines/xp/pitch.h
   engines/xp/sc88_chorus.c
   engines/xp/sc88_chorus.h
   engines/xp/sc88_delay.c
@@ -124,7 +124,7 @@ if(BUILD_TESTING)
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
     engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
-    engines/xp/pan.cc engines/xp/sc88_pitch.c
+    engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
     engines/xp/wave.cc)
@@ -159,7 +159,7 @@ if(BUILD_TESTING)
   set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_drum_test engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_lfo_test engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_pitch_test engines/xp/sc88_pitch.c engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_pitch_test engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_tvf_test engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/wave.cc)
   sc88_test(sc88_tva_test engines/xp/sc88_tva.c engines/xp/rom.cc engines/xp/wave.cc)
   # The interpolation word's identity is a property of the SC-88's own
