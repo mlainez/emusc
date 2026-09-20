@@ -114,9 +114,9 @@ struct sc88_reverb {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sc88_delay.c, which reuses pre_lpf; sc88_device.c, which embeds
- * struct sc88_reverb by value; and sc88_reverb_test.c). Each forwards to
- * the real implementation in namespace EmuSC::Xp. */
+ * below (sc88_device.c, which embeds struct sc88_reverb by value, and
+ * sc88_reverb_test.c). Each forwards to the real implementation in
+ * namespace EmuSC::Xp. */
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
                                 struct sc88_reverb_character *out);
 bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input);
@@ -140,10 +140,8 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
 namespace EmuSC { namespace Xp {
 
 // Reverb for the XP-generation-1 engine (see engines/xp/README.md). The
-// plain C types above are shared, unrenamed, with sc88_delay.c, which
-// reuses reverb_pre_lpf through the compat shim above and is not yet
-// converted, and with sc88_device.c, which embeds struct sc88_reverb by
-// value and is not yet converted either.
+// plain C types above are shared, unrenamed, with sc88_device.c, which
+// embeds struct sc88_reverb by value and is not yet converted to C++.
 
 bool reverb_read_character(const struct sc88_rom *rom, uint8_t character,
                             struct sc88_reverb_character *out);

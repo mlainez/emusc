@@ -3,7 +3,7 @@
 #define EMUSC_SC88_DEVICE_H
 
 #include "chorus.h"
-#include "sc88_delay.h"
+#include "delay.h"
 #include "sc88_eq.h"
 #include "sc88_output.h"
 #include "engine.h"

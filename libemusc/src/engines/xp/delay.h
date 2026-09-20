@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_DELAY_H
-#define EMUSC_SC88_DELAY_H
+#ifndef EMUSC_XP_DELAY_H
+#define EMUSC_XP_DELAY_H
 
 #include "rom.h"
 
@@ -50,28 +50,50 @@ struct sc88_delay {
   bool active;
 };
 
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_device.c, which embeds struct sc88_delay by value, and
+ * sc88_delay_test.c). Each forwards to the real implementation in
+ * namespace EmuSC::Xp. */
 bool sc88_delay_init(struct sc88_delay *dl, double output_rate);
 void sc88_delay_destroy(struct sc88_delay *dl);
 void sc88_delay_reset(struct sc88_delay *dl);
-
-/* One of the ten macro presets at `0x158be + 16*macro`, copied over
- * pre-LPF through reverb send exactly as writing the macro address does. */
 bool sc88_delay_macro(const struct sc88_rom *rom, uint8_t macro,
                       uint8_t out[10]);
-
-/* The ten public parameters in their manual order: pre-LPF, centre time,
- * left ratio, right ratio, centre level, left level, right level, overall
- * level, feedback, reverb send. */
 bool sc88_delay_set_params(const struct sc88_rom *rom,
                            struct sc88_delay *dl, const uint8_t p[10]);
-
-/* Adds the delay's stereo return to `stereo` from a mono send bus, and
- * accumulates its own reverb send into `to_reverb` when that is given. */
 void sc88_delay_process(struct sc88_delay *dl, const float *send,
                         float *stereo, float *to_reverb, size_t frames);
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Separate delay block for the XP-generation-1 engine (see
+// engines/xp/README.md). The plain sc88_delay struct above is shared,
+// unrenamed, with sc88_device.c, which embeds it by value and is not yet
+// converted to C++.
+
+bool delay_init(struct sc88_delay *dl, double outputRate);
+void delay_destroy(struct sc88_delay *dl);
+void delay_reset(struct sc88_delay *dl);
+
+/* One of the ten macro presets at `0x158be + 16*macro`, copied over
+ * pre-LPF through reverb send exactly as writing the macro address does. */
+bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10]);
+
+/* The ten public parameters in their manual order: pre-LPF, centre time,
+ * left ratio, right ratio, centre level, left level, right level, overall
+ * level, feedback, reverb send. */
+bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
+                       const uint8_t p[10]);
+
+/* Adds the delay's stereo return to `stereo` from a mono send bus, and
+ * accumulates its own reverb send into `toReverb` when that is given. */
+void delay_process(struct sc88_delay *dl, const float *send, float *stereo,
+                    float *toReverb, size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif
