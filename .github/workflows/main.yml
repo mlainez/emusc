@@ -73,12 +73,18 @@ jobs:
     # i386 packages live on the same archive.ubuntu.com/security.ubuntu.com
     # mirrors as amd64, so plain `dpkg --add-architecture i386` is enough.
     # armhf and arm64 don't: they're "ports" architectures, hosted only on
-    # ports.ubuntu.com, so without this apt-get update still tries (and 404s
-    # on) armhf/arm64 indexes on the amd64-only mirrors once dpkg knows
-    # about the architecture, which aborts the update.
+    # ports.ubuntu.com. The runner's default sources don't restrict which
+    # architecture they serve, so once dpkg knows about armhf/arm64, apt
+    # tries (and 404s on) those architectures on the amd64-only mirrors too -
+    # and having both the default sources and the new ports source offer the
+    # same (suite, component, arch) confuses apt's resolver into treating the
+    # foreign package as uninstallable, even though the ports copy fetched
+    # fine. Restricting the default sources to amd64 makes ports.ubuntu.com
+    # the sole provider of the foreign architecture.
     - name: Add ports.ubuntu.com for ARM architectures
       if: matrix.foreign_arch == 'armhf' || matrix.foreign_arch == 'arm64'
       run: |
+        sudo sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
         printf '%s\n' \
           'Types: deb' \
           'URIs: http://ports.ubuntu.com/ubuntu-ports' \
@@ -90,7 +96,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt-get update || [ "${{matrix.foreign_arch}}" = "armhf" ] || [ "${{matrix.foreign_arch}}" = "arm64" ]
+        sudo apt-get update
         sudo apt-get install -y ${{matrix.dep}}
 
     - name: Configure CMake (native)
