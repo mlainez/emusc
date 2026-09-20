@@ -25,7 +25,7 @@ install(FILES
   src/control_rom.h
   src/params.h
   src/engines/xp/sc88_device.h
-  src/engines/xp/sc88_engine.h
+  src/engines/xp/engine.h
   src/engines/xp/lfo.h
   src/engines/xp/oscillator.h
   src/engines/xp/pan.h

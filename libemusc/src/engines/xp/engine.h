@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_ENGINE_H
-#define EMUSC_SC88_ENGINE_H
+#ifndef EMUSC_XP_ENGINE_H
+#define EMUSC_XP_ENGINE_H
 
 #include "renderer.h"
 
@@ -240,6 +240,10 @@ struct sc88_engine {
   void *control_user;
 };
 
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_device.c, which embeds struct sc88_engine by value, and
+ * sc88_engine_test.c). Each forwards to the real implementation in
+ * namespace EmuSC::Xp. */
 bool sc88_engine_init(struct sc88_engine *engine,
                       const struct sc88_renderer *renderer);
 void sc88_engine_destroy(struct sc88_engine *engine);
@@ -261,17 +265,13 @@ void sc88_engine_set_part_tva_controls(
 void sc88_engine_set_part_tvf_controls(
   struct sc88_engine *engine, uint8_t part,
   const struct sc88_tvf_controls *controls);
-
-/* `setup` is Use For Rhythm Part: 0 off, 1 MAP1, 2 MAP2. */
 void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                                  uint8_t setup);
 void sc88_engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
                                    uint8_t map);
-/* One `41 mf rr` write: `setup` 1 or 2, `field` 1..9, `note` 0..127. */
 bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
                                     uint8_t setup, uint8_t field,
                                     uint8_t note, uint8_t value);
-/* Changing a rhythm part's kit clears them, as the firmware does. */
 void sc88_engine_clear_drum_overlay(struct sc88_engine *engine,
                                     uint8_t setup);
 void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
@@ -282,7 +282,6 @@ void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
                                            uint8_t part, uint16_t depth);
 void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
                                       uint8_t part, uint8_t send);
-/* CC65 past its 64 threshold, CC5 raw, and CC84's source key (0xff none). */
 void sc88_engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
                                      bool enabled);
 void sc88_engine_set_part_portamento_time(struct sc88_engine *engine,
@@ -301,26 +300,107 @@ void sc88_engine_hold_value(struct sc88_engine *engine, uint8_t part,
                             uint8_t value);
 void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
                            bool enabled);
-
 unsigned sc88_engine_active_slots(const struct sc88_engine *engine);
 unsigned sc88_engine_released_slots(const struct sc88_engine *engine);
-
-/* Interleaved stereo dry output. The callback receives firmware-equivalent
- * catch-up counts whenever the 10,001-clock (8.0008 ms) service is due. */
 void sc88_engine_render(struct sc88_engine *engine, float *stereo,
                         size_t frames);
-/* As above, and also accumulates the two mono effect send buses, each of
- * which must hold `frames` samples when given. Either may be NULL. */
-
 void sc88_engine_set_stage_taps(struct sc88_engine *engine,
                                 const struct sc88_engine_stage_taps *taps);
-
 void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
                                   float *send, float *chorus_send,
                                   float *delay_send, size_t frames);
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Voice engine (allocation, scheduling, mixing) for the XP-generation-1
+// engine (see engines/xp/README.md). The plain C types above are shared,
+// unrenamed, with sc88_device.c, which embeds struct sc88_engine by value
+// and is not yet converted to C++.
+//
+// Three concerns share this file rather than splitting into PartState,
+// VoiceAllocator and VoiceScheduler, as originally hypothesised: all three
+// read and write the same sc88_engine_note/sc88_engine_slot/
+// sc88_engine_part arrays, which are shaped by the ABI constraint above,
+// not by a design choice this file is free to make. The boundary is
+// visible in this file's own section comments instead - allocation
+// (init, note_on/note_off, free/pop list bookkeeping), part state
+// (set_part_*, held for sc88_device.c's controller writes), and the
+// scheduler (run_scheduler, render_with_send, the shared-LFO table) - so
+// that splitting them out is mechanical once sc88_device.c itself
+// converts (T17) and this struct can become real member state.
+
+bool engine_init(struct sc88_engine *engine,
+                  const struct sc88_renderer *renderer);
+void engine_destroy(struct sc88_engine *engine);
+void engine_set_control_service(struct sc88_engine *engine,
+                                 sc88_control_service_fn service, void *user);
+void engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
+                             const struct sc88_tva_levels *levels);
+void engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
+                          const struct sc88_pan_controls *pan);
+void engine_set_part_pitch_offset(struct sc88_engine *engine, uint8_t part,
+                                   int32_t pitchOffset);
+void engine_set_part_lfo_controls(struct sc88_engine *engine, uint8_t part,
+                                   const struct sc88_lfo_controls *controls);
+void engine_set_part_tva_controls(struct sc88_engine *engine, uint8_t part,
+                                   const struct sc88_tva_controls *controls);
+void engine_set_part_tvf_controls(struct sc88_engine *engine, uint8_t part,
+                                   const struct sc88_tvf_controls *controls);
+/* `setup` is Use For Rhythm Part: 0 off, 1 MAP1, 2 MAP2. */
+void engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
+                             uint8_t setup);
+void engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
+                               uint8_t map);
+/* One `41 mf rr` write: `setup` 1 or 2, `field` 1..9, `note` 0..127. */
+bool engine_set_drum_parameter(struct sc88_engine *engine, uint8_t setup,
+                                uint8_t field, uint8_t note, uint8_t value);
+/* Changing a rhythm part's kit clears them, as the firmware does. */
+void engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t setup);
+void engine_set_part_delay_send(struct sc88_engine *engine, uint8_t part,
+                                 uint8_t send);
+void engine_set_part_chorus_send(struct sc88_engine *engine, uint8_t part,
+                                  uint8_t send);
+void engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
+                                       uint8_t part, uint16_t depth);
+void engine_set_part_reverb_send(struct sc88_engine *engine, uint8_t part,
+                                  uint8_t send);
+/* CC65 past its 64 threshold, CC5 raw, and CC84's source key (0xff none). */
+void engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
+                                 bool enabled);
+void engine_set_part_portamento_time(struct sc88_engine *engine, uint8_t part,
+                                      uint8_t time);
+void engine_set_part_portamento_control(struct sc88_engine *engine,
+                                         uint8_t part, uint8_t key);
+bool engine_note_on(struct sc88_engine *engine, uint8_t part,
+                     uint8_t variation, uint8_t program, uint8_t key,
+                     uint8_t velocity, uint8_t context,
+                     enum sc88_same_note_mode mode, float provisionalGain);
+bool engine_note_off(struct sc88_engine *engine, uint8_t part, uint8_t key);
+void engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled);
+void engine_hold_value(struct sc88_engine *engine, uint8_t part,
+                        uint8_t value);
+void engine_sostenuto(struct sc88_engine *engine, uint8_t part, bool enabled);
+
+unsigned engine_active_slots(const struct sc88_engine *engine);
+unsigned engine_released_slots(const struct sc88_engine *engine);
+
+/* Interleaved stereo dry output. The callback receives firmware-equivalent
+ * catch-up counts whenever the 10,001-clock (8.0008 ms) service is due. */
+void engine_render(struct sc88_engine *engine, float *stereo, size_t frames);
+
+void engine_set_stage_taps(struct sc88_engine *engine,
+                            const struct sc88_engine_stage_taps *taps);
+
+/* As above, and also accumulates the two mono effect send buses, each of
+ * which must hold `frames` samples when given. Either may be NULL. */
+void engine_render_with_send(struct sc88_engine *engine, float *stereo,
+                              float *send, float *chorusSend,
+                              float *delaySend, size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

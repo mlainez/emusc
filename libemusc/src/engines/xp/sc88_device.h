@@ -6,7 +6,7 @@
 #include "sc88_delay.h"
 #include "sc88_eq.h"
 #include "sc88_output.h"
-#include "sc88_engine.h"
+#include "engine.h"
 #include "sc88_reverb.h"
 
 #include <stdbool.h>

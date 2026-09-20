@@ -31,8 +31,8 @@ set(EMUSC_SOURCES
   reverb.h
   engines/xp/sc88_device.c
   engines/xp/sc88_device.h
-  engines/xp/sc88_engine.c
-  engines/xp/sc88_engine.h
+  engines/xp/engine.cc
+  engines/xp/engine.h
   engines/xp/oscillator.cc
   engines/xp/oscillator.h
   engines/xp/sc88_output.c
@@ -123,7 +123,7 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
-    engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
+    engines/xp/engine.cc engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/renderer.cc engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
