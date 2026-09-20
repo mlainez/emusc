@@ -39,8 +39,8 @@ set(EMUSC_SOURCES
   engines/xp/sc88_output.h
   engines/xp/lfo.cc
   engines/xp/lfo.h
-  engines/xp/sc88_pan.c
-  engines/xp/sc88_pan.h
+  engines/xp/pan.cc
+  engines/xp/pan.h
   engines/xp/sc88_pitch.c
   engines/xp/sc88_pitch.h
   engines/xp/sc88_chorus.c
@@ -124,7 +124,7 @@ if(BUILD_TESTING)
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
     engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
-    engines/xp/sc88_pan.c engines/xp/sc88_pitch.c
+    engines/xp/pan.cc engines/xp/sc88_pitch.c
     engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
     engines/xp/wave.cc)
@@ -146,6 +146,7 @@ if(BUILD_TESTING)
 
   sc88_test(sc88_wave_test engines/xp/wave.cc)
   sc88_test(sc88_oscillator_test engines/xp/oscillator.cc)
+  sc88_test(sc88_pan_test engines/xp/pan.cc)
   sc88_test(sc88_reverb_test engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_chorus_test engines/xp/sc88_chorus.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_delay_test engines/xp/sc88_delay.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)

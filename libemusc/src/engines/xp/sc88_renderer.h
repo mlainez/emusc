@@ -3,7 +3,7 @@
 #define EMUSC_SC88_RENDERER_H
 
 #include "oscillator.h"
-#include "sc88_pan.h"
+#include "pan.h"
 #include "lfo.h"
 #include "sc88_pitch.h"
 #include "rom.h"
