@@ -142,30 +142,82 @@ The library is built as `build/libemusc/src/libemusc_static.a` (static) and `lib
 **64-bit:**
 ```bash
 cmake -B build-win64 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release
-cmake --build build-win64 --target emusc-render
+cmake --build build-win64
 ```
 
 **32-bit:**
 ```bash
 cmake -B build-win32 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw-w32.cmake -DCMAKE_BUILD_TYPE=Release
-cmake --build build-win32 --target emusc-render
+cmake --build build-win32
 ```
 
-Both builds produce a file named `emusc-render.exe` (the CMake target name doesn't
-change with architecture); CI renames the 32-bit one to `emusc-render32.exe` when
-it publishes both side by side, matching scva-headless's own `-render`/`-render32`
-convention.
+Each produces two files: `emusc-render.exe` (the CMake target names don't change
+with architecture) and `emusc-winmidi.exe`; CI renames the 32-bit ones to
+`emusc-render32.exe`/`emusc-winmidi32.exe` when it publishes both side by side,
+matching scva-headless's own `-render`/`-render32` convention.
 
-The resulting `.exe` files are self-contained, statically linked (`-static-libgcc -static-libstdc++`), and depend only on core Windows DLLs (KERNEL32.dll and msvcrt.dll), so they run on Windows 98 onwards without any additional runtime installation.
+The resulting `.exe` files are self-contained, statically linked (`-static-libgcc -static-libstdc++`), and depend only on core Windows DLLs (KERNEL32.dll, msvcrt.dll, and WINMM.dll for emusc-winmidi), so they run on Windows 98 onwards without any additional runtime installation - see "Hardware Floor" below for what that claim does and doesn't cover.
 
-**Note:** `emuscd` (the realtime ALSA MIDI daemon) is Linux-only - it's built on
-top of ALSA, which doesn't exist on Windows - and not built for Windows at all.
-There is no Windows equivalent of it yet; only `emusc-render` (the offline
-MIDI-to-WAV renderer) is available there.
+**`emuscd` (the realtime ALSA MIDI daemon) is Linux-only** - it's built on top
+of ALSA, which doesn't exist on Windows - so it isn't built for Windows at all.
+`emusc-winmidi` is its Windows counterpart: same idea (realtime MIDI in,
+realtime audio out via libEmuSC), built on WinMM instead of ALSA. It does not
+create its own MIDI port the way emuscd's ALSA "virtual:" port does - WinMM's
+midiIn API only opens an *existing* one - so route MIDI into it with a virtual
+MIDI cable (loopMIDI on Windows 7+, Maple Virtual MIDI Cable on 95/98/ME/2000/XP),
+then point `--midi-in` at that port:
+
+```bash
+emusc-winmidi --device sc55mkii --list-midi-in     # find the port number
+emusc-winmidi --device sc55mkii --midi-in 1
+```
+
+`emusc-winmidi --help` covers `--wave-out`, `--rate`, `--block` and `--latency`,
+which parallel emuscd's own `--pcm`/`--rate`/`--block`/`--latency`.
 
 ### Nightly builds
 
-CI (`.github/workflows/main.yml`) automatically builds all three platform variants (Linux, Windows x64, Windows x86) on every push. Nightly binaries are published as GitHub release assets under the `nightly` tag: `emusc-render` and `emuscd` for Linux, `emusc-render.exe` (64-bit) and `emusc-render32.exe` (32-bit) for Windows. Each nightly publish replaces the previous release outright, so it always reflects exactly the latest push rather than accumulating older builds' files alongside newer ones.
+CI (`.github/workflows/main.yml`) automatically builds all three platform variants (Linux, Windows x64, Windows x86) on every push. Nightly binaries are published as GitHub release assets under the `nightly` tag: `emusc-render` and `emuscd` for Linux; `emusc-render.exe` and `emusc-winmidi.exe` (64-bit) plus `emusc-render32.exe` and `emusc-winmidi32.exe` (32-bit) for Windows. Each nightly publish replaces the previous release outright, so it always reflects exactly the latest push rather than accumulating older builds' files alongside newer ones.
+
+## Hardware Floor (Windows, Untested)
+
+This section provides a theoretical minimum hardware specification for the new Windows binaries (`emusc-render` and `emusc-winmidi`, in both 64-bit and 32-bit variants), derived from performance measurements on modern hardware and historical reference points. **This is not a verified, tested specification.** Genuine real-hardware validation across period-appropriate systems (Windows 98 through current releases, ideally with era-adjacent hardware) is essential before any of these estimates should be trusted for actual deployment.
+
+### 64-bit builds floor
+
+The 64-bit builds (`emusc-render.exe` and `emusc-winmidi.exe`) have an architectural floor independent of emulation considerations: x86-64 instruction set architecture mandates SSE2 as a baseline, which eliminates all CPUs predating x86-64's introduction (~2003). More importantly, **Windows 98 is a 32-bit-only operating system** and cannot execute 64-bit code; 64-bit Windows did not exist until Windows XP Professional x64 Edition (2005).
+
+The practical floor for 64-bit builds is therefore **any x86-64 CPU, running 64-bit Windows XP x64 or later**. This floor is purely architectural and has nothing to do with retro or Windows-98-era hardware.
+
+### 32-bit builds floor and runtime complexity
+
+The 32-bit builds (`emusc-render32.exe` and `emusc-winmidi32.exe`) are the candidates for lower-end hardware. The CPU floor is more nuanced than it initially appears.
+
+This project's own C/C++ code is compiled with `-march=i486`, requiring only a 486-class CPU or later from an instruction-set perspective. However, **the binaries are statically linked against the MinGW C++ standard library (`libstdc++.a` and `libgcc.a`), which was built with the distro's default mingw-w64 target: `pentiumpro`.** This introduces Pentium-Pro-level instructions (CMOV, FCOMI) into the final binary as a side effect of standard-library linking, not this project's own code. Verification via `objdump` confirmed that a trivial "hello world" compiled with identical static-linking flags contains 780+ CMOV instructions and 20+ FCOMI instructions purely from runtime libraries. CMOV and FCOMI are Pentium-Pro and later instructions (1995+); they do not exist on plain Pentium or 486 hardware.
+
+**Thus, despite this project's code targeting i486, the shipped 32-bit binary's real CPU floor is Pentium Pro / Pentium II / Pentium III / AMD K6-2 or later (roughly 1995 onward).** Lowering this floor further would require rebuilding the entire MinGW GCC runtime from source targeting i486, which has not been attempted. No SSE, SSE2, or MMX instructions are required.
+
+From a Windows version perspective, DLL dependency analysis shows that `msvcrt.dll` (required by these binaries) was not part of Windows 95's original release but was included as a base OS component from Windows 98 onwards. The floor is **Windows 98** for these reasons.
+
+### Estimated realtime capability on retro hardware
+
+For **SC-55 and SC-55mkII-class emulation** (the lower-complexity synthesis paths), rendering measurements on modern hardware show approximately **74x realtime at 44.1 kHz, single-threaded, no SIMD, on a ~5 GHz core**. Historical reference points (Roland's own VSC-88 shipped with a Pentium-166 MHz target in 1997; TiMidity documented ~100 MHz for 32 kHz General MIDI synthesis) suggest that **Pentium-Pro, Pentium II, or Pentium III-class CPU** may plausibly sustain realtime SC-55/SC-55mkII synthesis, though this remains untested.
+
+For **SC-88-class emulation** (64-voice polyphony, fuller effects chains), the code is approximately **8x more expensive per second of audio** than the SC-55 path when measured on the same modern hardware. Achieving realtime SC-88 on historical Pentium-166-era hardware is optimistic and unproven. Roland's own hand-optimized SC-88 product (VSC-88, 1997) was hand-written and likely assembly-optimized; this project's current generic, unoptimized C/C++ SC-88 code has a much larger gap to close before hitting that target, making it an uncertain extrapolation.
+
+### emusc-winmidi testing status
+
+The new realtime MIDI daemon, `emusc-winmidi`, was:
+- **Built successfully**, cross-compiling for Windows with no additional DLL dependencies beyond KERNEL32.dll, msvcrt.dll, and WINMM.dll.
+- **Functionally tested under Wine** (a Windows compatibility layer running on Linux): the binary opened a real ALSA-backed MIDI input port through Wine's WinMM implementation and a real PulseAudio audio output device, then ran without crashing for a sustained period while a dense, multi-minute MIDI file was played into that port in real time. This verifies the MIDI-callback → queue → synthesis → audio-buffer pipeline runs without crashing under real MIDI load - it does not verify that the audio it produced was glitch-free or kept pace without underruns, which was never measured (see below).
+
+What was **not** tested:
+- Genuine Windows (any version, 98 through 11)
+- Period-era or period-adjacent hardware
+- Audio correctness or fidelity (output was never captured or auditioned, only confirmed not to crash)
+- Wine's WinMM callback timing and buffer-underrun behavior, which may diverge significantly from real Windows drivers, especially on 9x-era hardware
+
+Before deploying `emusc-winmidi` to actual hardware, real-hardware testing on Windows 98, XP, and a modern 64-bit release is essential.
 
 ---
 
