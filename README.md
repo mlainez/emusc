@@ -202,7 +202,22 @@ which parallel emuscd's own `--pcm`/`--rate`/`--block`/`--latency`.
 
 ### Nightly builds
 
-CI (`.github/workflows/main.yml`) automatically builds six architecture variants on every push: Linux x64, Linux x86, Linux ARM64, Linux ARM32, Windows x64 and Windows x86. Nightly binaries are published as GitHub release assets under the `nightly` tag: `emusc-render` and `emuscd` for the four Linux/ARM variants; `emusc-render.exe` and `emusc-winmidi.exe` (64-bit) plus `emusc-render32.exe` and `emusc-winmidi32.exe` (32-bit) for Windows. Each nightly publish replaces the previous release outright, so it always reflects exactly the latest push rather than accumulating older builds' files alongside newer ones.
+CI (`.github/workflows/main.yml`) automatically builds six architecture
+variants on every push - Linux x64, Linux x86, Linux ARM64, Linux ARM32,
+Windows x64 and Windows x86 - and publishes each as a `.tar.gz` GitHub
+release asset under the `nightly` tag: `emusc-linux-x64.tar.gz`,
+`emusc-linux-x86.tar.gz`, `emusc-linux-arm64.tar.gz`,
+`emusc-linux-arm32.tar.gz`, `emusc-windows-x64.tar.gz` and
+`emusc-windows-x86.tar.gz`. Each archive is a self-contained bundle built
+from this project's own `install()` rules: `bin/` holds `emusc-render` plus
+`emuscd` (Linux/ARM) or `emusc-winmidi` (Windows, named `emusc-render32.exe`/
+`emusc-winmidi32.exe` on the 32-bit Windows build); `lib/` holds the shared
+`libemusc` library (`.so`/`.dll`, plus the Windows import library) for
+anyone who wants to link against it directly rather than use the bundled
+tools; `include/emusc/` and `lib/pkgconfig/` hold its headers and
+pkg-config file. Each nightly publish replaces the previous release
+outright, so it always reflects exactly the latest push rather than
+accumulating older builds' files alongside newer ones.
 
 ## Hardware Floor (Windows, Untested)
 

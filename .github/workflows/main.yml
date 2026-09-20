@@ -86,25 +86,25 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Collect Linux binaries
-      if: matrix.os == 'linux'
-      run: |
-        mkdir -p release
-        if [ -f build/emuscd/emuscd ]; then cp build/emuscd/emuscd release/; fi
-        if [ -f build/libemusc/tools/emusc-render ]; then cp build/libemusc/tools/emusc-render release/; fi
+    # cmake --install walks the install() rules already declared in
+    # CMakeLists.txt (emusc-render/emuscd/emusc-winmidi into bin/, the shared
+    # library + headers + pkg-config file into lib/ and include/, licensing
+    # docs into share/doc/), so the release bundle's contents track those
+    # rules instead of a second, hand-maintained file list here.
+    - name: Stage install tree
+      run: cmake --install build --prefix "${{github.workspace}}/release/emusc-${{matrix.name}}"
       shell: bash
 
     # Named per architecture (emusc-render.exe / emusc-render32.exe, matching
-    # scva-headless's own -render/-render32 convention): the nightly release
-    # below flattens every job's artifacts into one asset list, where two
-    # files both called emusc-render.exe would collide and one would
-    # silently clobber the other.
-    - name: Collect Windows binaries
+    # scva-headless's own -render/-render32 convention): each architecture
+    # now ships in its own archive, so this is no longer needed to avoid
+    # asset collisions, but it still avoids a collision for anyone who
+    # extracts more than one Windows archive into the same directory.
+    - name: Rename Windows binaries
       if: matrix.os == 'windows'
       run: |
-        mkdir -p release
-        cp build/libemusc/tools/emusc-render.exe release/${{matrix.exe_name}}
-        cp build/emuscd/emusc-winmidi.exe release/${{matrix.winmidi_name}}
+        mv release/emusc-${{matrix.name}}/bin/emusc-render.exe release/emusc-${{matrix.name}}/bin/${{matrix.exe_name}}
+        mv release/emusc-${{matrix.name}}/bin/emusc-winmidi.exe release/emusc-${{matrix.name}}/bin/${{matrix.winmidi_name}}
       shell: bash
 
     # Both are expected to depend on nothing but core Windows DLLs (WINMM.dll
@@ -118,7 +118,7 @@ jobs:
       if: matrix.os == 'windows'
       run: |
         for f in ${{matrix.exe_name}} ${{matrix.winmidi_name}}; do
-          deps=$(${{matrix.objdump}} -p release/$f | grep -i "DLL Name" \
+          deps=$(${{matrix.objdump}} -p release/emusc-${{matrix.name}}/bin/$f | grep -i "DLL Name" \
                  | grep -viE "kernel32|msvcrt|winmm" || true)
           if [ -n "$deps" ]; then
             echo "$f depends on DLLs beyond the Windows base system:"
@@ -129,11 +129,15 @@ jobs:
         done
       shell: bash
 
+    - name: Create release archive
+      run: tar -czf emusc-${{matrix.name}}.tar.gz -C release emusc-${{matrix.name}}
+      shell: bash
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{matrix.name}}-binaries
-        path: release/
+        name: emusc-${{matrix.name}}
+        path: emusc-${{matrix.name}}.tar.gz
         retention-days: 7
 
   release:
@@ -173,6 +177,6 @@ jobs:
         name: Nightly Build
         prerelease: true
         generate_release_notes: false
-        files: artifacts/**/*
+        files: artifacts/**/*.tar.gz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
