@@ -23,17 +23,13 @@ The following Roland Sound Canvas and synthesizer modules are emulated:
 | **SC-88** | Partial | Full ROM-driven engine with 64-voice polyphony; SC-88's own synthesis path |
 | **JV-880** | Partial | Sampled sound module; device profile extracted; synthesis in progress |
 
-**Emulation scope:**
-- ✅ ROM-based voice waveforms and tables
-- ✅ MIDI channel and note-on/off control
-- ✅ Pitch bend, modulation, volume, pan, expression
-- ✅ Program change and bank selection
-- ✅ TVA envelope (attack, decay, sustain, release)
-- ✅ Oscillator frequency and modulation
-- ⏳ TVF (filter) envelope curves (in progress)
-- ⏳ Reverb and chorus effects (partial)
-- ⏳ LFO shape and routing
-- ⏳ Velocity response curves (partial)
+## Expectations
+
+This is active reverse-engineering research, not a finished emulator, and fidelity
+varies by device and by subsystem as the underlying ROM analysis progresses. A
+static feature checklist goes stale faster than the code does and can't capture
+which gaps apply to which device, so there isn't one here: read `libemusc/src/`
+or recent commit messages for what's actually implemented right now.
 
 ---
 
@@ -155,13 +151,21 @@ cmake -B build-win32 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw-w32.cmake -DCM
 cmake --build build-win32 --target emusc-render
 ```
 
+Both builds produce a file named `emusc-render.exe` (the CMake target name doesn't
+change with architecture); CI renames the 32-bit one to `emusc-render32.exe` when
+it publishes both side by side, matching scva-headless's own `-render`/`-render32`
+convention.
+
 The resulting `.exe` files are self-contained, statically linked (`-static-libgcc -static-libstdc++`), and depend only on core Windows DLLs (KERNEL32.dll and msvcrt.dll), so they run on Windows 98 onwards without any additional runtime installation.
 
-**Note:** `emuscd` (the realtime ALSA MIDI daemon) is Linux-only and not built for Windows. Only `emusc-render` (the offline MIDI-to-WAV renderer) is available on Windows.
+**Note:** `emuscd` (the realtime ALSA MIDI daemon) is Linux-only - it's built on
+top of ALSA, which doesn't exist on Windows - and not built for Windows at all.
+There is no Windows equivalent of it yet; only `emusc-render` (the offline
+MIDI-to-WAV renderer) is available there.
 
 ### Nightly builds
 
-CI (`.github/workflows/main.yml`) automatically builds all three platform variants (Linux, Windows x64, Windows x86) on every push. Nightly binaries are published as GitHub release artifacts with the tag `nightly`.
+CI (`.github/workflows/main.yml`) automatically builds all three platform variants (Linux, Windows x64, Windows x86) on every push. Nightly binaries are published as GitHub release assets under the `nightly` tag: `emusc-render` and `emuscd` for Linux, `emusc-render.exe` (64-bit) and `emusc-render32.exe` (32-bit) for Windows. Each nightly publish replaces the previous release outright, so it always reflects exactly the latest push rather than accumulating older builds' files alongside newer ones.
 
 ---
 
