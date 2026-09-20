@@ -14,20 +14,44 @@ jobs:
     # not built natively on windows-latest: a native Windows runner defaults
     # to the Visual Studio generator, which ignores CMAKE_CXX_COMPILER/
     # CMAKE_C_COMPILER, so a workflow that asks it for g++/gcc silently gets
-    # something else (or nothing). Cross-compiling is also how both a 64-bit
-    # and a 32-bit .exe get built without a second runner OS.
+    # something else (or nothing). The 32-bit Linux and both ARM builds are
+    # cross-compiled from the same runner for the same reason there's no
+    # separate runner OS for them: it's one job per architecture, not one job
+    # per (OS, architecture) pair.
     strategy:
       matrix:
         include:
-          - name: linux
+          - name: linux-x64
+            os: linux
             dep: 'build-essential cmake libasound2-dev'
+          # 32-bit x86 Linux has no dedicated cross-compiler package: Debian/
+          # Ubuntu expose it as a multilib target of the native amd64 gcc/g++
+          # (-m32), so it needs the i386 architecture added for its ALSA dev
+          # package rather than a gcc-*-linux-gnu cross toolchain.
+          - name: linux-x86
+            os: linux
+            foreign_arch: i386
+            dep: 'build-essential cmake gcc-multilib g++-multilib libc6-dev-i386 libasound2-dev:i386'
+            toolchain: cmake/toolchain-linux-i686.cmake
+          - name: linux-arm64
+            os: linux
+            foreign_arch: arm64
+            dep: 'cmake gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libasound2-dev:arm64'
+            toolchain: cmake/toolchain-linux-arm64.cmake
+          - name: linux-arm32
+            os: linux
+            foreign_arch: armhf
+            dep: 'cmake gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libasound2-dev:armhf'
+            toolchain: cmake/toolchain-linux-armhf.cmake
           - name: windows-x64
+            os: windows
             dep: 'cmake gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64'
             toolchain: cmake/toolchain-mingw-w64.cmake
             objdump: x86_64-w64-mingw32-objdump
             exe_name: emusc-render.exe
             winmidi_name: emusc-winmidi.exe
           - name: windows-x86
+            os: windows
             dep: 'cmake gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686'
             toolchain: cmake/toolchain-mingw-w32.cmake
             objdump: i686-w64-mingw32-objdump
@@ -38,24 +62,32 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
+    # Foreign-architecture packages (the target's own ALSA dev files) aren't
+    # visible to apt until dpkg knows about that architecture; MinGW targets
+    # don't need this, since their cross-compiler packages are ordinary amd64
+    # packages that happen to produce Windows binaries.
+    - name: Add foreign architecture
+      if: matrix.foreign_arch != ''
+      run: sudo dpkg --add-architecture ${{matrix.foreign_arch}}
+
     - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ${{matrix.dep}}
 
-    - name: Configure CMake (native Linux)
-      if: matrix.name == 'linux'
+    - name: Configure CMake (native)
+      if: matrix.toolchain == ''
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
-    - name: Configure CMake (Windows cross-compile)
-      if: matrix.name != 'linux'
+    - name: Configure CMake (cross-compile)
+      if: matrix.toolchain != ''
       run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=${{matrix.toolchain}} -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
     - name: Build
       run: cmake --build build --parallel
 
     - name: Collect Linux binaries
-      if: matrix.name == 'linux'
+      if: matrix.os == 'linux'
       run: |
         mkdir -p release
         if [ -f build/emuscd/emuscd ]; then cp build/emuscd/emuscd release/; fi
@@ -68,7 +100,7 @@ jobs:
     # files both called emusc-render.exe would collide and one would
     # silently clobber the other.
     - name: Collect Windows binaries
-      if: matrix.name != 'linux'
+      if: matrix.os == 'windows'
       run: |
         mkdir -p release
         cp build/libemusc/tools/emusc-render.exe release/${{matrix.exe_name}}
@@ -83,7 +115,7 @@ jobs:
     # (the statically-linked runtime itself still assumes a Pentium Pro or
     # later on the 32-bit build; both need this untested on real hardware).
     - name: Verify Windows binaries are self-contained
-      if: matrix.name != 'linux'
+      if: matrix.os == 'windows'
       run: |
         for f in ${{matrix.exe_name}} ${{matrix.winmidi_name}}; do
           deps=$(${{matrix.objdump}} -p release/$f | grep -i "DLL Name" \
