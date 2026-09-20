@@ -8,7 +8,7 @@ This is a separate fork of [skjelten/emusc](https://github.com/skjelten/emusc) f
 
 **emuscd** (the library `libEmuSC` + headless tools) emulates the low-level synthesis behavior of Roland's Sound Canvas family of synthesizers. It extracts and reimplements ROM-based voice engines, including oscillator waveforms, TVA (Time Variant Amplifier) envelopes, effects processing, and MIDI voice allocation.
 
-This fork was created to explore Sound Canvas emulation at a deep technical level, with substantial AI assistance in reverse engineering ROM structures, envelope dynamics, and oscillator characteristics. The library serves as the research output, with a focus on understanding the original hardware behavior rather than achieving bit-perfect reproduction.
+This fork exists to push emulation fidelity as high as it can go across the whole device family - SC-55 and SC-55mkII as much as SC-88 and JV-880, not any one of them in particular - by leveraging AI assistance for the reverse engineering that matching real hardware behavior requires: ROM structure analysis, envelope dynamics, and oscillator characteristics among them.
 
 ---
 
@@ -223,7 +223,7 @@ Before deploying `emusc-winmidi` to actual hardware, real-hardware testing on Wi
 
 ## About This Fork
 
-This fork exists because exploration of the SC-88 emulation required detailed ROM analysis, measurement of envelope behavior, and reverse engineering of oscillator characteristics. This work was substantially assisted by Claude (an AI assistant), which helped:
+This fork exists to reach the highest fidelity achievable on every supported device - SC-55 and SC-55mkII included, not just SC-88 - which in practice means detailed ROM analysis, measurement of envelope behavior, and reverse engineering of oscillator characteristics against the real hardware each device is modelled on. This work was substantially assisted by Claude (an AI assistant), which helped:
 
 - Analyze ROM structures and extract device profiles
 - Test and validate TVA envelope curve fitting
