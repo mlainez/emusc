@@ -13,9 +13,9 @@
  * filter and level. Names come from the multisample directory that
  * references each sample, since that is the only name the ROM gives them.
  */
-#include "sc88_oscillator.h"
-#include "sc88_rom.h"
-#include "sc88_wave.h"
+#include "engines/xp/sc88_oscillator.h"
+#include "engines/xp/sc88_rom.h"
+#include "engines/xp/sc88_wave.h"
 
 #include <math.h>
 

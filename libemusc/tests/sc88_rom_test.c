@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "sc88_rom.h"
-#include "sc88_pan.h"
-#include "sc88_pitch.h"
-#include "sc88_tva.h"
-#include "sc88_tvf.h"
+#include "engines/xp/sc88_rom.h"
+#include "engines/xp/sc88_pan.h"
+#include "engines/xp/sc88_pitch.h"
+#include "engines/xp/sc88_tva.h"
+#include "engines/xp/sc88_tvf.h"
 
 #include <assert.h>
 #ifdef NDEBUG

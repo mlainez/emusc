@@ -29,38 +29,38 @@ set(EMUSC_SOURCES
   resampler.h
   reverb.cc
   reverb.h
-  sc88_device.c
-  sc88_device.h
-  sc88_engine.c
-  sc88_engine.h
-  sc88_oscillator.c
-  sc88_oscillator.h
-  sc88_output.c
-  sc88_output.h
-  sc88_lfo.c
-  sc88_lfo.h
-  sc88_pan.c
-  sc88_pan.h
-  sc88_pitch.c
-  sc88_pitch.h
-  sc88_chorus.c
-  sc88_chorus.h
-  sc88_delay.c
-  sc88_delay.h
-  sc88_eq.c
-  sc88_eq.h
-  sc88_renderer.c
-  sc88_renderer.h
-  sc88_reverb.c
-  sc88_reverb.h
-  sc88_rom.c
-  sc88_rom.h
-  sc88_tva.c
-  sc88_tva.h
-  sc88_tvf.c
-  sc88_tvf.h
-  sc88_wave.c
-  sc88_wave.h
+  engines/xp/sc88_device.c
+  engines/xp/sc88_device.h
+  engines/xp/sc88_engine.c
+  engines/xp/sc88_engine.h
+  engines/xp/sc88_oscillator.c
+  engines/xp/sc88_oscillator.h
+  engines/xp/sc88_output.c
+  engines/xp/sc88_output.h
+  engines/xp/sc88_lfo.c
+  engines/xp/sc88_lfo.h
+  engines/xp/sc88_pan.c
+  engines/xp/sc88_pan.h
+  engines/xp/sc88_pitch.c
+  engines/xp/sc88_pitch.h
+  engines/xp/sc88_chorus.c
+  engines/xp/sc88_chorus.h
+  engines/xp/sc88_delay.c
+  engines/xp/sc88_delay.h
+  engines/xp/sc88_eq.c
+  engines/xp/sc88_eq.h
+  engines/xp/sc88_renderer.c
+  engines/xp/sc88_renderer.h
+  engines/xp/sc88_reverb.c
+  engines/xp/sc88_reverb.h
+  engines/xp/sc88_rom.c
+  engines/xp/sc88_rom.h
+  engines/xp/sc88_tva.c
+  engines/xp/sc88_tva.h
+  engines/xp/sc88_tvf.c
+  engines/xp/sc88_tvf.h
+  engines/xp/sc88_wave.c
+  engines/xp/sc88_wave.h
   settings.cc
   settings.h
   slew_calc.h
@@ -101,7 +101,7 @@ set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE
 # report are internal to the engine and no measurement of the rendered audio
 # can separate them.
 add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
-  sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
+  engines/xp/sc88_rom.c engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/sc88_wave.c)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_tvf_probe PRIVATE m)
@@ -109,7 +109,7 @@ endif()
 set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
-  sc88_oscillator.c sc88_rom.c sc88_wave.c)
+  engines/xp/sc88_oscillator.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
 target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_dump_samples PRIVATE m)
@@ -123,9 +123,11 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
-    sc88_engine.c sc88_lfo.c sc88_oscillator.c sc88_pan.c sc88_pitch.c
-    sc88_renderer.c sc88_reverb.c
-    sc88_rom.c sc88_tva.c sc88_tvf.c sc88_wave.c)
+    engines/xp/sc88_engine.c engines/xp/sc88_lfo.c engines/xp/sc88_oscillator.c
+    engines/xp/sc88_pan.c engines/xp/sc88_pitch.c
+    engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
+    engines/xp/sc88_rom.c engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
+    engines/xp/sc88_wave.c)
 
   function(sc88_test name)
     add_executable(${name} ../tests/${name}.c ${ARGN})
@@ -142,23 +144,23 @@ if(BUILD_TESTING)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
-  sc88_test(sc88_wave_test sc88_wave.c)
-  sc88_test(sc88_oscillator_test sc88_oscillator.c)
-  sc88_test(sc88_reverb_test sc88_reverb.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_chorus_test sc88_chorus.c sc88_reverb.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_delay_test sc88_delay.c sc88_reverb.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_eq_test sc88_eq.c sc88_rom.c sc88_wave.c)
+  sc88_test(sc88_wave_test engines/xp/sc88_wave.c)
+  sc88_test(sc88_oscillator_test engines/xp/sc88_oscillator.c)
+  sc88_test(sc88_reverb_test engines/xp/sc88_reverb.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_chorus_test engines/xp/sc88_chorus.c engines/xp/sc88_reverb.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_delay_test engines/xp/sc88_delay.c engines/xp/sc88_reverb.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_eq_test engines/xp/sc88_eq.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
   # while checking nothing. The path is read from SC88_CONTROL_ROM by the
   # test itself, at run time, so ctest's own environment carries it
   # whatever the tree was configured with.
   set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
-  sc88_test(sc88_drum_test sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_lfo_test sc88_lfo.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_pitch_test sc88_pitch.c sc88_rom.c sc88_wave.c)
-  sc88_test(sc88_tvf_test sc88_rom.c sc88_tvf.c sc88_tva.c sc88_wave.c)
-  sc88_test(sc88_tva_test sc88_tva.c sc88_rom.c sc88_wave.c)
+  sc88_test(sc88_drum_test engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_lfo_test engines/xp/sc88_lfo.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_pitch_test engines/xp/sc88_pitch.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_tvf_test engines/xp/sc88_rom.c engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/sc88_wave.c)
+  sc88_test(sc88_tva_test engines/xp/sc88_tva.c engines/xp/sc88_rom.c engines/xp/sc88_wave.c)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.
@@ -169,7 +171,7 @@ if(BUILD_TESTING)
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test sc88_device.c sc88_chorus.c sc88_delay.c sc88_eq.c sc88_output.c ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test engines/xp/sc88_device.c engines/xp/sc88_chorus.c engines/xp/sc88_delay.c engines/xp/sc88_eq.c engines/xp/sc88_output.c ${SC88_VOICE_SOURCES})
 
   # Synth::reset() is reached through the public C++ API, so this one links the
   # library rather than the engine sources. ControlRom and WaveRom read files

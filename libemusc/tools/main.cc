@@ -175,8 +175,8 @@ Options parse_args(int argc, char **argv) {
       o.cpu_rom = dir + "/" + o.device + "_cpu.bin";
     if (o.wave_roms.empty()) {
       // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
-      // (SC88_WAVE_CHIP_COUNT in sc88_device.h), JV-880 2 (DeviceProfile
-      // waveRomBanks in devices/jv880.cc).
+      // (SC88_WAVE_CHIP_COUNT in engines/xp/sc88_device.h), JV-880 2
+      // (DeviceProfile waveRomBanks in devices/jv880.cc).
       int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 :
               (o.device == "sc88") ? 4 : 2;
       for (int k = 1; k <= n; k++)

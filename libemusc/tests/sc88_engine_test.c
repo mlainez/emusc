@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "sc88_engine.h"
+#include "engines/xp/sc88_engine.h"
 
 #include <assert.h>
 #ifdef NDEBUG

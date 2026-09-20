@@ -24,18 +24,18 @@ install(FILES AUTHORS ChangeLog COPYING COPYING.LESSER NEWS README.md DESTINATIO
 install(FILES
   src/control_rom.h
   src/params.h
-  src/sc88_device.h
-  src/sc88_engine.h
-  src/sc88_lfo.h
-  src/sc88_oscillator.h
-  src/sc88_pan.h
-  src/sc88_pitch.h
-  src/sc88_renderer.h
-  src/sc88_reverb.h
-  src/sc88_rom.h
-  src/sc88_tva.h
-  src/sc88_tvf.h
-  src/sc88_wave.h
+  src/engines/xp/sc88_device.h
+  src/engines/xp/sc88_engine.h
+  src/engines/xp/sc88_lfo.h
+  src/engines/xp/sc88_oscillator.h
+  src/engines/xp/sc88_pan.h
+  src/engines/xp/sc88_pitch.h
+  src/engines/xp/sc88_renderer.h
+  src/engines/xp/sc88_reverb.h
+  src/engines/xp/sc88_rom.h
+  src/engines/xp/sc88_tva.h
+  src/engines/xp/sc88_tvf.h
+  src/engines/xp/sc88_wave.h
   src/synth.h
   src/wave_rom.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/emusc COMPONENT dev)

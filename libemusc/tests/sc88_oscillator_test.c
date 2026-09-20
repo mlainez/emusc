@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "sc88_oscillator.h"
+#include "engines/xp/sc88_oscillator.h"
 
 #include <assert.h>
 #ifdef NDEBUG

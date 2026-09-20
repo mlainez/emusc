@@ -543,7 +543,10 @@ public:
 
     // The SC-88 is rendered by the sc88_* engine rather than by the Note and
     // Partial path, so this generation selects a different code path in Synth
-    // entirely, not another set of table offsets.
+    // entirely, not another set of table offsets. SC55/SC55mk2/JV880 above
+    // are Class G (one shared silicon design, this file's own machinery);
+    // SC-88 is Class X, a different chip family entirely, whose engine
+    // lives in engines/xp/ - see engines/xp/README.md.
     SC88    = 5
   };
 
