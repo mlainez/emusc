@@ -26,11 +26,13 @@ jobs:
             toolchain: cmake/toolchain-mingw-w64.cmake
             objdump: x86_64-w64-mingw32-objdump
             exe_name: emusc-render.exe
+            winmidi_name: emusc-winmidi.exe
           - name: windows-x86
             dep: 'cmake gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686'
             toolchain: cmake/toolchain-mingw-w32.cmake
             objdump: i686-w64-mingw32-objdump
             exe_name: emusc-render32.exe
+            winmidi_name: emusc-winmidi32.exe
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repo
@@ -65,31 +67,34 @@ jobs:
     # below flattens every job's artifacts into one asset list, where two
     # files both called emusc-render.exe would collide and one would
     # silently clobber the other.
-    - name: Collect Windows binary
+    - name: Collect Windows binaries
       if: matrix.name != 'linux'
       run: |
         mkdir -p release
         cp build/libemusc/tools/emusc-render.exe release/${{matrix.exe_name}}
+        cp build/emuscd/emusc-winmidi.exe release/${{matrix.winmidi_name}}
       shell: bash
 
-    # emuscd is ALSA-only (see the WIN32 guard in the top-level CMakeLists),
-    # so there's no Windows daemon to collect. emusc-render is expected to
-    # depend on nothing but core Windows DLLs, so it runs on an unmodified
-    # Windows 98 install with no MinGW runtime to distribute alongside it.
-    - name: Verify Windows binary is self-contained
+    # Both are expected to depend on nothing but core Windows DLLs (WINMM.dll
+    # for emusc-winmidi is a base OS component too, present since Windows 95),
+    # so they run on an unmodified Windows 98 install with no MinGW runtime
+    # to distribute alongside them. That's the DLL side of the floor only -
+    # see README.md's hardware-floor section for the CPU-instruction side
+    # (the statically-linked runtime itself still assumes a Pentium Pro or
+    # later on the 32-bit build; both need this untested on real hardware).
+    - name: Verify Windows binaries are self-contained
       if: matrix.name != 'linux'
       run: |
-        # grep exits 1 (not an error here) when nothing extra is found, which
-        # is the passing case - the || true keeps that from tripping the
-        # step's own set -e before the if below gets to look at $deps.
-        deps=$(${{matrix.objdump}} -p release/${{matrix.exe_name}} | grep -i "DLL Name" \
-               | grep -viE "kernel32|msvcrt" || true)
-        if [ -n "$deps" ]; then
-          echo "${{matrix.exe_name}} depends on DLLs beyond the Windows base system:"
-          echo "$deps"
-          exit 1
-        fi
-        echo "${{matrix.exe_name}} depends only on core Windows DLLs"
+        for f in ${{matrix.exe_name}} ${{matrix.winmidi_name}}; do
+          deps=$(${{matrix.objdump}} -p release/$f | grep -i "DLL Name" \
+                 | grep -viE "kernel32|msvcrt|winmm" || true)
+          if [ -n "$deps" ]; then
+            echo "$f depends on DLLs beyond the Windows base system:"
+            echo "$deps"
+            exit 1
+          fi
+          echo "$f depends only on core Windows DLLs"
+        done
       shell: bash
 
     - name: Upload artifacts
