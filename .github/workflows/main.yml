@@ -106,6 +106,13 @@ jobs:
     permissions:
       contents: write
     steps:
+    # gh release delete --cleanup-tag shells out to local git to remove the
+    # tag, which needs a .git to run in - this job had none, so the delete
+    # step below failed ("not a git repository") and was silently swallowed
+    # by its own `|| true`, leaving every past run's stale assets in place.
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
