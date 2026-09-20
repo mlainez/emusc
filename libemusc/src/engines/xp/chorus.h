@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_CHORUS_H
-#define EMUSC_SC88_CHORUS_H
+#ifndef EMUSC_XP_CHORUS_H
+#define EMUSC_XP_CHORUS_H
 
 #include "rom.h"
 
@@ -53,31 +53,53 @@ struct sc88_chorus {
   bool active;
 };
 
-/* One of the eight macro presets at `0x1587e + 8*macro`: pre-LPF, level,
- * feedback, delay, rate, depth, send to reverb and send to delay, in that
- * order. Writing the chorus macro address copies these eight bytes over the
- * rest of the block - SC88-CTL handler 0x3400 is the reverb handler 0x3388's
- * sibling and calls the same copy helper. */
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_device.c, which embeds struct sc88_chorus by value, and
+ * sc88_chorus_test.c). Each forwards to the real implementation in
+ * namespace EmuSC::Xp. */
 bool sc88_chorus_macro(const struct sc88_rom *rom, uint8_t macro,
                        uint8_t out[8]);
-
 bool sc88_chorus_init(struct sc88_chorus *ch, double output_rate);
 void sc88_chorus_destroy(struct sc88_chorus *ch);
 void sc88_chorus_reset(struct sc88_chorus *ch);
-
-/* The GS parameters as received, 0..127 each (`pre_lpf` 0..7). */
 void sc88_chorus_set_params(const struct sc88_rom *rom,
                             struct sc88_chorus *ch, uint8_t level,
                             uint8_t feedback, uint8_t delay, uint8_t rate,
                             uint8_t depth, uint8_t pre_lpf);
-
-/* Adds the chorus's stereo return to `stereo`, which already holds the dry
- * mix, from a mono send bus. */
 void sc88_chorus_process(struct sc88_chorus *ch, const float *send,
                          float *stereo, size_t frames);
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Chorus for the XP-generation-1 engine (see engines/xp/README.md). The
+// plain sc88_chorus struct above is shared, unrenamed, with sc88_device.c,
+// which embeds it by value and is not yet converted to C++.
+
+/* One of the eight macro presets at `0x1587e + 8*macro`: pre-LPF, level,
+ * feedback, delay, rate, depth, send to reverb and send to delay, in that
+ * order. Writing the chorus macro address copies these eight bytes over the
+ * rest of the block - SC88-CTL handler 0x3400 is the reverb handler 0x3388's
+ * sibling and calls the same copy helper. */
+bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8]);
+
+bool chorus_init(struct sc88_chorus *ch, double outputRate);
+void chorus_destroy(struct sc88_chorus *ch);
+void chorus_reset(struct sc88_chorus *ch);
+
+/* The GS parameters as received, 0..127 each (`preLpf` 0..7). */
+void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
+                        uint8_t level, uint8_t feedback, uint8_t delay,
+                        uint8_t rate, uint8_t depth, uint8_t preLpf);
+
+/* Adds the chorus's stereo return to `stereo`, which already holds the dry
+ * mix, from a mono send bus. */
+void chorus_process(struct sc88_chorus *ch, const float *send, float *stereo,
+                     size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

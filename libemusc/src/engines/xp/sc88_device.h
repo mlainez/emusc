@@ -2,7 +2,7 @@
 #ifndef EMUSC_SC88_DEVICE_H
 #define EMUSC_SC88_DEVICE_H
 
-#include "sc88_chorus.h"
+#include "chorus.h"
 #include "sc88_delay.h"
 #include "sc88_eq.h"
 #include "sc88_output.h"
