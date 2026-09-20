@@ -123,12 +123,15 @@ jobs:
     # scva-headless's own -render/-render32 convention): each architecture
     # now ships in its own archive, so this is no longer needed to avoid
     # asset collisions, but it still avoids a collision for anyone who
-    # extracts more than one Windows archive into the same directory.
+    # extracts more than one Windows archive into the same directory. On
+    # windows-x64, exe_name/winmidi_name already match the install tree's
+    # default names, so the mv is skipped rather than failing on "same file".
     - name: Rename Windows binaries
       if: matrix.os == 'windows'
       run: |
-        mv release/emusc-${{matrix.name}}/bin/emusc-render.exe release/emusc-${{matrix.name}}/bin/${{matrix.exe_name}}
-        mv release/emusc-${{matrix.name}}/bin/emusc-winmidi.exe release/emusc-${{matrix.name}}/bin/${{matrix.winmidi_name}}
+        BIN=release/emusc-${{matrix.name}}/bin
+        [ "emusc-render.exe" = "${{matrix.exe_name}}" ] || mv $BIN/emusc-render.exe $BIN/${{matrix.exe_name}}
+        [ "emusc-winmidi.exe" = "${{matrix.winmidi_name}}" ] || mv $BIN/emusc-winmidi.exe $BIN/${{matrix.winmidi_name}}
       shell: bash
 
     # Both are expected to depend on nothing but core Windows DLLs (WINMM.dll
