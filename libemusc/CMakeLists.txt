@@ -27,7 +27,7 @@ install(FILES
   src/engines/xp/sc88_device.h
   src/engines/xp/sc88_engine.h
   src/engines/xp/sc88_lfo.h
-  src/engines/xp/sc88_oscillator.h
+  src/engines/xp/oscillator.h
   src/engines/xp/sc88_pan.h
   src/engines/xp/sc88_pitch.h
   src/engines/xp/sc88_renderer.h

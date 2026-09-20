@@ -33,8 +33,8 @@ set(EMUSC_SOURCES
   engines/xp/sc88_device.h
   engines/xp/sc88_engine.c
   engines/xp/sc88_engine.h
-  engines/xp/sc88_oscillator.c
-  engines/xp/sc88_oscillator.h
+  engines/xp/oscillator.cc
+  engines/xp/oscillator.h
   engines/xp/sc88_output.c
   engines/xp/sc88_output.h
   engines/xp/sc88_lfo.c
@@ -109,7 +109,7 @@ endif()
 set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
-  engines/xp/sc88_oscillator.c engines/xp/rom.cc engines/xp/wave.cc)
+  engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
 target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_dump_samples PRIVATE m)
@@ -123,7 +123,7 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
-    engines/xp/sc88_engine.c engines/xp/sc88_lfo.c engines/xp/sc88_oscillator.c
+    engines/xp/sc88_engine.c engines/xp/sc88_lfo.c engines/xp/oscillator.cc
     engines/xp/sc88_pan.c engines/xp/sc88_pitch.c
     engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
@@ -145,7 +145,7 @@ if(BUILD_TESTING)
   endfunction()
 
   sc88_test(sc88_wave_test engines/xp/wave.cc)
-  sc88_test(sc88_oscillator_test engines/xp/sc88_oscillator.c)
+  sc88_test(sc88_oscillator_test engines/xp/oscillator.cc)
   sc88_test(sc88_reverb_test engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_chorus_test engines/xp/sc88_chorus.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_delay_test engines/xp/sc88_delay.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
