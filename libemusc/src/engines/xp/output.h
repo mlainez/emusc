@@ -16,8 +16,8 @@
  *  here rather than folded into a ROM-derived law is the whole point:
  *  one labelled place, easy to find and easy to remove.
  */
-#ifndef SC88_OUTPUT_H
-#define SC88_OUTPUT_H
+#ifndef EMUSC_XP_OUTPUT_H
+#define EMUSC_XP_OUTPUT_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -57,7 +57,7 @@ struct sc88_output_biquad {
 struct sc88_output {
   struct sc88_output_biquad section[SC88_OUTPUT_MAX_SECTIONS];
   unsigned sections;
-  /* The DAC's zero-order hold. See sc88_output.c for the measurement. */
+  /* The DAC's zero-order hold. See output.cc for the measurement. */
   float hold[SC88_OUTPUT_HOLD_TAPS];
   float hold_z[2][SC88_OUTPUT_HOLD_TAPS];
   unsigned hold_taps;
@@ -70,7 +70,10 @@ struct sc88_output {
   bool enabled;
 };
 
-/* Designs the profile at `rate` and clears the state. */
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_device.c, which embeds struct sc88_output by value, and
+ * sc88_output_test.c). Each forwards to the real implementation in
+ * namespace EmuSC::Xp. */
 void sc88_output_init(struct sc88_output *out, double rate);
 void sc88_output_reset(struct sc88_output *out);
 void sc88_output_process(struct sc88_output *out, float *stereo,
@@ -84,7 +87,7 @@ extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
 #define SC88_OUTPUT_DAC_RATE 32000.0
 
 /* The analog board's own poles, as the R and C that make them. See
-   sc88_output.c for the schematic they are read from. */
+   output.cc for the schematic they are read from. */
 #define SC88_OUTPUT_ANALOG_SECTIONS 5
 struct sc88_output_rc { double r_ohm, c_farad; };
 extern const struct sc88_output_rc
@@ -92,6 +95,20 @@ extern const struct sc88_output_rc
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Output stage (converter hold, analog board, DC blocker) for the
+// XP-generation-1 engine (see engines/xp/README.md). The plain C types
+// above are shared, unrenamed, with sc88_device.c, which embeds struct
+// sc88_output by value and is not yet converted to C++.
+
+/* Designs the profile at `rate` and clears the state. */
+void output_init(struct sc88_output *out, double rate);
+void output_reset(struct sc88_output *out);
+void output_process(struct sc88_output *out, float *stereo, size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

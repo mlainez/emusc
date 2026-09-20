@@ -35,8 +35,8 @@ set(EMUSC_SOURCES
   engines/xp/engine.h
   engines/xp/oscillator.cc
   engines/xp/oscillator.h
-  engines/xp/sc88_output.c
-  engines/xp/sc88_output.h
+  engines/xp/output.cc
+  engines/xp/output.h
   engines/xp/lfo.cc
   engines/xp/lfo.h
   engines/xp/pan.cc
@@ -151,6 +151,7 @@ if(BUILD_TESTING)
   sc88_test(sc88_chorus_test engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_delay_test engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_eq_test engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_output_test engines/xp/output.cc)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
   # while checking nothing. The path is read from SC88_CONTROL_ROM by the
@@ -172,7 +173,7 @@ if(BUILD_TESTING)
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test engines/xp/sc88_device.c engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/sc88_output.c ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test engines/xp/sc88_device.c engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/output.cc ${SC88_VOICE_SOURCES})
 
   # Synth::reset() is reached through the public C++ API, so this one links the
   # library rather than the engine sources. ControlRom and WaveRom read files

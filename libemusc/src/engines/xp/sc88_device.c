@@ -1230,7 +1230,7 @@ void sc88_device_render(struct sc88_device *device, float *stereo,
     sc88_reverb_process(&device->reverb, device->send_bus, stereo, frames);
   sc88_eq_process(&device->eq, stereo, frames);
   /* Last: the output stage. Everything above this line is the digital
-     machine; sc88_output.c is the one place that carries behaviour we
+     machine; output.cc is the one place that carries behaviour we
      have measured but not derived. */
   sc88_output_process(&device->output, stereo, frames);
 }

@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-/* See sc88_output.h for what this stage is and why it is not part of any
+/* See output.h for what this stage is and why it is not part of any
    ROM-derived law. */
-#include "sc88_output.h"
+#include "output.h"
 
-#include <math.h>
-#include <string.h>
+#include <cmath>
+#include <cstring>
+
+namespace EmuSC { namespace Xp {
 
 /* The response list is EMPTY, and that is the finding.
 
@@ -43,10 +45,10 @@
    The stage stays, with the DC blocker in it, because it is the one
    labelled place for this class of thing. C has no empty array, so one
    zeroed entry stands in the list and the count is zero. */
-const struct sc88_output_section SC88_OUTPUT_RESPONSE[1] = {
+extern "C" const struct sc88_output_section SC88_OUTPUT_RESPONSE[1] = {
   { SC88_OUTPUT_PEAKING, 0.0f, 0.0f, 0.0f },
 };
-const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
+extern "C" const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
 
 /* THE CONVERTER'S HOLD, and it is measured rather than assumed.
 
@@ -149,7 +151,8 @@ const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
    than run as biquads: all five sit above the engine's own Nyquist,
    where a bilinear transform has no pole to place, and the FIR is
    designed by frequency sampling, which does not care. */
-const struct sc88_output_rc SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS] = {
+extern "C" const struct sc88_output_rc
+  SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS] = {
   { 4.7e3, 100e-12 },   /* IC110 R146 || C152 */
   { 22.0e3, 100e-12 },  /* IC109 R140 || C144 */
   { 100.0, 680e-12 },   /* R138 + C141        */
@@ -157,26 +160,26 @@ const struct sc88_output_rc SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS] = {
   { 1.8e3, 1000e-12 },  /* R101 + C113        */
 };
 
+namespace {
+
 /* |H(f)| of the five one-pole sections above, at DC gain one. */
-static double sc88_output_analog_mag(double f)
+double analogMag(double f)
 {
   const double pi = 3.14159265358979323846;
   double mag = 1.0;
-  unsigned i;
-  for (i = 0; i < SC88_OUTPUT_ANALOG_SECTIONS; ++i) {
+  for (unsigned i = 0; i < SC88_OUTPUT_ANALOG_SECTIONS; ++i) {
     double fc = 1.0 / (2.0 * pi * SC88_OUTPUT_ANALOG[i].r_ohm *
                        SC88_OUTPUT_ANALOG[i].c_farad);
     double r = f / fc;
-    mag /= sqrt(1.0 + r * r);
+    mag /= std::sqrt(1.0 + r * r);
   }
   return mag;
 }
 
-static double sc88_output_i0(double x)
+double besselI0(double x)
 {
   double sum = 1.0, term = 1.0, xh = 0.5 * x;
-  int k;
-  for (k = 1; k <= 25; ++k) {
+  for (int k = 1; k <= 25; ++k) {
     term *= xh / k;
     sum += term * term;
   }
@@ -187,64 +190,59 @@ static double sc88_output_i0(double x)
    (pi f / 32000)| times the analog board's own response over the whole
    output band, by frequency sampling, then a Kaiser window so a 31-tap
    truncation does not ripple. */
-static void sc88_output_design_hold(struct sc88_output *out, double rate)
+void designHold(struct sc88_output *out, double rate)
 {
   const double pi = 3.14159265358979323846;
   const int half = SC88_OUTPUT_HOLD_TAPS / 2;
   const int steps = 4096;
   const double beta = 7.0;
-  const double i0beta = sc88_output_i0(beta);
+  const double i0beta = besselI0(beta);
   double h[SC88_OUTPUT_HOLD_TAPS];
   double sum = 0.0;
-  int k, j;
 
-  for (k = -half; k <= half; ++k) {
+  for (int k = -half; k <= half; ++k) {
     double acc = 0.0;
-    for (j = 0; j <= steps; ++j) {
+    for (int j = 0; j <= steps; ++j) {
       double f = 0.5 * rate * (double)j / (double)steps;
       double x = pi * f / SC88_OUTPUT_DAC_RATE;
-      double mag = (x > 1e-12) ? fabs(sin(x) / x) : 1.0;
+      double mag = (x > 1e-12) ? std::fabs(std::sin(x) / x) : 1.0;
       double w = (j == 0 || j == steps) ? 0.5 : 1.0;
-      mag *= sc88_output_analog_mag(f);
-      acc += w * mag * cos(2.0 * pi * f * (double)k / rate);
+      mag *= analogMag(f);
+      acc += w * mag * std::cos(2.0 * pi * f * (double)k / rate);
     }
     acc *= (0.5 * rate / (double)steps) * 2.0 / rate;
-    {
-      double wn = (double)k / (double)half;
-      double win = sc88_output_i0(beta * sqrt(fmax(0.0, 1.0 - wn * wn))) /
-        i0beta;
-      h[k + half] = acc * win;
-    }
+    double wn = (double)k / (double)half;
+    double win = besselI0(beta * std::sqrt(std::fmax(0.0, 1.0 - wn * wn))) /
+      i0beta;
+    h[k + half] = acc * win;
     sum += h[k + half];
   }
-  for (k = 0; k < SC88_OUTPUT_HOLD_TAPS; ++k)
+  for (int k = 0; k < SC88_OUTPUT_HOLD_TAPS; ++k)
     out->hold[k] = (float)(h[k] / sum);
   out->hold_taps = SC88_OUTPUT_HOLD_TAPS;
   out->hold_pos = 0;
 }
 
 /* Audio EQ Cookbook forms, normalised by a0. */
-static void sc88_output_design(struct sc88_output_biquad *bq,
-                               const struct sc88_output_section *s,
-                               double rate)
+void design(struct sc88_output_biquad *bq, const struct sc88_output_section *s,
+            double rate)
 {
-  double a = pow(10.0, s->gain_db / 40.0);
+  double a = std::pow(10.0, s->gain_db / 40.0);
   double w0 = 2.0 * 3.14159265358979323846 * s->frequency / rate;
-  double cw, sw, alpha;
-  double b0, b1, b2, a0, a1, a2;
 
-  memset(bq, 0, sizeof *bq);
+  std::memset(bq, 0, sizeof *bq);
   if (!(w0 > 0.0) || w0 >= 3.14159265358979323846) {
     bq->b0 = 1.0f;
     return;
   }
-  cw = cos(w0);
-  sw = sin(w0);
-  alpha = sw / (2.0 * (s->q > 0.0f ? s->q : 0.7071));
+  double cw = std::cos(w0);
+  double sw = std::sin(w0);
+  double alpha = sw / (2.0 * (s->q > 0.0f ? s->q : 0.7071));
 
+  double b0, b1, b2, a0, a1, a2;
   switch (s->type) {
   case SC88_OUTPUT_HIGH_SHELF: {
-    double sq = 2.0 * sqrt(a) * alpha;
+    double sq = 2.0 * std::sqrt(a) * alpha;
     b0 = a * ((a + 1.0) + (a - 1.0) * cw + sq);
     b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cw);
     b2 = a * ((a + 1.0) + (a - 1.0) * cw - sq);
@@ -254,7 +252,7 @@ static void sc88_output_design(struct sc88_output_biquad *bq,
     break;
   }
   case SC88_OUTPUT_LOW_SHELF: {
-    double sq = 2.0 * sqrt(a) * alpha;
+    double sq = 2.0 * std::sqrt(a) * alpha;
     b0 = a * ((a + 1.0) - (a - 1.0) * cw + sq);
     b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cw);
     b2 = a * ((a + 1.0) - (a - 1.0) * cw - sq);
@@ -279,20 +277,21 @@ static void sc88_output_design(struct sc88_output_biquad *bq,
   bq->a2 = (float)(a2 / a0);
 }
 
-void sc88_output_init(struct sc88_output *out, double rate)
+}  // namespace
+
+void output_init(struct sc88_output *out, double rate)
 {
-  unsigned i;
   if (!out)
     return;
-  memset(out, 0, sizeof *out);
+  std::memset(out, 0, sizeof *out);
   if (!(rate > 0.0))
     rate = 32000.0;
   out->sections = SC88_OUTPUT_RESPONSE_SECTIONS;
   if (out->sections > SC88_OUTPUT_MAX_SECTIONS)
     out->sections = SC88_OUTPUT_MAX_SECTIONS;
-  for (i = 0; i < out->sections; ++i)
-    sc88_output_design(&out->section[i], &SC88_OUTPUT_RESPONSE[i], rate);
-  sc88_output_design_hold(out, rate);
+  for (unsigned i = 0; i < out->sections; ++i)
+    design(&out->section[i], &SC88_OUTPUT_RESPONSE[i], rate);
+  designHold(out, rate);
   /* A 10 Hz single-pole blocker: 0.03 dB at 111 Hz and unity everywhere
      the audit measures, so it is not what removes the high frequency
      above - but it is not cited to any ROM either, and libEmuSC's SC-55
@@ -302,35 +301,31 @@ void sc88_output_init(struct sc88_output *out, double rate)
   out->enabled = true;
 }
 
-void sc88_output_reset(struct sc88_output *out)
+void output_reset(struct sc88_output *out)
 {
-  unsigned i;
   if (!out)
     return;
-  for (i = 0; i < SC88_OUTPUT_MAX_SECTIONS; ++i) {
-    memset(out->section[i].x1, 0, sizeof out->section[i].x1);
-    memset(out->section[i].x2, 0, sizeof out->section[i].x2);
-    memset(out->section[i].y1, 0, sizeof out->section[i].y1);
-    memset(out->section[i].y2, 0, sizeof out->section[i].y2);
+  for (unsigned i = 0; i < SC88_OUTPUT_MAX_SECTIONS; ++i) {
+    std::memset(out->section[i].x1, 0, sizeof out->section[i].x1);
+    std::memset(out->section[i].x2, 0, sizeof out->section[i].x2);
+    std::memset(out->section[i].y1, 0, sizeof out->section[i].y1);
+    std::memset(out->section[i].y2, 0, sizeof out->section[i].y2);
   }
   out->dc_x[0] = out->dc_x[1] = 0.0f;
   out->dc_y[0] = out->dc_y[1] = 0.0f;
-  memset(out->hold_z, 0, sizeof out->hold_z);
+  std::memset(out->hold_z, 0, sizeof out->hold_z);
   out->hold_pos = 0;
 }
 
-void sc88_output_process(struct sc88_output *out, float *stereo,
-                         size_t frames)
+void output_process(struct sc88_output *out, float *stereo, size_t frames)
 {
-  size_t k;
-  unsigned ch, i;
   if (!out || !out->enabled || !stereo)
     return;
-  for (k = 0; k < frames; ++k)
-    for (ch = 0; ch < 2; ++ch) {
+  for (size_t k = 0; k < frames; ++k)
+    for (unsigned ch = 0; ch < 2; ++ch) {
       float x = stereo[k * 2 + ch];
       float y;
-      for (i = 0; i < out->sections; ++i) {
+      for (unsigned i = 0; i < out->sections; ++i) {
         struct sc88_output_biquad *b = &out->section[i];
         y = b->b0 * x + b->b1 * b->x1[ch] + b->b2 * b->x2[ch] -
           b->a1 * b->y1[ch] - b->a2 * b->y2[ch];
@@ -345,13 +340,12 @@ void sc88_output_process(struct sc88_output *out, float *stereo,
       out->dc_y[ch] = y;
       stereo[k * 2 + ch] = y;
     }
-  for (k = 0; k < frames; ++k) {
+  for (size_t k = 0; k < frames; ++k) {
     unsigned pos = out->hold_pos;
-    for (ch = 0; ch < 2; ++ch) {
+    for (unsigned ch = 0; ch < 2; ++ch) {
       float acc = 0.0f;
-      unsigned t;
       out->hold_z[ch][pos] = stereo[k * 2 + ch];
-      for (t = 0; t < out->hold_taps; ++t) {
+      for (unsigned t = 0; t < out->hold_taps; ++t) {
         unsigned idx = (pos + out->hold_taps - t) % out->hold_taps;
         acc += out->hold[t] * out->hold_z[ch][idx];
       }
@@ -360,3 +354,26 @@ void sc88_output_process(struct sc88_output *out, float *stereo,
     out->hold_pos = (pos + 1) % out->hold_taps;
   }
 }
+
+}}  // namespace EmuSC::Xp
+
+// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
+extern "C" {
+
+void sc88_output_init(struct sc88_output *out, double rate)
+{
+  EmuSC::Xp::output_init(out, rate);
+}
+
+void sc88_output_reset(struct sc88_output *out)
+{
+  EmuSC::Xp::output_reset(out);
+}
+
+void sc88_output_process(struct sc88_output *out, float *stereo,
+                         size_t frames)
+{
+  EmuSC::Xp::output_process(out, stereo, frames);
+}
+
+}  // extern "C"
