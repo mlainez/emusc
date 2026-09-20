@@ -25,10 +25,12 @@ jobs:
             dep: 'cmake gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64'
             toolchain: cmake/toolchain-mingw-w64.cmake
             objdump: x86_64-w64-mingw32-objdump
+            exe_name: emusc-render.exe
           - name: windows-x86
             dep: 'cmake gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686'
             toolchain: cmake/toolchain-mingw-w32.cmake
             objdump: i686-w64-mingw32-objdump
+            exe_name: emusc-render32.exe
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repo
@@ -58,11 +60,16 @@ jobs:
         if [ -f build/libemusc/tools/emusc-render ]; then cp build/libemusc/tools/emusc-render release/; fi
       shell: bash
 
+    # Named per architecture (emusc-render.exe / emusc-render32.exe, matching
+    # scva-headless's own -render/-render32 convention): the nightly release
+    # below flattens every job's artifacts into one asset list, where two
+    # files both called emusc-render.exe would collide and one would
+    # silently clobber the other.
     - name: Collect Windows binary
       if: matrix.name != 'linux'
       run: |
         mkdir -p release
-        cp build/libemusc/tools/emusc-render.exe release/
+        cp build/libemusc/tools/emusc-render.exe release/${{matrix.exe_name}}
       shell: bash
 
     # emuscd is ALSA-only (see the WIN32 guard in the top-level CMakeLists),
@@ -75,14 +82,14 @@ jobs:
         # grep exits 1 (not an error here) when nothing extra is found, which
         # is the passing case - the || true keeps that from tripping the
         # step's own set -e before the if below gets to look at $deps.
-        deps=$(${{matrix.objdump}} -p release/emusc-render.exe | grep -i "DLL Name" \
+        deps=$(${{matrix.objdump}} -p release/${{matrix.exe_name}} | grep -i "DLL Name" \
                | grep -viE "kernel32|msvcrt" || true)
         if [ -n "$deps" ]; then
-          echo "emusc-render.exe depends on DLLs beyond the Windows base system:"
+          echo "${{matrix.exe_name}} depends on DLLs beyond the Windows base system:"
           echo "$deps"
           exit 1
         fi
-        echo "emusc-render.exe depends only on core Windows DLLs"
+        echo "${{matrix.exe_name}} depends only on core Windows DLLs"
       shell: bash
 
     - name: Upload artifacts
@@ -103,6 +110,17 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         path: artifacts
+
+    # softprops/action-gh-release only adds/overwrites the files it's given;
+    # it never removes an asset that a past run uploaded but the current one
+    # doesn't produce. Without this, "nightly" silently accumulates stale
+    # binaries from whatever the workflow used to build, forever appearing
+    # alongside the current ones. Deleting first makes each nightly an exact
+    # snapshot of this run. There's nothing to delete on the very first run.
+    - name: Delete previous nightly release
+      run: gh release delete nightly --yes --cleanup-tag || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create rolling release
       uses: softprops/action-gh-release@v2
