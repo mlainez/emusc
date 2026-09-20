@@ -72,13 +72,17 @@ jobs:
     - name: Verify Windows binary is self-contained
       if: matrix.name != 'linux'
       run: |
+        # grep exits 1 (not an error here) when nothing extra is found, which
+        # is the passing case - the || true keeps that from tripping the
+        # step's own set -e before the if below gets to look at $deps.
         deps=$(${{matrix.objdump}} -p release/emusc-render.exe | grep -i "DLL Name" \
-               | grep -viE "kernel32|msvcrt")
+               | grep -viE "kernel32|msvcrt" || true)
         if [ -n "$deps" ]; then
           echo "emusc-render.exe depends on DLLs beyond the Windows base system:"
           echo "$deps"
           exit 1
         fi
+        echo "emusc-render.exe depends only on core Windows DLLs"
       shell: bash
 
     - name: Upload artifacts
