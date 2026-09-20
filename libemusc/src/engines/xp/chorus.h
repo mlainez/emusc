@@ -54,9 +54,9 @@ struct sc88_chorus {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sc88_device.c, which embeds struct sc88_chorus by value, and
- * sc88_chorus_test.c). Each forwards to the real implementation in
- * namespace EmuSC::Xp. */
+ * below (struct sc88_device in device.h, which embeds struct sc88_chorus
+ * by value, and sc88_chorus_test.c). Each forwards to the real
+ * implementation in namespace EmuSC::Xp. */
 bool sc88_chorus_macro(const struct sc88_rom *rom, uint8_t macro,
                        uint8_t out[8]);
 bool sc88_chorus_init(struct sc88_chorus *ch, double output_rate);
@@ -75,8 +75,9 @@ void sc88_chorus_process(struct sc88_chorus *ch, const float *send,
 namespace EmuSC { namespace Xp {
 
 // Chorus for the XP-generation-1 engine (see engines/xp/README.md). The
-// plain sc88_chorus struct above is shared, unrenamed, with sc88_device.c,
-// which embeds it by value and is not yet converted to C++.
+// plain sc88_chorus struct above is shared, unrenamed, with struct
+// sc88_device (device.h), which embeds it by value, and with
+// sc88_device_test.c and sc88_chorus_test.c, which read it directly.
 
 /* One of the eight macro presets at `0x1587e + 8*macro`: pre-LPF, level,
  * feedback, delay, rate, depth, send to reverb and send to delay, in that

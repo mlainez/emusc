@@ -29,8 +29,8 @@ set(EMUSC_SOURCES
   resampler.h
   reverb.cc
   reverb.h
-  engines/xp/sc88_device.c
-  engines/xp/sc88_device.h
+  engines/xp/device.cc
+  engines/xp/device.h
   engines/xp/engine.cc
   engines/xp/engine.h
   engines/xp/oscillator.cc
@@ -180,7 +180,7 @@ if(BUILD_TESTING)
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   set_property(TEST sc88_renderer_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test engines/xp/sc88_device.c engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/output.cc ${SC88_VOICE_SOURCES})
+  sc88_test(sc88_device_test engines/xp/device.cc engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/output.cc ${SC88_VOICE_SOURCES})
   set_property(TEST sc88_device_test PROPERTY SKIP_RETURN_CODE 77)
 
   # Synth::reset() is reached through the public C++ API, so this one links the

@@ -97,7 +97,7 @@ typedef float (*sc88_tvf_audio_transfer_fn)(
   double period_fraction, float input);
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, sc88_tvf_probe.c, and
+ * below (struct sc88_device in device.h, sc88_tvf_probe.c, and
  * sc88_tvf_test.c, all of which read these structs' fields directly).
  * Each forwards to the real implementation in namespace EmuSC::Xp. */
 bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
@@ -151,8 +151,9 @@ namespace EmuSC { namespace Xp {
 
 // TVF (cutoff/resonance control law, and the provisional audio-side state-
 // variable filter) for the XP-generation-1 engine (see engines/xp/README.md).
-// The plain C types above are shared, unrenamed, with sibling engines/xp/*.c
-// modules not yet ported.
+// The plain C types above are shared, unrenamed, with struct sc88_device
+// (device.h), which embeds the per-voice component holding them by value,
+// and with sc88_tvf_test.c, which reads them directly.
 //
 // The control-law functions below (prepare_registers through
 // advance_registers) are [FW-EXACT]: they reproduce the firmware's own
@@ -160,11 +161,12 @@ namespace EmuSC { namespace Xp {
 // not - they are a measured model of the still-undecoded XP audio path, and
 // the "_provisional" name is load-bearing, not decorative. That split is
 // kept visible in the ordering of this file, not in a second file pair: the
-// audio state is a plain struct embedded by value in sc88_device.c's
-// per-voice component (not yet converted to C++), so it cannot yet hold an
-// EmuSC::SVF - the topology this filter shares with the SC-55 path's
-// svf.h - directly. Once the renderer becomes a real C++ object (T10/T11),
-// replacing this section with an EmuSC::SVF member is the natural follow-up.
+// audio state is a plain struct embedded by value in the per-voice
+// component, which is itself embedded by value in struct sc88_device for
+// sc88_device_test.c's sake, so it cannot yet hold an EmuSC::SVF - the
+// topology this filter shares with the SC-55 path's svf.h - directly.
+// Replacing this section with an EmuSC::SVF member is the natural
+// follow-up whenever that constraint lifts.
 
 /* pre_base_modulation is the wrapped key/dynamic word prepared before the
  * base-table lookup, carrying the two LFO filter terms alongside the key

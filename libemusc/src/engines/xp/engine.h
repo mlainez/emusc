@@ -241,9 +241,9 @@ struct sc88_engine {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sc88_device.c, which embeds struct sc88_engine by value, and
- * sc88_engine_test.c). Each forwards to the real implementation in
- * namespace EmuSC::Xp. */
+ * below (struct sc88_device in device.h, which embeds struct sc88_engine
+ * by value, and sc88_engine_test.c). Each forwards to the real
+ * implementation in namespace EmuSC::Xp. */
 bool sc88_engine_init(struct sc88_engine *engine,
                       const struct sc88_renderer *renderer);
 void sc88_engine_destroy(struct sc88_engine *engine);
@@ -317,8 +317,9 @@ namespace EmuSC { namespace Xp {
 
 // Voice engine (allocation, scheduling, mixing) for the XP-generation-1
 // engine (see engines/xp/README.md). The plain C types above are shared,
-// unrenamed, with sc88_device.c, which embeds struct sc88_engine by value
-// and is not yet converted to C++.
+// unrenamed, with struct sc88_device (device.h), which embeds struct
+// sc88_engine by value, and with sc88_engine_test.c, which reads it
+// directly.
 //
 // Three concerns share this file rather than splitting into PartState,
 // VoiceAllocator and VoiceScheduler, as originally hypothesised: all three
@@ -327,10 +328,11 @@ namespace EmuSC { namespace Xp {
 // not by a design choice this file is free to make. The boundary is
 // visible in this file's own section comments instead - allocation
 // (init, note_on/note_off, free/pop list bookkeeping), part state
-// (set_part_*, held for sc88_device.c's controller writes), and the
+// (set_part_*, held for struct sc88_device's controller writes), and the
 // scheduler (run_scheduler, render_with_send, the shared-LFO table) - so
-// that splitting them out is mechanical once sc88_device.c itself
-// converts (T17) and this struct can become real member state.
+// that splitting them out is mechanical whenever the test file's own
+// direct field access is retired and this struct can become real member
+// state (see device.h's own note on the same tradeoff).
 
 bool engine_init(struct sc88_engine *engine,
                   const struct sc88_renderer *renderer);

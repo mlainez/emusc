@@ -18,7 +18,7 @@
 
 
 #include "synth.h"
-#include "engines/xp/sc88_device.h"
+#include "engines/xp/device.h"
 #include "part.h"
 #include "settings.h"
 

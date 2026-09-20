@@ -24,7 +24,7 @@ install(FILES AUTHORS ChangeLog COPYING COPYING.LESSER NEWS README.md DESTINATIO
 install(FILES
   src/control_rom.h
   src/params.h
-  src/engines/xp/sc88_device.h
+  src/engines/xp/device.h
   src/engines/xp/engine.h
   src/engines/xp/lfo.h
   src/engines/xp/oscillator.h

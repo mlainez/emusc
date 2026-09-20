@@ -92,8 +92,8 @@ double sc88_lfo_frequency(uint16_t increment);
 namespace EmuSC { namespace Xp {
 
 // LFO oscillator for the XP-generation-1 engine (see engines/xp/README.md).
-// The plain C types above are shared, unrenamed, with sibling
-// engines/xp/*.c modules not yet ported to C++.
+// The plain C types above are shared, unrenamed, with sc88_device_test.c,
+// which embeds struct sc88_lfo by value through renderer.h and engine.h.
 
 /* The live rate contribution, from the cached controller and poly-pressure
  * word the part composes. Clipped before doubling, and the signed product's

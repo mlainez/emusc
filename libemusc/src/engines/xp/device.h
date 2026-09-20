@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_DEVICE_H
-#define EMUSC_SC88_DEVICE_H
+#ifndef EMUSC_XP_DEVICE_H
+#define EMUSC_XP_DEVICE_H
 
 #include "chorus.h"
 #include "delay.h"
@@ -182,8 +182,11 @@ struct sc88_device {
   bool initialized;
 };
 
-/* Input buffers are copied. Raw images are the four physical two-MiB dumps
- * in selector order 00/01, 10/11, 20/21, 30/31. */
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (synth.cc, which holds an opaque struct sc88_device* and calls
+ * only these functions, and sc88_device_test.c, which reads the struct's
+ * fields directly). Each forwards to the real implementation in namespace
+ * EmuSC::Xp. */
 bool sc88_device_init_raw(struct sc88_device *device,
                           const uint8_t *control_rom,
                           size_t control_rom_size,
@@ -191,48 +194,93 @@ bool sc88_device_init_raw(struct sc88_device *device,
                           const size_t raw_sizes[SC88_WAVE_CHIP_COUNT],
                           double output_rate,
                           enum sc88_fractional_wrap wrap);
-
-/* Same ownership contract, for already descrambled two-MiB chip images. */
 bool sc88_device_init_decoded(
   struct sc88_device *device, const uint8_t *control_rom,
   size_t control_rom_size,
   const uint8_t *const decoded_chips[SC88_WAVE_CHIP_COUNT],
   const size_t decoded_sizes[SC88_WAVE_CHIP_COUNT], double output_rate,
   enum sc88_fractional_wrap wrap);
-
 void sc88_device_destroy(struct sc88_device *device);
 void sc88_device_reset_controllers(struct sc88_device *device);
 void sc88_device_set_master_volume(struct sc88_device *device, uint8_t value);
 void sc88_device_set_master_pan(struct sc88_device *device, uint8_t value);
-
-/* MIDI port 0 addresses parts 0..15 and port 1 addresses parts 16..31.
- * Supported channel messages: note on/off, pitch bend, program change,
- * CC0/6/7/10/11/32/64/66/98..101/121, RPN 00/00 bend sensitivity, and
- * NRPN 01/20..21 cutoff/resonance.
- * Unsupported messages return false without changing state. */
-/* One System Exclusive message, with or without its leading `f0` and
- * trailing `f7`. Returns false for a message that is not a well-formed GS
- * DT1 for this device - a wrong manufacturer or model, a bad checksum, a
- * truncated packet - and true once the packet has been applied, whether or
- * not every address in it was one this implementation acts on.
- */
 bool sc88_device_sysex(struct sc88_device *device, uint8_t port,
                        const uint8_t *data, size_t size);
-
 bool sc88_device_midi(struct sc88_device *device, uint8_t port,
                       uint8_t status, uint8_t data1, uint8_t data2);
-
-/* One part's cached controller-matrix cutoff word, the value the firmware
- * holds at DP:1c34 + part. Exposed so the arithmetic can be checked on its
- * own; the device recomposes it whenever one of its inputs moves. */
 int16_t sc88_device_matrix_cutoff_word(
   const struct sc88_channel_state *channel);
-
 void sc88_device_render(struct sc88_device *device, float *stereo,
                         size_t frames);
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Top-level MIDI device (lifecycle, SysEx/MIDI protocol decoding, the
+// controller-to-engine parameter-sync bridge, and effects-chain ownership)
+// for the XP-generation-1 engine (see engines/xp/README.md). The plain C
+// types above are shared, unrenamed, with synth.cc (opaque pointer only)
+// and sc88_device_test.c (direct field access).
+//
+// This is the last engines/xp/*.c module to convert, and the first one
+// where nothing outside this file's own tests embeds these structs by
+// value any more - the ABI constraint every earlier hub task (tvf,
+// renderer, engine) deferred its SRP split on is gone. It stays a single
+// file here anyway, matching every other hub task's own house style
+// rather than restructuring on the strength of a constraint lifting: a
+// three-way split into MidiDecoder (sysex/midi protocol decode),
+// EffectsBus (reverb/chorus/delay/eq/output ownership and the render
+// chain) and a retained Device facade is the natural next step, and the
+// boundary is visible below in this file's own section comments. Protocol
+// decoding is plausibly generic XP SysEx/MIDI shape, shared with a future
+// JV-1080; the parameter-sync bridge (GS controller state -> engine
+// registers) is plausibly SC-88-specific. That split, and the
+// synth.h/synth.cc change from an opaque struct sc88_device* to a real
+// EmuSC::Xp::Device*, is what the backlog's optional final task retires
+// the extern "C" shims for.
+
+bool device_init_raw(struct sc88_device *device, const uint8_t *controlRom,
+                      size_t controlRomSize,
+                      const uint8_t *const rawChips[SC88_WAVE_CHIP_COUNT],
+                      const size_t rawSizes[SC88_WAVE_CHIP_COUNT],
+                      double outputRate, enum sc88_fractional_wrap wrap);
+bool device_init_decoded(
+  struct sc88_device *device, const uint8_t *controlRom,
+  size_t controlRomSize,
+  const uint8_t *const decodedChips[SC88_WAVE_CHIP_COUNT],
+  const size_t decodedSizes[SC88_WAVE_CHIP_COUNT], double outputRate,
+  enum sc88_fractional_wrap wrap);
+void device_destroy(struct sc88_device *device);
+void device_reset_controllers(struct sc88_device *device);
+void device_set_master_volume(struct sc88_device *device, uint8_t value);
+void device_set_master_pan(struct sc88_device *device, uint8_t value);
+
+/* One System Exclusive message, with or without its leading `f0` and
+ * trailing `f7`. Returns false for a message that is not a well-formed GS
+ * DT1 for this device - a wrong manufacturer or model, a bad checksum, a
+ * truncated packet - and true once the packet has been applied, whether or
+ * not every address in it was one this implementation acts on. */
+bool device_sysex(struct sc88_device *device, uint8_t port,
+                   const uint8_t *data, size_t size);
+
+/* MIDI port 0 addresses parts 0..15 and port 1 addresses parts 16..31.
+ * Supported channel messages: note on/off, pitch bend, program change,
+ * CC0/6/7/10/11/32/64/66/98..101/121, RPN 00/00 bend sensitivity, and
+ * NRPN 01/20..21 cutoff/resonance. Unsupported messages return false
+ * without changing state. */
+bool device_midi(struct sc88_device *device, uint8_t port, uint8_t status,
+                  uint8_t data1, uint8_t data2);
+
+/* One part's cached controller-matrix cutoff word, the value the firmware
+ * holds at DP:1c34 + part. Exposed so the arithmetic can be checked on its
+ * own; the device recomposes it whenever one of its inputs moves. */
+int16_t device_matrix_cutoff_word(const struct sc88_channel_state *channel);
+
+void device_render(struct sc88_device *device, float *stereo, size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

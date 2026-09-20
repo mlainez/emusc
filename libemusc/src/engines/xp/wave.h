@@ -107,9 +107,9 @@ namespace EmuSC { namespace Xp {
 // behavior known to transfer to a sibling until measured on one.
 //
 // The plain C types above (sc88_wave_descriptor and friends) are shared,
-// unrenamed, with sibling engines/xp/*.c modules not yet ported to C++;
-// they stay as they are so this conversion doesn't force changes onto
-// code outside this file.
+// unrenamed, with sc88_device_test.c, which reads them directly, and with
+// the extern "C" compatibility surface every sibling engines/xp/ module
+// keeps for callers still using the pre-conversion sc88_* names.
 
 bool wave_descriptor_parse(const uint8_t *raw, size_t size,
                             struct sc88_wave_descriptor *out);

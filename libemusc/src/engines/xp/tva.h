@@ -102,7 +102,7 @@ struct sc88_tva_envelope {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, sc88_tvf_probe.c, and
+ * below (struct sc88_device in device.h, sc88_tvf_probe.c, and
  * sc88_tva_test.c, all of which read these structs' fields directly or
  * call sc88_tva_curve_decode/_progress). Each forwards to the real
  * implementation in namespace EmuSC::Xp. */

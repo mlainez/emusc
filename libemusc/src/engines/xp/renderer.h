@@ -173,9 +173,10 @@ struct sc88_render_voice {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sc88_device.c, which embeds the structs above by value through
- * engine.h, and sc88_renderer_test.c, which reads their fields directly).
- * Each forwards to the real implementation in namespace EmuSC::Xp. */
+ * below (struct sc88_device in device.h, which embeds the structs above
+ * by value through engine.h, and sc88_renderer_test.c, which reads their
+ * fields directly). Each forwards to the real implementation in namespace
+ * EmuSC::Xp. */
 uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
                                    uint8_t midi_key);
 uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
@@ -264,17 +265,19 @@ namespace EmuSC { namespace Xp {
 
 // Renderer (per-voice tone resolution and rendering) for the
 // XP-generation-1 engine (see engines/xp/README.md). The plain C types
-// above are shared, unrenamed, with sc88_device.c, which embeds
-// sc88_render_component and sc88_render_voice by value through engine.h
-// and is not yet converted to C++.
+// above are shared, unrenamed, with struct sc88_device (device.h), which
+// embeds sc88_render_component and sc88_render_voice by value through
+// engine.h, and with sc88_renderer_test.c, which reads their fields
+// directly.
 //
 // Two concerns share this file rather than splitting into a ToneSelector
 // and a Voice, as originally hypothesised: tone/zone resolution
 // (renderer_note_on_tone, private below) directly fills in the very
 // sc88_render_component fields the per-sample render loop reads, and both
 // sides are struct-shaped by the same ABI constraint above. A split
-// becomes natural once sc88_device.c itself converts (T17) and these
-// structs can become real member state instead of a shared C layout.
+// becomes natural whenever the test file's own direct field access is
+// retired and these structs can become real member state instead of a
+// shared C layout.
 
 /* Firmware key transform at SC88-CTL 0x60c7..0x6123. */
 uint8_t renderer_selector_key(const struct sc88_component *component,
