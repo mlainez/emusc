@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_RENDERER_H
-#define EMUSC_SC88_RENDERER_H
+#ifndef EMUSC_XP_RENDERER_H
+#define EMUSC_XP_RENDERER_H
 
 #include "oscillator.h"
 #include "pan.h"
@@ -107,7 +107,7 @@ struct sc88_render_component {
 
      `0x2a7` is the exponential family's entry at rate index 2, so the
      approach is one of about ten time constants per control period:
-     `sc88_tva_curve_decode` gives it `rate = 679/64`, a time constant of
+     `tva_curve_decode` gives it `rate = 679/64`, a time constant of
      0.75 ms. It is a de-click, not a glide. */
   uint32_t static_gain_q17;
   uint32_t static_gain_current_q17;
@@ -172,37 +172,22 @@ struct sc88_render_voice {
   unsigned only_component;
 };
 
-/* Firmware key transform at SC88-CTL 0x60c7..0x6123. */
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_engine.c, sc88_device.c, and sc88_renderer_test.c, all of
+ * which embed the structs above by value or read their fields directly).
+ * Each forwards to the real implementation in namespace EmuSC::Xp. */
 uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
                                    uint8_t midi_key);
-
-/* The remainder that transform drops, in pitch units (0..1364):
-   SC88-CTL 0x611e..0x6121 scale it by 0x555, one semitone. */
 uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
                                     uint8_t midi_key);
-
-/* Everything `sc88_renderer_pitch_word_at` needs to recompose the static
-   pitch word for a key that is moving, taken from the same note-on inputs
-   `sc88_renderer_static_pitch_word` is given. */
 bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
                                     const struct sc88_tone *tone,
                                     const struct sc88_component *component,
                                     const struct sc88_wave_descriptor *desc,
                                     struct sc88_portamento *portamento);
-
-/* The static pitch word for a fractional MIDI key, 16.16 - what SC88-CTL
-   `0x6063` and `0x6077` recompose every control period while a glide runs.
-   At a whole key it returns exactly what `sc88_renderer_static_pitch_word`
-   composed for that key, so a finished glide lands on the note-on value
-   rather than near it. */
 bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
                                  const struct sc88_portamento *portamento,
                                  uint32_t key_q16, uint32_t *pitch_word);
-
-/* Static note-on pitch before controllers, LFOs and the pitch envelope.
- * It needs BOTH keys: `0x6124` indexes the tone-common pitch table with the
- * raw key at RAM `0x245a`, while `0x609a` takes the root key off the
- * transformed one at `0x19fc`. */
 bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      const struct sc88_tone *tone,
                                      const struct sc88_component *component,
@@ -211,7 +196,6 @@ bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
                                      uint8_t selector_key,
                                      uint16_t key_fraction,
                                      uint32_t *pitch_word);
-
 bool sc88_renderer_init(struct sc88_renderer *renderer,
                         const uint8_t *control_rom, size_t control_rom_size,
                         const struct sc88_wave_bank *banks, size_t bank_count,
@@ -220,28 +204,13 @@ void sc88_renderer_set_levels(struct sc88_renderer *renderer,
                               const struct sc88_tva_levels *levels);
 void sc88_renderer_set_pan(struct sc88_renderer *renderer,
                            const struct sc88_pan_controls *pan);
-/* Instrumentation: 1 sounds only the tone's first component, 2 only its
- * second, 0 (the default) sounds them all. */
 void sc88_renderer_set_only_component(struct sc88_renderer *renderer,
                                       unsigned which);
-
 void sc88_renderer_set_tvf_audio_transfer(
   struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
   void *user);
 void sc88_renderer_set_tvf_controls(
   struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls);
-
-/* There is no gain argument and no gain field on the voice. The firmware
- * composes a voice's amplitude in exactly one place - `compose_voice_amplitude`
- * subtracts its five level sources and the component's static attenuation from
- * one headroom - so a float multiply beside it is an escape hatch with no
- * counterpart in the device, and anything put through it is not being modelled.
- * The kit's per-note level was applied that way and, because the engine's mix
- * reads its own copy of the caller's trim rather than the voice's, it reached
- * `sc88_renderer_render` and no song. Output trim belongs to the caller.
- *
- * Static TVA, release, pan and exact TVF control state are native ROM paths;
- * the audio-side TVF callback and effects remain explicit seams. */
 bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
                            struct sc88_render_voice *voice,
                            uint8_t variation, uint8_t program,
@@ -255,10 +224,6 @@ bool sc88_renderer_note_on_with_controls(
   uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
   const struct sc88_tva_levels *levels,
   const struct sc88_pan_controls *pan);
-/* `map` is the tone map, which chooses the row of the variation lookup the
- * bank is taken from, exactly as it chooses a rhythm part's kit set. The
- * three entry points above have no part state to take it from and use the
- * reset default, `SC88_TONE_MAP_SC88`. */
 bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
@@ -268,9 +233,6 @@ bool sc88_renderer_note_on_with_part_controls(
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls);
-/* As above, and `zone_key` chooses the zone instead of `key`. A portamento
- * note hands in the higher of the glide's two ends, which is what SC88-CTL
- * `0x602e` computes and `0x4e2c` is given. */
 bool sc88_renderer_note_on_with_glide(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
@@ -280,13 +242,6 @@ bool sc88_renderer_note_on_with_glide(
   const struct sc88_tvf_controls *tvf_controls,
   const struct sc88_tva_controls *tva_controls,
   const struct sc88_lfo_controls *lfo_controls);
-/* A rhythm-part note. The kit record supplies the tone, the key it is played
- * at, and this key's own level and pan, so a kick is not a sample transposed
- * to whatever key triggered it. `note` receives the whole record when the
- * caller wants its sends or assign group.
- * `map` is the tone map, which chooses the kit set; `setup` is the drum
- * setup the part plays from, which chooses the half of `overlay` its own
- * `41 mf rr` edits are in. They are separate axes on this machine. */
 bool sc88_renderer_note_on_drum(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
@@ -297,17 +252,161 @@ bool sc88_renderer_note_on_drum(
   const struct sc88_lfo_controls *lfo_controls,
   const struct sc88_drum_overlay *overlay, uint8_t setup,
   struct sc88_drum_note *note);
-
 void sc88_renderer_voice_destroy(struct sc88_render_voice *voice);
 bool sc88_renderer_voice_active(const struct sc88_render_voice *voice);
-
-/* Interleaved stereo dry output. No clipping is applied because XP summing
- * precision is open. */
 size_t sc88_renderer_render(struct sc88_render_voice *voice,
                             float *stereo, size_t frames);
 
 #ifdef __cplusplus
 }
+
+namespace EmuSC { namespace Xp {
+
+// Renderer (per-voice tone resolution and rendering) for the
+// XP-generation-1 engine (see engines/xp/README.md). The plain C types
+// above are shared, unrenamed, with sibling engines/xp/*.c modules not yet
+// ported (sc88_engine.c embeds sc88_render_component and
+// sc88_render_voice by value in its own not-yet-converted structs).
+//
+// Two concerns share this file rather than splitting into a ToneSelector
+// and a Voice, as originally hypothesised: tone/zone resolution
+// (renderer_note_on_tone, private below) directly fills in the very
+// sc88_render_component fields the per-sample render loop reads, and both
+// sides are struct-shaped by the same ABI constraint above. A split
+// becomes natural once sc88_engine.c itself converts (T11) and these
+// structs can become real member state instead of a shared C layout.
+
+/* Firmware key transform at SC88-CTL 0x60c7..0x6123. */
+uint8_t renderer_selector_key(const struct sc88_component *component,
+                               uint8_t midiKey);
+
+/* The remainder that transform drops, in pitch units (0..1364):
+   SC88-CTL 0x611e..0x6121 scale it by 0x555, one semitone. */
+uint16_t renderer_key_fraction(const struct sc88_component *component,
+                                uint8_t midiKey);
+
+/* Everything renderer_pitch_word_at needs to recompose the static pitch
+   word for a key that is moving, taken from the same note-on inputs
+   renderer_static_pitch_word is given. */
+bool renderer_portamento_terms(const struct sc88_rom *rom,
+                                const struct sc88_tone *tone,
+                                const struct sc88_component *component,
+                                const struct sc88_wave_descriptor *desc,
+                                struct sc88_portamento *portamento);
+
+/* The static pitch word for a fractional MIDI key, 16.16 - what SC88-CTL
+   `0x6063` and `0x6077` recompose every control period while a glide runs.
+   At a whole key it returns exactly what renderer_static_pitch_word
+   composed for that key, so a finished glide lands on the note-on value
+   rather than near it. */
+bool renderer_pitch_word_at(const struct sc88_rom *rom,
+                             const struct sc88_portamento *portamento,
+                             uint32_t keyQ16, uint32_t *pitchWord);
+
+/* Static note-on pitch before controllers, LFOs and the pitch envelope.
+ * It needs BOTH keys: `0x6124` indexes the tone-common pitch table with the
+ * raw key at RAM `0x245a`, while `0x609a` takes the root key off the
+ * transformed one at `0x19fc`. */
+bool renderer_static_pitch_word(const struct sc88_rom *rom,
+                                 const struct sc88_tone *tone,
+                                 const struct sc88_component *component,
+                                 const struct sc88_wave_descriptor *desc,
+                                 uint8_t midiKey, uint8_t selectorKey,
+                                 uint16_t keyFraction, uint32_t *pitchWord);
+
+bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
+                    size_t controlRomSize, const struct sc88_wave_bank *banks,
+                    size_t bankCount, double outputRate,
+                    enum sc88_fractional_wrap wrap);
+void renderer_set_levels(struct sc88_renderer *renderer,
+                          const struct sc88_tva_levels *levels);
+void renderer_set_pan(struct sc88_renderer *renderer,
+                       const struct sc88_pan_controls *pan);
+/* Instrumentation: 1 sounds only the tone's first component, 2 only its
+ * second, 0 (the default) sounds them all. */
+void renderer_set_only_component(struct sc88_renderer *renderer,
+                                  unsigned which);
+void renderer_set_tvf_audio_transfer(struct sc88_renderer *renderer,
+                                      sc88_tvf_audio_transfer_fn transfer,
+                                      void *user);
+void renderer_set_tvf_controls(struct sc88_renderer *renderer,
+                                const struct sc88_tvf_controls *controls);
+
+/* There is no gain argument and no gain field on the voice. The firmware
+ * composes a voice's amplitude in exactly one place - `compose_voice_amplitude`
+ * subtracts its five level sources and the component's static attenuation from
+ * one headroom - so a float multiply beside it is an escape hatch with no
+ * counterpart in the device, and anything put through it is not being modelled.
+ * The kit's per-note level was applied that way and, because the engine's mix
+ * reads its own copy of the caller's trim rather than the voice's, it reached
+ * renderer_render and no song. Output trim belongs to the caller.
+ *
+ * Static TVA, release, pan and exact TVF control state are native ROM paths;
+ * the audio-side TVF callback and effects remain explicit seams. */
+bool renderer_note_on(const struct sc88_renderer *renderer,
+                       struct sc88_render_voice *voice, uint8_t variation,
+                       uint8_t program, uint8_t key, uint8_t velocity);
+bool renderer_note_on_with_levels(const struct sc88_renderer *renderer,
+                                   struct sc88_render_voice *voice,
+                                   uint8_t variation, uint8_t program,
+                                   uint8_t key, uint8_t velocity,
+                                   const struct sc88_tva_levels *levels);
+bool renderer_note_on_with_controls(const struct sc88_renderer *renderer,
+                                     struct sc88_render_voice *voice,
+                                     uint8_t variation, uint8_t program,
+                                     uint8_t key, uint8_t velocity,
+                                     const struct sc88_tva_levels *levels,
+                                     const struct sc88_pan_controls *pan);
+/* `map` is the tone map, which chooses the row of the variation lookup the
+ * bank is taken from, exactly as it chooses a rhythm part's kit set. The
+ * three entry points above have no part state to take it from and use the
+ * reset default, `SC88_TONE_MAP_SC88`. */
+bool renderer_note_on_with_part_controls(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t velocity, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvfControls,
+  const struct sc88_tva_controls *tvaControls,
+  const struct sc88_lfo_controls *lfoControls);
+/* As above, and `zoneKey` chooses the zone instead of `key`. A portamento
+ * note hands in the higher of the glide's two ends, which is what SC88-CTL
+ * `0x602e` computes and `0x4e2c` is given. */
+bool renderer_note_on_with_glide(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
+  uint8_t zoneKey, uint8_t velocity, const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvfControls,
+  const struct sc88_tva_controls *tvaControls,
+  const struct sc88_lfo_controls *lfoControls);
+/* A rhythm-part note. The kit record supplies the tone, the key it is played
+ * at, and this key's own level and pan, so a kick is not a sample transposed
+ * to whatever key triggered it. `note` receives the whole record when the
+ * caller wants its sends or assign group.
+ * `map` is the tone map, which chooses the kit set; `setup` is the drum
+ * setup the part plays from, which chooses the half of `overlay` its own
+ * `41 mf rr` edits are in. They are separate axes on this machine. */
+bool renderer_note_on_drum(
+  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
+  const struct sc88_tva_levels *levels,
+  const struct sc88_pan_controls *pan,
+  const struct sc88_tvf_controls *tvfControls,
+  const struct sc88_tva_controls *tvaControls,
+  const struct sc88_lfo_controls *lfoControls,
+  const struct sc88_drum_overlay *overlay, uint8_t setup,
+  struct sc88_drum_note *note);
+
+void renderer_voice_destroy(struct sc88_render_voice *voice);
+bool renderer_voice_active(const struct sc88_render_voice *voice);
+
+/* Interleaved stereo dry output. No clipping is applied because XP summing
+ * precision is open. */
+size_t renderer_render(struct sc88_render_voice *voice, float *stereo,
+                        size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

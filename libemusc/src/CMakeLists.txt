@@ -49,8 +49,8 @@ set(EMUSC_SOURCES
   engines/xp/sc88_delay.h
   engines/xp/sc88_eq.c
   engines/xp/sc88_eq.h
-  engines/xp/sc88_renderer.c
-  engines/xp/sc88_renderer.h
+  engines/xp/renderer.cc
+  engines/xp/renderer.h
   engines/xp/sc88_reverb.c
   engines/xp/sc88_reverb.h
   engines/xp/rom.cc
@@ -125,7 +125,7 @@ if(BUILD_TESTING)
   set(SC88_VOICE_SOURCES
     engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
-    engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
+    engines/xp/renderer.cc engines/xp/sc88_reverb.c
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
     engines/xp/wave.cc)
 

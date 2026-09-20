@@ -2,7 +2,7 @@
 #ifndef EMUSC_SC88_ENGINE_H
 #define EMUSC_SC88_ENGINE_H
 
-#include "sc88_renderer.h"
+#include "renderer.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -81,7 +81,7 @@ struct sc88_engine_slot {
    already, with the same interpolation word.
 
    Nothing here is a new shape: the ramp is `sc88_render_static_gain_q17`,
-   the register model already in `sc88_renderer.h`, evaluated on this
+   the register model already in `renderer.h`, evaluated on this
    voice's own clock instead of the control period's. Its time constant is
    therefore not fitted - it is `0x2a7`, about 0.75 ms, the word the
    firmware writes beside every amplitude target, which is long enough to

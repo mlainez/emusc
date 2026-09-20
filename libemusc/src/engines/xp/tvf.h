@@ -160,7 +160,7 @@ namespace EmuSC { namespace Xp {
 // not - they are a measured model of the still-undecoded XP audio path, and
 // the "_provisional" name is load-bearing, not decorative. That split is
 // kept visible in the ordering of this file, not in a second file pair: the
-// audio state is a plain struct embedded by value in sc88_renderer.c's
+// audio state is a plain struct embedded by value in sc88_engine.c's
 // per-voice component (not yet converted to C++), so it cannot yet hold an
 // EmuSC::SVF - the topology this filter shares with the SC-55 path's
 // svf.h - directly. Once the renderer becomes a real C++ object (T10/T11),

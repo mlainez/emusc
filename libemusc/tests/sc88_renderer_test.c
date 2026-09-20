@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "engines/xp/sc88_renderer.h"
+#include "engines/xp/renderer.h"
 #include "engines/xp/sc88_engine.h"
 
 #include <assert.h>
