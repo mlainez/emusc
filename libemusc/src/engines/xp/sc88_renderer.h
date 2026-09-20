@@ -7,7 +7,7 @@
 #include "lfo.h"
 #include "pitch.h"
 #include "rom.h"
-#include "sc88_tva.h"
+#include "tva.h"
 #include "sc88_tvf.h"
 
 #include <stdbool.h>

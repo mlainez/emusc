@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_tvf.h"
 
-#include "sc88_tva.h"
+#include "tva.h"
 
 #include <limits.h>
 #include <math.h>

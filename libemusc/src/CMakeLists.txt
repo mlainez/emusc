@@ -55,8 +55,8 @@ set(EMUSC_SOURCES
   engines/xp/sc88_reverb.h
   engines/xp/rom.cc
   engines/xp/rom.h
-  engines/xp/sc88_tva.c
-  engines/xp/sc88_tva.h
+  engines/xp/tva.cc
+  engines/xp/tva.h
   engines/xp/sc88_tvf.c
   engines/xp/sc88_tvf.h
   engines/xp/wave.cc
@@ -101,7 +101,7 @@ set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE
 # report are internal to the engine and no measurement of the rendered audio
 # can separate them.
 add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
-  engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/wave.cc)
+  engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/tva.cc engines/xp/wave.cc)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_tvf_probe PRIVATE m)
@@ -126,7 +126,7 @@ if(BUILD_TESTING)
     engines/xp/sc88_engine.c engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/sc88_renderer.c engines/xp/sc88_reverb.c
-    engines/xp/rom.cc engines/xp/sc88_tva.c engines/xp/sc88_tvf.c
+    engines/xp/rom.cc engines/xp/tva.cc engines/xp/sc88_tvf.c
     engines/xp/wave.cc)
 
   function(sc88_test name)
@@ -160,8 +160,8 @@ if(BUILD_TESTING)
   sc88_test(sc88_drum_test engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_lfo_test engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_pitch_test engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_tvf_test engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/sc88_tva.c engines/xp/wave.cc)
-  sc88_test(sc88_tva_test engines/xp/sc88_tva.c engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_tvf_test engines/xp/rom.cc engines/xp/sc88_tvf.c engines/xp/tva.cc engines/xp/wave.cc)
+  sc88_test(sc88_tva_test engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.

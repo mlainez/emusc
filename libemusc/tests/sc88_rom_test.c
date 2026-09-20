@@ -2,7 +2,7 @@
 #include "engines/xp/rom.h"
 #include "engines/xp/pan.h"
 #include "engines/xp/pitch.h"
-#include "engines/xp/sc88_tva.h"
+#include "engines/xp/tva.h"
 #include "engines/xp/sc88_tvf.h"
 
 #include <assert.h>
