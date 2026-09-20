@@ -35,6 +35,35 @@ static uint8_t *read_exact(const char *path, size_t size)
   return bytes;
 }
 
+/* The held ROMs' own paths are read from the environment at run time, so
+   ctest's own environment carries them whatever the tree was configured
+   with:
+     SC88_CONTROL_ROM  the control ROM
+     SC88_WAVE_ROMS    the four wave chips, comma separated, in chip order
+   Without them the caller skips rather than passing while checking only
+   the synthetic fixtures above. */
+static bool split_wave_roms(const char *csv, char paths[4][512])
+{
+  const char *p = csv;
+  unsigned i;
+  for (i = 0; i < 4; ++i) {
+    const char *comma = strchr(p, ',');
+    size_t len = comma ? (size_t)(comma - p) : strlen(p);
+    if (len == 0 || len >= 512)
+      return false;
+    memcpy(paths[i], p, len);
+    paths[i][len] = '\0';
+    if (i < 3) {
+      if (!comma)
+        return false;
+      p = comma + 1;
+    } else if (comma) {
+      return false;                      /* exactly four entries expected */
+    }
+  }
+  return true;
+}
+
 static void test_held_rom(char **paths)
 {
   static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
@@ -84,7 +113,7 @@ static void test_held_rom(char **paths)
   free(control);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
   static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
@@ -348,7 +377,32 @@ int main(int argc, char **argv)
   }
   free(wave);
   free(control);
-  if (argc == 6)
-    test_held_rom(argv + 1);
+
+  {
+    const char *control_path = getenv("SC88_CONTROL_ROM");
+    const char *wave_csv = getenv("SC88_WAVE_ROMS");
+    char wave_paths[4][512];
+    char *held_paths[5];
+    FILE *probe;
+    unsigned i;
+    if (!control_path || !wave_csv)
+      return 77;
+    probe = fopen(control_path, "rb");
+    if (!probe)
+      return 77;
+    fclose(probe);
+    if (!split_wave_roms(wave_csv, wave_paths))
+      return 77;
+    for (i = 0; i < 4; ++i) {
+      probe = fopen(wave_paths[i], "rb");
+      if (!probe)
+        return 77;
+      fclose(probe);
+    }
+    held_paths[0] = (char *)control_path;
+    for (i = 0; i < 4; ++i)
+      held_paths[i + 1] = wave_paths[i];
+    test_held_rom(held_paths);
+  }
   return 0;
 }

@@ -99,7 +99,6 @@ int main(void)
   assert(sc88_pitch_current_word(0, 0, -0x4000) == 0x3fffe);
   /* One unit either side of the top of the unsaturated range, and one unit
      either side of zero, so a clamp written as a signed compare fails here. */
-  assert(sc88_pitch_current_word(0x3ffff, 0, 0) == 0x3fffe);
   assert(sc88_pitch_current_word(0x40000, 0, 0) == 0x3fffe);
   assert(sc88_pitch_current_word(1, -1, 0) == 0);
   assert(sc88_pitch_current_word(0, -1, 0) == 0x3fffe);

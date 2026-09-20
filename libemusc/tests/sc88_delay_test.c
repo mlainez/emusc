@@ -30,11 +30,6 @@ int main(void)
 
   /* the centre-time table is `0x8000 + floor(ms * 32)` over its 115 public
      entries, so 100 ms at index 80 and one second at index 0x73 */
-  for (i = 1; i <= 0x73; ++i) {
-    double ms = i <= 0x14 ? i * 0.1
-      : i <= 0x23 ? 2.0 + (i - 0x14) * 0.2 : 0.0;
-    (void)ms;
-  }
   bytes[0x15fb4 + 80 * 2] = 0x8c;
   bytes[0x15fb4 + 80 * 2 + 1] = 0x80;          /* 100.00 ms */
   bytes[0x165ca + 0x18 * 2] = 0x01;

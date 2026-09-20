@@ -20,6 +20,12 @@ static void put24(uint8_t *p, uint32_t value)
   p[2] = (uint8_t)value;
 }
 
+/* The held control ROM's own path is read from the environment at run
+   time, so ctest's own environment carries it whatever the tree was
+   configured with:
+     SC88_CONTROL_ROM  the control ROM
+   Without it the caller skips rather than passing while checking only
+   the synthetic fixtures above. */
 static void test_held_rom(const char *path)
 {
   FILE *file = fopen(path, "rb");
@@ -150,7 +156,7 @@ static void test_held_rom(const char *path)
   free(bytes);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
   static const uint8_t vectors[16] = {
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
@@ -227,7 +233,17 @@ int main(int argc, char **argv)
   bytes[0] ^= 1;
   assert(!sc88_rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
   free(bytes);
-  if (argc == 2)
-    test_held_rom(argv[1]);
+
+  {
+    const char *rom_path = getenv("SC88_CONTROL_ROM");
+    FILE *probe;
+    if (!rom_path)
+      return 77;                          /* no ROM given: skip */
+    probe = fopen(rom_path, "rb");
+    if (!probe)
+      return 77;
+    fclose(probe);
+    test_held_rom(rom_path);
+  }
   return 0;
 }

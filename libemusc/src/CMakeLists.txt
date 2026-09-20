@@ -171,9 +171,17 @@ if(BUILD_TESTING)
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
+  # Each also sweeps the held ROM(s) end to end (every melodic tone for
+  # sc88_rom_test; a real note-on and render for sc88_renderer_test and
+  # sc88_device_test), gated on the same environment variables as
+  # sc88_tva_test above; without them the sweep is skipped and only the
+  # synthetic fixtures run.
+  set_property(TEST sc88_rom_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
+  set_property(TEST sc88_renderer_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
   sc88_test(sc88_device_test engines/xp/sc88_device.c engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/output.cc ${SC88_VOICE_SOURCES})
+  set_property(TEST sc88_device_test PROPERTY SKIP_RETURN_CODE 77)
 
   # Synth::reset() is reached through the public C++ API, so this one links the
   # library rather than the engine sources. ControlRom and WaveRom read files

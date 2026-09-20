@@ -64,6 +64,19 @@ static void test_pitch_correction(void)
   desc.base_pitch_correction = -1365;
   desc.alternate_pitch_correction = -442;
   assert(sc88_wave_pitch_correction(&desc, true) == -1807);
+
+  /* Neither case above actually leaves the int16 range - the header
+     comment's wraparound claim needs a sum that does. Two positives
+     summing past +32767 land negative; two negatives summing past
+     -32768 land positive - a clamping implementation gives +32767 or
+     -32768 here instead, and a naive 32-bit sum truncated the wrong way
+     gives neither. */
+  desc.base_pitch_correction = 20000;
+  desc.alternate_pitch_correction = 20000;
+  assert(sc88_wave_pitch_correction(&desc, true) == -25536);
+  desc.base_pitch_correction = -30000;
+  desc.alternate_pitch_correction = -10000;
+  assert(sc88_wave_pitch_correction(&desc, true) == 25536);
 }
 
 static void test_decoder(void)
