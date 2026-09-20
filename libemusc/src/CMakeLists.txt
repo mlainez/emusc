@@ -51,8 +51,8 @@ set(EMUSC_SOURCES
   engines/xp/sc88_eq.h
   engines/xp/renderer.cc
   engines/xp/renderer.h
-  engines/xp/sc88_reverb.c
-  engines/xp/sc88_reverb.h
+  engines/xp/reverb.cc
+  engines/xp/reverb.h
   engines/xp/rom.cc
   engines/xp/rom.h
   engines/xp/tva.cc
@@ -125,7 +125,7 @@ if(BUILD_TESTING)
   set(SC88_VOICE_SOURCES
     engines/xp/engine.cc engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
-    engines/xp/renderer.cc engines/xp/sc88_reverb.c
+    engines/xp/renderer.cc engines/xp/reverb.cc
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
     engines/xp/wave.cc)
 
@@ -147,9 +147,9 @@ if(BUILD_TESTING)
   sc88_test(sc88_wave_test engines/xp/wave.cc)
   sc88_test(sc88_oscillator_test engines/xp/oscillator.cc)
   sc88_test(sc88_pan_test engines/xp/pan.cc)
-  sc88_test(sc88_reverb_test engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_chorus_test engines/xp/sc88_chorus.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_delay_test engines/xp/sc88_delay.c engines/xp/sc88_reverb.c engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_reverb_test engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_chorus_test engines/xp/sc88_chorus.c engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_delay_test engines/xp/sc88_delay.c engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_eq_test engines/xp/sc88_eq.c engines/xp/rom.cc engines/xp/wave.cc)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing

@@ -7,7 +7,7 @@
 #include "sc88_eq.h"
 #include "sc88_output.h"
 #include "engine.h"
-#include "sc88_reverb.h"
+#include "reverb.h"
 
 #include <stdbool.h>
 #include <stddef.h>

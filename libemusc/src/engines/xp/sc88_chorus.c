@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_chorus.h"
-#include "sc88_reverb.h"
+#include "reverb.h"
 
 #include <math.h>
 #include <stdlib.h>

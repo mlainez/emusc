@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "sc88_delay.h"
-#include "sc88_reverb.h"
+#include "reverb.h"
 
 #include <stdlib.h>
 #include <string.h>

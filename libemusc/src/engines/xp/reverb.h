@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#ifndef EMUSC_SC88_REVERB_H
-#define EMUSC_SC88_REVERB_H
+#ifndef EMUSC_XP_REVERB_H
+#define EMUSC_XP_REVERB_H
 
 #include "rom.h"
 
@@ -78,20 +78,6 @@ struct sc88_reverb_character {
   uint16_t return_trim;
 };
 
-bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
-                                struct sc88_reverb_character *out);
-
-/* The pre-LPF's eight settings, as a one-pole (`M-010`): the feedback
- * coefficient is p/8 and the input coefficient is 1 - 1/64 - p/8, so p = 0 is
- * an exact bypass and every other entry leaks one part in 64. */
-bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input);
-
-/* The eight tap gains, read from the DSP program's own coefficient RAM at
- * the tap instructions. They are not part of the character record - every
- * character shares them, and both program images carry the same eight. */
-bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
-                           float gains[SC88_REVERB_TAPS]);
-
 struct sc88_reverb {
   struct sc88_reverb_character character;
   /* One shared delay memory, addressed the way the chip addresses it: a
@@ -127,35 +113,78 @@ struct sc88_reverb {
   bool active;
 };
 
+/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
+ * below (sc88_chorus.c and sc88_delay.c, which reuse pre_lpf; sc88_device.c,
+ * which embeds struct sc88_reverb by value; and sc88_reverb_test.c). Each
+ * forwards to the real implementation in namespace EmuSC::Xp. */
+bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
+                                struct sc88_reverb_character *out);
+bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input);
+bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
+                           float gains[SC88_REVERB_TAPS]);
+bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[7]);
+bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
+                      uint8_t character, double output_rate);
+void sc88_reverb_destroy(struct sc88_reverb *rv);
+void sc88_reverb_reset(struct sc88_reverb *rv);
+void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
+                            uint8_t time, uint8_t pre_lpf);
+void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds);
+void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
+                         float *stereo, size_t frames);
+
+#ifdef __cplusplus
+}
+
+namespace EmuSC { namespace Xp {
+
+// Reverb for the XP-generation-1 engine (see engines/xp/README.md). The
+// plain C types above are shared, unrenamed, with sibling engines/xp/*.c
+// modules not yet ported (sc88_chorus.c and sc88_delay.c reuse
+// reverb_pre_lpf through the compat shim above; sc88_device.c embeds
+// struct sc88_reverb by value and is not yet converted).
+
+bool reverb_read_character(const struct sc88_rom *rom, uint8_t character,
+                            struct sc88_reverb_character *out);
+
+/* The pre-LPF's eight settings, as a one-pole (`M-010`): the feedback
+ * coefficient is p/8 and the input coefficient is 1 - 1/64 - p/8, so p = 0 is
+ * an exact bypass and every other entry leaks one part in 64. */
+bool reverb_pre_lpf(uint8_t p, float *feedback, float *input);
+
+/* The eight tap gains, read from the DSP program's own coefficient RAM at
+ * the tap instructions. They are not part of the character record - every
+ * character shares them, and both program images carry the same eight. */
+bool reverb_tap_gains(const struct sc88_rom *rom, float gains[SC88_REVERB_TAPS]);
+
 /* One of the eight macro presets at `0x1583e + 8*macro`: character, pre-LPF,
  * level, time, delay feedback, the reserved byte the reverb block has at
  * `40 01 36`, and predelay, in that order. Writing the reverb macro address
  * copies these seven bytes over the rest of the block, exactly as writing
  * the delay macro copies its ten - SC88-CTL handler 0x3388 is the reverb
  * sibling of the delay's 0x342b and calls the same copy helper. */
-bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
-                       uint8_t out[7]);
+bool reverb_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[7]);
 
-bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
-                      uint8_t character, double output_rate);
-void sc88_reverb_destroy(struct sc88_reverb *rv);
-void sc88_reverb_reset(struct sc88_reverb *rv);
+bool reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
+                  uint8_t character, double outputRate);
+void reverb_destroy(struct sc88_reverb *rv);
+void reverb_reset(struct sc88_reverb *rv);
 
-/* `level`, `time` and `pre_lpf` are the GS parameters as received. The level
+/* `level`, `time` and `preLpf` are the GS parameters as received. The level
  * law is recovered (4*p); the mapping from `time` to a decay is not, and is
  * labelled provisional where it is applied. */
-void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
-                            uint8_t time, uint8_t pre_lpf);
+void reverb_set_params(struct sc88_reverb *rv, uint8_t level, uint8_t time,
+                        uint8_t preLpf);
 /* 0..127 milliseconds. */
-void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds);
+void reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds);
 
 /* Adds the reverb's stereo return to `stereo`, an interleaved buffer that
  * already holds the dry mix, from a mono send bus. */
-void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
-                         float *stereo, size_t frames);
+void reverb_process(struct sc88_reverb *rv, const float *send, float *stereo,
+                     size_t frames);
 
-#ifdef __cplusplus
-}
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

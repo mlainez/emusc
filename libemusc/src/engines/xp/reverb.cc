@@ -1,46 +1,48 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "sc88_reverb.h"
+#include "reverb.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
+namespace EmuSC { namespace Xp {
+
+namespace {
 
 /* SC88-CTL v1.01. The character pointers are offsets **within the 0x10000
  * page**; read as absolute addresses they land in unrelated code and decode
  * to plausible nonsense, which is the trap recorded in `M-008`. */
-#define SC88_REVERB_POINTERS 0x1595eu
-#define SC88_REVERB_PAGE 0x10000u
-#define SC88_REVERB_PRE_LPF_TABLE 0x15972u
+constexpr uint32_t kReverbPointers = 0x1595eu;
+constexpr uint32_t kReverbPage = 0x10000u;
 /* The eight macro presets, 8 bytes each, read by SC88-CTL handler 0x3388 and
  * by the power-on loader at 0x4476. The reset image at ROM 0x13104 - the
  * patch common block whose first sixteen bytes are the default patch name -
  * carries macro 4 and that macro's own seven bytes, so a GS reset is this
  * table's Hall 2 row and not a separate set of defaults. */
-#define SC88_REVERB_MACRO_TABLE 0x1583eu
-#define SC88_REVERB_CHARACTERS 10u
-#define SC88_REVERB_RECORD_WORDS 53u
-#define SC88_REVERB_ALLPASS_PAIR_A 0x3000u   /* -0.5 under the XP law */
-#define SC88_REVERB_ALLPASS_PAIR_B 0x1000u   /* +0.5 */
-#define SC88_REVERB_ALLPASS_G 0.5f
+constexpr uint32_t kReverbMacroTable = 0x1583eu;
+constexpr unsigned kReverbCharacters = 10u;
+constexpr unsigned kReverbRecordWords = 53u;
+constexpr uint16_t kReverbAllpassPairA = 0x3000u;   /* -0.5 under the XP law */
+constexpr uint16_t kReverbAllpassPairB = 0x1000u;   /* +0.5 */
+constexpr float kReverbAllpassG = 0.5f;
 /* The single-module DSP image and its coefficient RAM. CRAM[i] is the
  * coefficient of PRAM[i] - no field selects it (`M-173`) - so the gain of a
  * tap is the word at the tap's own instruction index. */
-#define SC88_REVERB_IMAGE0_CRAM (0x78b02u + 0x480u)
+constexpr uint32_t kReverbImage0Cram = 0x78b02u + 0x480u;
 
-static uint16_t sc88_reverb_be16(const uint8_t *p)
+uint16_t be16(const uint8_t *p)
 {
   return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
 }
 
-static const unsigned sc88_reverb_shift[4] = {0u, 1u, 2u, 4u};
+constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
 
-static double sc88_reverb_xp(uint16_t raw)
+double xp(uint16_t raw)
 {
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (double)value * (double)(1u << sc88_reverb_shift[raw >> 14]) /
-    8192.0;
+  return (double)value * (double)(1u << kShift[raw >> 14]) / 8192.0;
 }
 
 /* Which of the record's 32 delay-memory addresses is which. The record
@@ -49,30 +51,64 @@ static double sc88_reverb_xp(uint16_t raw)
  * 41 43 47 51 59 61 63 55 75 77 79 73 and taps at 89 91 93 95 97 99 101 103
  * for the first module, the same sequence shifted for the other two layouts.
  * These three tables are that order read back as buffer roles. */
-static const uint8_t sc88_reverb_head_word[SC88_REVERB_BUFFERS] = {
+constexpr uint8_t kHeadWord[SC88_REVERB_BUFFERS] = {
   0u, 2u, 4u, 6u, 8u, 10u, 14u, 16u, 20u, 22u, 26u, 28u};
-static const uint8_t sc88_reverb_far_word[SC88_REVERB_BUFFERS] = {
+constexpr uint8_t kFarWord[SC88_REVERB_BUFFERS] = {
   1u, 3u, 5u, 7u, 9u, 13u, 15u, 19u, 21u, 25u, 27u, 31u};
-static const uint8_t sc88_reverb_tap_word[SC88_REVERB_TAPS] = {
+constexpr uint8_t kTapWord[SC88_REVERB_TAPS] = {
   11u, 17u, 23u, 29u, 12u, 18u, 24u, 30u};
 /* The eight coefficient pairs belong to the eight buffers whose write
  * instruction carries +0.5, in the same order the record lists them. */
-static const uint8_t sc88_reverb_allpass_buffer[8] = {
-  0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u};
+constexpr uint8_t kAllpassBuffer[8] = {0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u};
 /* PRAM indices of the eight taps in the single-module image. */
-static const uint8_t sc88_reverb_tap_instruction[SC88_REVERB_TAPS] = {
+constexpr uint8_t kTapInstruction[SC88_REVERB_TAPS] = {
   131u, 133u, 135u, 137u, 139u, 141u, 143u, 145u};
 
-bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
-                           float gains[SC88_REVERB_TAPS])
+unsigned scaleAddr(unsigned addr, double scale)
 {
-  unsigned i;
+  return (unsigned)((double)addr * scale + 0.5);
+}
+
+float eramRead(const struct sc88_reverb *rv, unsigned a)
+{
+  unsigned i = rv->eram_pos + a;
+  if (i >= rv->eram_len)
+    i -= rv->eram_len;
+  return rv->eram[i];
+}
+
+void eramWrite(struct sc88_reverb *rv, unsigned a, float v)
+{
+  unsigned i = rv->eram_pos + a;
+  if (i >= rv->eram_len)
+    i -= rv->eram_len;
+  rv->eram[i] = v;
+}
+
+/* One buffer as the program runs it: the far end is already read, and the
+ * section is an allpass where the character enables its pair and a plain
+ * delay where it does not. */
+float section(struct sc88_reverb *rv, unsigned b, float x, float delayed)
+{
+  if (rv->character.allpass[b]) {
+    float v = x + kReverbAllpassG * delayed;
+    eramWrite(rv, rv->head[b], v);
+    return delayed - kReverbAllpassG * v;
+  }
+  eramWrite(rv, rv->head[b], x);
+  return delayed;
+}
+
+}  // namespace
+
+bool reverb_tap_gains(const struct sc88_rom *rom, float gains[SC88_REVERB_TAPS])
+{
   if (!rom || !rom->bytes || !gains ||
-      SC88_REVERB_IMAGE0_CRAM + 2u * 288u > rom->size)
+      kReverbImage0Cram + 2u * 288u > rom->size)
     return false;
-  for (i = 0; i < SC88_REVERB_TAPS; ++i) {
-    double g = sc88_reverb_xp(sc88_reverb_be16(rom->bytes +
-      SC88_REVERB_IMAGE0_CRAM + 2u * sc88_reverb_tap_instruction[i]));
+  for (unsigned i = 0; i < SC88_REVERB_TAPS; ++i) {
+    double g = xp(be16(rom->bytes + kReverbImage0Cram +
+      2u * kTapInstruction[i]));
     /* Seven of the eight are exactly +1 and the first is +0.500122. A word
        outside this range is not a gain and the caller is told so rather
        than handed a number chosen here. */
@@ -83,29 +119,26 @@ bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
   return true;
 }
 
-bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
-                                struct sc88_reverb_character *out)
+bool reverb_read_character(const struct sc88_rom *rom, uint8_t character,
+                            struct sc88_reverb_character *out)
 {
-  uint32_t block;
-  uint16_t addr[32];
-  unsigned i, lo, hi;
-  if (!rom || !rom->bytes || !out || character >= SC88_REVERB_CHARACTERS ||
-      SC88_REVERB_POINTERS + 2u * SC88_REVERB_CHARACTERS > rom->size)
+  if (!rom || !rom->bytes || !out || character >= kReverbCharacters ||
+      kReverbPointers + 2u * kReverbCharacters > rom->size)
     return false;
-  block = SC88_REVERB_PAGE +
-    sc88_reverb_be16(rom->bytes + SC88_REVERB_POINTERS + 2u * character);
-  if (block + 2u * SC88_REVERB_RECORD_WORDS > rom->size)
+  uint32_t block = kReverbPage +
+    be16(rom->bytes + kReverbPointers + 2u * character);
+  if (block + 2u * kReverbRecordWords > rom->size)
     return false;
-  memset(out, 0, sizeof *out);
+  std::memset(out, 0, sizeof *out);
   /* words 0..15 are the eight coefficient pairs; an enabled one is exactly
      the allpass pair and a disabled one exactly zero, with nothing else
      appearing in those slots on any character (`M-008`). A disabled section
      still has its buffer, and runs as the plain delay that buffer is. */
-  for (i = 0; i < 8; ++i) {
-    uint16_t a = sc88_reverb_be16(rom->bytes + block + 4u * i);
-    uint16_t b = sc88_reverb_be16(rom->bytes + block + 4u * i + 2u);
-    if (a == SC88_REVERB_ALLPASS_PAIR_A && b == SC88_REVERB_ALLPASS_PAIR_B) {
-      out->allpass[sc88_reverb_allpass_buffer[i]] = true;
+  for (unsigned i = 0; i < 8; ++i) {
+    uint16_t a = be16(rom->bytes + block + 4u * i);
+    uint16_t b = be16(rom->bytes + block + 4u * i + 2u);
+    if (a == kReverbAllpassPairA && b == kReverbAllpassPairB) {
+      out->allpass[kAllpassBuffer[i]] = true;
       ++out->allpasses;
     }
   }
@@ -118,11 +151,9 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
      one. A pair that is not two words of those two signs is not a filter,
      and the half then runs undamped rather than on coefficients chosen
      here - which is what Delay and Panning Delay leave behind. */
-  for (i = 0; i < 2; ++i) {
-    double a = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 32u +
-                                               4u * i));
-    double b = sc88_reverb_xp(sc88_reverb_be16(rom->bytes + block + 34u +
-                                               4u * i));
+  for (unsigned i = 0; i < 2; ++i) {
+    double a = xp(be16(rom->bytes + block + 32u + 4u * i));
+    double b = xp(be16(rom->bytes + block + 34u + 4u * i));
     if (a > 0.0 && a < 0.99 && b < 0.0) {
       out->damp_input[i] = (float)a;
       out->damp_pole[i] = (float)(-b);
@@ -137,32 +168,33 @@ bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
      taps. Which is which is the ERAM write-enable bit read off the program
      image (`M-173`), not a guess from the address values - that is the whole
      difference from sorting them and calling every gap a line. */
-  for (i = 0; i < 32; ++i)
-    addr[i] = sc88_reverb_be16(rom->bytes + block + 2u * (20u + i));
-  lo = 0xffffu;
-  hi = 0u;
-  for (i = 0; i < 32; ++i) {
+  uint16_t addr[32];
+  for (unsigned i = 0; i < 32; ++i)
+    addr[i] = be16(rom->bytes + block + 2u * (20u + i));
+  unsigned lo = 0xffffu;
+  unsigned hi = 0u;
+  for (unsigned i = 0; i < 32; ++i) {
     if (addr[i] < lo)
       lo = addr[i];
     if (addr[i] > hi)
       hi = addr[i];
   }
-  for (i = 0; i < SC88_REVERB_BUFFERS; ++i) {
-    unsigned h = addr[sc88_reverb_head_word[i]] - lo;
-    unsigned f = addr[sc88_reverb_far_word[i]] - lo;
+  for (unsigned i = 0; i < SC88_REVERB_BUFFERS; ++i) {
+    unsigned h = addr[kHeadWord[i]] - lo;
+    unsigned f = addr[kFarWord[i]] - lo;
     out->head[i] = (uint16_t)h;
     out->far[i] = (uint16_t)(f < h ? h : f);
   }
-  for (i = 0; i < SC88_REVERB_TAPS; ++i)
-    out->tap[i] = (uint16_t)(addr[sc88_reverb_tap_word[i]] - lo);
+  for (unsigned i = 0; i < SC88_REVERB_TAPS; ++i)
+    out->tap[i] = (uint16_t)(addr[kTapWord[i]] - lo);
   out->extent = (uint16_t)(hi - lo);
   /* word 52, the one value the loader writes to a control register: this
      character's own return trim. See the field's note in the header. */
-  out->return_trim = sc88_reverb_be16(rom->bytes + block + 2u * 52u);
+  out->return_trim = be16(rom->bytes + block + 2u * 52u);
   return hi > lo;
 }
 
-bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input)
+bool reverb_pre_lpf(uint8_t p, float *feedback, float *input)
 {
   if (!feedback || !input || p > 7)
     return false;
@@ -173,58 +205,49 @@ bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input)
   return true;
 }
 
-static unsigned sc88_reverb_scale(unsigned addr, double scale)
-{
-  return (unsigned)((double)addr * scale + 0.5);
-}
-
 /* The eight reverb macro presets, one 8-byte record each, of which the
  * firmware copies the first seven bytes over character..predelay. */
-bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
-                       uint8_t out[7])
+bool reverb_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[7])
 {
-  uint32_t base;
-  unsigned i;
   if (!rom || !rom->bytes || !out || macro > 7)
     return false;
-  base = SC88_REVERB_MACRO_TABLE + (uint32_t)macro * 8u;
+  uint32_t base = kReverbMacroTable + (uint32_t)macro * 8u;
   if (base + 7u > rom->size)
     return false;
-  for (i = 0; i < 7; ++i)
+  for (unsigned i = 0; i < 7; ++i)
     out[i] = rom->bytes[base + i];
   return true;
 }
 
-bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
-                      uint8_t character, double output_rate)
+bool reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
+                  uint8_t character, double outputRate)
 {
-  unsigned i, top = 0;
-  double scale;
-  if (!rv || output_rate < 8000.0 || output_rate > 192000.0)
+  if (!rv || outputRate < 8000.0 || outputRate > 192000.0)
     return false;
-  memset(rv, 0, sizeof *rv);
-  if (!sc88_reverb_read_character(rom, character, &rv->character))
+  std::memset(rv, 0, sizeof *rv);
+  if (!reverb_read_character(rom, character, &rv->character))
     return false;
   rv->character_index = character;
-  rv->output_rate = output_rate;
+  rv->output_rate = outputRate;
   /* the addresses are in the engine's own 32 kHz samples */
-  scale = output_rate / SC88_REVERB_NATIVE_RATE;
-  for (i = 0; i < SC88_REVERB_BUFFERS; ++i) {
-    rv->head[i] = sc88_reverb_scale(rv->character.head[i], scale);
-    rv->far[i] = sc88_reverb_scale(rv->character.far[i], scale);
+  double scale = outputRate / SC88_REVERB_NATIVE_RATE;
+  unsigned top = 0;
+  for (unsigned i = 0; i < SC88_REVERB_BUFFERS; ++i) {
+    rv->head[i] = scaleAddr(rv->character.head[i], scale);
+    rv->far[i] = scaleAddr(rv->character.far[i], scale);
     if (rv->far[i] < rv->head[i])
       rv->far[i] = rv->head[i];
     if (rv->far[i] > top)
       top = rv->far[i];
   }
-  for (i = 0; i < SC88_REVERB_TAPS; ++i) {
-    rv->tap[i] = sc88_reverb_scale(rv->character.tap[i], scale);
+  for (unsigned i = 0; i < SC88_REVERB_TAPS; ++i) {
+    rv->tap[i] = scaleAddr(rv->character.tap[i], scale);
     if (rv->tap[i] > top)
       top = rv->tap[i];
   }
   /* the whole graph lives in one delay memory, the way the chip holds it */
   rv->eram_len = top + 1u;
-  rv->eram = (float *)calloc(rv->eram_len, sizeof *rv->eram);
+  rv->eram = (float *)std::calloc(rv->eram_len, sizeof *rv->eram);
   if (!rv->eram)
     return false;
   rv->eram_pos = 0;
@@ -232,26 +255,25 @@ bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
      character record: +0.500122 on the first and exactly +1 on the other
      seven. A ROM that does not carry them leaves every tap at unity rather
      than at a set chosen here. */
-  if (!sc88_reverb_tap_gains(rom, rv->tap_gain))
-    for (i = 0; i < SC88_REVERB_TAPS; ++i)
+  if (!reverb_tap_gains(rom, rv->tap_gain))
+    for (unsigned i = 0; i < SC88_REVERB_TAPS; ++i)
       rv->tap_gain[i] = 1.0f;
-  sc88_reverb_set_params(rv, 64, 64, 3);
+  reverb_set_params(rv, 64, 64, 3);
   rv->active = true;
   return true;
 }
 
-void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
+void reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
 {
-  size_t want;
   if (!rv || milliseconds > 127)
     return;
-  want = (size_t)(milliseconds * rv->output_rate / 1000.0);
+  size_t want = (size_t)(milliseconds * rv->output_rate / 1000.0);
   if (!rv->pre_delay_buf || want + 2u > rv->pre_delay_len) {
     size_t len = (size_t)(128.0 * rv->output_rate / 1000.0) + 2u;
-    float *grown = (float *)calloc(len ? len : 1u, sizeof *grown);
+    float *grown = (float *)std::calloc(len ? len : 1u, sizeof *grown);
     if (!grown)
       return;
-    free(rv->pre_delay_buf);
+    std::free(rv->pre_delay_buf);
     rv->pre_delay_buf = grown;
     rv->pre_delay_len = len;
     rv->pre_delay_pos = 0;
@@ -259,38 +281,38 @@ void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
   rv->pre_delay_taps = want;
 }
 
-void sc88_reverb_destroy(struct sc88_reverb *rv)
+void reverb_destroy(struct sc88_reverb *rv)
 {
   if (!rv)
     return;
-  free(rv->pre_delay_buf);
-  free(rv->eram);
-  memset(rv, 0, sizeof *rv);
+  std::free(rv->pre_delay_buf);
+  std::free(rv->eram);
+  std::memset(rv, 0, sizeof *rv);
 }
 
-void sc88_reverb_reset(struct sc88_reverb *rv)
+void reverb_reset(struct sc88_reverb *rv)
 {
   if (!rv)
     return;
   if (rv->eram)
-    memset(rv->eram, 0, rv->eram_len * sizeof *rv->eram);
+    std::memset(rv->eram, 0, rv->eram_len * sizeof *rv->eram);
   rv->eram_pos = 0;
   rv->damp_state[0] = rv->damp_state[1] = 0.0f;
   rv->tank_return = 0.0f;
   rv->pre_state = 0.0f;
   if (rv->pre_delay_buf)
-    memset(rv->pre_delay_buf, 0, rv->pre_delay_len * sizeof *rv->pre_delay_buf);
+    std::memset(rv->pre_delay_buf, 0,
+                rv->pre_delay_len * sizeof *rv->pre_delay_buf);
   rv->pre_delay_pos = 0;
 }
 
-void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
-                            uint8_t time, uint8_t pre_lpf)
+void reverb_set_params(struct sc88_reverb *rv, uint8_t level, uint8_t time,
+                        uint8_t preLpf)
 {
-  float fb, in;
-  unsigned h;
   if (!rv)
     return;
-  if (sc88_reverb_pre_lpf(pre_lpf > 7 ? 7 : pre_lpf, &fb, &in)) {
+  float fb, in;
+  if (reverb_pre_lpf(preLpf > 7 ? 7 : preLpf, &fb, &in)) {
     rv->pre_fb = fb;
     rv->pre_in = in;
   }
@@ -323,34 +345,32 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
     unsigned index = rv->character_index < 10u ? rv->character_index : 4u;
     unsigned p = time > 127 ? 127u : (unsigned)time;
     unsigned samples[2];
-    double seconds;
-    for (h = 0; h < 2; ++h) {
-      unsigned i;
+    for (unsigned h = 0; h < 2; ++h) {
       samples[h] = 0u;
-      for (i = 0; i < SC88_REVERB_HALF_BUFFERS; ++i) {
+      for (unsigned i = 0; i < SC88_REVERB_HALF_BUFFERS; ++i) {
         unsigned b = SC88_REVERB_HALF_BUFFERS * (h + 1u) + i;
         samples[h] += rv->far[b] - rv->head[b];
       }
     }
-    seconds = rv->output_rate > 0.0
+    double seconds = rv->output_rate > 0.0
       ? (double)(samples[0] + samples[1]) / rv->output_rate : 0.0;
     if (index < 6u) {
       unsigned reg = p * 380u / 108u;
       double g = (double)(reg > 380u ? 380u : reg) / 512.0;
       if (g < 0.001)
         g = 0.001;
-      for (h = 0; h < 2; ++h)
+      for (unsigned h = 0; h < 2; ++h)
         rv->decay[h] = (float)g;
       /* the decay the register and the lines come to, for reporting */
-      rv->target_t60 = 3.0 * seconds / (2.0 * log10(1.0 / g));
+      rv->target_t60 = 3.0 * seconds / (2.0 * std::log10(1.0 / g));
     } else {
-      rv->target_t60 = 0.1423 * exp(0.0292 * (double)p);
-      for (h = 0; h < 2; ++h) {
+      rv->target_t60 = 0.1423 * std::exp(0.0292 * (double)p);
+      for (unsigned h = 0; h < 2; ++h) {
         double half = rv->output_rate > 0.0
           ? (double)samples[h] / rv->output_rate : 0.0;
         double g = 0.0;
         if (half > 0.0 && rv->target_t60 > 0.01)
-          g = pow(10.0, -3.0 * half / rv->target_t60);
+          g = std::pow(10.0, -3.0 * half / rv->target_t60);
         if (g > 0.995)
           g = 0.995;
         else if (g < 0.05)
@@ -404,51 +424,18 @@ void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
      sum grows as the root of the count and not as the count, and the root
      of the total rather than of each side's is what measures right against
      the hardware recording of demo song 1. */
-  rv->wet_gain_left = rv->level * rv->trim / sqrtf((float)SC88_REVERB_TAPS);
+  rv->wet_gain_left = rv->level * rv->trim / std::sqrt((float)SC88_REVERB_TAPS);
   rv->wet_gain_right = rv->wet_gain_left;
 }
 
-static float sc88_reverb_eram_read(const struct sc88_reverb *rv, unsigned a)
+void reverb_process(struct sc88_reverb *rv, const float *send, float *stereo,
+                     size_t frames)
 {
-  unsigned i = rv->eram_pos + a;
-  if (i >= rv->eram_len)
-    i -= rv->eram_len;
-  return rv->eram[i];
-}
-
-static void sc88_reverb_eram_write(struct sc88_reverb *rv, unsigned a, float v)
-{
-  unsigned i = rv->eram_pos + a;
-  if (i >= rv->eram_len)
-    i -= rv->eram_len;
-  rv->eram[i] = v;
-}
-
-/* One buffer as the program runs it: the far end is already read, and the
- * section is an allpass where the character enables its pair and a plain
- * delay where it does not. */
-static float sc88_reverb_section(struct sc88_reverb *rv, unsigned b, float x,
-                                 float delayed)
-{
-  if (rv->character.allpass[b]) {
-    float v = x + SC88_REVERB_ALLPASS_G * delayed;
-    sc88_reverb_eram_write(rv, rv->head[b], v);
-    return delayed - SC88_REVERB_ALLPASS_G * v;
-  }
-  sc88_reverb_eram_write(rv, rv->head[b], x);
-  return delayed;
-}
-
-void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
-                         float *stereo, size_t frames)
-{
-  size_t k;
-  unsigned i;
   if (!rv || !rv->active || !send || !stereo || !rv->eram)
     return;
-  for (k = 0; k < frames; ++k) {
+  for (size_t k = 0; k < frames; ++k) {
     float x = send[k];
-    float wet_l = 0.0f, wet_r = 0.0f;
+    float wetL = 0.0f, wetR = 0.0f;
     float tail[2], r[SC88_REVERB_BUFFERS];
     if (rv->pre_delay_buf && rv->pre_delay_taps) {
       size_t read = (rv->pre_delay_pos + rv->pre_delay_len -
@@ -463,11 +450,11 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
     x = rv->pre_state;
     /* The instructions run in PRAM index order, and every far end is read
        before the writes of its own group, so read them all first. */
-    for (i = 0; i < SC88_REVERB_BUFFERS; ++i)
-      r[i] = sc88_reverb_eram_read(rv, rv->far[i]);
+    for (unsigned i = 0; i < SC88_REVERB_BUFFERS; ++i)
+      r[i] = eramRead(rv, rv->far[i]);
     /* instructions 41..57: the four series allpasses of the input diffuser */
-    for (i = 0; i < 4; ++i)
-      x = sc88_reverb_section(rv, i, x, r[i]);
+    for (unsigned i = 0; i < 4; ++i)
+      x = section(rv, i, x, r[i]);
     /* Instruction 55 reads half 1's last delay before half 1's own writes,
        and instruction 73 reads half 2's last delay before half 2's - the
        two feedback returns. WHICH ACCUMULATOR EACH RETURN REACHES IS NOT
@@ -479,10 +466,9 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
        pipelined read-before-write does with it. */
     tail[0] = r[7];
     tail[1] = r[11];
-    for (i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < 2; ++i) {
       float back = i == 0 ? rv->tank_return : tail[0];
       unsigned b = SC88_REVERB_HALF_BUFFERS * (i + 1u);
-      float y;
       back *= rv->decay[i];
       /* the half's own damping one-pole, normalised to unity at DC */
       rv->damp_state[i] = back * (1.0f - rv->damp[i]) +
@@ -490,10 +476,10 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
       back = rv->damp_state[i];
       if (i == 0)
         back += x;
-      y = sc88_reverb_section(rv, b, back, r[b]);          /* allpass */
-      y = sc88_reverb_section(rv, b + 1u, y, r[b + 1u]);   /* delay */
-      y = sc88_reverb_section(rv, b + 2u, y, r[b + 2u]);   /* allpass */
-      (void)sc88_reverb_section(rv, b + 3u, y, r[b + 3u]); /* delay */
+      float y = section(rv, b, back, r[b]);          /* allpass */
+      y = section(rv, b + 1u, y, r[b + 1u]);          /* delay */
+      y = section(rv, b + 2u, y, r[b + 2u]);          /* allpass */
+      (void)section(rv, b + 3u, y, r[b + 3u]);        /* delay */
     }
     rv->tank_return = tail[1];
     /* Instructions 89..103: the eight output taps, read after the writes,
@@ -502,16 +488,79 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
        split the program order offers - the record interleaves the taps in
        two groups of four, one from each pair of slots - and like the
        returns above it is routing, which is not recovered. */
-    for (i = 0; i < SC88_REVERB_TAPS; ++i) {
-      float v = rv->tap_gain[i] * sc88_reverb_eram_read(rv, rv->tap[i]);
+    for (unsigned i = 0; i < SC88_REVERB_TAPS; ++i) {
+      float v = rv->tap_gain[i] * eramRead(rv, rv->tap[i]);
       if (i < SC88_REVERB_TAPS / 2u)
-        wet_l += v;
+        wetL += v;
       else
-        wet_r += v;
+        wetR += v;
     }
-    stereo[k * 2] += wet_l * rv->wet_gain_left;
-    stereo[k * 2 + 1] += wet_r * rv->wet_gain_right;
+    stereo[k * 2] += wetL * rv->wet_gain_left;
+    stereo[k * 2 + 1] += wetR * rv->wet_gain_right;
     /* the delay memory's base pointer steps back one sample per sample */
     rv->eram_pos = rv->eram_pos ? rv->eram_pos - 1u : rv->eram_len - 1u;
   }
 }
+
+}}  // namespace EmuSC::Xp
+
+// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
+extern "C" {
+
+bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
+                                struct sc88_reverb_character *out)
+{
+  return EmuSC::Xp::reverb_read_character(rom, character, out);
+}
+
+bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input)
+{
+  return EmuSC::Xp::reverb_pre_lpf(p, feedback, input);
+}
+
+bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
+                           float gains[SC88_REVERB_TAPS])
+{
+  return EmuSC::Xp::reverb_tap_gains(rom, gains);
+}
+
+bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
+                       uint8_t out[7])
+{
+  return EmuSC::Xp::reverb_macro(rom, macro, out);
+}
+
+bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
+                      uint8_t character, double output_rate)
+{
+  return EmuSC::Xp::reverb_init(rv, rom, character, output_rate);
+}
+
+void sc88_reverb_destroy(struct sc88_reverb *rv)
+{
+  EmuSC::Xp::reverb_destroy(rv);
+}
+
+void sc88_reverb_reset(struct sc88_reverb *rv)
+{
+  EmuSC::Xp::reverb_reset(rv);
+}
+
+void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
+                            uint8_t time, uint8_t pre_lpf)
+{
+  EmuSC::Xp::reverb_set_params(rv, level, time, pre_lpf);
+}
+
+void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
+{
+  EmuSC::Xp::reverb_set_predelay(rv, milliseconds);
+}
+
+void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
+                         float *stereo, size_t frames)
+{
+  EmuSC::Xp::reverb_process(rv, send, stereo, frames);
+}
+
+}  // extern "C"

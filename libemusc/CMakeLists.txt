@@ -31,7 +31,7 @@ install(FILES
   src/engines/xp/pan.h
   src/engines/xp/pitch.h
   src/engines/xp/renderer.h
-  src/engines/xp/sc88_reverb.h
+  src/engines/xp/reverb.h
   src/engines/xp/rom.h
   src/engines/xp/tva.h
   src/engines/xp/tvf.h
