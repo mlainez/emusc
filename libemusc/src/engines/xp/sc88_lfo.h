@@ -2,7 +2,7 @@
 #ifndef EMUSC_SC88_LFO_H
 #define EMUSC_SC88_LFO_H
 
-#include "sc88_rom.h"
+#include "rom.h"
 
 #include <stdbool.h>
 #include <stdint.h>

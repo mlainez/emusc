@@ -32,7 +32,7 @@ install(FILES
   src/engines/xp/sc88_pitch.h
   src/engines/xp/sc88_renderer.h
   src/engines/xp/sc88_reverb.h
-  src/engines/xp/sc88_rom.h
+  src/engines/xp/rom.h
   src/engines/xp/sc88_tva.h
   src/engines/xp/sc88_tvf.h
   src/engines/xp/wave.h

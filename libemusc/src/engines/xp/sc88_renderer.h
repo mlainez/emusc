@@ -6,7 +6,7 @@
 #include "sc88_pan.h"
 #include "sc88_lfo.h"
 #include "sc88_pitch.h"
-#include "sc88_rom.h"
+#include "rom.h"
 #include "sc88_tva.h"
 #include "sc88_tvf.h"
 

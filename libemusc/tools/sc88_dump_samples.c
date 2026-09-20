@@ -14,7 +14,7 @@
  * references each sample, since that is the only name the ROM gives them.
  */
 #include "engines/xp/sc88_oscillator.h"
-#include "engines/xp/sc88_rom.h"
+#include "engines/xp/rom.h"
 #include "engines/xp/wave.h"
 
 #include <math.h>

@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "engines/xp/sc88_rom.h"
+#include "engines/xp/rom.h"
 #include "engines/xp/sc88_tvf.h"
 #include "engines/xp/sc88_tva.h"
 #include "engines/xp/wave.h"
