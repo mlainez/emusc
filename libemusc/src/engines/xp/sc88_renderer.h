@@ -8,7 +8,7 @@
 #include "pitch.h"
 #include "rom.h"
 #include "tva.h"
-#include "sc88_tvf.h"
+#include "tvf.h"
 
 #include <stdbool.h>
 #include <stddef.h>

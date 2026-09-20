@@ -14,7 +14,7 @@
    trapezoidal integrators are a bilinear transform and left a double
    zero at Nyquist, so the two poles the ROM asks for rolled off like
    three. With the TVF realised in the topology the chip's limit table
-   names (sc88_tvf.c, SC88_TVF_LIMIT_TABLE) there is nothing left for the
+   names (tvf.cc, kLimitTable) there is nothing left for the
    shelf to stand in for.
 
    Measured, 63 single notes against the archive recordings, median band

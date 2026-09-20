@@ -3,7 +3,7 @@
 #include "engines/xp/pan.h"
 #include "engines/xp/pitch.h"
 #include "engines/xp/tva.h"
-#include "engines/xp/sc88_tvf.h"
+#include "engines/xp/tvf.h"
 
 #include <assert.h>
 #ifdef NDEBUG
