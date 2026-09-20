@@ -121,6 +121,16 @@ You can verify your ROM dumps match known-good versions by checking their SHA1 a
 - GCC or Clang
 - ALSA development libraries (for `emuscd`)
 
+**Requirements for 32-bit x86 and ARM Linux (cross-compilation from an x86_64 host):**
+- 32-bit x86: `gcc-multilib g++-multilib libc6-dev-i386`, plus the i386
+  architecture's own ALSA dev files (`dpkg --add-architecture i386` then
+  `libasound2-dev:i386`)
+- 32-bit ARM (armhf): `gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf`, plus
+  `dpkg --add-architecture armhf` then `libasound2-dev:armhf`
+- 64-bit ARM (aarch64): `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu`, plus
+  `dpkg --add-architecture arm64` then `libasound2-dev:arm64`
+- CMake 3.12+
+
 **Requirements for Windows (cross-compilation from Linux):**
 - `mingw-w64` cross-compiler packages:
   - 64-bit: `gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64`
@@ -136,6 +146,21 @@ cmake --build build --target test  # Run tests
 ```
 
 The library is built as `build/libemusc/src/libemusc_static.a` (static) and `libemusc.so` (shared), and tools as `build/libemusc/tools/emusc-render` and `build/emuscd/emuscd`.
+
+### 32-bit x86 and ARM Linux binaries (cross-compiled from an x86_64 host)
+
+```bash
+cmake -B build-linux-x86   -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-i686.cmake  -DCMAKE_BUILD_TYPE=Release
+cmake -B build-linux-arm32 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-armhf.cmake -DCMAKE_BUILD_TYPE=Release
+cmake -B build-linux-arm64 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-arm64.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux-x86
+cmake --build build-linux-arm32
+cmake --build build-linux-arm64
+```
+
+Each produces `emusc-render` and `emuscd` for that architecture, statically
+linked against libgcc/libstdc++ like the native build; `emuscd` still links
+ALSA dynamically, against that architecture's own `libasound.so`.
 
 ### Windows binaries (cross-compiled from Linux)
 
@@ -177,7 +202,22 @@ which parallel emuscd's own `--pcm`/`--rate`/`--block`/`--latency`.
 
 ### Nightly builds
 
-CI (`.github/workflows/main.yml`) automatically builds all three platform variants (Linux, Windows x64, Windows x86) on every push. Nightly binaries are published as GitHub release assets under the `nightly` tag: `emusc-render` and `emuscd` for Linux; `emusc-render.exe` and `emusc-winmidi.exe` (64-bit) plus `emusc-render32.exe` and `emusc-winmidi32.exe` (32-bit) for Windows. Each nightly publish replaces the previous release outright, so it always reflects exactly the latest push rather than accumulating older builds' files alongside newer ones.
+CI (`.github/workflows/main.yml`) automatically builds six architecture
+variants on every push - Linux x64, Linux x86, Linux ARM64, Linux ARM32,
+Windows x64 and Windows x86 - and publishes each as a `.tar.gz` GitHub
+release asset under the `nightly` tag: `emusc-linux-x64.tar.gz`,
+`emusc-linux-x86.tar.gz`, `emusc-linux-arm64.tar.gz`,
+`emusc-linux-arm32.tar.gz`, `emusc-windows-x64.tar.gz` and
+`emusc-windows-x86.tar.gz`. Each archive is a self-contained bundle built
+from this project's own `install()` rules: `bin/` holds `emusc-render` plus
+`emuscd` (Linux/ARM) or `emusc-winmidi` (Windows, named `emusc-render32.exe`/
+`emusc-winmidi32.exe` on the 32-bit Windows build); `lib/` holds the shared
+`libemusc` library (`.so`/`.dll`, plus the Windows import library) for
+anyone who wants to link against it directly rather than use the bundled
+tools; `include/emusc/` and `lib/pkgconfig/` hold its headers and
+pkg-config file. Each nightly publish replaces the previous release
+outright, so it always reflects exactly the latest push rather than
+accumulating older builds' files alongside newer ones.
 
 ## Hardware Floor (Windows, Untested)
 

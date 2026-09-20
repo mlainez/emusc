@@ -14,20 +14,44 @@ jobs:
     # not built natively on windows-latest: a native Windows runner defaults
     # to the Visual Studio generator, which ignores CMAKE_CXX_COMPILER/
     # CMAKE_C_COMPILER, so a workflow that asks it for g++/gcc silently gets
-    # something else (or nothing). Cross-compiling is also how both a 64-bit
-    # and a 32-bit .exe get built without a second runner OS.
+    # something else (or nothing). The 32-bit Linux and both ARM builds are
+    # cross-compiled from the same runner for the same reason there's no
+    # separate runner OS for them: it's one job per architecture, not one job
+    # per (OS, architecture) pair.
     strategy:
       matrix:
         include:
-          - name: linux
+          - name: linux-x64
+            os: linux
             dep: 'build-essential cmake libasound2-dev'
+          # 32-bit x86 Linux has no dedicated cross-compiler package: Debian/
+          # Ubuntu expose it as a multilib target of the native amd64 gcc/g++
+          # (-m32), so it needs the i386 architecture added for its ALSA dev
+          # package rather than a gcc-*-linux-gnu cross toolchain.
+          - name: linux-x86
+            os: linux
+            foreign_arch: i386
+            dep: 'build-essential cmake gcc-multilib g++-multilib libc6-dev-i386 libasound2-dev:i386'
+            toolchain: cmake/toolchain-linux-i686.cmake
+          - name: linux-arm64
+            os: linux
+            foreign_arch: arm64
+            dep: 'cmake gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libasound2-dev:arm64'
+            toolchain: cmake/toolchain-linux-arm64.cmake
+          - name: linux-arm32
+            os: linux
+            foreign_arch: armhf
+            dep: 'cmake gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libasound2-dev:armhf'
+            toolchain: cmake/toolchain-linux-armhf.cmake
           - name: windows-x64
+            os: windows
             dep: 'cmake gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64'
             toolchain: cmake/toolchain-mingw-w64.cmake
             objdump: x86_64-w64-mingw32-objdump
             exe_name: emusc-render.exe
             winmidi_name: emusc-winmidi.exe
           - name: windows-x86
+            os: windows
             dep: 'cmake gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686'
             toolchain: cmake/toolchain-mingw-w32.cmake
             objdump: i686-w64-mingw32-objdump
@@ -38,41 +62,76 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
+    # Foreign-architecture packages (the target's own ALSA dev files) aren't
+    # visible to apt until dpkg knows about that architecture; MinGW targets
+    # don't need this, since their cross-compiler packages are ordinary amd64
+    # packages that happen to produce Windows binaries.
+    - name: Add foreign architecture
+      if: matrix.foreign_arch != ''
+      run: sudo dpkg --add-architecture ${{matrix.foreign_arch}}
+
+    # i386 packages live on the same archive.ubuntu.com/security.ubuntu.com
+    # mirrors as amd64, so plain `dpkg --add-architecture i386` is enough.
+    # armhf and arm64 don't: they're "ports" architectures, hosted only on
+    # ports.ubuntu.com. The runner's default sources don't restrict which
+    # architecture they serve, so once dpkg knows about armhf/arm64, apt
+    # tries (and 404s on) those architectures on the amd64-only mirrors too -
+    # and having both the default sources and the new ports source offer the
+    # same (suite, component, arch) confuses apt's resolver into treating the
+    # foreign package as uninstallable, even though the ports copy fetched
+    # fine. Restricting the default sources to amd64 makes ports.ubuntu.com
+    # the sole provider of the foreign architecture.
+    - name: Add ports.ubuntu.com for ARM architectures
+      if: matrix.foreign_arch == 'armhf' || matrix.foreign_arch == 'arm64'
+      run: |
+        sudo sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        printf '%s\n' \
+          'Types: deb' \
+          'URIs: http://ports.ubuntu.com/ubuntu-ports' \
+          'Suites: noble noble-updates noble-backports noble-security' \
+          'Components: main universe restricted multiverse' \
+          'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+          "Architectures: ${{matrix.foreign_arch}}" \
+          | sudo tee /etc/apt/sources.list.d/ports-${{matrix.foreign_arch}}.sources > /dev/null
+
     - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ${{matrix.dep}}
 
-    - name: Configure CMake (native Linux)
-      if: matrix.name == 'linux'
+    - name: Configure CMake (native)
+      if: matrix.toolchain == ''
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
-    - name: Configure CMake (Windows cross-compile)
-      if: matrix.name != 'linux'
+    - name: Configure CMake (cross-compile)
+      if: matrix.toolchain != ''
       run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=${{matrix.toolchain}} -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Collect Linux binaries
-      if: matrix.name == 'linux'
-      run: |
-        mkdir -p release
-        if [ -f build/emuscd/emuscd ]; then cp build/emuscd/emuscd release/; fi
-        if [ -f build/libemusc/tools/emusc-render ]; then cp build/libemusc/tools/emusc-render release/; fi
+    # cmake --install walks the install() rules already declared in
+    # CMakeLists.txt (emusc-render/emuscd/emusc-winmidi into bin/, the shared
+    # library + headers + pkg-config file into lib/ and include/, licensing
+    # docs into share/doc/), so the release bundle's contents track those
+    # rules instead of a second, hand-maintained file list here.
+    - name: Stage install tree
+      run: cmake --install build --prefix "${{github.workspace}}/release/emusc-${{matrix.name}}"
       shell: bash
 
     # Named per architecture (emusc-render.exe / emusc-render32.exe, matching
-    # scva-headless's own -render/-render32 convention): the nightly release
-    # below flattens every job's artifacts into one asset list, where two
-    # files both called emusc-render.exe would collide and one would
-    # silently clobber the other.
-    - name: Collect Windows binaries
-      if: matrix.name != 'linux'
+    # scva-headless's own -render/-render32 convention): each architecture
+    # now ships in its own archive, so this is no longer needed to avoid
+    # asset collisions, but it still avoids a collision for anyone who
+    # extracts more than one Windows archive into the same directory. On
+    # windows-x64, exe_name/winmidi_name already match the install tree's
+    # default names, so the mv is skipped rather than failing on "same file".
+    - name: Rename Windows binaries
+      if: matrix.os == 'windows'
       run: |
-        mkdir -p release
-        cp build/libemusc/tools/emusc-render.exe release/${{matrix.exe_name}}
-        cp build/emuscd/emusc-winmidi.exe release/${{matrix.winmidi_name}}
+        BIN=release/emusc-${{matrix.name}}/bin
+        [ "emusc-render.exe" = "${{matrix.exe_name}}" ] || mv $BIN/emusc-render.exe $BIN/${{matrix.exe_name}}
+        [ "emusc-winmidi.exe" = "${{matrix.winmidi_name}}" ] || mv $BIN/emusc-winmidi.exe $BIN/${{matrix.winmidi_name}}
       shell: bash
 
     # Both are expected to depend on nothing but core Windows DLLs (WINMM.dll
@@ -83,10 +142,10 @@ jobs:
     # (the statically-linked runtime itself still assumes a Pentium Pro or
     # later on the 32-bit build; both need this untested on real hardware).
     - name: Verify Windows binaries are self-contained
-      if: matrix.name != 'linux'
+      if: matrix.os == 'windows'
       run: |
         for f in ${{matrix.exe_name}} ${{matrix.winmidi_name}}; do
-          deps=$(${{matrix.objdump}} -p release/$f | grep -i "DLL Name" \
+          deps=$(${{matrix.objdump}} -p release/emusc-${{matrix.name}}/bin/$f | grep -i "DLL Name" \
                  | grep -viE "kernel32|msvcrt|winmm" || true)
           if [ -n "$deps" ]; then
             echo "$f depends on DLLs beyond the Windows base system:"
@@ -97,11 +156,15 @@ jobs:
         done
       shell: bash
 
+    - name: Create release archive
+      run: tar -czf emusc-${{matrix.name}}.tar.gz -C release emusc-${{matrix.name}}
+      shell: bash
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{matrix.name}}-binaries
-        path: release/
+        name: emusc-${{matrix.name}}
+        path: emusc-${{matrix.name}}.tar.gz
         retention-days: 7
 
   release:
@@ -141,6 +204,6 @@ jobs:
         name: Nightly Build
         prerelease: true
         generate_release_notes: false
-        files: artifacts/**/*
+        files: artifacts/**/*.tar.gz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
