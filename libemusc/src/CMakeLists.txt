@@ -173,15 +173,33 @@ if(BUILD_TESTING)
   sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
   # Each also sweeps the held ROM(s) end to end (every melodic tone for
   # sc88_rom_test; a real note-on and render for sc88_renderer_test and
-  # sc88_device_test), gated on the same environment variables as
+  # device_test), gated on the same environment variables as
   # sc88_tva_test above; without them the sweep is skipped and only the
   # synthetic fixtures run.
   set_property(TEST sc88_rom_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
   set_property(TEST sc88_renderer_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
-  sc88_test(sc88_device_test engines/xp/device.cc engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc engines/xp/output.cc ${SC88_VOICE_SOURCES})
-  set_property(TEST sc88_device_test PROPERTY SKIP_RETURN_CODE 77)
+
+  # device_test is the one sc88_*_test analog written in C++: EmuSC::Xp::Device
+  # and EmuSC::Xp::ChannelState (engines/xp/device.h) are no longer a plain C
+  # compat struct with an extern "C" shim layer - synth.cc was their only
+  # caller outside this test, and it has always held them as an opaque
+  # pointer - so sc88_test()'s ../tests/${name}.c convention does not fit.
+  add_executable(device_test ../tests/device_test.cc engines/xp/device.cc
+    engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc
+    engines/xp/output.cc ${SC88_VOICE_SOURCES})
+  target_include_directories(device_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(NOT MSVC)
+    target_link_libraries(device_test PRIVATE m)
+  endif()
+  if(MSVC)
+    target_compile_options(device_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(device_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME device_test COMMAND device_test)
+  set_property(TEST device_test PROPERTY SKIP_RETURN_CODE 77)
 
   # Synth::reset() is reached through the public C++ API, so this one links the
   # library rather than the engine sources. ControlRom and WaveRom read files

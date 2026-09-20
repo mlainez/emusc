@@ -51,7 +51,7 @@ struct sc88_delay {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (struct sc88_device in device.h, which embeds struct sc88_delay
+ * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_delay
  * by value, and sc88_delay_test.c). Each forwards to the real
  * implementation in namespace EmuSC::Xp. */
 bool sc88_delay_init(struct sc88_delay *dl, double output_rate);
@@ -71,7 +71,7 @@ namespace EmuSC { namespace Xp {
 
 // Separate delay block for the XP-generation-1 engine (see
 // engines/xp/README.md). The plain sc88_delay struct above is shared,
-// unrenamed, with struct sc88_device (device.h), which embeds it by
+// unrenamed, with EmuSC::Xp::Device (device.h), which embeds it by
 // value, and with sc88_delay_test.c, which reads it directly.
 
 bool delay_init(struct sc88_delay *dl, double outputRate);

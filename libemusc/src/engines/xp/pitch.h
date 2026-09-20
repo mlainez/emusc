@@ -105,7 +105,7 @@ namespace EmuSC { namespace Xp {
 
 // Pitch envelope, release and portamento for the XP-generation-1 engine
 // (see engines/xp/README.md). The plain C types above are shared,
-// unrenamed, with sc88_device_test.c, which embeds them by value through
+// unrenamed, with device_test.cc, which embeds them by value through
 // renderer.h.
 
 /* The rate table: 128 big-endian 32-bit entries at SC88-CTL 0x78502, indexed

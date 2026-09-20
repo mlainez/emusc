@@ -71,7 +71,7 @@ struct sc88_output {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (struct sc88_device in device.h, which embeds struct sc88_output
+ * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_output
  * by value, and sc88_output_test.c). Each forwards to the real
  * implementation in namespace EmuSC::Xp. */
 void sc88_output_init(struct sc88_output *out, double rate);
@@ -100,7 +100,7 @@ namespace EmuSC { namespace Xp {
 
 // Output stage (converter hold, analog board, DC blocker) for the
 // XP-generation-1 engine (see engines/xp/README.md). The plain C types
-// above are shared, unrenamed, with struct sc88_device (device.h), which
+// above are shared, unrenamed, with EmuSC::Xp::Device (device.h), which
 // embeds struct sc88_output by value, and with sc88_output_test.c, which
 // reads it directly.
 

@@ -50,7 +50,7 @@ namespace EmuSC { namespace Xp {
 
 // Pan/send gain laws for the XP-generation-1 engine (see
 // engines/xp/README.md). The plain sc88_pan_controls struct above is
-// shared, unrenamed, with sc88_device_test.c and sc88_pan_test.c, which
+// shared, unrenamed, with device_test.cc and sc88_pan_test.c, which
 // read it directly.
 
 bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *tone,

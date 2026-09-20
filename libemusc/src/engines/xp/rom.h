@@ -115,7 +115,7 @@ namespace EmuSC { namespace Xp {
 // Control-ROM reader for the SC-88 (see engines/xp/README.md for why this
 // is SC-88-shaped rather than generically XP-shaped: it is the only
 // Class-X member whose ROM layout is currently mapped here). The plain C
-// types above are shared, unrenamed, with sc88_device_test.c and
+// types above are shared, unrenamed, with device_test.cc and
 // sc88_rom_test.c, which read them directly.
 
 /* The offsets in this view are for the held SC-88 control ROM v1.01. The

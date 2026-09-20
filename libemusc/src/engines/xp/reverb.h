@@ -114,7 +114,7 @@ struct sc88_reverb {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (struct sc88_device in device.h, which embeds struct sc88_reverb
+ * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_reverb
  * by value, and sc88_reverb_test.c). Each forwards to the real
  * implementation in namespace EmuSC::Xp. */
 bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
@@ -140,7 +140,7 @@ void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
 namespace EmuSC { namespace Xp {
 
 // Reverb for the XP-generation-1 engine (see engines/xp/README.md). The
-// plain C types above are shared, unrenamed, with struct sc88_device
+// plain C types above are shared, unrenamed, with EmuSC::Xp::Device
 // (device.h), which embeds struct sc88_reverb by value, and with
 // sc88_reverb_test.c, which reads it directly.
 

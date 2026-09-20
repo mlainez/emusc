@@ -107,7 +107,7 @@ namespace EmuSC { namespace Xp {
 // behavior known to transfer to a sibling until measured on one.
 //
 // The plain C types above (sc88_wave_descriptor and friends) are shared,
-// unrenamed, with sc88_device_test.c, which reads them directly, and with
+// unrenamed, with device_test.cc, which reads them directly, and with
 // the extern "C" compatibility surface every sibling engines/xp/ module
 // keeps for callers still using the pre-conversion sc88_* names.
 

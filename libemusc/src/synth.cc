@@ -89,7 +89,7 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
 bool Synth::_sc88_configure(uint32_t sampleRate)
 {
   if (_sc88) {
-    sc88_device_destroy(_sc88);
+    Xp::device_destroy(_sc88);
     delete _sc88;
     _sc88 = nullptr;
   }
@@ -111,13 +111,13 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
     sizes[i] = chips[i].size();
   }
 
-  _sc88 = new struct sc88_device();
+  _sc88 = new Xp::Device();
   /* The wrap is not a choice: the wave directory's own pitch corrections are
      cut against a loop traversal of `span / step` output samples, which is
      what carrying the remainder gives. `sc88_oscillator_wrapped_phase` holds
      the evidence and `sc88_oscillator_test` holds the arithmetic. */
-  if (!sc88_device_init_raw(_sc88, ctrl.data(), ctrl.size(), raw, sizes,
-                            (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
+  if (!Xp::device_init_raw(_sc88, ctrl.data(), ctrl.size(), raw, sizes,
+                           (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
     delete _sc88;
     _sc88 = nullptr;
     std::cerr << "libEmuSC: the SC-88's engine refused these ROM images"
@@ -132,7 +132,7 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
 Synth::~Synth()
 {
   if (_sc88) {
-    sc88_device_destroy(_sc88);
+    Xp::device_destroy(_sc88);
     delete _sc88;
     _sc88 = nullptr;
   }
@@ -161,7 +161,7 @@ void Synth::reset(SoundMap sm, bool resetParts)
 {
   // The SC-88 holds its state in its own engine and leaves _parts empty for
   // its whole life, so the loop below reaches none of it. This is the call
-  // sc88_device_sysex() makes for the GS reset address 40 00 7F, so a host
+  // Xp::device_sysex() makes for the GS reset address 40 00 7F, so a host
   // reset and a GS reset leave the device in the same state: controllers and
   // parameters back to their defaults, voices already sounding left alone.
   // It returns without doing anything on a device that is not yet
@@ -173,7 +173,7 @@ void Synth::reset(SoundMap sm, bool resetParts)
   // for an SC-88, so nothing dispatches a SysEx through them here.
   if (_sc88) {
     midiMutex.lock();
-    sc88_device_reset_controllers(_sc88);
+    Xp::device_reset_controllers(_sc88);
     midiMutex.unlock();
   }
 
@@ -882,13 +882,13 @@ int Synth::get_next_frame(float &lOut, float &rOut)
            _eventQueue.front().applyAt <= _framesDelivered) {
       PendingEvent &e = _eventQueue.front();
       if (e.isSysEx)
-        sc88_device_sysex(_sc88, e.port, e.sysex.data(), e.sysex.size());
+        Xp::device_sysex(_sc88, e.port, e.sysex.data(), e.sysex.size());
       else
-        sc88_device_midi(_sc88, e.port, e.status, e.data1, e.data2);
+        Xp::device_midi(_sc88, e.port, e.status, e.data1, e.data2);
       _eventQueue.pop_front();
     }
 
-    sc88_device_render(_sc88, frame, 1);
+    Xp::device_render(_sc88, frame, 1);
     midiMutex.unlock();
     lOut = std::clamp(frame[0], -1.0f, 1.0f);
     rOut = std::clamp(frame[1], -1.0f, 1.0f);
@@ -1071,7 +1071,7 @@ void Synth::panic(void)
   midiMutex.lock();
   _eventQueue.clear();
   if (_sc88)
-    sc88_device_reset_controllers(_sc88);
+    Xp::device_reset_controllers(_sc88);
   midiMutex.unlock();
 
   if (_sc88)

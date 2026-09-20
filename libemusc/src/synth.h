@@ -56,9 +56,9 @@
  */
 
 
-// The SC-88's engine, written in C and holding its own device state. Declared
-// rather than included so that this header stays C++ only.
-struct sc88_device;
+// The SC-88's engine and its own device state. Forward-declared rather than
+// included so that this header does not pull in the whole engines/xp/ tree.
+namespace EmuSC { namespace Xp { struct Device; } }
 
 namespace EmuSC {
 
@@ -170,7 +170,7 @@ private:
   // control ROM itself and renders a stereo frame at a time off its own
   // scheduler clock. When the loaded ROM is an SC-88 this holds that engine and
   // every audio and MIDI call is forwarded to it. Null for every other device.
-  struct sc88_device *_sc88 = nullptr;
+  Xp::Device *_sc88 = nullptr;
 
   bool _sc88_configure(uint32_t sampleRate);
   

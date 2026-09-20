@@ -12,9 +12,9 @@ constexpr uint8_t kSelectors[SC88_WAVE_BANK_COUNT] = {
   0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
 };
 
-void syncPart(struct sc88_device *device, uint8_t part)
+void syncPart(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   struct sc88_tva_levels levels;
   struct sc88_pan_controls pan;
   levels.master = device->master_volume;
@@ -32,7 +32,7 @@ void syncPart(struct sc88_device *device, uint8_t part)
   engine_set_part_pan(&device->engine, part, &pan);
 }
 
-void syncChorus(struct sc88_device *device)
+void syncChorus(Device *device)
 {
   chorus_set_params(&device->renderer.rom, &device->chorus,
                      device->chorus_level, device->chorus_feedback,
@@ -44,7 +44,7 @@ void syncChorus(struct sc88_device *device)
    send - handler 0x3400, the reverb handler 0x3388's sibling, through the
    same copy helper and the same 8-byte record stride. The delay send is
    single-module only and this engine does not hold it. */
-bool loadChorusMacro(struct sc88_device *device, uint8_t macro)
+bool loadChorusMacro(Device *device, uint8_t macro)
 {
   uint8_t p[8];
   if (macro > 7 || !chorus_macro(&device->renderer.rom, macro, p))
@@ -61,9 +61,9 @@ bool loadChorusMacro(struct sc88_device *device, uint8_t macro)
   return true;
 }
 
-void syncLfo(struct sc88_device *device, uint8_t part)
+void syncLfo(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   struct sc88_lfo_controls controls;
   controls.rate = channel->vibrato_rate;
   controls.delay = channel->vibrato_delay;
@@ -71,16 +71,16 @@ void syncLfo(struct sc88_device *device, uint8_t part)
   engine_set_part_lfo_controls(&device->engine, part, &controls);
 }
 
-void syncEq(struct sc88_device *device)
+void syncEq(Device *device)
 {
   (void)eq_set_params(&device->renderer.rom, &device->eq,
                        device->eq_low_frequency, device->eq_low_gain,
                        device->eq_high_frequency, device->eq_high_gain);
 }
 
-void syncPitch(struct sc88_device *device, uint8_t part)
+void syncPitch(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   int64_t numerator = ((int32_t)channel->pitch_bend - 8192) *
     (int32_t)channel->pitch_bend_sensitivity * 16384;
   int32_t offset = (int32_t)(numerator / (8192 * 12));
@@ -124,18 +124,18 @@ uint16_t matrixTerm(uint8_t depth, uint8_t value)
   return (uint16_t)(centredDepth(depth) * (int)value);
 }
 
-void syncTvf(struct sc88_device *device, uint8_t part);
-void syncLfo1PitchDepth(struct sc88_device *device, uint8_t part);
-void syncTva(struct sc88_device *device, uint8_t part);
-void syncToneMap(struct sc88_device *device, uint8_t part);
+void syncTvf(Device *device, uint8_t part);
+void syncLfo1PitchDepth(Device *device, uint8_t part);
+void syncTva(Device *device, uint8_t part);
+void syncToneMap(Device *device, uint8_t part);
 
-bool setReverbCharacter(struct sc88_device *device, uint8_t character);
-bool loadReverbMacro(struct sc88_device *device, uint8_t macro);
-bool sysexWrite(struct sc88_device *device, uint8_t port, uint32_t address,
+bool setReverbCharacter(Device *device, uint8_t character);
+bool loadReverbMacro(Device *device, uint8_t macro);
+bool sysexWrite(Device *device, uint8_t port, uint32_t address,
                  uint8_t value);
 bool blockPart(uint8_t block, uint8_t port, uint8_t *part);
 
-bool initCommon(struct sc88_device *device, const uint8_t *controlRom,
+bool initCommon(Device *device, const uint8_t *controlRom,
                  size_t controlRomSize,
                  const uint8_t *const chips[SC88_WAVE_CHIP_COUNT],
                  const size_t sizes[SC88_WAVE_CHIP_COUNT], double outputRate,
@@ -216,9 +216,9 @@ fail:
    wraps. Pitch is the one destination that does not halve and whose bend
    constant is 0xfe16 instead; amplitude and the two LFO rates share this
    shape exactly, and would be wired from here. */
-void syncTvf(struct sc88_device *device, uint8_t part)
+void syncTvf(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   struct sc88_tvf_controls controls;
   controls.part_cutoff = channel->cutoff;
   controls.secondary_cutoff = 64;
@@ -232,18 +232,18 @@ void syncTvf(struct sc88_device *device, uint8_t part)
    unsigned and their four byte-controller products are shifted right two
    rather than one (`04_protocol/controllers.md`); modulation is the only
    source modelled, so the sum is the one term. */
-void syncLfo1PitchDepth(struct sc88_device *device, uint8_t part)
+void syncLfo1PitchDepth(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   unsigned depth =
     channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_LFO1_PITCH_DEPTH];
   engine_set_part_lfo1_pitch_depth(
     &device->engine, part, (uint16_t)((depth * channel->modulation) >> 2));
 }
 
-void syncTva(struct sc88_device *device, uint8_t part)
+void syncTva(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   struct sc88_tva_controls controls;
   controls.part_attack = channel->attack;
   controls.secondary_attack = 64;
@@ -257,9 +257,9 @@ void syncTva(struct sc88_device *device, uint8_t part)
    map does. A forced byte above 2 resolves to no tone at all on the device;
    it is refused where it is received instead, so nothing ever reaches this
    holding a map the ROM lookup has no row for. */
-void syncToneMap(struct sc88_device *device, uint8_t part)
+void syncToneMap(Device *device, uint8_t part)
 {
-  const struct sc88_channel_state *channel = device->channels + part;
+  const ChannelState *channel = device->channels + part;
   engine_set_part_tone_map(&device->engine, part,
                             channel->tone_map_forced
                               ? channel->tone_map_forced
@@ -282,7 +282,7 @@ bool blockPart(uint8_t block, uint8_t port, uint8_t *part)
   return true;
 }
 
-bool setReverbCharacter(struct sc88_device *device, uint8_t character)
+bool setReverbCharacter(Device *device, uint8_t character)
 {
   struct sc88_reverb replacement;
   if (character == device->reverb_character)
@@ -311,7 +311,7 @@ bool setReverbCharacter(struct sc88_device *device, uint8_t character)
    only when the index is zero, copy the rest of the block out of a ROM table
    (`0x1583e + 8*macro` here, `0x158be + 16*macro` there) through the same
    pair of copy helpers. The power-on loader at 0x4476 reads the same table. */
-bool loadReverbMacro(struct sc88_device *device, uint8_t macro)
+bool loadReverbMacro(Device *device, uint8_t macro)
 {
   uint8_t p[7];
   if (macro > 7 || !reverb_macro(&device->renderer.rom, macro, p))
@@ -333,7 +333,7 @@ bool loadReverbMacro(struct sc88_device *device, uint8_t macro)
 }
 
 /* One address of a DT1 packet. `true` means the write was acted on. */
-bool sysexWrite(struct sc88_device *device, uint8_t port, uint32_t address,
+bool sysexWrite(Device *device, uint8_t port, uint32_t address,
                  uint8_t value)
 {
   uint8_t part;
@@ -521,7 +521,7 @@ bool sysexWrite(struct sc88_device *device, uint8_t port, uint32_t address,
      survive to the merge that reads it. */
   if ((address & 0xf0f000u) == 0x402000u &&
       blockPart((uint8_t)((address >> 8) & 0x0f), port, &part)) {
-    struct sc88_channel_state *state = device->channels + part;
+    ChannelState *state = device->channels + part;
     uint8_t group = (uint8_t)((address & 0xffu) >> 4);
     uint8_t destination = (uint8_t)(address & 0x0fu);
     if (group >= SC88_MATRIX_SOURCE_COUNT ||
@@ -539,7 +539,7 @@ bool sysexWrite(struct sc88_device *device, uint8_t port, uint32_t address,
      caller's port is what decides which sixteen parts `1x` counts within. */
   if ((address & 0xf0f000u) == 0x401000u &&
       blockPart((uint8_t)((address >> 8) & 0x0f), port, &part)) {
-    struct sc88_channel_state *state = device->channels + part;
+    ChannelState *state = device->channels + part;
     switch (address & 0xffu) {
     case 0x14:
       if (value > 2)
@@ -635,7 +635,7 @@ bool sysexWrite(struct sc88_device *device, uint8_t port, uint32_t address,
 
 }  // namespace
 
-bool device_init_raw(struct sc88_device *device, const uint8_t *controlRom,
+bool device_init_raw(Device *device, const uint8_t *controlRom,
                       size_t controlRomSize,
                       const uint8_t *const rawChips[SC88_WAVE_CHIP_COUNT],
                       const size_t rawSizes[SC88_WAVE_CHIP_COUNT],
@@ -646,7 +646,7 @@ bool device_init_raw(struct sc88_device *device, const uint8_t *controlRom,
 }
 
 bool device_init_decoded(
-  struct sc88_device *device, const uint8_t *controlRom,
+  Device *device, const uint8_t *controlRom,
   size_t controlRomSize,
   const uint8_t *const decodedChips[SC88_WAVE_CHIP_COUNT],
   const size_t decodedSizes[SC88_WAVE_CHIP_COUNT], double outputRate,
@@ -656,7 +656,7 @@ bool device_init_decoded(
                      decodedSizes, outputRate, wrap, false);
 }
 
-void device_destroy(struct sc88_device *device)
+void device_destroy(Device *device)
 {
   if (!device)
     return;
@@ -674,7 +674,7 @@ void device_destroy(struct sc88_device *device)
   std::memset(device, 0, sizeof *device);
 }
 
-void device_reset_controllers(struct sc88_device *device)
+void device_reset_controllers(Device *device)
 {
   if (!device || !device->initialized)
     return;
@@ -710,7 +710,7 @@ void device_reset_controllers(struct sc88_device *device)
                             device->delay_params);
   delay_reset(&device->delay);
   for (unsigned part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
-    struct sc88_channel_state *channel = device->channels + part;
+    ChannelState *channel = device->channels + part;
     channel->variation = 0;
     channel->tone_map_forced = 0;
     channel->program = 0;
@@ -809,7 +809,7 @@ void device_reset_controllers(struct sc88_device *device)
   }
 }
 
-void device_set_master_volume(struct sc88_device *device, uint8_t value)
+void device_set_master_volume(Device *device, uint8_t value)
 {
   if (!device || !device->initialized || value > 127)
     return;
@@ -818,7 +818,7 @@ void device_set_master_volume(struct sc88_device *device, uint8_t value)
     syncPart(device, (uint8_t)part);
 }
 
-void device_set_master_pan(struct sc88_device *device, uint8_t value)
+void device_set_master_pan(Device *device, uint8_t value)
 {
   if (!device || !device->initialized || value < 1 || value > 127)
     return;
@@ -827,7 +827,7 @@ void device_set_master_pan(struct sc88_device *device, uint8_t value)
     syncPart(device, (uint8_t)part);
 }
 
-bool device_sysex(struct sc88_device *device, uint8_t port,
+bool device_sysex(Device *device, uint8_t port,
                    const uint8_t *data, size_t size)
 {
   if (!device || !device->initialized || !data ||
@@ -872,7 +872,7 @@ bool device_sysex(struct sc88_device *device, uint8_t port,
   return true;
 }
 
-bool device_midi(struct sc88_device *device, uint8_t port, uint8_t status,
+bool device_midi(Device *device, uint8_t port, uint8_t status,
                   uint8_t data1, uint8_t data2)
 {
   if (!device || !device->initialized || port >= SC88_MIDI_PORT_COUNT ||
@@ -880,7 +880,7 @@ bool device_midi(struct sc88_device *device, uint8_t port, uint8_t status,
     return false;
   uint8_t channel = status & 0x0f;
   uint8_t part = (uint8_t)(port * 16 + channel);
-  struct sc88_channel_state *state = device->channels + part;
+  ChannelState *state = device->channels + part;
   switch (status & 0xf0) {
   case 0x80:
     return engine_note_off(&device->engine, part, data1);
@@ -1130,7 +1130,7 @@ bool device_midi(struct sc88_device *device, uint8_t port, uint8_t status,
   }
 }
 
-int16_t device_matrix_cutoff_word(const struct sc88_channel_state *channel)
+int16_t device_matrix_cutoff_word(const ChannelState *channel)
 {
   uint16_t sum = matrixTerm(
     channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_CUTOFF],
@@ -1156,7 +1156,7 @@ int16_t device_matrix_cutoff_word(const struct sc88_channel_state *channel)
   return s16((uint16_t)(sum + (uint16_t)product));
 }
 
-void device_render(struct sc88_device *device, float *stereo, size_t frames)
+void device_render(Device *device, float *stereo, size_t frames)
 {
   if (!device || !device->initialized || !stereo)
     return;
@@ -1211,76 +1211,3 @@ void device_render(struct sc88_device *device, float *stereo, size_t frames)
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_device_init_raw(struct sc88_device *device,
-                          const uint8_t *control_rom,
-                          size_t control_rom_size,
-                          const uint8_t *const raw_chips[SC88_WAVE_CHIP_COUNT],
-                          const size_t raw_sizes[SC88_WAVE_CHIP_COUNT],
-                          double output_rate,
-                          enum sc88_fractional_wrap wrap)
-{
-  return EmuSC::Xp::device_init_raw(device, control_rom, control_rom_size,
-                                     raw_chips, raw_sizes, output_rate, wrap);
-}
-
-bool sc88_device_init_decoded(
-  struct sc88_device *device, const uint8_t *control_rom,
-  size_t control_rom_size,
-  const uint8_t *const decoded_chips[SC88_WAVE_CHIP_COUNT],
-  const size_t decoded_sizes[SC88_WAVE_CHIP_COUNT], double output_rate,
-  enum sc88_fractional_wrap wrap)
-{
-  return EmuSC::Xp::device_init_decoded(device, control_rom, control_rom_size,
-                                         decoded_chips, decoded_sizes,
-                                         output_rate, wrap);
-}
-
-void sc88_device_destroy(struct sc88_device *device)
-{
-  EmuSC::Xp::device_destroy(device);
-}
-
-void sc88_device_reset_controllers(struct sc88_device *device)
-{
-  EmuSC::Xp::device_reset_controllers(device);
-}
-
-void sc88_device_set_master_volume(struct sc88_device *device, uint8_t value)
-{
-  EmuSC::Xp::device_set_master_volume(device, value);
-}
-
-void sc88_device_set_master_pan(struct sc88_device *device, uint8_t value)
-{
-  EmuSC::Xp::device_set_master_pan(device, value);
-}
-
-bool sc88_device_sysex(struct sc88_device *device, uint8_t port,
-                       const uint8_t *data, size_t size)
-{
-  return EmuSC::Xp::device_sysex(device, port, data, size);
-}
-
-bool sc88_device_midi(struct sc88_device *device, uint8_t port,
-                      uint8_t status, uint8_t data1, uint8_t data2)
-{
-  return EmuSC::Xp::device_midi(device, port, status, data1, data2);
-}
-
-int16_t sc88_device_matrix_cutoff_word(
-  const struct sc88_channel_state *channel)
-{
-  return EmuSC::Xp::device_matrix_cutoff_word(channel);
-}
-
-void sc88_device_render(struct sc88_device *device, float *stereo,
-                        size_t frames)
-{
-  EmuSC::Xp::device_render(device, stereo, frames);
-}
-
-}  // extern "C"

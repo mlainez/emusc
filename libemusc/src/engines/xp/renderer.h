@@ -173,7 +173,7 @@ struct sc88_render_voice {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (struct sc88_device in device.h, which embeds the structs above
+ * below (EmuSC::Xp::Device in device.h, which embeds the structs above
  * by value through engine.h, and sc88_renderer_test.c, which reads their
  * fields directly). Each forwards to the real implementation in namespace
  * EmuSC::Xp. */
@@ -265,7 +265,7 @@ namespace EmuSC { namespace Xp {
 
 // Renderer (per-voice tone resolution and rendering) for the
 // XP-generation-1 engine (see engines/xp/README.md). The plain C types
-// above are shared, unrenamed, with struct sc88_device (device.h), which
+// above are shared, unrenamed, with EmuSC::Xp::Device (device.h), which
 // embeds sc88_render_component and sc88_render_voice by value through
 // engine.h, and with sc88_renderer_test.c, which reads their fields
 // directly.

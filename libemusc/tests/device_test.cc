@@ -1,22 +1,24 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/device.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
-static void put16(uint8_t *p, uint16_t value)
+namespace {
+
+void put16(uint8_t *p, uint16_t value)
 {
   p[0] = (uint8_t)(value >> 8);
   p[1] = (uint8_t)value;
 }
 
-static void put24(uint8_t *p, uint32_t value)
+void put24(uint8_t *p, uint32_t value)
 {
   p[0] = (uint8_t)(value >> 16);
   p[1] = (uint8_t)(value >> 8);
@@ -24,8 +26,8 @@ static void put24(uint8_t *p, uint32_t value)
 }
 
 /* One GS DT1 write, framed as the wire carries it. */
-static bool dt1(struct sc88_device *device, uint8_t a, uint8_t b, uint8_t c,
-                uint8_t value)
+bool dt1(EmuSC::Xp::Device *device, uint8_t a, uint8_t b, uint8_t c,
+         uint8_t value)
 {
   uint8_t packet[10];
   unsigned sum = (unsigned)a + b + c + value;
@@ -33,10 +35,10 @@ static bool dt1(struct sc88_device *device, uint8_t a, uint8_t b, uint8_t c,
   packet[3] = 0x42; packet[4] = 0x12;
   packet[5] = a; packet[6] = b; packet[7] = c; packet[8] = value;
   packet[9] = (uint8_t)((0u - sum) & 0x7fu);
-  return sc88_device_sysex(device, 0, packet, 10);
+  return EmuSC::Xp::device_sysex(device, 0, packet, 10);
 }
 
-static uint8_t *read_exact(const char *path, size_t size)
+uint8_t *read_exact(const char *path, size_t size)
 {
   FILE *file = fopen(path, "rb");
   uint8_t *bytes = (uint8_t *)malloc(size);
@@ -47,7 +49,7 @@ static uint8_t *read_exact(const char *path, size_t size)
   return bytes;
 }
 
-static void make_control(uint8_t *control)
+void make_control(uint8_t *control)
 {
   static const uint8_t vectors[16] = {
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
@@ -111,7 +113,7 @@ static void make_control(uint8_t *control)
      SC88_WAVE_ROMS    the four wave chips, comma separated, in chip order
    Without them the caller skips rather than passing while checking only
    the synthetic fixtures above. */
-static bool split_wave_roms(const char *csv, char paths[4][512])
+bool split_wave_roms(const char *csv, char paths[4][512])
 {
   const char *p = csv;
   unsigned i;
@@ -133,13 +135,13 @@ static bool split_wave_roms(const char *csv, char paths[4][512])
   return true;
 }
 
-static void test_held_raw(char **paths)
+void test_held_raw(char **paths)
 {
   uint8_t *control = read_exact(paths[0], SC88_CONTROL_ROM_SIZE);
   uint8_t *chips[SC88_WAVE_CHIP_COUNT];
   const uint8_t *inputs[SC88_WAVE_CHIP_COUNT];
   size_t sizes[SC88_WAVE_CHIP_COUNT];
-  struct sc88_device device;
+  EmuSC::Xp::Device device;
   float output[8192];
   double energy = 0.0;
   unsigned i;
@@ -149,19 +151,21 @@ static void test_held_raw(char **paths)
     inputs[i] = chips[i];
     sizes[i] = SC88_WAVE_CHIP_SIZE;
   }
-  assert(sc88_device_init_raw(&device, control, SC88_CONTROL_ROM_SIZE,
-                              inputs, sizes, 48000.0,
-                              SC88_WRAP_FULL_CARRY));
-  assert(sc88_device_midi(&device, 0, 0x90, 60, 100));
-  sc88_device_render(&device, output, 4096);
+  assert(EmuSC::Xp::device_init_raw(&device, control, SC88_CONTROL_ROM_SIZE,
+                                     inputs, sizes, 48000.0,
+                                     SC88_WRAP_FULL_CARRY));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0x90, 60, 100));
+  EmuSC::Xp::device_render(&device, output, 4096);
   for (i = 0; i < 8192; ++i)
     energy += fabs(output[i]);
   assert(energy > 0.0);
-  sc88_device_destroy(&device);
+  EmuSC::Xp::device_destroy(&device);
   for (i = 0; i < SC88_WAVE_CHIP_COUNT; ++i)
     free(chips[i]);
   free(control);
 }
+
+}  // namespace
 
 int main(void)
 {
@@ -172,16 +176,16 @@ int main(void)
     SC88_WAVE_CHIP_SIZE, SC88_WAVE_CHIP_SIZE,
     SC88_WAVE_CHIP_SIZE, SC88_WAVE_CHIP_SIZE
   };
-  struct sc88_device device;
+  EmuSC::Xp::Device device;
   float output[514];
 
   assert(control && chip);
   make_control(control);
   chip[0x8000] = 1;
   chip[0x8001] = 1;
-  assert(sc88_device_init_decoded(&device, control, SC88_CONTROL_ROM_SIZE,
-                                  chips, sizes, 32000.0,
-                                  SC88_WRAP_FULL_CARRY));
+  assert(EmuSC::Xp::device_init_decoded(&device, control, SC88_CONTROL_ROM_SIZE,
+                                        chips, sizes, 32000.0,
+                                        SC88_WRAP_FULL_CARRY));
   assert(device.channels[0].volume == 100);
   assert(device.channels[0].cutoff == 64);
   /* A reset makes MIDI channel 10 of each port a rhythm part playing from
@@ -196,23 +200,23 @@ int main(void)
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
   /* CC32 forces a map; 0 goes back to the selected one, which nothing
      resets off the SC-88. */
-  assert(sc88_device_midi(&device, 0, 0xb0, 32, 1));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 32, 1));
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
-  assert(sc88_device_midi(&device, 0, 0xb0, 32, 0));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 32, 0));
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
-  assert(sc88_device_midi(&device, 0, 0x90, 60, 100));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0x90, 60, 100));
   assert(sc88_engine_active_slots(&device.engine) == 1);
   {
     double unity_step = device.engine.slots[0].component.oscillator.step;
-    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xe0, 127, 127));
     assert(device.engine.slots[0].component.oscillator.step > unity_step);
-    assert(sc88_device_midi(&device, 0, 0xb0, 101, 0));
-    assert(sc88_device_midi(&device, 0, 0xb0, 100, 0));
-    assert(sc88_device_midi(&device, 0, 0xb0, 6, 12));
-    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 101, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 100, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 6, 12));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xe0, 127, 127));
     assert(fabs(device.engine.slots[0].component.oscillator.step /
                 unity_step - 1.9998) < 0.001);
-    assert(sc88_device_midi(&device, 0, 0xb0, 121, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 121, 0));
     assert(fabs(device.engine.slots[0].component.oscillator.step -
                 unity_step) < 1e-12);
   }
@@ -222,7 +226,7 @@ int main(void)
      and the filter exactly where it was. That is why wiring this moves
      no render of a song that never writes `40 2x`. */
   {
-    struct sc88_channel_state *state = device.channels;
+    EmuSC::Xp::ChannelState *state = device.channels;
     unsigned source;
     for (source = 0; source < SC88_MATRIX_SOURCE_COUNT; ++source)
       assert(state->matrix_depth[source][SC88_MATRIX_CUTOFF] == 0x40);
@@ -230,13 +234,13 @@ int main(void)
                               [SC88_MATRIX_LFO1_PITCH_DEPTH] == 0x0a);
     assert(state->matrix_depth[SC88_MATRIX_PITCH_BEND]
                               [SC88_MATRIX_PITCH] == 0x42);
-    assert(sc88_device_midi(&device, 0, 0xb0, 1, 127));
-    assert(sc88_device_midi(&device, 0, 0xd0, 127, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 1, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xd0, 127, 0));
     assert(device.channels[0].channel_pressure == 127);
-    assert(sc88_device_midi(&device, 0, 0xb0, 16, 127));
-    assert(sc88_device_midi(&device, 0, 0xb0, 17, 127));
-    assert(sc88_device_midi(&device, 0, 0xe0, 127, 127));
-    assert(sc88_device_matrix_cutoff_word(state) == 0);
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 16, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 17, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xe0, 127, 127));
+    assert(EmuSC::Xp::device_matrix_cutoff_word(state) == 0);
     assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 0);
 
     /* `40 21 01`: modulation to cutoff on part 1, at full positive
@@ -245,19 +249,19 @@ int main(void)
     assert(dt1(&device, 0x40, 0x21, 0x01, 0x7f));
     assert(state->matrix_depth[SC88_MATRIX_MODULATION]
                               [SC88_MATRIX_CUTOFF] == 0x7f);
-    assert(sc88_device_matrix_cutoff_word(state) == 4000);
+    assert(EmuSC::Xp::device_matrix_cutoff_word(state) == 4000);
     assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 4000);
     assert(sc88_tvf_matrix_cutoff_term(4000) == 8191);
     /* Released, the wheel puts it back where it was. */
-    assert(sc88_device_midi(&device, 0, 0xb0, 1, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 1, 0));
     assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 0);
-    assert(sc88_device_midi(&device, 0, 0xb0, 1, 127));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 1, 127));
     /* A depth below centre darkens instead. */
     assert(dt1(&device, 0x40, 0x21, 0x01, 0x00));
-    assert(sc88_device_matrix_cutoff_word(state) == -4064);
+    assert(EmuSC::Xp::device_matrix_cutoff_word(state) == -4064);
     /* Neutral again, and the wheel goes back to moving nothing. */
     assert(dt1(&device, 0x40, 0x21, 0x01, 0x40));
-    assert(sc88_device_matrix_cutoff_word(state) == 0);
+    assert(EmuSC::Xp::device_matrix_cutoff_word(state) == 0);
     /* `40 4x 20` is the equaliser switch and `40 2x 20` the channel
        aftertouch group's pitch depth. The two are distinct addresses and
        neither reaches the other. */
@@ -270,36 +274,36 @@ int main(void)
     assert(dt1(&device, 0x40, 0x41, 0x20, 0x01));
     assert(device.eq.enabled);
     /* Put every source back at rest for the tests that follow. */
-    assert(sc88_device_midi(&device, 0, 0xb0, 1, 0));
-    assert(sc88_device_midi(&device, 0, 0xd0, 0, 0));
-    assert(sc88_device_midi(&device, 0, 0xb0, 16, 0));
-    assert(sc88_device_midi(&device, 0, 0xb0, 17, 0));
-    assert(sc88_device_midi(&device, 0, 0xb0, 121, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 1, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xd0, 0, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 16, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 17, 0));
+    assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 121, 0));
   }
-  assert(sc88_device_midi(&device, 0, 0xb0, 99, 1));
-  assert(sc88_device_midi(&device, 0, 0xb0, 98, 0x20));
-  assert(sc88_device_midi(&device, 0, 0xb0, 6, 127));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 99, 1));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 98, 0x20));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 6, 127));
   assert(device.channels[0].cutoff == 127);
   assert(device.engine.parts[0].tvf_dirty);
-  assert(sc88_device_midi(&device, 0, 0xb0, 98, 0x21));
-  assert(sc88_device_midi(&device, 0, 0xb0, 6, 96));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 98, 0x21));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 6, 96));
   assert(device.channels[0].resonance == 96);
-  assert(sc88_device_midi(&device, 0, 0xb0, 10, 1));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 10, 1));
   assert(device.engine.slots[0].component.pan_target_position == 1);
-  sc88_device_render(&device, output, 257);
+  EmuSC::Xp::device_render(&device, output, 257);
   assert(!device.engine.parts[0].tvf_dirty);
   assert(device.engine.slots[0].component.pan_position == 63);
   assert(output[0] > 0.0f && output[0] == output[1]);
 
   put16(device.control_rom + 0x14f3e, 0xffff);
-  assert(sc88_device_midi(&device, 0, 0xb0, 7, 0));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 7, 0));
   /* Silencing the part silences the voices, but the output stage is
      AC-coupled and rings briefly on any step, so what is asserted is that
      it settles rather than that it is zero on the next sample. The
      settled level is asserted against an absolute bound: comparing two
      samples of the tail against each other compares float noise once
      more than one section is in the path. */
-  sc88_device_render(&device, output, 64);
+  EmuSC::Xp::device_render(&device, output, 64);
   {
     unsigned s;
     for (s = 0; s < 64; ++s)
@@ -308,28 +312,28 @@ int main(void)
     assert(fabs(output[126]) < 1e-3f);
   }
   put16(device.control_rom + 0x14f3e, 0);
-  assert(sc88_device_midi(&device, 0, 0xb0, 7, 100));
-  assert(sc88_device_midi(&device, 0, 0xb0, 64, 127));
-  assert(sc88_device_midi(&device, 0, 0x80, 60, 64));
-  sc88_device_render(&device, output, 257);
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 7, 100));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 64, 127));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0x80, 60, 64));
+  EmuSC::Xp::device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 1);
-  assert(sc88_device_midi(&device, 0, 0xb0, 64, 0));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 64, 0));
   /* Two control periods: one for the release to run out and compose
      amplitude 0, one for the chip's register to glide to it. */
-  sc88_device_render(&device, output, 257);
-  sc88_device_render(&device, output, 257);
+  EmuSC::Xp::device_render(&device, output, 257);
+  EmuSC::Xp::device_render(&device, output, 257);
   assert(sc88_engine_active_slots(&device.engine) == 0);
-  assert(sc88_device_midi(&device, 1, 0xc0, 0, 0));
-  assert(!sc88_device_midi(&device, 2, 0x90, 60, 100));
+  assert(EmuSC::Xp::device_midi(&device, 1, 0xc0, 0, 0));
+  assert(!EmuSC::Xp::device_midi(&device, 2, 0x90, 60, 100));
   /* The tone map reaches a melodic part, not only a rhythm one: this image
      fills both rows of the variation lookup with the same bank, so a part
      forced onto the SC-55 row sounds its tone rather than dropping the
      note. Thirteen corpus files send exactly this. */
-  assert(sc88_device_midi(&device, 0, 0xb0, 32, 1));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 32, 1));
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
-  assert(sc88_device_midi(&device, 0, 0x90, 62, 100));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0x90, 62, 100));
   assert(sc88_engine_active_slots(&device.engine) == 1);
-  assert(sc88_device_midi(&device, 0, 0x80, 62, 64));
+  assert(EmuSC::Xp::device_midi(&device, 0, 0x80, 62, 64));
   /* `40 4x 00` writes the byte CC32 writes and `40 4x 01` the part's own
      map, which the forcing byte defers to when it is zero. Block 1 is
      part 1; the last byte of each packet is its checksum. */
@@ -342,19 +346,22 @@ int main(void)
       0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x01, 0x01, 0x7d };
     static const uint8_t selected_bad[] = {
       0x41, 0x10, 0x42, 0x12, 0x40, 0x41, 0x01, 0x00, 0x7e };
-    assert(sc88_device_sysex(&device, 0, forced_sc88, sizeof forced_sc88));
+    assert(EmuSC::Xp::device_sysex(&device, 0, forced_sc88,
+                                    sizeof forced_sc88));
     assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
-    assert(sc88_device_sysex(&device, 0, selected_sc55,
-                             sizeof selected_sc55));
+    assert(EmuSC::Xp::device_sysex(&device, 0, selected_sc55,
+                                    sizeof selected_sc55));
     assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
-    assert(sc88_device_sysex(&device, 0, forced_off, sizeof forced_off));
+    assert(EmuSC::Xp::device_sysex(&device, 0, forced_off,
+                                    sizeof forced_off));
     assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
     /* `46e9` carries the range 01..02 and refuses anything else, so the
        selected map stays where it was. */
-    assert(sc88_device_sysex(&device, 0, selected_bad, sizeof selected_bad));
+    assert(EmuSC::Xp::device_sysex(&device, 0, selected_bad,
+                                    sizeof selected_bad));
     assert(device.channels[0].tone_map_selected == SC88_TONE_MAP_SC55);
   }
-  sc88_device_destroy(&device);
+  EmuSC::Xp::device_destroy(&device);
   free(chip);
   free(control);
 

@@ -37,7 +37,7 @@ struct sc88_eq {
 };
 
 /* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (struct sc88_device in device.h, which embeds struct sc88_eq by
+ * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_eq by
  * value, and sc88_eq_test.c). Each forwards to the real implementation in
  * namespace EmuSC::Xp. */
 void sc88_eq_init(struct sc88_eq *eq);
@@ -54,7 +54,7 @@ namespace EmuSC { namespace Xp {
 
 // Two-band output equaliser for the XP-generation-1 engine (see
 // engines/xp/README.md). The plain sc88_eq struct above is shared,
-// unrenamed, with struct sc88_device (device.h), which embeds it by
+// unrenamed, with EmuSC::Xp::Device (device.h), which embeds it by
 // value, and with sc88_eq_test.c, which reads it directly.
 
 /* `lowFrequency` and `highFrequency` select the band corner: 0 is 200 Hz
