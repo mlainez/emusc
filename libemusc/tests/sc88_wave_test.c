@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: CC0-1.0 */
-#include "engines/xp/sc88_wave.h"
+#include "engines/xp/wave.h"
 
 #include <assert.h>
 #ifdef NDEBUG

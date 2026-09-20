@@ -2,7 +2,7 @@
 #ifndef EMUSC_SC88_ROM_H
 #define EMUSC_SC88_ROM_H
 
-#include "sc88_wave.h"
+#include "wave.h"
 
 #include <stdbool.h>
 #include <stddef.h>

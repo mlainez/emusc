@@ -22,7 +22,7 @@
 #include "engines/xp/sc88_rom.h"
 #include "engines/xp/sc88_tvf.h"
 #include "engines/xp/sc88_tva.h"
-#include "engines/xp/sc88_wave.h"
+#include "engines/xp/wave.h"
 
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 #define SC88_TVF_NATIVE_RATE 32000.0

@@ -35,7 +35,7 @@ install(FILES
   src/engines/xp/sc88_rom.h
   src/engines/xp/sc88_tva.h
   src/engines/xp/sc88_tvf.h
-  src/engines/xp/sc88_wave.h
+  src/engines/xp/wave.h
   src/synth.h
   src/wave_rom.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/emusc COMPONENT dev)
