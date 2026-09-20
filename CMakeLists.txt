@@ -22,7 +22,9 @@ endif()
 
 add_subdirectory(libemusc)
 
-# emuscd daemon requires ALSA (Linux only)
-if(NOT WIN32 AND NOT APPLE)
+# emuscd/ holds the realtime MIDI daemon for both platforms it's built on:
+# emuscd itself (ALSA, Linux) or emusc-winmidi (WinMM, Windows). Neither is
+# built on Apple platforms - no backend exists for it yet.
+if(NOT APPLE)
   add_subdirectory(emuscd)
 endif()
