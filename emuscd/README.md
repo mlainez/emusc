@@ -12,7 +12,7 @@ emuscd
 emuscd --device sc55
 
 # Custom MIDI port name
-emuscd --device sc88 --port-name "My Synth"
+emuscd --device sc88 --name "My Synth"
 ```
 
 ## Supported Devices
@@ -37,7 +37,7 @@ aconnect "Your Keyboard" "emuscd"
 ### Using JACK
 If JACK is running, emuscd uses ALSA's JACK bridge:
 ```bash
-emuscd --device sc88 --port-name "emuscd"
+emuscd --device sc88 --name "emuscd"
 # Connect in Qjackctl or your JACK patchbay
 ```
 
@@ -57,7 +57,12 @@ Type `quit` or `exit` to stop the daemon.
 ## Options
 
 - `--device NAME` — Device to emulate (default: sc88)
-- `--port-name NAME` — ALSA MIDI port name (default: emuscd)
+- `--name NAME` — ALSA MIDI port name (default: emuscd)
+- `--pcm DEVICE` — ALSA PCM output device (default: default)
+- `--list-pcm` — List ALSA PCM devices and exit
+- `--rate HZ` — Requested audio sample rate (default: 44100)
+- `--latency MS` — Requested output buffer size (default: 20)
+- `--block N` — Audio frames per ALSA write (default: 256)
 - `--help` — Show help message
 
 ## ROM Files
@@ -69,20 +74,29 @@ export EMUSCD_ROM_DIR=/path/to/roms
 emuscd --device sc88
 ```
 
-ROM files should be named:
-- `sc55_rom1.bin`, `sc55_rom2.bin`, `sc55_waverom{1,2,3}.bin` (SC-55)
-- `sc55mkii_rom1.bin`, `sc55mkii_rom2.bin`, `sc55mkii_waverom{1,2}.bin` (SC-55mkII)
-- `sc88_rom1.bin`, `sc88_waverom{1,2,3,4}.bin` (SC-88; no separate CPU ROM)
-- `jv880_rom2.bin`, `jv880_waverom{1,2}.bin` (JV-880; `jv880_rom1.bin` is not used)
+One naming convention covers all four devices: `<device>_control.bin` is
+always the control/program ROM, and `<device>_cpu.bin` is the internal CPU
+ROM that only SC-55 and SC-55mkII have.
+
+- `sc55_control.bin`, `sc55_cpu.bin`, `sc55_waverom{1,2,3}.bin` (SC-55)
+- `sc55mkii_control.bin`, `sc55mkii_cpu.bin`, `sc55mkii_waverom{1,2}.bin` (SC-55mkII)
+- `sc88_control.bin`, `sc88_waverom{1,2,3,4}.bin` (SC-88; no separate CPU ROM)
+- `jv880_control.bin`, `jv880_waverom{1,2}.bin` (JV-880)
+
+See the top-level [README.md](../README.md) for exact file sizes and SHA1/MD5
+hashes of known-good ROM dumps.
 
 ## Audio Output
 
 Audio is sent to your system's default ALSA PCM device (usually your speakers or JACK).
 
-To route to a specific ALSA device:
+To route to a specific device:
 ```bash
-ALSA_CARD=1 emuscd
+emuscd --pcm hw:1
 ```
+
+`--list-pcm` shows what's available. `ALSA_CARD=1 emuscd` (ALSA's own
+environment variable) still works too.
 
 ## Building
 

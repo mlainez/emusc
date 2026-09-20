@@ -1,6 +1,7 @@
 // emuscd - headless Roland Sound Canvas daemon
 // Listens for MIDI input and synthesizes audio to ALSA output
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -34,33 +35,50 @@ bool device_supported(const std::string &dev) {
   return false;
 }
 
+// Enumerates ALSA PCM devices the way `aplay -L` does, so --pcm has a source
+// of values to try without guessing at ALSA's own naming.
+void list_pcm_devices() {
+  void **hints;
+  if (snd_device_name_hint(-1, "pcm", &hints) < 0) {
+    std::cerr << "emuscd: could not enumerate PCM devices" << std::endl;
+    return;
+  }
+  for (void **n = hints; *n != nullptr; n++) {
+    char *name = snd_device_name_get_hint(*n, "NAME");
+    char *desc = snd_device_name_get_hint(*n, "DESC");
+    if (name) {
+      std::cout << name;
+      if (desc) {
+        std::string d(desc);
+        std::replace(d.begin(), d.end(), '\n', ' ');
+        std::cout << "  -  " << d;
+      }
+      std::cout << std::endl;
+    }
+    free(name);
+    free(desc);
+  }
+  snd_device_name_free_hint(hints);
+}
+
 struct DeviceRoms {
   std::string control_rom, cpu_rom;
   std::vector<std::string> wave_roms;
 };
 
-// File layout matches emusc-render's --device preset (libemusc/tools/main.cc):
-// SC-55/SC-55mkII split control data across an external rom2 (control) and an
-// internal rom1 (CPU); SC-88 and JV-880 each hold everything in one image
-// (SC-88: sc88_rom1.bin; JV-880: the 256 kB rom2.bin, per DeviceProfile in
-// devices/jv880.cc, not the unused 32 kB rom1.bin).
+// One naming convention for all four devices, shared with emusc-render's
+// --device preset (libemusc/tools/main.cc): <device>_control.bin is always
+// the control/program ROM, <device>_cpu.bin is the internal CPU ROM that
+// only SC-55 and SC-55mkII have. See README.md for exact file hashes.
 DeviceRoms resolve_device_roms(const std::string &device, const std::string &rom_dir) {
   DeviceRoms r;
-  if (device == "sc55" || device == "sc55mkii") {
-    r.control_rom = rom_dir + "/" + device + "_rom2.bin";
-    r.cpu_rom     = rom_dir + "/" + device + "_rom1.bin";
-    int n = (device == "sc55") ? 3 : 2;
-    for (int k = 1; k <= n; k++)
-      r.wave_roms.push_back(rom_dir + "/" + device + "_waverom" + std::to_string(k) + ".bin");
-  } else if (device == "sc88") {
-    r.control_rom = rom_dir + "/sc88_rom1.bin";
-    for (int k = 1; k <= 4; k++)
-      r.wave_roms.push_back(rom_dir + "/sc88_waverom" + std::to_string(k) + ".bin");
-  } else if (device == "jv880") {
-    r.control_rom = rom_dir + "/jv880_rom2.bin";
-    for (int k = 1; k <= 2; k++)
-      r.wave_roms.push_back(rom_dir + "/jv880_waverom" + std::to_string(k) + ".bin");
-  }
+  r.control_rom = rom_dir + "/" + device + "_control.bin";
+  if (device == "sc55" || device == "sc55mkii")
+    r.cpu_rom = rom_dir + "/" + device + "_cpu.bin";
+
+  int n = (device == "sc55") ? 3 : (device == "sc88") ? 4 : 2;  // sc55mkii, jv880
+  for (int k = 1; k <= n; k++)
+    r.wave_roms.push_back(rom_dir + "/" + device + "_waverom" + std::to_string(k) + ".bin");
   return r;
 }
 
@@ -174,7 +192,8 @@ private:
 class EmuscdDaemon {
   snd_rawmidi_t* midi_in = nullptr;
   snd_pcm_t* pcm_out = nullptr;
-  unsigned int sample_rate = 44100;
+  unsigned int sample_rate;
+  unsigned int block_frames;
 
   std::unique_ptr<EmuSC::ControlRom> ctrl_rom;
   std::unique_ptr<EmuSC::WaveRom> wave_rom;
@@ -189,9 +208,12 @@ class EmuscdDaemon {
   std::string requested_device;
 
 public:
-  EmuscdDaemon(const std::string& dev, const std::string& port_name) {
+  EmuscdDaemon(const std::string& dev, const std::string& port_name,
+               const std::string& pcm_device, unsigned int requested_rate,
+               unsigned int latency_ms, unsigned int block)
+      : sample_rate(requested_rate), block_frames(block) {
     init_alsa_midi(port_name);
-    init_alsa_audio();
+    init_alsa_audio(pcm_device, latency_ms);
     if (!load_device(dev)) {
       std::cerr << "emuscd: failed to load initial device '" << dev << "'"
                 << std::endl;
@@ -216,13 +238,14 @@ public:
     std::cout << "ALSA MIDI input opened: " << port_name << std::endl;
   }
 
-  void init_alsa_audio() {
+  void init_alsa_audio(const std::string& pcm_device, unsigned int latency_ms) {
     snd_pcm_hw_params_t* hw_params;
     int err;
 
-    err = snd_pcm_open(&pcm_out, "default", SND_PCM_STREAM_PLAYBACK, 0);
+    err = snd_pcm_open(&pcm_out, pcm_device.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0) {
-      std::cerr << "PCM open error: " << snd_strerror(err) << std::endl;
+      std::cerr << "PCM open error (" << pcm_device << "): "
+                << snd_strerror(err) << std::endl;
       exit(1);
     }
 
@@ -233,13 +256,17 @@ public:
     snd_pcm_hw_params_set_format(pcm_out, hw_params, SND_PCM_FORMAT_S16_LE);
     snd_pcm_hw_params_set_channels(pcm_out, hw_params, 2);
 
-    unsigned int rate = 44100;
+    unsigned int rate = sample_rate;
     snd_pcm_hw_params_set_rate_near(pcm_out, hw_params, &rate, 0);
+
+    unsigned int buffer_time_us = latency_ms * 1000;
+    snd_pcm_hw_params_set_buffer_time_near(pcm_out, hw_params, &buffer_time_us, 0);
+
     snd_pcm_hw_params(pcm_out, hw_params);
     sample_rate = rate;
 
-    std::cout << "ALSA audio output initialized at " << rate << " Hz"
-              << std::endl;
+    std::cout << "ALSA audio output '" << pcm_device << "' initialized at "
+              << rate << " Hz, ~" << latency_ms << " ms buffer" << std::endl;
   }
 
   bool load_device(const std::string& dev) {
@@ -304,6 +331,8 @@ public:
     std::thread stdin_thread([this]() { read_stdin_commands(); });
 
     unsigned char midi_buf[64];
+    std::vector<int16_t> out_buf;
+    out_buf.reserve(block_frames * 2);
     std::cout << "emuscd daemon running (device: " << device_name << "). "
               << "Type a device name to switch, or 'quit' to exit."
               << std::endl;
@@ -334,14 +363,11 @@ public:
       if (synth && pcm_out) {
         float left = 0.0f, right = 0.0f;
         synth->get_next_frame(left, right);
-        int16_t buf[2] = { to_i16(left), to_i16(right) };
-
-        snd_pcm_sframes_t written = snd_pcm_writei(pcm_out, buf, 1);
-        if (written < 0) {
-          if (snd_pcm_recover(pcm_out, (int) written, 1) < 0) {
-            std::cerr << "emuscd: PCM write error: "
-                      << snd_strerror((int) written) << std::endl;
-          }
+        out_buf.push_back(to_i16(left));
+        out_buf.push_back(to_i16(right));
+        if (out_buf.size() >= block_frames * 2) {
+          write_block(out_buf);
+          out_buf.clear();
         }
       } else {
         std::this_thread::yield();
@@ -352,6 +378,27 @@ public:
   }
 
 private:
+  // A batched write can legitimately return fewer frames than asked for, one
+  // single-frame writei never could; retry the remainder, and recover once
+  // on an xrun/suspend rather than dropping the rest of the block.
+  void write_block(const std::vector<int16_t>& out_buf) {
+    snd_pcm_uframes_t total = out_buf.size() / 2;
+    snd_pcm_uframes_t offset = 0;
+    while (offset < total) {
+      snd_pcm_sframes_t written =
+        snd_pcm_writei(pcm_out, out_buf.data() + offset * 2, total - offset);
+      if (written < 0) {
+        if (snd_pcm_recover(pcm_out, (int) written, 1) < 0) {
+          std::cerr << "emuscd: PCM write error: "
+                    << snd_strerror((int) written) << std::endl;
+          return;
+        }
+        continue;
+      }
+      offset += written;
+    }
+  }
+
   void read_stdin_commands() {
     std::string line;
     while (running) {
@@ -375,13 +422,39 @@ private:
 int main(int argc, char* argv[]) {
   std::string device = "sc88";
   std::string port_name = "emuscd";
+  std::string pcm_device = "default";
+  unsigned int rate = 44100;
+  unsigned int latency_ms = 20;
+  unsigned int block = 256;
 
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if (arg == "--device" && i + 1 < argc) {
-      device = argv[++i];
-    } else if (arg == "--port-name" && i + 1 < argc) {
-      port_name = argv[++i];
+    auto need = [&](const char *name) -> std::string {
+      if (i + 1 >= argc) {
+        std::cerr << "emuscd: " << name << " requires an argument" << std::endl;
+        exit(1);
+      }
+      return argv[++i];
+    };
+    if (arg == "--device") {
+      device = need("--device");
+    } else if (arg == "--name") {
+      port_name = need("--name");
+    } else if (arg == "--pcm") {
+      pcm_device = need("--pcm");
+    } else if (arg == "--list-pcm") {
+      list_pcm_devices();
+      return 0;
+    } else if (arg == "--rate") {
+      rate = static_cast<unsigned int>(std::stoul(need("--rate")));
+    } else if (arg == "--latency") {
+      latency_ms = static_cast<unsigned int>(std::stoul(need("--latency")));
+    } else if (arg == "--block") {
+      block = static_cast<unsigned int>(std::stoul(need("--block")));
+      if (block < 1) {
+        std::cerr << "emuscd: --block must be >= 1" << std::endl;
+        return 1;
+      }
     } else if (arg == "--help" || arg == "-h") {
       std::cout
           << "emuscd - Roland Sound Canvas daemon\n"
@@ -389,12 +462,18 @@ int main(int argc, char* argv[]) {
           << "Options:\n"
           << "  --device NAME       Device to emulate (default: sc88)\n"
           << "                       Supported: sc55, sc55mkii, sc88, jv880\n"
-          << "  --port-name NAME    ALSA MIDI port name (default: emuscd)\n"
+          << "  --name NAME         ALSA MIDI port name (default: emuscd)\n"
+          << "  --pcm DEVICE        ALSA PCM output device (default: default)\n"
+          << "  --list-pcm          List ALSA PCM devices and exit\n"
+          << "  --rate HZ           Requested audio sample rate (default: 44100)\n"
+          << "  --latency MS        Requested output buffer size (default: 20)\n"
+          << "  --block N           Audio frames per ALSA write (default: 256)\n"
           << "  --help              Show this help\n"
           << "\n"
           << "ROM files are read from $EMUSCD_ROM_DIR (default:\n"
-          << "/usr/share/emuscd/roms), named <device>_rom1.bin,\n"
-          << "<device>_rom2.bin and <device>_waverom<N>.bin. See README.md.\n";
+          << "/usr/share/emuscd/roms), named <device>_control.bin,\n"
+          << "<device>_cpu.bin (SC-55/SC-55mkII only) and\n"
+          << "<device>_waverom<N>.bin. See README.md for exact ROM hashes.\n";
       return 0;
     } else {
       std::cerr << "emuscd: unknown option '" << arg << "'" << std::endl;
@@ -409,7 +488,7 @@ int main(int argc, char* argv[]) {
   }
 
   try {
-    EmuscdDaemon daemon(device, port_name);
+    EmuscdDaemon daemon(device, port_name, pcm_device, rate, latency_ms, block);
     daemon.run();
   } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << std::endl;
