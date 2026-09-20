@@ -10,63 +10,85 @@ on:
 
 jobs:
   build:
+    # Windows binaries are cross-compiled with MinGW-w64 from ubuntu-latest,
+    # not built natively on windows-latest: a native Windows runner defaults
+    # to the Visual Studio generator, which ignores CMAKE_CXX_COMPILER/
+    # CMAKE_C_COMPILER, so a workflow that asks it for g++/gcc silently gets
+    # something else (or nothing). Cross-compiling is also how both a 64-bit
+    # and a 32-bit .exe get built without a second runner OS.
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest,  cxx: g++,      cc: gcc,    dep: 'build-essential cmake libasound2-dev' }
-          - { os: windows-latest, cxx: g++,      cc: gcc,    dep: '' }
-    runs-on: ${{matrix.os}}
+          - name: linux
+            dep: 'build-essential cmake libasound2-dev'
+          - name: windows-x64
+            dep: 'cmake gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64'
+            toolchain: cmake/toolchain-mingw-w64.cmake
+            objdump: x86_64-w64-mingw32-objdump
+          - name: windows-x86
+            dep: 'cmake gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686'
+            toolchain: cmake/toolchain-mingw-w32.cmake
+            objdump: i686-w64-mingw32-objdump
+    runs-on: ubuntu-latest
     steps:
-    - name: Install Dependencies (Ubuntu)
-      if: runner.os == 'Linux'
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ${{matrix.dep}}
 
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+    - name: Configure CMake (native Linux)
+      if: matrix.name == 'linux'
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
-    - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{matrix.cxx}} -DCMAKE_C_COMPILER=${{matrix.cc}} -DBUILD_TESTING=OFF
+    - name: Configure CMake (Windows cross-compile)
+      if: matrix.name != 'linux'
+      run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=${{matrix.toolchain}} -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
     - name: Build
-      run: cmake --build build --config Release
-
-    - name: Collect Windows binaries
-      if: runner.os == 'Windows'
-      run: |
-        mkdir -p release
-        cp build/libemusc/src/Release/emusc.dll release/
-        if [ -f build/libemusc/tools/Release/emusc-render.exe ]; then
-          cp build/libemusc/tools/Release/emusc-render.exe release/
-        fi
-      shell: bash
+      run: cmake --build build --parallel
 
     - name: Collect Linux binaries
-      if: runner.os == 'Linux'
+      if: matrix.name == 'linux'
       run: |
         mkdir -p release
-        # Copy library (could be .so, .so.* or .a)
-        if [ -f build/libemusc/src/libemusc.so ]; then
-          cp build/libemusc/src/libemusc.so* release/ 2>/dev/null || true
+        if [ -f build/emuscd/emuscd ]; then cp build/emuscd/emuscd release/; fi
+        if [ -f build/libemusc/tools/emusc-render ]; then cp build/libemusc/tools/emusc-render release/; fi
+      shell: bash
+
+    - name: Collect Windows binary
+      if: matrix.name != 'linux'
+      run: |
+        mkdir -p release
+        cp build/libemusc/tools/emusc-render.exe release/
+      shell: bash
+
+    # emuscd is ALSA-only (see the WIN32 guard in the top-level CMakeLists),
+    # so there's no Windows daemon to collect. emusc-render is expected to
+    # depend on nothing but core Windows DLLs, so it runs on an unmodified
+    # Windows 98 install with no MinGW runtime to distribute alongside it.
+    - name: Verify Windows binary is self-contained
+      if: matrix.name != 'linux'
+      run: |
+        # grep exits 1 (not an error here) when nothing extra is found, which
+        # is the passing case - the || true keeps that from tripping the
+        # step's own set -e before the if below gets to look at $deps.
+        deps=$(${{matrix.objdump}} -p release/emusc-render.exe | grep -i "DLL Name" \
+               | grep -viE "kernel32|msvcrt" || true)
+        if [ -n "$deps" ]; then
+          echo "emusc-render.exe depends on DLLs beyond the Windows base system:"
+          echo "$deps"
+          exit 1
         fi
-        if [ -f build/libemusc/src/libemusc.a ]; then
-          cp build/libemusc/src/libemusc.a release/
-        fi
-        # Copy daemon if built
-        if [ -f build/emuscd/emuscd ]; then
-          cp build/emuscd/emuscd release/
-        fi
-        # Copy renderer if built
-        if [ -f build/libemusc/tools/emusc-render ]; then
-          cp build/libemusc/tools/emusc-render release/
-        fi
+        echo "emusc-render.exe depends only on core Windows DLLs"
       shell: bash
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ runner.os }}-binaries
+        name: ${{matrix.name}}-binaries
         path: release/
         retention-days: 7
 

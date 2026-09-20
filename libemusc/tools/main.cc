@@ -31,28 +31,38 @@ const char *USAGE = R"(usage: emusc-render [options] <input.mid> <output.wav>
 
 Renders a Standard MIDI File through libEmuSC to a 16-bit stereo WAV.
 
+Input/output (either the two positional paths, or these two flags - for
+scripts that drive emusc-render and another renderer with the same options):
+  --midi FILE            Input Standard MIDI File
+  --out FILE             Output WAV
+
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
-  --rom-dir DIR          Directory holding device ROM files, named:
-                           sc55:     sc55_rom1.bin sc55_rom2.bin
+  --rom-dir DIR          Directory holding device ROM files, named
+                         <device>_control.bin, <device>_cpu.bin (SC-55 and
+                         SC-55mkII only) and <device>_waverom1.bin upward:
+                           sc55:     sc55_control.bin sc55_cpu.bin
                                      sc55_waverom{1,2,3}.bin
-                           sc55mkii: sc55mkii_rom1.bin sc55mkii_rom2.bin
+                           sc55mkii: sc55mkii_control.bin sc55mkii_cpu.bin
                                      sc55mkii_waverom{1,2}.bin
-                           sc88:     sc88_rom1.bin sc88_waverom{1,2,3,4}.bin
-                           jv880:    jv880_rom2.bin jv880_waverom{1,2}.bin
+                           sc88:     sc88_control.bin sc88_waverom{1,2,3,4}.bin
+                           jv880:    jv880_control.bin jv880_waverom{1,2}.bin
+                         See README.md for exact ROM file hashes.
   --control-rom FILE     External program EPROM
   --cpu-rom FILE         Internal CPU EPROM (32 kB; SC-55/SC-55mkII only)
   --wave-rom FILE        PCM/wave ROM; repeat in bank order (each a multiple of 1 MB)
 
 Rendering:
   --rate HZ              Output sample rate (required; e.g. 66207, 64000, 44100)
-  --reset gm|gs          Initial sound-map / reset state (default: gs)
+  --reset gm|gs|none     Initial sound-map / reset state (default: gs).
+                         none skips the power-on reset call entirely.
   --tail SECONDS         Silence rendered after the last MIDI event (default: 2)
   --seed N               Seed for libEmuSC's use of std::rand() (default: 1)
-  --float                Write IEEE float32 samples instead of 16-bit PCM.
-                         For measurement: 16 bits floors a decaying tail at
-                         about -101 dBFS, which is above where a reverb's
-                         top octave has to be fitted.
+  --bits 16|32           16-bit PCM or IEEE float32 samples (default: 16).
+                         32 floors a decaying tail at about -101 dBFS lower
+                         than 16 bits does, which matters when the top octave
+                         of a reverb tail is being measured.
+  --float                Same as --bits 32.
   --verbose              Let libEmuSC's own stdout diagnostics through
   --version              Print tool and libEmuSC version and exit
   --help                 This text
@@ -97,7 +107,9 @@ Options parse_args(int argc, char **argv) {
       if (i + 1 >= argc) die(1, std::string(name) + " requires an argument");
       return argv[++i];
     };
-    if      (a == "--device")      o.device = need("--device");
+    if      (a == "--midi")        o.in = need("--midi");
+    else if (a == "--out")         o.out = need("--out");
+    else if (a == "--device")      o.device = need("--device");
     else if (a == "--rom-dir")     o.rom_dir = need("--rom-dir");
     else if (a == "--control-rom") o.control_rom = need("--control-rom");
     else if (a == "--cpu-rom")     o.cpu_rom = need("--cpu-rom");
@@ -107,6 +119,12 @@ Options parse_args(int argc, char **argv) {
     else if (a == "--tail")        o.tail = std::stod(need("--tail"));
     else if (a == "--seed")        o.seed = static_cast<unsigned>(std::stoul(need("--seed")));
     else if (a == "--float")       o.as_float = true;
+    else if (a == "--bits") {
+      std::string bits = need("--bits");
+      if      (bits == "16") o.as_float = false;
+      else if (bits == "32") o.as_float = true;
+      else die(1, "--bits must be 16 or 32");
+    }
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
@@ -127,31 +145,34 @@ Options parse_args(int argc, char **argv) {
     else if (!a.empty() && a[0] == '-') die(1, "unknown option " + a + "\n" + USAGE);
     else positional.push_back(a);
   }
-  if (positional.size() != 2) die(1, std::string("expected <input.mid> <output.wav>\n") + USAGE);
-  o.in = positional[0];
-  o.out = positional[1];
+  if (!positional.empty()) {
+    if (!o.in.empty() || !o.out.empty() || positional.size() != 2)
+      die(1, std::string("give either <input.mid> <output.wav>, or --midi and --out, not a mix\n") + USAGE);
+    o.in = positional[0];
+    o.out = positional[1];
+  }
+  if (o.in.empty() || o.out.empty())
+    die(1, std::string("expected <input.mid> <output.wav>, or --midi and --out\n") + USAGE);
 
   if (o.rate == 0) die(1, "--rate is required");
-  if (o.reset != "gm" && o.reset != "gs") die(1, "--reset must be gm or gs");
+  if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
+    die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
 
   if (!o.device.empty()) {
     if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
       die(1, "--device must be sc55, sc55mkii, sc88, or jv880");
+    // One naming convention for all four devices: <device>_control.bin is
+    // always the control/program ROM, <device>_cpu.bin is the internal CPU
+    // ROM that only SC-55 and SC-55mkII have. SC-88 has no separate CPU ROM,
+    // and JV-880's second physical ROM chip (DeviceProfile::romSize in
+    // devices/jv880.cc) is what "control" means for it; JV-880 has no
+    // <device>_cpu.bin because its other chip is never read at all.
     std::string dir = o.rom_dir.empty() ? default_rom_dir(o.device) : o.rom_dir;
-    if (o.control_rom.empty()) {
-      if (o.device == "sc55" || o.device == "sc55mkii")
-        o.control_rom = dir + "/" + o.device + "_rom2.bin";
-      else if (o.device == "sc88")
-        o.control_rom = dir + "/" + o.device + "_rom1.bin";
-      else if (o.device == "jv880")
-        // JV-880's control ROM is its 256 kB table image (DeviceProfile::romSize
-        // in devices/jv880.cc); the 32 kB rom1 image is not read for this device.
-        o.control_rom = dir + "/" + o.device + "_rom2.bin";
-    }
-    if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii")) {
-      o.cpu_rom = dir + "/" + o.device + "_rom1.bin";
-    }
+    if (o.control_rom.empty())
+      o.control_rom = dir + "/" + o.device + "_control.bin";
+    if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii"))
+      o.cpu_rom = dir + "/" + o.device + "_cpu.bin";
     if (o.wave_roms.empty()) {
       // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
       // (SC88_WAVE_CHIP_COUNT in sc88_device.h), JV-880 2 (DeviceProfile
@@ -266,7 +287,12 @@ int main(int argc, char **argv) {
   // is here because the tool should start the device the way the device starts
   // itself, so that a file which plays a note before its first program change
   // is rendered from a stated default rather than an implied one.
-  synth.reset(map, true);
+  //
+  // --reset none skips this call, for comparing against a renderer that
+  // never injects a reset of its own and leaves the map exactly as the
+  // constructor above set it (GS).
+  if (o.reset != "none")
+    synth.reset(map, true);
 
   // ---- Schedule -------------------------------------------------------------
   struct Sched { uint64_t frame; const smf::Event *ev; };
