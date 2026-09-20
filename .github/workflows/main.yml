@@ -70,9 +70,27 @@ jobs:
       if: matrix.foreign_arch != ''
       run: sudo dpkg --add-architecture ${{matrix.foreign_arch}}
 
+    # i386 packages live on the same archive.ubuntu.com/security.ubuntu.com
+    # mirrors as amd64, so plain `dpkg --add-architecture i386` is enough.
+    # armhf and arm64 don't: they're "ports" architectures, hosted only on
+    # ports.ubuntu.com, so without this apt-get update still tries (and 404s
+    # on) armhf/arm64 indexes on the amd64-only mirrors once dpkg knows
+    # about the architecture, which aborts the update.
+    - name: Add ports.ubuntu.com for ARM architectures
+      if: matrix.foreign_arch == 'armhf' || matrix.foreign_arch == 'arm64'
+      run: |
+        printf '%s\n' \
+          'Types: deb' \
+          'URIs: http://ports.ubuntu.com/ubuntu-ports' \
+          'Suites: noble noble-updates noble-backports noble-security' \
+          'Components: main universe restricted multiverse' \
+          'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+          "Architectures: ${{matrix.foreign_arch}}" \
+          | sudo tee /etc/apt/sources.list.d/ports-${{matrix.foreign_arch}}.sources > /dev/null
+
     - name: Install Dependencies
       run: |
-        sudo apt-get update
+        sudo apt-get update || [ "${{matrix.foreign_arch}}" = "armhf" ] || [ "${{matrix.foreign_arch}}" = "arm64" ]
         sudo apt-get install -y ${{matrix.dep}}
 
     - name: Configure CMake (native)
