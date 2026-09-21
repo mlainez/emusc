@@ -80,8 +80,8 @@ public:
     // tone at level 127 and 127 on the tone at level 75. -1 means the device
     // has no such field, which is every Sound Canvas, and then the note's own
     // depth stands alone. scdb D-40.
-    int16_t revSend;
-    int16_t choSend;
+    int16_t revSend = -1;
+    int16_t choSend = -1;
 
     uint16_t partialIndex;  // Partial table index, 0xFFFF for unused
     int8_t panpot;          // [-64, 64]. Default 0x40 (0-127)
@@ -253,7 +253,7 @@ public:
     // are the Sound Canvas's sign-and-magnitude bytes (scdb D-75).
     int8_t  JVLfoTvaDepth[2];
     int8_t  JVLfoPitchDepth[2];
-    uint8_t hasJVLfo;
+    uint8_t hasJVLfo = 0;
 
     // Random Pitch Depth, 0-15, an index into LookupTables::JVRandomPitch;
     // 0 = none. Drawn once per voice in Pitch::_jv_init().
@@ -265,7 +265,7 @@ public:
     // A per-NOTE pitch bend range in semitones, 0-12, which the JV's rhythm
     // notes carry in place of the part's. hasJVBendRange 0 (every Sound Canvas
     // partial and every JV patch tone) keeps the part's own range.
-    uint8_t JVBendRange, hasJVBendRange;
+    uint8_t JVBendRange = 0, hasJVBendRange = 0;
 
     // The JV's two per-tone CC enables, patch tone +0x47 bits 7 and 6 (scdb
     // D-30). Volume off takes the tone out of CC7's reach; Hold-1 off takes it
