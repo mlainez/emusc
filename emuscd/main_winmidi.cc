@@ -55,10 +55,10 @@ const char *USAGE =
 "95/98/ME), then pick that port with --midi-in.\n";
 
 // Bytes 0-2 of MIM_DATA's packed dwParam1 are the status byte and up to two
-// data bytes, already driver-normalised. Unlike ALSA's raw rawmidi byte
-// stream, WinMM has resolved running status and framed the message before
-// this ever arrives, so there's no need for emuscd's own byte-level
-// MidiParser here - that class exists for the ALSA side's raw stream.
+// data bytes, already driver-normalised: WinMM has resolved running status
+// and framed the message before this ever arrives, same as ALSA's sequencer
+// API does on the Linux side (main.cc's handle_seq_event) - neither backend
+// does its own byte-level MIDI parsing.
 struct MidiEvt { uint8_t status, d1, d2; };
 
 inline MidiEvt unpack_midi_message(DWORD_PTR dwParam1) {
