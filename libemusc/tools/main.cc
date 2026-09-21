@@ -40,7 +40,9 @@ ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
   --rom-dir DIR          Directory holding device ROM files, named
                          <device>_control.bin, <device>_cpu.bin (SC-55 and
-                         SC-55mkII only) and <device>_waverom1.bin upward:
+                         SC-55mkII only) and <device>_waverom1.bin upward.
+                         Falls back to $EMUSCD_ROM_DIR (same variable emuscd
+                         and emusc-winmidi read) if not given:
                            sc55:     sc55_control.bin sc55_cpu.bin
                                      sc55_waverom{1,2,3}.bin
                            sc55mkii: sc55mkii_control.bin sc55mkii_cpu.bin
@@ -85,17 +87,6 @@ struct Options {
 [[noreturn]] void die(int code, const std::string &msg) {
   std::cerr << "emusc-render: " << msg << std::endl;
   std::exit(code);
-}
-
-std::string default_rom_dir(const std::string &romset) {
-  const char *home = std::getenv("SC55_ORACLE_HOME");
-  std::string base;
-  if (home && *home) base = home;
-  else {
-    const char *h = std::getenv("HOME");
-    base = std::string(h ? h : "") + "/.local/share/sc55-oracle";
-  }
-  return base + "/roms/" + romset;
 }
 
 Options parse_args(int argc, char **argv) {
@@ -168,7 +159,15 @@ Options parse_args(int argc, char **argv) {
     // and JV-880's second physical ROM chip (DeviceProfile::romSize in
     // devices/jv880.cc) is what "control" means for it; JV-880 has no
     // <device>_cpu.bin because its other chip is never read at all.
-    std::string dir = o.rom_dir.empty() ? default_rom_dir(o.device) : o.rom_dir;
+    std::string dir = o.rom_dir;
+    if (dir.empty()) {
+      // Same $EMUSCD_ROM_DIR emuscd and emusc-winmidi already read, so all
+      // three tools share one ROM-location convention.
+      const char *env_dir = std::getenv("EMUSCD_ROM_DIR");
+      if (env_dir && *env_dir) dir = env_dir;
+    }
+    if (dir.empty())
+      die(1, "--device given without --rom-dir or $EMUSCD_ROM_DIR set");
     if (o.control_rom.empty())
       o.control_rom = dir + "/" + o.device + "_control.bin";
     if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii"))

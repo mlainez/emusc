@@ -284,7 +284,7 @@ int main(int argc, char* argv[]) {
   std::string device = "sc88";
   std::string port_name = "emuscd";
   std::string pcm_device = "default";
-  unsigned int rate = 44100;
+  unsigned int rate = 48000;
   unsigned int latency_ms = 20;
   unsigned int block = 256;
 
@@ -326,7 +326,7 @@ int main(int argc, char* argv[]) {
           << "  --name NAME         ALSA MIDI port name (default: emuscd)\n"
           << "  --pcm DEVICE        ALSA PCM output device (default: default)\n"
           << "  --list-pcm          List ALSA PCM devices and exit\n"
-          << "  --rate HZ           Requested audio sample rate (default: 44100)\n"
+          << "  --rate HZ           Requested audio sample rate (default: 48000)\n"
           << "  --latency MS        Requested output buffer size (default: 20)\n"
           << "  --block N           Audio frames per ALSA write (default: 256)\n"
           << "  --help              Show this help\n"
