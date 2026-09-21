@@ -81,7 +81,16 @@ set(EMUSC_SOURCES
   wave_rom.cc
   wave_rom.h)
 
-add_library(emusc SHARED ${EMUSC_SOURCES})
+# A plain OBJECT library, not folded into EMUSC_SOURCES: a static archive
+# only pulls in a member when something already needs one of its symbols at
+# the point the archive is scanned, and nothing does until libgcc's own
+# gthr-win32.o is linked in afterwards - by which point ld has already moved
+# past emusc_static.a and won't come back for it. Object libraries are always
+# passed to the final link as loose .o files instead, sidestepping that.
+add_library(win9x_compat OBJECT win9x_compat.cc)
+set_target_properties(win9x_compat PROPERTIES CXX_EXTENSIONS OFF)
+
+add_library(emusc SHARED ${EMUSC_SOURCES} $<TARGET_OBJECTS:win9x_compat>)
 add_library(emusc_static STATIC ${EMUSC_SOURCES})
 
 target_compile_features(emusc PUBLIC cxx_std_17)
