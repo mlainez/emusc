@@ -8,6 +8,7 @@
 #include "output.h"
 #include "engine.h"
 #include "reverb.h"
+#include "devices/sc88.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,9 +17,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SC88_WAVE_CHIP_COUNT 4u
-#define SC88_MIDI_PORT_COUNT 2u
 
 /* The controller destination matrix at `40 2x ss`, in the order
  * `04_protocol/sysex.md` prints: six source groups of eleven destinations.
@@ -33,7 +31,6 @@ enum sc88_matrix_source {
   SC88_MATRIX_CC1 = 4,
   SC88_MATRIX_CC2 = 5
 };
-#define SC88_MATRIX_SOURCE_COUNT 6u
 
 enum sc88_matrix_destination {
   SC88_MATRIX_PITCH = 0,
@@ -48,7 +45,6 @@ enum sc88_matrix_destination {
   SC88_MATRIX_LFO2_TVF_DEPTH = 9,
   SC88_MATRIX_LFO2_TVA_DEPTH = 10
 };
-#define SC88_MATRIX_DEST_COUNT 11u
 
 #ifdef __cplusplus
 }

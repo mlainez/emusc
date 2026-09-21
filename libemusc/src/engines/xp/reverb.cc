@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "reverb.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -9,60 +12,21 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* SC88-CTL v1.01. The character pointers are offsets **within the 0x10000
- * page**; read as absolute addresses they land in unrelated code and decode
- * to plausible nonsense, which is the trap recorded in `M-008`. */
-constexpr uint32_t kReverbPointers = 0x1595eu;
-constexpr uint32_t kReverbPage = 0x10000u;
-/* The eight macro presets, 8 bytes each, read by SC88-CTL handler 0x3388 and
- * by the power-on loader at 0x4476. The reset image at ROM 0x13104 - the
- * patch common block whose first sixteen bytes are the default patch name -
- * carries macro 4 and that macro's own seven bytes, so a GS reset is this
- * table's Hall 2 row and not a separate set of defaults. */
-constexpr uint32_t kReverbMacroTable = 0x1583eu;
 constexpr unsigned kReverbCharacters = 10u;
 constexpr unsigned kReverbRecordWords = 53u;
-constexpr uint16_t kReverbAllpassPairA = 0x3000u;   /* -0.5 under the XP law */
-constexpr uint16_t kReverbAllpassPairB = 0x1000u;   /* +0.5 */
-constexpr float kReverbAllpassG = 0.5f;
-/* The single-module DSP image and its coefficient RAM. CRAM[i] is the
- * coefficient of PRAM[i] - no field selects it (`M-173`) - so the gain of a
- * tap is the word at the tap's own instruction index. */
-constexpr uint32_t kReverbImage0Cram = 0x78b02u + 0x480u;
 
 uint16_t be16(const uint8_t *p)
 {
   return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
 }
 
-constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
-
 double xp(uint16_t raw)
 {
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (double)value * (double)(1u << kShift[raw >> 14]) / 8192.0;
+  return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
-
-/* Which of the record's 32 delay-memory addresses is which. The record
- * always carries them in program order of the instructions they patch -
- * writes at 45 49 53 57 65 67 69 71 81 83 85 87, far-end reads at
- * 41 43 47 51 59 61 63 55 75 77 79 73 and taps at 89 91 93 95 97 99 101 103
- * for the first module, the same sequence shifted for the other two layouts.
- * These three tables are that order read back as buffer roles. */
-constexpr uint8_t kHeadWord[SC88_REVERB_BUFFERS] = {
-  0u, 2u, 4u, 6u, 8u, 10u, 14u, 16u, 20u, 22u, 26u, 28u};
-constexpr uint8_t kFarWord[SC88_REVERB_BUFFERS] = {
-  1u, 3u, 5u, 7u, 9u, 13u, 15u, 19u, 21u, 25u, 27u, 31u};
-constexpr uint8_t kTapWord[SC88_REVERB_TAPS] = {
-  11u, 17u, 23u, 29u, 12u, 18u, 24u, 30u};
-/* The eight coefficient pairs belong to the eight buffers whose write
- * instruction carries +0.5, in the same order the record lists them. */
-constexpr uint8_t kAllpassBuffer[8] = {0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u};
-/* PRAM indices of the eight taps in the single-module image. */
-constexpr uint8_t kTapInstruction[SC88_REVERB_TAPS] = {
-  131u, 133u, 135u, 137u, 139u, 141u, 143u, 145u};
 
 unsigned scaleAddr(unsigned addr, double scale)
 {
@@ -230,7 +194,7 @@ bool reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
   rv->character_index = character;
   rv->output_rate = outputRate;
   /* the addresses are in the engine's own 32 kHz samples */
-  double scale = outputRate / SC88_REVERB_NATIVE_RATE;
+  double scale = outputRate / kXpNativeRate;
   unsigned top = 0;
   for (unsigned i = 0; i < SC88_REVERB_BUFFERS; ++i) {
     rv->head[i] = scaleAddr(rv->character.head[i], scale);

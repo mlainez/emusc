@@ -2,6 +2,8 @@
 #ifndef EMUSC_XP_WAVE_H
 #define EMUSC_XP_WAVE_H
 
+#include "devices/sc88.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -9,11 +11,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SC88_WAVE_DESCRIPTOR_SIZE 20u
-#define SC88_WAVE_BANK_SIZE 0x100000u
-#define SC88_WAVE_CHIP_SIZE 0x200000u
-#define SC88_WAVE_SAMPLE_RATE 32000u
 
 enum sc88_wave_loop_type {
   SC88_WAVE_FORWARD_LOOP = 0,

@@ -3,6 +3,7 @@
 #define EMUSC_XP_REVERB_H
 
 #include "rom.h"
+#include "devices/sc88.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,27 +12,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* The reverb's delay-line graph is read out of the DSP program in the
- * control ROM (`M-173`, scdb `08_effects/dsp_program.md`). Twelve ERAM
- * buffers, eight output taps:
- *
- *   B0 B1 B2 B3   four series allpasses at g = 0.5, the input diffuser
- *   B4 B5 B6 B7   tank half 1: allpass, delay, allpass, delay
- *   B8 B9 B10 B11 tank half 2: allpass, delay, allpass, delay
- *   eight taps    read inside the tank, two per pair of program slots
- *
- * The twelve buffer heads are the twelve instructions with the ERAM write
- * enable (bit 24) set; the twenty reads have it clear, and each buffer's
- * far end sits one address below the next head. The eight taps are reads
- * that land inside a buffer rather than at its end, and they are the early
- * field. */
-#define SC88_REVERB_BUFFERS 12u
-#define SC88_REVERB_TAPS 8u
-#define SC88_REVERB_HALF_BUFFERS 4u
-/* The delay-line lengths in a character record are addresses in the XP's
- * delay memory, one unit per sample at the engine's own 32 kHz. */
-#define SC88_REVERB_NATIVE_RATE 32000.0
 
 /* One reverb character as the ROM describes it: the graph above with this
  * character's own addresses, allpass enables and damping.

@@ -1,22 +1,11 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "pan.h"
 
+#include "devices/sc88.h"
+
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kPanTable = 0x15db6u;
-/* The effect sends do NOT read the pan table. They have their own, and it is
- * a different shape: 128 words at 0x15eb6, indexed by the control value
- * WHOLE rather than by `value - 1`, and exactly
- * `64 * floor((value * 512 + 63) / 127)` on every one of the 128 - a linear
- * Q15 gain with 0x8000 for unity (`P-xxxx`). The firmware reaches it from a
- * different routine than the pan pair does. The two tables agree at only
- * three points, so reading one for the other is audible: it opens the send
- * 1.4 dB too far around the middle of the range, and at control 1 the pan
- * table's first word is 0, which closes a send the chip would have left
- * open. */
-constexpr uint32_t kSendTable = 0x15eb6u;
 
 uint16_t be16(const uint8_t *p)
 {

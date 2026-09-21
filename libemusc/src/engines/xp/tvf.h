@@ -2,6 +2,7 @@
 #ifndef EMUSC_XP_TVF_H
 #define EMUSC_XP_TVF_H
 
+#include "devices/sc88.h"
 #include "rom.h"
 
 #include <stdbool.h>
@@ -75,15 +76,6 @@ struct sc88_tvf_release {
 /* Replaceable audio-side interpretation of the still-undecoded XP words.
  * This state-variable topology is intentionally separate from the exact CPU
  * state above. */
-/* Two-pole sections in cascade. The filter's order is not recovered from
-   the ROM; the sibling chip measures two-pole on hardware (`M-054`). Three
-   sections had been chosen by measurement while the cutoff word was read
-   as a sine and sat at 8-10 kHz on every tone, a compensating fit that
-   also cut a snare's content above 8 kHz from 30 % to 12 %; with the
-   cutoff word read in its own log domain one section measures closest to
-   the recordings (`M-105`). Resonance belongs to the first section. */
-#define SC88_TVF_SECTIONS 1
-
 struct sc88_tvf_audio_state {
   float integrator_band;
   float integrator_low;

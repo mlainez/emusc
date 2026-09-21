@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "oscillator.h"
 
+#include "common/constants.h"
+
 #include <cmath>
 
 namespace EmuSC { namespace Xp {
@@ -9,8 +11,8 @@ double pitch_word_rate(uint32_t pitchWord, double outputRate)
 {
   if (outputRate <= 0.0)
     return 0.0;
-  return (SC88_WAVE_SAMPLE_RATE / outputRate) *
-    std::pow(2.0, ((double)pitchWord - 0x38000) / 0x4000);
+  return (kXpNativeRate / outputRate) *
+    std::pow(2.0, ((double)pitchWord - kXpPitchUnity) / kXpPitchUnitsPerOctave);
 }
 
 namespace {
@@ -105,7 +107,7 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
                       enum sc88_fractional_wrap wrap)
 {
   if (!oscillator || !pcm24 || !pcmCount || !registers ||
-      outputRate <= 0.0 || pitchWord > 0x3ffff ||
+      outputRate <= 0.0 || pitchWord > kXpPitchSaturation ||
       wrap < SC88_WRAP_FULL_CARRY || wrap > SC88_WRAP_FRACTION_ONLY ||
       registers->start >= SC88_WAVE_BANK_SIZE ||
       registers->loop >= SC88_WAVE_BANK_SIZE ||

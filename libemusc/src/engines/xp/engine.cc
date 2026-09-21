@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engine.h"
 
+#include "common/constants.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -9,9 +11,6 @@
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr double kControlTimerHz = 1250000.0;
-constexpr double kControlPeriodClocks = 10001.0;
 
 void queueNote(struct sc88_engine *engine, uint8_t note)
 {
@@ -311,7 +310,7 @@ void startRelease(struct sc88_engine *engine, uint8_t noteIndex)
         /* `58f9`: TVA stage 4, which is this envelope standing still. */
         tva_envelope_freeze(
           &engine->renderer->rom, &component->envelope,
-          engine->scheduler_clocks / kControlPeriodClocks);
+          engine->scheduler_clocks / kXpControlPeriodClocks);
       }
     }
   }
@@ -374,7 +373,7 @@ bool noteMatches(const struct sc88_engine_note *note, uint8_t part,
 void stopVoice(struct sc88_engine *engine, uint8_t slotIndex)
 {
   struct sc88_engine_slot *slot = engine->slots + slotIndex;
-  double fraction = engine->scheduler_clocks / kControlPeriodClocks;
+  double fraction = engine->scheduler_clocks / kXpControlPeriodClocks;
   if (!slot->allocated || !slot->component.active ||
       slot->note >= SC88_ENGINE_NOTE_COUNT)
     return;
@@ -561,12 +560,12 @@ void sharedLfoJoin(struct sc88_engine *engine, uint32_t tone, uint32_t comp,
 
 void runScheduler(struct sc88_engine *engine)
 {
-  engine->scheduler_clocks += kControlTimerHz / engine->renderer->output_rate;
+  engine->scheduler_clocks += kXpControlTimerHz / engine->renderer->output_rate;
   unsigned elapsed =
-    (unsigned)(engine->scheduler_clocks / kControlPeriodClocks);
+    (unsigned)(engine->scheduler_clocks / kXpControlPeriodClocks);
   if (!elapsed)
     return;
-  engine->scheduler_clocks -= elapsed * kControlPeriodClocks;
+  engine->scheduler_clocks -= elapsed * kXpControlPeriodClocks;
 
   /* One oscillator per sharing tone, advanced once for the whole period
      before any voice reads it. Entries nothing used last period are
@@ -584,7 +583,11 @@ void runScheduler(struct sc88_engine *engine)
     (void)lfo_advance(&engine->renderer->rom, &e->lfo, 0,
                        (uint8_t)(elapsed - 1u), &engine->lfo_seed);
   }
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+  /* Slots at or past max_voices are never allocated (engine_set_max_voices
+     never adds them to the free list), so bounding this - the per-voice
+     per-control-tick work - to max_voices instead of the full
+     SC88_ENGINE_SLOT_COUNT is exact, not an approximation. */
+  for (unsigned i = 0; i < engine->max_voices; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     if (!slot->allocated)
       continue;
@@ -792,6 +795,7 @@ bool engine_init(struct sc88_engine *engine,
   engine->free_slot_head = 0;
   engine->free_slot_tail = SC88_ENGINE_SLOT_COUNT - 1;
   engine->free_slot_count = SC88_ENGINE_SLOT_COUNT;
+  engine->max_voices = SC88_DEFAULT_MAX_VOICES;
   engine->lfo_seed = 0x1234u;
   engine->next_serial = 1;
   for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
@@ -827,6 +831,24 @@ bool engine_init(struct sc88_engine *engine,
     engine->parts[i].tvf_controls.secondary_resonance = 64;
     engine->parts[i].portamento_control = 0xffu;
   }
+  return true;
+}
+
+bool engine_set_max_voices(struct sc88_engine *engine, unsigned max_voices)
+{
+  if (!engine || engine->free_slot_count != SC88_ENGINE_SLOT_COUNT)
+    return false;
+  if (max_voices < 1)
+    max_voices = 1;
+  else if (max_voices > SC88_ENGINE_SLOT_COUNT)
+    max_voices = SC88_ENGINE_SLOT_COUNT;
+  engine->max_voices = max_voices;
+  engine->free_slot_head = 0;
+  engine->free_slot_tail = (uint8_t)(max_voices - 1);
+  engine->free_slot_count = max_voices;
+  for (unsigned i = 0; i < max_voices; ++i)
+    engine->slots[i].next_free = i + 1 < max_voices
+      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
   return true;
 }
 
@@ -1232,7 +1254,7 @@ void engine_sostenuto(struct sc88_engine *engine, uint8_t part, bool enabled)
 
 unsigned engine_active_slots(const struct sc88_engine *engine)
 {
-  return engine ? SC88_ENGINE_SLOT_COUNT - engine->free_slot_count : 0;
+  return engine ? engine->max_voices - engine->free_slot_count : 0;
 }
 
 unsigned engine_released_slots(const struct sc88_engine *engine)
@@ -1278,10 +1300,15 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
        so is the static-gain glide's exp()-based progress derived from
        it, which every voice below would otherwise recompute for itself. */
     const double periodFraction =
-      engine->scheduler_clocks / kControlPeriodClocks;
+      engine->scheduler_clocks / kXpControlPeriodClocks;
     const double staticGainProgress =
       sc88_static_gain_progress(periodFraction);
-    for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+    /* Slots at or past max_voices are never allocated (see
+       engine_set_max_voices), so this - the per-voice per-sample mix,
+       the most expensive loop in the engine - does strictly less work
+       when capped below the real hardware's 64, not just fewer voices
+       sounding. */
+    for (unsigned i = 0; i < engine->max_voices; ++i) {
       struct sc88_engine_slot *slot = engine->slots + i;
       float sample;
       if (!slot->allocated)
@@ -1404,8 +1431,8 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
       }
       if (stop->component.oscillator.ended)
         stop->component.active = false;
-      stop->periods += kControlTimerHz /
-        (engine->renderer->output_rate * kControlPeriodClocks);
+      stop->periods += kXpControlTimerHz /
+        (engine->renderer->output_rate * kXpControlPeriodClocks);
     }
     stereo[frame * 2] = left;
     stereo[frame * 2 + 1] = right;

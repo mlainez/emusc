@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "wave.h"
 
-#include <array>
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cmath>
 #include <climits>
 
@@ -28,22 +30,17 @@ int16_t s16(uint16_t value)
 
 uint8_t descramble_byte(uint8_t value)
 {
-  static constexpr std::array<uint8_t, 8> inputBit = {2, 0, 4, 5, 7, 6, 3, 1};
   uint8_t result = 0;
   for (unsigned bit = 0; bit < 8; ++bit)
-    result |= (uint8_t)(((value >> inputBit[bit]) & 1u) << bit);
+    result |= (uint8_t)(((value >> kWaveDataLinePermutation[bit]) & 1u) << bit);
   return result;
 }
 
 uint32_t descramble_address(uint32_t value)
 {
-  static constexpr std::array<uint8_t, 21> inputBit = {
-    0, 4, 2, 3, 1, 13, 7, 12, 5, 10, 16,
-    9, 6, 8, 14, 17, 11, 15, 18, 19, 20
-  };
   uint32_t result = 0;
   for (unsigned bit = 0; bit < 21; ++bit)
-    result |= ((value >> inputBit[bit]) & 1u) << bit;
+    result |= ((value >> kWaveAddressLinePermutation[bit]) & 1u) << bit;
   return result;
 }
 
@@ -65,11 +62,6 @@ double bin_power(const int32_t *x, size_t count, size_t k)
   }
   return s1 * s1 + s2 * s2 - coeff * s1 * s2;
 }
-
-/* -15 dB and -7 dB as power ratios; see wave_loop_reads_double's own
-   comment for the measured gaps these sit in the middle of. */
-constexpr double kBelowPower = 0.0316227766016838;
-constexpr double kPartialPower = 0.199526231496888;
 
 }  // namespace
 
@@ -433,7 +425,7 @@ bool wave_loop_reads_double(const int32_t *pcm, size_t count,
     return false;
 
   /* How many periods of the note the descriptor claims fit in the loop. */
-  double period = (double)SC88_WAVE_SAMPLE_RATE /
+  double period = kXpNativeRate /
     (440.0 * std::pow(2.0, ((double)desc->root_key - 69.0) / 12.0));
   double cycles = (double)length / period;
   double rounded = std::floor(cycles + 0.5);

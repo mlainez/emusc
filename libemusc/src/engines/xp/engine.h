@@ -3,6 +3,7 @@
 #define EMUSC_XP_ENGINE_H
 
 #include "renderer.h"
+#include "devices/sc88.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,10 +13,13 @@
 extern "C" {
 #endif
 
-#define SC88_ENGINE_SLOT_COUNT 64u
-#define SC88_ENGINE_NOTE_COUNT 64u
-#define SC88_ENGINE_PART_COUNT 32u
 #define SC88_ENGINE_NONE 0xffu
+
+/* engine_init()'s default max_voices, absent a --max-voices override - what
+   the real hardware did. SC88_DEFAULT_MAX_VOICES (devices/sc88.h) is a
+   device fact and can differ per device; SC88_ENGINE_SLOT_COUNT (also
+   devices/sc88.h) stays this engine's own fixed array size and hard
+   ceiling regardless of which device's default is in effect. */
 
 enum sc88_same_note_mode {
   SC88_SAME_NOTE_SINGLE = 0,
@@ -233,6 +237,10 @@ struct sc88_engine {
   uint8_t free_slot_head;
   uint8_t free_slot_tail;
   unsigned free_slot_count;
+  /* The real SC-88 is SC88_ENGINE_SLOT_COUNT (64-voice polyphony); this
+     can only lower that, never raise it, for hardware too slow to keep
+     up with the real ceiling - see engine_set_max_voices. */
+  unsigned max_voices;
   uint64_t next_serial;
   double scheduler_clocks;
   sc88_control_service_fn control_service;
@@ -248,7 +256,7 @@ namespace EmuSC { namespace Xp {
 // Voice engine (allocation, scheduling, mixing) for the XP-generation-1
 // engine (see engines/xp/README.md). The plain C types above are shared,
 // unrenamed, with EmuSC::Xp::Device (device.h), which embeds struct
-// sc88_engine by value, and with sc88_engine_test.c, which reads it
+// sc88_engine by value, and with sc88_engine_test.cc, which reads it
 // directly.
 //
 // Three concerns share this file rather than splitting into PartState,
@@ -267,6 +275,14 @@ namespace EmuSC { namespace Xp {
 bool engine_init(struct sc88_engine *engine,
                   const struct sc88_renderer *renderer);
 void engine_destroy(struct sc88_engine *engine);
+/* Lowers the engine's own voice ceiling below SC88_ENGINE_SLOT_COUNT, for
+   hardware too slow to sustain the real 64-voice worst case - clamped to
+   [1, SC88_ENGINE_SLOT_COUNT], and only meaningful called right after
+   engine_init, before any note has taken a slot (it rebuilds the free
+   list from scratch, which would strand a sounding voice's slot outside
+   it if called later). Returns false, changing nothing, if engine is
+   null or any slot is already allocated. */
+bool engine_set_max_voices(struct sc88_engine *engine, unsigned max_voices);
 void engine_set_control_service(struct sc88_engine *engine,
                                  sc88_control_service_fn service, void *user);
 void engine_set_part_levels(struct sc88_engine *engine, uint8_t part,

@@ -1,32 +1,25 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "eq.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* The four 25-record blocks, six bytes each, indexed by gain - 0x34. */
-constexpr uint32_t kEqLow200 = 0x1609cu;
-constexpr uint32_t kEqLow400 = 0x16132u;
-constexpr uint32_t kEqHigh3k = 0x161c8u;
-constexpr uint32_t kEqHigh6k = 0x1625eu;
-constexpr uint8_t kEqGainMin = 0x34u;
-constexpr uint8_t kEqGainMax = 0x4cu;
-
 /* The XP coefficient law: fourteen signed bits with thirteen fractional,
    scaled by the two-bit exponent the top bits carry. At the centre gain
    the low 200 Hz record is `5000 2162 1e9e`, which decodes to exactly
    1, -0.956787 and +0.956787 - the identity eq.md describes. */
-constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
-
 float coefficient(uint16_t raw)
 {
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (float)((double)value * (double)(1u << kShift[raw >> 14]) / 8192.0);
+  return (float)((double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0);
 }
 
 bool readBand(const struct sc88_rom *rom, uint32_t block, uint8_t gain,

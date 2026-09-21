@@ -3,6 +3,8 @@
    ROM-derived law. */
 #include "output.h"
 
+#include "common/constants.h"
+
 #include <cmath>
 #include <cstring>
 
@@ -204,7 +206,7 @@ void designHold(struct sc88_output *out, double rate)
     double acc = 0.0;
     for (int j = 0; j <= steps; ++j) {
       double f = 0.5 * rate * (double)j / (double)steps;
-      double x = pi * f / SC88_OUTPUT_DAC_RATE;
+      double x = pi * f / kXpNativeRate;
       double mag = (x > 1e-12) ? std::fabs(std::sin(x) / x) : 1.0;
       double w = (j == 0 || j == steps) ? 0.5 : 1.0;
       mag *= analogMag(f);

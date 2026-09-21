@@ -1,28 +1,14 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "rom.h"
 
+#include "devices/sc88.h"
+
 #include <array>
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kPointerTableBase = 0x20000u;
-constexpr uint32_t kPointerBankSize = 384u;
-constexpr uint32_t kMelodicMapBase = 0x2fc00u;
-constexpr uint32_t kDirectoryBase = 0x30000u;
-constexpr uint32_t kDirectoryEnd = 0x3606cu;
-constexpr uint32_t kDescriptorBase = 0x36100u;
-constexpr uint32_t kDescriptorEnd = 0x3f714u;
-constexpr uint32_t kToneBase = 0x40000u;
-constexpr uint32_t kToneEnd = 0x75000u;
-
-constexpr uint32_t kDrumMapBase = 0x2fd00u;
-constexpr uint32_t kDrumPointerTable = 0x2b550u;
-constexpr uint32_t kDrumKitCount = 24u;
-constexpr uint32_t kDrumKitStride = 0x50cu;
-constexpr uint32_t kDrumKitBase = 0x23c30u;
 
 uint16_t be16(const uint8_t *p)
 {

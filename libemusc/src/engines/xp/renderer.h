@@ -9,6 +9,7 @@
 #include "rom.h"
 #include "tva.h"
 #include "tvf.h"
+#include "devices/sc88.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,9 +22,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SC88_WAVE_BANK_COUNT 8u
-#define SC88_MAX_TONE_COMPONENTS 2u
 
 struct sc88_wave_bank {
   uint8_t selector;
@@ -160,9 +158,6 @@ struct sc88_render_component {
   bool active;
 };
 
-/* The word at `71c7`, the exponential family's entry at rate index 2. */
-#define SC88_STATIC_AMPLITUDE_CURVE_WORD 0x02a7u
-
 /* tva_curve_decode's result for SC88_STATIC_AMPLITUDE_CURVE_WORD never
    changes (linear false, rate 679/64 - a power-of-two divisor, so this
    is that exact double, not an approximation of it), so this inlines
@@ -177,7 +172,6 @@ struct sc88_render_component {
    separate period_fraction <= 0.0 case is needed here. */
 static inline double sc88_static_gain_progress(double period_fraction)
 {
-  constexpr double kRate = 679.0 / 64.0;
   const double q = kRate * period_fraction;
   return q >= 40.0 ? 1.0 : 1.0 - std::exp(-q);
 }

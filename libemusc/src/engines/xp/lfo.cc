@@ -1,26 +1,12 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "lfo.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-/* SC88-CTL v1.01 offsets. The two increment tables sit immediately after the
- * 16-entry callback dispatch table at 0x29ba. */
-constexpr uint32_t kRateTable = 0x29dau;
-constexpr uint32_t kDelayTable = 0x2adau;
-constexpr uint32_t kSineTable = 0x1492cu;
-constexpr uint32_t kTable10 = 0x14524u;
-constexpr uint32_t kTable12 = 0x14626u;
-constexpr uint32_t kTable14 = 0x14728u;
-constexpr uint32_t kTable16 = 0x1482au;
-constexpr uint32_t kTablePoints = 129u;
-constexpr uint16_t kMaxIncrement = UINT16_C(0x28f6);
-constexpr uint16_t kInterpolateBelow = UINT16_C(0x0200);
-constexpr int32_t kSlewStep = INT32_C(0x1c2);
-
-/* The control task's own period, 8.0008 ms, gives the phase unit its size. */
-constexpr double kServiceHz = 124.987501249875;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -347,7 +333,7 @@ bool lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
 
 double lfo_frequency(uint16_t increment)
 {
-  return (double)increment * kServiceHz / 65536.0;
+  return (double)increment * kXpControlPeriodHz / 65536.0;
 }
 
 }}  // namespace EmuSC::Xp

@@ -1,16 +1,13 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "pitch.h"
 
+#include "devices/sc88.h"
+
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kEnvelopeRateTable = 0x1543eu;
-constexpr uint32_t kRateScaleTable = 0x1573eu;
-constexpr uint32_t kReleasePedalTable = 0x78a02u;
-constexpr uint32_t kPortamentoRateTable = 0x78502u;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -48,7 +45,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !scale || key > 127 || velocity > 127 ||
-      kRateScaleTable + 258u > rom->size)
+      kXpRateScaleTable + 258u > rom->size)
     return false;
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
@@ -58,7 +55,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
                       s8((uint8_t)(0u - component->bytes[factorAt])) * 256) + 64;
   if (index < 0 || index > 128)
     return false;
-  uint16_t keyScale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  uint16_t keyScale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   uint16_t velocityScale = 0x0100;
   if (useVelocity) {
     int product = 2 * ((int)velocity - 64) * velocityFactor;
@@ -66,7 +63,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
              -(int)(((unsigned)(-product) + 255u) >> 8)) + 64;
     if (index < 0 || index > 128)
       return false;
-    velocityScale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+    velocityScale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   }
   *scale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
   return true;
@@ -111,7 +108,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kEnvelopeRateTable + 256u > rom->size)
+      kXpEnvelopeRateTable + 256u > rom->size)
     return false;
   uint16_t scale;
   if (!rate_scale(rom, tone, component, selectorKey, 0x30, 0x34,
@@ -121,7 +118,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
   envelope->depth = velocity_depth(be16(component->bytes + 0x1a), velocity,
                                    s16(be16(component->bytes + 0x36)));
   for (unsigned stage = 0; stage < 4; ++stage) {
-    uint16_t rate = be16(rom->bytes + kEnvelopeRateTable +
+    uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
                          (uint32_t)component->bytes[0x2a + stage] * 2);
     envelope->targets[stage] = scale_target(
       s16(be16(component->bytes + 0x20 + stage * 2)), envelope->depth);
@@ -193,7 +190,7 @@ bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *t
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
-  uint16_t rate = be16(rom->bytes + kEnvelopeRateTable +
+  uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
                        (uint32_t)component->bytes[0x2e] * 2);
   uint16_t phase;
   prepare_increment(rate, scale, &phase, &release->increment);
@@ -227,7 +224,7 @@ bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);

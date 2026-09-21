@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "tva.h"
 
+#include "devices/sc88.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -8,15 +10,6 @@
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kLevelTable = 0x14f3eu;
-constexpr uint32_t kCoarseGainTable = 0x1503eu;
-constexpr uint32_t kFineGainTable = 0x1523eu;
-constexpr uint32_t kEnvelopeRateTable = 0x1543eu;
-constexpr uint32_t kRateScaleTable = 0x1573eu;
-constexpr uint32_t kReleasePedalTable = 0x78a02u;
-constexpr uint32_t kAmpCurve1Table = 0x1553eu;
-constexpr uint32_t kAmpCurve0Table = 0x1563eu;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -159,7 +152,7 @@ bool key_rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   int index = floor_div_pow2(keyValue * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -172,7 +165,7 @@ bool velocity_rate_scale(const struct sc88_rom *rom, uint8_t velocity,
   int index = floor_div_pow2((2 * ((int)velocity - 64)) * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -367,8 +360,8 @@ bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   uint32_t page = (uint32_t)tone->common[0x21] << 16;
   uint32_t keyCurve = page | be16(component->bytes + 0x8c);
   if (keyCurve + selectorKey >= rom->size ||
-      kRateScaleTable + 129u * 2 > rom->size ||
-      kEnvelopeRateTable + 128u * 2 > rom->size)
+      kXpRateScaleTable + 129u * 2 > rom->size ||
+      kXpEnvelopeRateTable + 128u * 2 > rom->size)
     return false;
   int keyValue = s8(rom->bytes[keyCurve + selectorKey]);
   int factor = s8((uint8_t)(0u - component->bytes[0x8f]));
@@ -376,8 +369,8 @@ bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   unsigned scaleIndex = (unsigned)(productHigh + 64);
   if (scaleIndex > 128)
     return false;
-  uint16_t scale = be16(rom->bytes + kRateScaleTable + scaleIndex * 2);
-  uint16_t rate = be16(rom->bytes + kEnvelopeRateTable +
+  uint16_t scale = be16(rom->bytes + kXpRateScaleTable + scaleIndex * 2);
+  uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
                        (uint32_t)component->bytes[0x84] * 2);
   if (rate < 16)
     rate = UINT16_MAX;
@@ -408,7 +401,7 @@ bool tva_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -445,8 +438,8 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
   uint16_t keyScale;
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kRateScaleTable + 129u * 2 > rom->size ||
-      kEnvelopeRateTable + 128u * 2 > rom->size ||
+      kXpRateScaleTable + 129u * 2 > rom->size ||
+      kXpEnvelopeRateTable + 128u * 2 > rom->size ||
       !key_rate_scale(rom, tone, component, selectorKey, 0x8a, 0x8e, &keyScale))
     return false;
   for (unsigned stage = 0; stage < 4; ++stage) {
@@ -470,7 +463,7 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
       curveEntry |= 0x4000;
     envelope->curve_words[stage] = curve_pack(curveEntry, finalScale);
     tva_curve_decode(envelope->curve_words[stage], envelope->curves + stage);
-    uint16_t rate = be16(rom->bytes + kEnvelopeRateTable + (uint32_t)rateIndex * 2);
+    uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable + (uint32_t)rateIndex * 2);
     if (std::getenv("SC88_TRACE_TVA"))
       std::fprintf(stderr, "  stage %u: rate_index %3u rate %5u key_scale %5u "
               "vel_scale %5u final_scale %5u\n",

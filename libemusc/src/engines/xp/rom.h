@@ -2,6 +2,7 @@
 #ifndef EMUSC_XP_ROM_H
 #define EMUSC_XP_ROM_H
 
+#include "devices/sc88.h"
 #include "wave.h"
 
 #include <stdbool.h>
@@ -11,10 +12,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define SC88_CONTROL_ROM_SIZE 0x80000u
-#define SC88_TONE_COMMON_SIZE 34u
-#define SC88_COMPONENT_SIZE 148u
 
 struct sc88_rom {
   const uint8_t *bytes;
@@ -72,7 +69,6 @@ struct sc88_drum_note {
   uint8_t flags;                 /* +0x480, receive and exclusivity bits */
 };
 
-#define SC88_DRUM_FIELDS 10u
 struct sc88_drum_overlay {
   uint8_t value[2][SC88_DRUM_FIELDS][128];
   uint8_t present[2][SC88_DRUM_FIELDS][128];

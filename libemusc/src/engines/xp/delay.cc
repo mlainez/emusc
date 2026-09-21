@@ -2,23 +2,15 @@
 #include "delay.h"
 #include "reverb.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cstdlib>
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kDelayCentreTable = 0x15fb4u;
-constexpr uint32_t kDelayRatioTable = 0x165cau;
-constexpr uint32_t kDelayMacroTable = 0x158beu;
-/* The delay memory counts in 1/32 ms in this path, and both the centre
-   time and the side taps cap at 0x7d00 above the 0x8000 base: one second. */
-constexpr double kDelayUnitsPerMs = 32.0;
-constexpr unsigned kDelayMaxUnits = 0x7d00u;
-constexpr double kDelayMaxMs = 1000.0;
-
-constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
 
 uint16_t be16(const uint8_t *p)
 {
@@ -30,7 +22,7 @@ double xp(uint16_t raw)
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (double)value * (double)(1u << kShift[raw >> 14]) / 8192.0;
+  return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
 float tap(const struct sc88_delay *dl, double back)

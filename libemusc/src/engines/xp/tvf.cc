@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "tvf.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
 #include "tva.h"
 
 #include <cmath>
@@ -10,120 +12,6 @@
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kBaseTable = 0x78702u;
-/* [FW-EXACT] TVF-Q current is the companion word << 2, i.e.
-   resonance_index << 11, and one unit of damping is 131072 - that is,
-   q = resonance_index / 64.
-
-   The scaling is fixed by the chip's own limit table; see the note on
-   kLimitTable. Read with q = index/64 that table is exactly
-   f*f + f*q = 2 on all 128 entries; read with index/32 it spans
-   2.000..3.458 and with index/128 1.270..2.000. The value libEmuSC's
-   SC-55 path uses (svf.cc's set_resonance, q = resonance/64, which the
-   SC-55's own two stability tables fix to a rounding unit in P-0130 and
-   P-0131) is the value the SC-88's ROM asks for too. */
-constexpr double kQUnity = 131072.0;
-/* [FW-EXACT] The TVF-F register is a log-frequency word in the XP pitch
-   register's own domain. `07_synthesis/pitch.md` has the pitch word at
-   16384 units per octave, 18 bits, unity playback at 0x38000; routine
-   67a8 forms TVF-F as the same 18-bit high/low pair in the same scratch
-   tuple with the same interpolation word 0x4100, and the base table at
-   0x78702 steps by exactly 16384/12 per index once expanded - one
-   semitone per index. That is the slope. The anchor - which frequency a
-   register value names - is the ROM's too, and the limit table fixes it
-   in integer arithmetic.
-
-   The limit table's law is f*f + f*q = 2 (see kLimitTable), which gives
-   f = sqrt(2) at resonance index 0 and f = 1 at index 64. With
-   f = 2*sin(pi*fc/fs) those two ceilings are fc = fs/4 and fs/6 exactly,
-   so their sines are sqrt(2)/2 and 1/2 and their words sit 16384/2 and
-   16384 units below the word whose sine is one. The entries are 0xf800
-   and 0xf000, which the firmware expands ((e >> 1) << 3) to 0x3e000 and
-   0x3c000:
-
-       0x3e000 + 8192  = 0x40000
-       0x3c000 + 16384 = 0x40000
-
-   Neither equation rounds. Those two are the only entries in either
-   table whose exact word is a multiple of four, so they are the only
-   two the table's floor leaves untouched, and both name 0x40000 - the
-   word one past the 18-bit range - as the chip's Nyquist.
-
-   With that anchor both tables decode to the bit:
-
-       entry = floor((0x40000 + 16384*log2(sin(pi*f/fs))) / 4)
-
-   the base table over f = 440*2^((i - 64)/12) for all 127 indices below
-   Nyquist, and the limit table over the stability law for all 128. So
-   the base table is a note table whose index 64 is A440; index 127 asks
-   for 16744 Hz, past the fold, and holds 0xffff instead. floor is what
-   reproduces them - round gets 64 and 57, ceil 0 and 2 - and moving the
-   anchor by one word unit breaks at least 28 entries per table. The
-   limit table runs fs/4 at resonance index 0 through fs/6 at 64 to
-   3835 Hz at 127, and 0x38000 - unity playback in the pitch register -
-   is 2573.8 Hz here.
-
-   fc and fs enter only as sin(pi*fc/fs), so the ROM fixes their ratio
-   and nothing more. Fit the base table with the anchor and the absolute
-   scale both free and index 64 comes out at 439.9996 Hz, 1sd 0.05 cent,
-   which is a second reading of the 32.000 kHz rate - `M-166` has it from
-   the DAC image mirror. The coefficient the chip derives from the word
-   is recovered as well: see kLimitTable. */
-constexpr double kOctaveUnits = 16384.0;
-constexpr uint32_t kNyquistWord = 0x40000;
-/* [FW-EXACT] The limit table is the filter's own topology, written down.
- *
- * 0x78802 holds one cutoff ceiling per resonance index. Read in the base
- * table's domain - f = 2*sin(pi*fc/32000), the Chamberlin coefficient the
- * base table already is - and with q = resonance_index/64, every one of
- * its 128 entries satisfies
- *
- *     f*f + f*q = 2
- *
- * to a rounding unit: the residual against the exact law is -0.53 +- 0.29
- * table units and lies in [-0.99, 0], which is the signature of a floor(),
- * not of a fit. In octaves that is 0.33 cent of cutoff.
- *
- * That expression is not a general fact about two-pole filters. It is the
- * trace of the state matrix of the forward-Euler state-variable filter
- *
- *     lp[n] = lp[n-1] + f*bp[n-1]
- *     hp[n] = x[n] - lp[n] - q*bp[n-1]
- *     bp[n] = bp[n-1] + f*hp[n]
- *
- * whose trace is 2 - f*f - f*q and whose determinant is 1 - f*q. Setting
- * the trace to zero puts the pole pair at exactly +-90 degrees: the chip
- * refuses to let the filter's realised resonance climb past fs/4, and the
- * ceiling it writes for each resonance is the cutoff at which that
- * happens. A trapezoidal (bilinear) realisation is stable for every
- * positive coefficient and has no such ceiling to tabulate; its own
- * coefficient g = tan(pi*fc/fs) puts g*g + g*q at 0.906..1.000 over the
- * same table, and reading the word as a frequency instead of a sine puts
- * it at 3.211..3.414. The topology is forward-Euler.
- *
- * This is the SC-55's filter. libEmuSC's svf.cc is the same three lines,
- * and the SC-55's control ROM carries the same law twice: TVFResonance[]
- * is 128*(sqrt(q*q+4) - q) and TVFResonanceFreq[] is 32*(4-f*f)/f, the
- * two sides of that state matrix's stability edge, with q = r/64 and
- * f = x/128 (P-0130, P-0131). The SC-88 tabulates the same topology at a
- * tighter bound.
- *
- * Two things follow that the audio path could not have been told any
- * other way. The coefficient is the ROM's own word and is not warped
- * again; and a tone whose computed cutoff is clamped to this ceiling is
- * a tone the chip has been asked to leave alone - at q = 1 the law gives
- * f = 1 exactly, where the difference equations above collapse to
- * y[n] = x[n-1], a bare sample of delay. "Wide open" is realised as
- * transparent, which is what asking for a cutoff above the ceiling
- * should mean. */
-constexpr uint32_t kLimitTable = 0x78802u;
-/* The sound chip's own sample rate, which the cutoff word is a
-   fraction of. */
-constexpr double kNativeRate = 32000.0;
-constexpr uint32_t kEnvelopeRateTable = 0x1543eu;
-constexpr uint32_t kRateScaleTable = 0x1573eu;
-constexpr uint32_t kReleasePedalTable = 0x78a02u;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -192,14 +80,14 @@ bool keyRateScale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
   if (curve + selectorKey >= rom->size ||
-      kRateScaleTable + 129u * 2 > rom->size)
+      kXpRateScaleTable + 129u * 2 > rom->size)
     return false;
   int keyValue = s8(rom->bytes[curve + selectorKey]);
   int factor = s8((uint8_t)(0u - component->bytes[factorAt]));
   int index = floorDivPow2(keyValue * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -208,12 +96,12 @@ bool velocityRateScale(const struct sc88_rom *rom, uint8_t velocity,
 {
   if (!rom || !rom->bytes || !scale || velocity > 127 ||
       factor < -128 || factor > 127 ||
-      kRateScaleTable + 129u * 2 > rom->size)
+      kXpRateScaleTable + 129u * 2 > rom->size)
     return false;
   int index = floorDivPow2((2 * ((int)velocity - 64)) * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -326,8 +214,8 @@ double tvf_word_to_hz(uint32_t word)
   double sine = std::exp2(((double)word - kNyquistWord) / kOctaveUnits);
 
   if (sine >= 1.0)
-    return 0.5 * kNativeRate;
-  return (kNativeRate / 3.14159265358979323846) * std::asin(sine);
+    return 0.5 * kXpNativeRate;
+  return (kXpNativeRate / 3.14159265358979323846) * std::asin(sine);
 }
 
 /* `0x6ad0`..`0x6aff`. The matrix's cached word is a controller reading,
@@ -479,7 +367,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kEnvelopeRateTable + 128u * 2 > rom->size ||
+      kXpEnvelopeRateTable + 128u * 2 > rom->size ||
       !envelopeDepth(rom, tone, component, velocity, softPedal,
                      &envelope->depth))
     return false;
@@ -500,7 +388,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
     if (!velocityRateScale(rom, velocity, factor, &velocityScale))
       return false;
     uint16_t finalScale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
-    uint16_t tableRate = be16(rom->bytes + kEnvelopeRateTable +
+    uint16_t tableRate = be16(rom->bytes + kXpEnvelopeRateTable +
       (uint32_t)component->bytes[0x54 + stage] * 2);
     prepareIncrement(tableRate, finalScale, envelope->initial_phases + stage,
                       envelope->increments + stage);
@@ -569,7 +457,7 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !release || selectorKey > 127 ||
-      kEnvelopeRateTable + 128u * 2 > rom->size)
+      kXpEnvelopeRateTable + 128u * 2 > rom->size)
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
@@ -578,7 +466,7 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   uint16_t keyScale;
   if (!keyRateScale(rom, tone, component, selectorKey, 0x5c, 0x5f, &keyScale))
     return false;
-  uint16_t tableRate = be16(rom->bytes + kEnvelopeRateTable +
+  uint16_t tableRate = be16(rom->bytes + kXpEnvelopeRateTable +
                             (uint32_t)component->bytes[0x58] * 2);
   uint16_t initialPhase;
   prepareIncrement(tableRate, keyScale, &initialPhase, &release->increment);
@@ -605,7 +493,7 @@ bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -727,7 +615,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
          taken out of the word by tvf_word_to_hz and put straight back -
          and at any other host rate it is the same analog corner retuned
          to that rate, which is the only part of this that is a choice. */
-      double rate = user ? *(const double *)user : kNativeRate;
+      double rate = user ? *(const double *)user : kXpNativeRate;
       double cutoff = tvf_word_to_hz(wordInt);
       double nyquist = rate * 0.5;
       if (cutoff > nyquist * 0.99)

@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "renderer.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -72,10 +75,6 @@ const struct sc88_wave_bank *findBank(const struct sc88_renderer *renderer,
   int index = bankIndex(selector);
   return index < 0 ? nullptr : renderer->banks + index;
 }
-
-/* Centre of the 255-word bipolar pitch-control curve at 0x78304..0x78502,
- * indexed -127..127 about this address (`02_rom/tables.md`). */
-constexpr uint32_t kPitchCurveCentre = 0x78402u;
 
 /* The body both note-on entry points share. A melodic note selects its tone
  * through the variation map and plays it at the MIDI key; a rhythm note's
@@ -328,9 +327,9 @@ bool noteOnTone(const struct sc88_renderer *renderer,
     if (wave_loop_reads_double(renderComponent->pcm24,
                                 renderComponent->pcm_count, pcmBase,
                                 &zone.descriptor)) {
-      pitchWord += 0x4000u;
-      if (pitchWord > 0x3ffffu)
-        pitchWord = 0x3ffffu;
+      pitchWord += kXpPitchUnitsPerOctave;
+      if (pitchWord > kXpPitchSaturation)
+        pitchWord = kXpPitchSaturation;
     }
     renderComponent->static_pitch_word = pitchWord;
     pitchWord = pitch_current_word(pitchWord, 0,
@@ -401,7 +400,7 @@ uint16_t renderer_key_fraction(const struct sc88_component *component,
   if (key < 0 || key > 127)
     return 0;
   uint32_t remainder = ((uint32_t)product << 2) & 0xffffu;
-  return (uint16_t)((0x555u * remainder) >> 16);
+  return (uint16_t)((kXpPitchRemainderStep * remainder) >> 16);
 }
 
 bool renderer_portamento_terms(const struct sc88_rom *rom,
@@ -421,7 +420,7 @@ bool renderer_portamento_terms(const struct sc88_rom *rom,
   portamento->key_table = table;
   /* Both of the descriptor's pitch corrections, as in the static word; the
      evidence and the open condition are on `wave_pitch_correction`. */
-  portamento->fixed = 0x38000 + wave_pitch_correction(desc, true) +
+  portamento->fixed = (int32_t)kXpPitchUnity + wave_pitch_correction(desc, true) +
     s16(be16(component->bytes + 0x10));
   portamento->key_factor = s16(be16(component->bytes + 0x14));
   portamento->key_transpose = s8(component->bytes[0x16]);
@@ -463,7 +462,7 @@ bool renderer_pitch_word_at(const struct sc88_rom *rom,
     fraction = 0;
   } else {
     selector = (uint32_t)key;
-    fraction = (uint16_t)((0x555u * ((uint32_t)product & 0xffffu)) >> 16);
+    fraction = (uint16_t)((kXpPitchRemainderStep * ((uint32_t)product & 0xffffu)) >> 16);
   }
   int32_t pitch = portamento->fixed +
     relativePitch((int)selector - (int)portamento->root_key) +
@@ -471,8 +470,8 @@ bool renderer_pitch_word_at(const struct sc88_rom *rom,
     s16(be16(rom->bytes + portamento->key_table + rawKey * 2u));
   if (pitch < 0)
     pitch = 0;
-  if (pitch > 0x3ffff)
-    pitch = 0x3ffff;
+  if (pitch > (int32_t)kXpPitchSaturation)
+    pitch = (int32_t)kXpPitchSaturation;
   *pitchWord = (uint32_t)pitch;
   return true;
 }
@@ -510,7 +509,7 @@ bool renderer_static_pitch_word(const struct sc88_rom *rom,
     be16(tone->common + 0x10);
   if (tableOffset + (uint32_t)midiKey * 2 + 2 > rom->size)
     return false;
-  int32_t pitch = 0x38000 +
+  int32_t pitch = (int32_t)kXpPitchUnity +
     relativePitch((int)selectorKey - desc->root_key) +
     /* SC88-CTL 0x6081 adds RAM 0x197c into the low word of the pitch the
        key table just produced, before the 0x6124 offsets land on it. */
@@ -524,8 +523,8 @@ bool renderer_static_pitch_word(const struct sc88_rom *rom,
     s16(be16(component->bytes + 0x10));
   if (pitch < 0)
     pitch = 0;
-  if (pitch > 0x3ffff)
-    pitch = 0x3ffff;
+  if (pitch > (int32_t)kXpPitchSaturation)
+    pitch = (int32_t)kXpPitchSaturation;
   *pitchWord = (uint32_t)pitch;
   return true;
 }

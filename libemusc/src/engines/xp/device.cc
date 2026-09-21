@@ -1,16 +1,14 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "device.h"
 
+#include "devices/sc88.h"
+
 #include <cstdlib>
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint8_t kSelectors[SC88_WAVE_BANK_COUNT] = {
-  0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
-};
 
 void syncPart(Device *device, uint8_t part)
 {
