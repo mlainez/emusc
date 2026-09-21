@@ -3,34 +3,54 @@ cmake_minimum_required(VERSION 3.8...3.30)
 configure_file(config.h.in config.h)
 
 set(EMUSC_SOURCES
-  analog_stage.cc
-  analog_stage.h
-  chorus.cc
-  chorus.h
   control_rom.cc
+  control_rom.h
   devices/jv880.cc
   devices/sc55.cc
   devices/sc55mkii.cc
   devices/sc88.cc
   devices/sound_canvas_default.cc
-  control_rom.h
-  envelope.cc
-  envelope.h
-  note.cc
-  note.h
   params.h
-  part.cc
-  part.h
-  partial.cc
-  partial.h
-  pitch.cc
-  pitch.h
-  resampler.cc
-  resampler.h
-  reverb.cc
-  reverb.h
+  settings.cc
+  settings.h
+  slew_calc.h
+  synth.cc
+  synth.h
+  wave_rom.cc
+  wave_rom.h
+  engines/gp/analog_stage.cc
+  engines/gp/analog_stage.h
+  engines/gp/chorus.cc
+  engines/gp/chorus.h
+  engines/gp/envelope.cc
+  engines/gp/envelope.h
+  engines/gp/note.cc
+  engines/gp/note.h
+  engines/gp/part.cc
+  engines/gp/part.h
+  engines/gp/partial.cc
+  engines/gp/partial.h
+  engines/gp/pitch.cc
+  engines/gp/pitch.h
+  engines/gp/resampler.cc
+  engines/gp/resampler.h
+  engines/gp/reverb.cc
+  engines/gp/reverb.h
+  engines/gp/svf.cc
+  engines/gp/svf.h
+  engines/gp/system_effects.cc
+  engines/gp/system_effects.h
+  engines/gp/tva.cc
+  engines/gp/tva.h
+  engines/gp/tvf.cc
+  engines/gp/tvf.h
+  engines/gp/wave_generator.cc
+  engines/gp/wave_generator.h
+  engines/gp/wave_oscillator.cc
+  engines/gp/wave_oscillator.h
   engines/xp/device.cc
   engines/xp/device.h
+  engines/xp/devices/sc88.h
   engines/xp/engine.cc
   engines/xp/engine.h
   engines/xp/oscillator.cc
@@ -60,26 +80,7 @@ set(EMUSC_SOURCES
   engines/xp/tvf.cc
   engines/xp/tvf.h
   engines/xp/wave.cc
-  engines/xp/wave.h
-  settings.cc
-  settings.h
-  slew_calc.h
-  svf.cc
-  svf.h
-  synth.cc
-  synth.h
-  system_effects.cc
-  system_effects.h
-  tva.cc
-  tva.h
-  tvf.cc
-  tvf.h
-  wave_generator.cc
-  wave_generator.h
-  wave_oscillator.cc
-  wave_oscillator.h
-  wave_rom.cc
-  wave_rom.h)
+  engines/xp/wave.h)
 
 # A plain OBJECT library, not folded into EMUSC_SOURCES: a static archive
 # only pulls in a member when something already needs one of its symbols at

@@ -18,8 +18,8 @@
 
 
 #include "synth.h"
+#include "engines/gp/part.h"
 #include "engines/xp/device.h"
-#include "part.h"
 #include "settings.h"
 
 #include <cstring>
@@ -71,12 +71,12 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
   // it: it has no DeviceProfile for the analog stage to read, its effects are
   // its own, and it resamples internally to whatever rate it is opened at.
   // Settings above is kept so the parameter API still answers.
-  if (_ctrlRom.generation() == ControlRom::SynthGen::SC88)
+  if (_ctrlRom.uses_xp_engine())
     return;
 
-  _systemEffects = new SystemEffects(_settings, _ctrlRom);
-  _resampler = new Resampler();
-  _analogStage = new AnalogStage(_ctrlRom.device()->analog);
+  _systemEffects = new Gp::SystemEffects(_settings, _ctrlRom);
+  _resampler = new Gp::Resampler();
+  _analogStage = new Gp::AnalogStage(_ctrlRom.device()->analog);
 }
 
 
@@ -84,12 +84,12 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
 // rate is handed straight to it rather than run through Resampler. Re-opening
 // on a rate change is what the engine's own interface asks for: the rate is
 // fixed at init.
-bool Synth::_sc88_configure(uint32_t sampleRate)
+bool Synth::_xp_configure(uint32_t sampleRate)
 {
-  if (_sc88) {
-    Xp::device_destroy(_sc88);
-    delete _sc88;
-    _sc88 = nullptr;
+  if (_xpDevice) {
+    Xp::device_destroy(_xpDevice);
+    delete _xpDevice;
+    _xpDevice = nullptr;
   }
 
   const std::vector<uint8_t> &ctrl = _ctrlRom.device_rom();
@@ -109,29 +109,40 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
     sizes[i] = chips[i].size();
   }
 
-  _sc88 = new Xp::Device();
+  _xpDevice = new Xp::Device();
   /* The wrap is not a choice: the wave directory's own pitch corrections are
      cut against a loop traversal of `span / step` output samples, which is
      what carrying the remainder gives. `sc88_oscillator_wrapped_phase` holds
      the evidence and `sc88_oscillator_test` holds the arithmetic. */
-  if (!Xp::device_init_raw(_sc88, ctrl.data(), ctrl.size(), raw, sizes,
+  if (!Xp::device_init_raw(_xpDevice, ctrl.data(), ctrl.size(), raw, sizes,
                            (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
-    delete _sc88;
-    _sc88 = nullptr;
+    delete _xpDevice;
+    _xpDevice = nullptr;
     std::fprintf(stderr, "libEmuSC: the SC-88's engine refused these ROM images\n");
     return false;
   }
+  if (_maxVoicesSet)
+    Xp::engine_set_max_voices(&_xpDevice->engine, _maxVoices);
 
   return true;
 }
 
 
+void Synth::set_max_voices(unsigned maxVoices)
+{
+  _maxVoicesSet = true;
+  _maxVoices = maxVoices;
+  if (_xpDevice)
+    Xp::engine_set_max_voices(&_xpDevice->engine, maxVoices);
+}
+
+
 Synth::~Synth()
 {
-  if (_sc88) {
-    Xp::device_destroy(_sc88);
-    delete _sc88;
-    _sc88 = nullptr;
+  if (_xpDevice) {
+    Xp::device_destroy(_xpDevice);
+    delete _xpDevice;
+    _xpDevice = nullptr;
   }
 
   _parts.clear();
@@ -168,9 +179,9 @@ void Synth::reset(SoundMap sm, bool resetParts)
   // _apply_midi_sysex() and _midi_input_sysex_DT1(), are reachable on the
   // Sound Canvas path alone: get_next_frame() returns before _process_samples()
   // for an SC-88, so nothing dispatches a SysEx through them here.
-  if (_sc88) {
+  if (_xpDevice) {
     midiMutex.lock();
-    Xp::device_reset_controllers(_sc88);
+    Xp::device_reset_controllers(_xpDevice);
     midiMutex.unlock();
   }
 
@@ -217,12 +228,12 @@ int Synth::_partials_in_use(void)
 // The reserve defaults sum to 24 on both models, so on the SC-55mkII four
 // partials are free for whichever part asks first (SC-55 OM p.79,
 // SC-55mkII OM p.98; PROVENANCE.md P-0077, P-0078, P-0079).
-int Synth::_steal_partials(Part &requester)
+int Synth::_steal_partials(Gp::Part &requester)
 {
   if (_settings->generation() == ControlRom::SynthGen::JV880)
     return _steal_partial_jv(requester);
 
-  Part *victim = NULL;
+  Gp::Part *victim = NULL;
   int victimRank = -1;
   uint32_t victimSerial = 0;
 
@@ -296,18 +307,18 @@ int Synth::_steal_partials(Part &requester)
 // recomputing it here for every request idealises that. What the chip does to
 // a voice re-keyed while it sounds is silicon, so the stolen partial fades at
 // the device's damp rate.
-int Synth::_steal_partial_jv(Part &requester)
+int Synth::_steal_partial_jv(Gp::Part &requester)
 {
   // EMUSC_DEBUG_STEAL prints every steal with the internal time, the pool
   // occupancy, the requesting part and the victim, so a mix that loses a voice
   // can be told apart from one that never had it. Diagnostics only.
   static const bool dbg = getenv("EMUSC_DEBUG_STEAL") != nullptr;
-  struct Candidate { int gate; uint32_t serial; int slot; Part *part; };
+  struct Candidate { int gate; uint32_t serial; int slot; Gp::Part *part; };
   std::vector<Candidate> master;
-  std::map<Part *, int> excess;
+  std::map<Gp::Part *, int> excess;
 
   for (auto &p : _parts) {
-    std::vector<Part::LivePartial> live;
+    std::vector<Gp::Part::LivePartial> live;
     p.live_partials(live);                       // oldest first
     for (auto &l : live)
       master.push_back({l.gate, l.serial, l.slot, &p});
@@ -351,7 +362,7 @@ int Synth::_steal_partial_jv(Part &requester)
       std::fprintf(stderr, " victim=NONE");
     std::fprintf(stderr, " live/reserve=");
     for (auto &p : _parts) {
-      std::vector<Part::LivePartial> live;
+      std::vector<Gp::Part::LivePartial> live;
       p.live_partials(live);
       if (!live.empty() || _ctrlRom.device_voice_reserve(p.id()))
         std::fprintf(stderr, " p%d:%zu/%d", p.id() + 1, live.size(),
@@ -379,7 +390,12 @@ void Synth::_add_note(uint8_t midiChannel, uint8_t key, uint8_t velocity,
   // Polyphony 24 (partials)", SC-55 OM p.86) and 28 on the SC-55mkII
   // (SC-55mkII OM p.98). A note needs one partial per partial of its tone, and
   // when they are all in use it takes them from voices that are sounding.
-  const int maxPolyphony = _ctrlRom.max_polyphony();
+  // set_max_voices() can only lower this ceiling, never raise it - read
+  // fresh on every note rather than cached once, so it takes effect on
+  // the very next note regardless of when it was called.
+  const int maxPolyphony = _maxVoicesSet
+    ? std::min((int) _maxVoices, (int) _ctrlRom.max_polyphony())
+    : _ctrlRom.max_polyphony();
 
   for (auto &p: _parts) {
     if (p.midi_channel() != midiChannel)
@@ -497,7 +513,7 @@ void Synth::midi_input(uint8_t status, uint8_t data1, uint8_t data2,
   // where the Sound Canvas path counts in 32 kHz control samples. The SC-55's
   // measured serialisation and note-on delays are not applied - they are that
   // device's measurements, and nothing has measured the SC-88's.
-  if (_sc88) {
+  if (_xpDevice) {
     PendingEvent e;
     e.applyAt = _framesDelivered + frameOffset;
     e.isSysEx = false;
@@ -533,7 +549,7 @@ void Synth::_queue_event(uint8_t status, uint8_t data1, uint8_t data2,
 
   const double arrives =
     (double) (_framesDelivered + frameOffset) * 32000.0 / (double) _sampleRate
-    + Resampler::output_advance();
+    + Gp::Resampler::output_advance();
 
   // One byte per 100 us, and the message acts when its last byte is in.
   const int bytes = sysex ? (int) sysexLength
@@ -702,7 +718,7 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
 void Synth::midi_input_sysex(uint8_t *data, uint16_t length,
                              uint32_t frameOffset, uint8_t port)
 {
-  if (_sc88) {
+  if (_xpDevice) {
     PendingEvent e;
     e.applyAt = _framesDelivered + frameOffset;
     e.isSysEx = true;
@@ -865,7 +881,7 @@ int Synth::get_next_frame(float &lOut, float &rOut)
   // a frame at a time is exactly what a block of 256 would have produced, and
   // it lets a MIDI event delivered between two frames land on the frame it was
   // delivered for.
-  if (_sc88) {
+  if (_xpDevice) {
     float frame[2] = {0.0f, 0.0f};
     midiMutex.lock();
 
@@ -877,13 +893,13 @@ int Synth::get_next_frame(float &lOut, float &rOut)
            _eventQueue.front().applyAt <= _framesDelivered) {
       PendingEvent &e = _eventQueue.front();
       if (e.isSysEx)
-        Xp::device_sysex(_sc88, e.port, e.sysex.data(), e.sysex.size());
+        Xp::device_sysex(_xpDevice, e.port, e.sysex.data(), e.sysex.size());
       else
-        Xp::device_midi(_sc88, e.port, e.status, e.data1, e.data2);
+        Xp::device_midi(_xpDevice, e.port, e.status, e.data1, e.data2);
       _eventQueue.pop_front();
     }
 
-    Xp::device_render(_sc88, frame, 1);
+    Xp::device_render(_xpDevice, frame, 1);
     midiMutex.unlock();
     lOut = std::clamp(frame[0], -1.0f, 1.0f);
     rOut = std::clamp(frame[1], -1.0f, 1.0f);
@@ -1019,8 +1035,8 @@ std::array<int, 16> Synth::get_parts_last_peak_sample(void)
 
 void Synth::set_audio_format(uint32_t sampleRate, uint8_t channels)
 {
-  if (_ctrlRom.generation() == ControlRom::SynthGen::SC88) {
-    _sampleRate = _sc88_configure(sampleRate) ? sampleRate : 0;
+  if (_ctrlRom.uses_xp_engine()) {
+    _sampleRate = _xp_configure(sampleRate) ? sampleRate : 0;
     _channels = channels;
     _settings->set_sample_rate(sampleRate);
     _settings->set_channels(channels);
@@ -1057,7 +1073,7 @@ std::string Synth::version(void)
 
 int Synth::midi_ports(void) const
 {
-  return (_ctrlRom.generation() == ControlRom::SynthGen::SC88) ? 2 : 1;
+  return _ctrlRom.uses_xp_engine() ? 2 : 1;
 }
 
 
@@ -1065,11 +1081,11 @@ void Synth::panic(void)
 {
   midiMutex.lock();
   _eventQueue.clear();
-  if (_sc88)
-    Xp::device_reset_controllers(_sc88);
+  if (_xpDevice)
+    Xp::device_reset_controllers(_xpDevice);
   midiMutex.unlock();
 
-  if (_sc88)
+  if (_xpDevice)
     return;
 
   for (auto &p : _parts)

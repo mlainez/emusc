@@ -70,6 +70,11 @@ scripts that drive emusc-render and another renderer with the same options):
                          meaning as emuscd's/emusc-winmidi's --latency.
                          Raise this (and --block) if playback breaks up on
                          slow hardware (default: 200)
+  --max-voices N         caps simultaneous voices below the loaded device's
+                         real polyphony (24 SC-55, 28 SC-55mkII/JV-880, 64
+                         SC-88), trading polyphony for headroom on hardware
+                         too slow to sustain the worst case (default: the
+                         device's own ceiling - this can only lower it)
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
@@ -121,6 +126,8 @@ struct Options {
   bool play = false;
   unsigned block = 2048;
   unsigned latency = 200;
+  bool max_voices_set = false;
+  unsigned max_voices = 0;
 };
 
 [[noreturn]] void die(int code, const std::string &msg) {
@@ -159,6 +166,10 @@ Options parse_args(int argc, char **argv) {
     else if (a == "--play")        o.play = true;
     else if (a == "--block")       o.block = static_cast<unsigned>(std::stoul(need("--block")));
     else if (a == "--latency")     o.latency = static_cast<unsigned>(std::stoul(need("--latency")));
+    else if (a == "--max-voices") {
+      o.max_voices_set = true;
+      o.max_voices = static_cast<unsigned>(std::stoul(need("--max-voices")));
+    }
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
       // twice reported the wrong thing on this project. The source hash is
@@ -203,6 +214,8 @@ Options parse_args(int argc, char **argv) {
     die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
   if (o.block < 1) die(1, "--block must be >= 1");
+  if (o.max_voices_set && o.max_voices < 1)
+    die(1, "--max-voices must be >= 1");
 
   if (!o.device.empty()) {
     if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
@@ -339,6 +352,7 @@ int main(int argc, char **argv) {
   // draws from std::rand() for random pan, random pitch and the sample-and-hold
   // LFO. Re-seed with a fixed value so the render is reproducible.
   std::srand(o.seed);
+  if (o.max_voices_set) synth.set_max_voices(o.max_voices);
   synth.set_audio_format(o.rate, 2);   // also instantiates the 16 parts
 
   // Power-on reset, before the first event is queued. --reset selects the sound

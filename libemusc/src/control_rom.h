@@ -559,6 +559,13 @@ public:
   std::string date(void) { return _date; }
   enum SynthGen generation(void) { return _synthGeneration; }
 
+  // Whether this device is rendered by engines/xp/'s own engine (which
+  // reads the control ROM itself) rather than the Part/Note path. Only
+  // SC-88 today; the one place this needs to change to add a second
+  // XP-family device (e.g. a JV-1080), rather than re-auditing every
+  // generation() == SC88 check scattered by hand.
+  bool uses_xp_engine(void) { return _synthGeneration == SynthGen::SC88; }
+
   // The whole control ROM image, verbatim. The SC-88 path hands this to its own
   // engine, which reads the device's tables itself; it is empty for a device
   // whose tables this class parses.

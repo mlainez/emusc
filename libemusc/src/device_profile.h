@@ -1140,6 +1140,14 @@ struct DeviceProfile
   // And for the per-tone controller matrix: omitted, enabled is 0 and the
   // matrix is not built. scdb D-79.
   CtrlMatrixJvLaw ctrlJv;
+
+  // Whether a variation-table miss falls back to the bank's group base (the
+  // bank number with its low three bits cleared), and failing that to bank 0,
+  // rather than leaving the part silent. Only the SC-55 does this, and only
+  // for bank < 64 and program < 120 (part.cc has the full rule and its
+  // provenance). Last and omitted everywhere else, so it defaults to false -
+  // the correct, no-fallback behaviour for every other profile.
+  bool variationFallback;
 };
 
 extern const RomSignature SC55_SIGNATURE;

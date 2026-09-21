@@ -116,7 +116,11 @@ const DeviceProfile SC55_PROFILE = {
   { false, 0x10, 0x50 },
 
   // Bank id 2 lands in the second megabyte on this generation.
-  { false, 0x100000 }
+  { false, 0x100000 },
+
+  {}, {}, {}, {}, {}, {}, {},   // no JV/analog/controller-matrix laws
+
+  true    // variationFallback: the SC-55's own group-base substitution
 };
 
 }
