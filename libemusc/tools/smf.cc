@@ -99,114 +99,127 @@ File parse(const std::vector<uint8_t> &data) {
   std::vector<TempoChange> tempi;
   std::vector<std::pair<uint64_t, int>> eots;   // (tick, track)
 
+  // A file with a truncated or corrupted chunk anywhere still renders
+  // everything up to the damage: files in the wild are truncated or
+  // corrupted often enough that refusing the whole song over one bad byte
+  // would lose music every other player still manages to render. Only the
+  // header (already validated above, since without it nothing can be
+  // interpreted at all) is a hard failure; every per-chunk and per-track
+  // problem below stops just that chunk or track and keeps whatever
+  // parsed before it, from it and from every other track.
   size_t pos = 8 + hlen;
   int track_no = 0;
-  while (pos + 8 <= data.size() && track_no < f.ntracks) {
+  while (pos + 8 <= data.size()) {
     std::string tag(data.begin() + pos, data.begin() + pos + 4);
     uint32_t len = be32(&data[pos + 4]);
-    if (pos + 8 + len > data.size())
-      throw std::runtime_error("SMF: chunk '" + tag + "' runs past end of file");
+    size_t body = pos + 8;
+    if (len > data.size() - body)
+      len = static_cast<uint32_t>(data.size() - body);   // truncated: use what's there
     if (tag != "MTrk") {          // alien chunks are to be skipped (spec)
-      pos += 8 + len;
+      pos = body + len;
       continue;
     }
 
-    Cursor c{&data[pos + 8], &data[pos + 8 + len]};
+    Cursor c{&data[body], &data[body + len]};
     uint64_t tick = 0;
     uint8_t running = 0;
     uint32_t seq = 0;
     std::vector<uint8_t> pending_sysex;   // multi-packet F0 ... F7 reassembly
     bool ended = false;
 
-    while (c.left() > 0 && !ended) {
-      tick += c.vlq();
-      uint8_t b = c.u8();
-      uint8_t status;
-      if (b & 0x80) {
-        status = b;
-      } else {
-        if (running == 0) throw std::runtime_error("SMF: data byte without running status");
-        status = running;
-        c.p--;          // re-read b as the first data byte
-      }
+    try {
+      while (c.left() > 0 && !ended) {
+        tick += c.vlq();
+        uint8_t b = c.u8();
+        uint8_t status;
+        if (b & 0x80) {
+          status = b;
+        } else {
+          if (running == 0) throw std::runtime_error("SMF: data byte without running status");
+          status = running;
+          c.p--;          // re-read b as the first data byte
+        }
 
-      if (status < 0xf0) {
-        running = status;
-        int n = channel_data_bytes(status);
-        RawEvent e{Kind::Channel, tick, track_no, seq++, {}};
-        e.bytes.push_back(status);
-        for (int i = 0; i < n; i++) {
-          uint8_t d = c.u8();
-          if (d & 0x80) throw std::runtime_error("SMF: status byte where data byte expected");
-          e.bytes.push_back(d);
-        }
-        raw.push_back(std::move(e));
-      } else if (status == 0xf0) {
-        // System exclusive: F0 <len> <bytes>. Complete iff it ends in F7.
-        // Running status is cancelled by SysEx and meta events.
-        running = 0;
-        uint32_t n = c.vlq();
-        if (n > c.left()) throw std::runtime_error("SMF: SysEx length runs past track end");
-        pending_sysex.clear();
-        pending_sysex.push_back(0xf0);
-        pending_sysex.insert(pending_sysex.end(), c.p, c.p + n);
-        c.p += n;
-        if (!pending_sysex.empty() && pending_sysex.back() == 0xf7) {
-          raw.push_back(RawEvent{Kind::SysEx, tick, track_no, seq++, pending_sysex});
+        if (status < 0xf0) {
+          running = status;
+          int n = channel_data_bytes(status);
+          RawEvent e{Kind::Channel, tick, track_no, seq++, {}};
+          e.bytes.push_back(status);
+          for (int i = 0; i < n; i++) {
+            uint8_t d = c.u8();
+            if (d & 0x80) throw std::runtime_error("SMF: status byte where data byte expected");
+            e.bytes.push_back(d);
+          }
+          raw.push_back(std::move(e));
+        } else if (status == 0xf0) {
+          // System exclusive: F0 <len> <bytes>. Complete iff it ends in F7.
+          // Running status is cancelled by SysEx and meta events.
+          running = 0;
+          uint32_t n = c.vlq();
+          if (n > c.left()) throw std::runtime_error("SMF: SysEx length runs past track end");
           pending_sysex.clear();
-        }
-        // else: continued by following F7 packets
-      } else if (status == 0xf7) {
-        // Either a continuation packet of a multi-packet SysEx, or an
-        // "escape" carrying arbitrary bytes (which we do not forward).
-        running = 0;
-        uint32_t n = c.vlq();
-        if (n > c.left()) throw std::runtime_error("SMF: F7 length runs past track end");
-        if (!pending_sysex.empty()) {
+          pending_sysex.push_back(0xf0);
           pending_sysex.insert(pending_sysex.end(), c.p, c.p + n);
+          c.p += n;
           if (!pending_sysex.empty() && pending_sysex.back() == 0xf7) {
-            // Delivered at the time of the packet that completes it.
             raw.push_back(RawEvent{Kind::SysEx, tick, track_no, seq++, pending_sysex});
             pending_sysex.clear();
           }
+          // else: continued by following F7 packets
+        } else if (status == 0xf7) {
+          // Either a continuation packet of a multi-packet SysEx, or an
+          // "escape" carrying arbitrary bytes (which we do not forward).
+          running = 0;
+          uint32_t n = c.vlq();
+          if (n > c.left()) throw std::runtime_error("SMF: F7 length runs past track end");
+          if (!pending_sysex.empty()) {
+            pending_sysex.insert(pending_sysex.end(), c.p, c.p + n);
+            if (!pending_sysex.empty() && pending_sysex.back() == 0xf7) {
+              // Delivered at the time of the packet that completes it.
+              raw.push_back(RawEvent{Kind::SysEx, tick, track_no, seq++, pending_sysex});
+              pending_sysex.clear();
+            }
+          }
+          c.p += n;
+        } else if (status == 0xff) {
+          running = 0;
+          uint8_t type = c.u8();
+          uint32_t n = c.vlq();
+          if (n > c.left()) throw std::runtime_error("SMF: meta length runs past track end");
+          std::vector<uint8_t> bytes;
+          bytes.push_back(type);
+          bytes.insert(bytes.end(), c.p, c.p + n);
+          c.p += n;
+          if (type == 0x51 && n == 3) {
+            uint32_t us = (uint32_t(bytes[1]) << 16) | (uint32_t(bytes[2]) << 8) | bytes[3];
+            // A length other than 3, or a tempo of 0, is a malformed Set
+            // Tempo: it is still recorded below as an ordinary meta event,
+            // it just never becomes a tempo change.
+            if (us != 0) tempi.push_back(TempoChange{tick, us, track_no, seq});
+          } else if (type == 0x2f) {
+            eots.emplace_back(tick, track_no);
+            ended = true;
+          }
+          raw.push_back(RawEvent{Kind::Meta, tick, track_no, seq++, std::move(bytes)});
+        } else {
+          // System common / realtime bytes (F1..F6, F8..FE) are not legal in
+          // an SMF track outside an F7 escape; treat as malformed.
+          throw std::runtime_error("SMF: unexpected status byte 0x" +
+                                   std::to_string(status) + " in track");
         }
-        c.p += n;
-      } else if (status == 0xff) {
-        running = 0;
-        uint8_t type = c.u8();
-        uint32_t n = c.vlq();
-        if (n > c.left()) throw std::runtime_error("SMF: meta length runs past track end");
-        std::vector<uint8_t> bytes;
-        bytes.push_back(type);
-        bytes.insert(bytes.end(), c.p, c.p + n);
-        c.p += n;
-        if (type == 0x51) {
-          if (n != 3) throw std::runtime_error("SMF: Set Tempo meta with length != 3");
-          uint32_t us = (uint32_t(bytes[1]) << 16) | (uint32_t(bytes[2]) << 8) | bytes[3];
-          if (us == 0) throw std::runtime_error("SMF: tempo of 0 microseconds per quarter note");
-          tempi.push_back(TempoChange{tick, us, track_no, seq});
-        } else if (type == 0x2f) {
-          eots.emplace_back(tick, track_no);
-          ended = true;
-        }
-        raw.push_back(RawEvent{Kind::Meta, tick, track_no, seq++, std::move(bytes)});
-      } else {
-        // System common / realtime bytes (F1..F6, F8..FE) are not legal in
-        // an SMF track outside an F7 escape; treat as malformed.
-        throw std::runtime_error("SMF: unexpected status byte 0x" +
-                                 std::to_string(status) + " in track");
       }
+    } catch (const std::runtime_error &) {
+      // Stop this track where the damage is; everything it already pushed
+      // to raw/tempi/eots stays, and every other track is unaffected. An
+      // incomplete multi-packet SysEx at that point is discarded rather
+      // than forwarded as a partial message.
     }
-    if (!pending_sysex.empty())
-      throw std::runtime_error("SMF: unterminated multi-packet SysEx at end of track");
     if (!ended) eots.emplace_back(tick, track_no);   // track without End Of Track meta
 
-    pos += 8 + len;
+    pos = body + len;
     track_no++;
   }
-  if (track_no != f.ntracks)
-    throw std::runtime_error("SMF: header announces " + std::to_string(f.ntracks) +
-                             " tracks but " + std::to_string(track_no) + " found");
+  f.ntracks = static_cast<uint16_t>(track_no);   // the header's count may be wrong
 
   // ---- Pass 2: tempo map -> absolute time for every event -------------------
   // Tempo changes from all tracks apply globally (format 1 puts them in track 0
