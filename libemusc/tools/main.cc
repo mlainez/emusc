@@ -18,6 +18,7 @@
 #include "control_rom.h"
 #include "wave_rom.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +63,13 @@ scripts that drive emusc-render and another renderer with the same options):
                          OS or user MIDI player. Always 16-bit regardless of
                          --bits/--float; paced by the audio device itself,
                          so this run takes as long as the song does.
+  --block N              --play only: audio frames per device write, same
+                         meaning as emuscd's/emusc-winmidi's --block
+                         (default: 2048)
+  --latency MS           --play only: requested output buffer depth, same
+                         meaning as emuscd's/emusc-winmidi's --latency.
+                         Raise this (and --block) if playback breaks up on
+                         slow hardware (default: 200)
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
@@ -111,6 +119,8 @@ struct Options {
   bool as_float = false;
   bool verbose = false;
   bool play = false;
+  unsigned block = 2048;
+  unsigned latency = 200;
 };
 
 [[noreturn]] void die(int code, const std::string &msg) {
@@ -147,6 +157,8 @@ Options parse_args(int argc, char **argv) {
     }
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--play")        o.play = true;
+    else if (a == "--block")       o.block = static_cast<unsigned>(std::stoul(need("--block")));
+    else if (a == "--latency")     o.latency = static_cast<unsigned>(std::stoul(need("--latency")));
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
       // twice reported the wrong thing on this project. The source hash is
@@ -190,6 +202,7 @@ Options parse_args(int argc, char **argv) {
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
     die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
+  if (o.block < 1) die(1, "--block must be >= 1");
 
   if (!o.device.empty()) {
     if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
@@ -390,7 +403,7 @@ int main(int argc, char **argv) {
     // audio device claims the sound card for a run that was going to fail
     // anyway.
     std::unique_ptr<AudioOut> audio_out;
-    if (o.play) audio_out.reset(new AudioOut(o.rate));
+    if (o.play) audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
 
     std::vector<int16_t> buf;
     std::vector<float> fbuf;
@@ -400,7 +413,7 @@ int main(int argc, char **argv) {
     std::vector<int16_t> play_buf;
     buf.reserve(2 * 4096);
     fbuf.reserve(2 * 4096);
-    play_buf.reserve(2 * 4096);
+    play_buf.reserve(2 * (size_t) o.block);
     // Enough lead for one control period (256 samples at 32 kHz, at most
     // 1024 output frames up to 128 kHz) plus the synth's own note-on delay,
     // so every event is queued before the period it belongs to is generated.
@@ -431,6 +444,16 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "emusc-render: %d of %zu tracks play into MIDI port B\n",
                      onB, trackPort.size());
     }
+
+    // --play real-time headroom: printed periodically so a render that
+    // cannot keep up shows exactly when it falls behind, rather than just
+    // sounding increasingly delayed with no way to tell why. "window" is
+    // since the last report, "overall" is since playback started - a
+    // steadily healthy window ratio with a falling overall ratio means an
+    // early one-time stall (e.g. ROM load) rather than a sustained deficit.
+    const auto play_start = std::chrono::steady_clock::now();
+    auto window_start = play_start;
+    uint64_t window_start_frame = 0;
 
     size_t next = 0;
     for (uint64_t fr = 0; fr < total_frames; fr++) {
@@ -471,9 +494,27 @@ int main(int argc, char **argv) {
       if (audio_out) {
         play_buf.push_back(to_i16(l));
         play_buf.push_back(to_i16(r));
-        if (play_buf.size() >= 2 * 4096) {
+        if (play_buf.size() >= 2 * (size_t) o.block) {
           audio_out->write(play_buf.data(), play_buf.size() / 2);
           play_buf.clear();
+
+          const auto now = std::chrono::steady_clock::now();
+          if (now - window_start >= std::chrono::seconds(2)) {
+            const double window_wall =
+              std::chrono::duration<double>(now - window_start).count();
+            const double window_audio =
+              (double)(fr + 1 - window_start_frame) / o.rate;
+            const double overall_wall =
+              std::chrono::duration<double>(now - play_start).count();
+            const double overall_audio = (double)(fr + 1) / o.rate;
+            std::fprintf(stderr,
+                         "emusc-render: --play: window %.0f%% real-time, "
+                         "overall %.0f%% real-time\n",
+                         100.0 * window_audio / window_wall,
+                         100.0 * overall_audio / overall_wall);
+            window_start = now;
+            window_start_frame = fr + 1;
+          }
         }
       }
     }

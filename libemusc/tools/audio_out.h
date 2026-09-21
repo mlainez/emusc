@@ -16,10 +16,13 @@
 
 class AudioOut {
 public:
-  // Opens 16-bit stereo interleaved playback at the given rate. Exits the
-  // process with code 4 on failure, matching this tool's own die() for
-  // every other unrecoverable startup error.
-  explicit AudioOut(unsigned rate);
+  // Opens 16-bit stereo interleaved playback at the given rate. blockFrames
+  // and latencyMs carry the same meaning as emuscd's/emusc-winmidi's own
+  // --block/--latency: audio frames per device write, and the requested
+  // total output buffer depth in milliseconds. Exits the process with code
+  // 4 on failure, matching this tool's own die() for every other
+  // unrecoverable startup error.
+  AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs);
   ~AudioOut();
 
   AudioOut(const AudioOut &) = delete;

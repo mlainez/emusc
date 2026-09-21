@@ -14,7 +14,13 @@ struct AudioOut::Impl {
   snd_pcm_t *pcm = nullptr;
 };
 
-AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
+// blockFrames isn't used here: main.cc's own render loop already controls
+// write() granularity via --block (the same way emuscd's write_block() does
+// on the daemon side), and snd_pcm_writei() itself handles any frame count,
+// unlike WinMM's fixed-size WAVEHDR buffers. Only latencyMs maps onto
+// anything ALSA-specific, the same way it does in emuscd's init_alsa_audio().
+AudioOut::AudioOut(unsigned rate, unsigned /*blockFrames*/, unsigned latencyMs)
+    : _impl(new Impl) {
   int err = snd_pcm_open(&_impl->pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
   if (err < 0) {
     std::cerr << "emusc-render: --play: PCM open error: " << snd_strerror(err)
@@ -30,9 +36,7 @@ AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
   snd_pcm_hw_params_set_channels(_impl->pcm, hw, 2);
   unsigned r = rate;
   snd_pcm_hw_params_set_rate_near(_impl->pcm, hw, &r, 0);
-  // 200 ms: generous for a batch tool with no live input to stay responsive
-  // to, so an occasional slow render block doesn't underrun the device.
-  unsigned buffer_time_us = 200000;
+  unsigned buffer_time_us = latencyMs * 1000;
   snd_pcm_hw_params_set_buffer_time_near(_impl->pcm, hw, &buffer_time_us, 0);
 
   if (snd_pcm_hw_params(_impl->pcm, hw) < 0) {
