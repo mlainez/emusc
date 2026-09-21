@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/tva.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 /* The layout is checked without a ROM; the sweep over the curve and rate
    tables needs one, and its path is read from the environment at run time,
@@ -42,7 +44,7 @@ static double dwell(uint16_t increment)
   return 65536.0 / (double)increment;
 }
 
-int main(void)
+int main()
 {
   static const unsigned firmware_shift[4] = {0, 3, 5, 7};
   static const unsigned control_shift[3][4] = {
@@ -61,34 +63,34 @@ int main(void)
 
   /* The layout, without a ROM. Bit 14 is the shape alone; bits 13..12 are
      the exponent; `rate` is the decoded value over 64. */
-  sc88_tva_curve_decode(0x4517, &curve);
+  tva_curve_decode(0x4517, &curve);
   assert(curve.linear);
   assert(fabs(curve.rate - 1303.0 / 64.0) < 1e-9);
-  sc88_tva_curve_decode(0x0517, &curve);
+  tva_curve_decode(0x0517, &curve);
   assert(!curve.linear);
   assert(fabs(curve.rate - 1303.0 / 64.0) < 1e-9);
-  sc88_tva_curve_decode(0x1022, &curve);
+  tva_curve_decode(0x1022, &curve);
   assert(fabs(curve.rate - (34.0 / 8.0) / 64.0) < 1e-9);
-  sc88_tva_curve_decode(0x2022, &curve);
+  tva_curve_decode(0x2022, &curve);
   assert(fabs(curve.rate - (34.0 / 32.0) / 64.0) < 1e-9);
-  sc88_tva_curve_decode(0x3022, &curve);
+  tva_curve_decode(0x3022, &curve);
   assert(fabs(curve.rate - (34.0 / 128.0) / 64.0) < 1e-9);
 
   /* A linear stage arrives when `q` reaches 1, an exponential one is
      10.95 time constants long and so has arrived by then. */
-  sc88_tva_curve_decode(0x4040, &curve);        /* linear, value 64 */
-  assert(fabs(sc88_tva_curve_progress(&curve, 0.5) - 0.5) < 1e-9);
-  assert(sc88_tva_curve_progress(&curve, 1.0) == 1.0);
-  assert(sc88_tva_curve_progress(&curve, 2.0) == 1.0);
-  sc88_tva_curve_decode(0x0040, &curve);        /* exponential, value 64 */
-  assert(fabs(sc88_tva_curve_progress(&curve, 1.0) -
+  tva_curve_decode(0x4040, &curve);        /* linear, value 64 */
+  assert(fabs(tva_curve_progress(&curve, 0.5) - 0.5) < 1e-9);
+  assert(tva_curve_progress(&curve, 1.0) == 1.0);
+  assert(tva_curve_progress(&curve, 2.0) == 1.0);
+  tva_curve_decode(0x0040, &curve);        /* exponential, value 64 */
+  assert(fabs(tva_curve_progress(&curve, 1.0) -
               (1.0 - exp(-1.0))) < 1e-9);
-  assert(sc88_tva_curve_progress(&curve, 0.0) == 0.0);
+  assert(tva_curve_progress(&curve, 0.0) == 0.0);
   /* `0x0fff` closes the gap within one period either way. */
-  sc88_tva_curve_decode(0x0fff, &curve);
-  assert(sc88_tva_curve_progress(&curve, 1.0) == 1.0);
-  sc88_tva_curve_decode(0x4fff, &curve);
-  assert(sc88_tva_curve_progress(&curve, 1.0) == 1.0);
+  tva_curve_decode(0x0fff, &curve);
+  assert(tva_curve_progress(&curve, 1.0) == 1.0);
+  tva_curve_decode(0x4fff, &curve);
+  assert(tva_curve_progress(&curve, 1.0) == 1.0);
 
   romPath = getenv("SC88_CONTROL_ROM");
   if (!romPath)
@@ -102,7 +104,7 @@ int main(void)
   }
   size = (size_t)ftell(file);
   rewind(file);
-  bytes = malloc(size);
+  bytes = (uint8_t *)malloc(size);
   assert(bytes);
   assert(fread(bytes, 1, size, file) == size);
   fclose(file);

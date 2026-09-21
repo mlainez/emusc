@@ -1,13 +1,15 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/wave.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 static void test_descriptor(void)
 {
@@ -19,7 +21,7 @@ static void test_descriptor(void)
   struct sc88_wave_registers registers;
   enum sc88_wave_loop_type mode;
 
-  assert(sc88_wave_descriptor_parse(raw, sizeof raw, &desc));
+  assert(wave_descriptor_parse(raw, sizeof raw, &desc));
   assert(desc.bank_select == 0);
   assert(desc.address_a == 0x01ee60);
   assert(desc.address_b == 0x026f9c);
@@ -29,9 +31,9 @@ static void test_descriptor(void)
   assert(desc.alternate_pitch_correction == 0);
   assert(desc.start_offset == 0x0a00);
   assert(desc.state_a == -3024);
-  assert(sc88_wave_descriptor_loop_type(&desc, &mode));
+  assert(wave_descriptor_loop_type(&desc, &mode));
   assert(mode == SC88_WAVE_FORWARD_LOOP);
-  assert(sc88_wave_prepare_registers(&desc, false, &registers));
+  assert(wave_prepare_registers(&desc, false, &registers));
   assert(registers.bank_flags == 0x8000);
   assert(registers.start == 0x01f860);
   assert(registers.loop == 0x026f9c);
@@ -54,16 +56,16 @@ static void test_pitch_correction(void)
   };
   struct sc88_wave_descriptor desc;
 
-  assert(sc88_wave_descriptor_parse(raw, sizeof raw, &desc));
+  assert(wave_descriptor_parse(raw, sizeof raw, &desc));
   assert(desc.root_key == 77);
   assert(desc.base_pitch_correction == -559);
   assert(desc.alternate_pitch_correction == 132);
-  assert(sc88_wave_pitch_correction(&desc, false) == -559);
-  assert(sc88_wave_pitch_correction(&desc, true) == -427);
+  assert(wave_pitch_correction(&desc, false) == -559);
+  assert(wave_pitch_correction(&desc, true) == -427);
 
   desc.base_pitch_correction = -1365;
   desc.alternate_pitch_correction = -442;
-  assert(sc88_wave_pitch_correction(&desc, true) == -1807);
+  assert(wave_pitch_correction(&desc, true) == -1807);
 
   /* Neither case above actually leaves the int16 range - the header
      comment's wraparound claim needs a sum that does. Two positives
@@ -73,10 +75,10 @@ static void test_pitch_correction(void)
      gives neither. */
   desc.base_pitch_correction = 20000;
   desc.alternate_pitch_correction = 20000;
-  assert(sc88_wave_pitch_correction(&desc, true) == -25536);
+  assert(wave_pitch_correction(&desc, true) == -25536);
   desc.base_pitch_correction = -30000;
   desc.alternate_pitch_correction = -10000;
-  assert(sc88_wave_pitch_correction(&desc, true) == 25536);
+  assert(wave_pitch_correction(&desc, true) == 25536);
 }
 
 static void test_decoder(void)
@@ -89,14 +91,14 @@ static void test_decoder(void)
   bank[0x400] = 0x21;
   bank[0x8000] = 1;
   bank[0x8001] = 0xff;
-  assert(sc88_fce_decoder_reset(&decoder, 0x8000));
-  assert(sc88_fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
+  assert(fce_decoder_reset(&decoder, 0x8000));
+  assert(fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
   assert(pcm == 256);
-  assert(sc88_fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
+  assert(fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
   assert(pcm == 0);
 
   decoder.accumulator = INT64_C(0x10000);
-  assert(sc88_fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
+  assert(fce_decoder_read(&decoder, bank, SC88_WAVE_BANK_SIZE, &pcm));
   assert(pcm == 0x7fffff);
   free(bank);
 }
@@ -110,13 +112,13 @@ static void test_descramble(void)
   raw[0] = 0x5a;
   raw[0x20] = 0x01;
   raw[SC88_WAVE_BANK_SIZE] = 0xa5;
-  assert(sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
-                                    SC88_WAVE_CHIP_SIZE));
+  assert(wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
+                               SC88_WAVE_CHIP_SIZE));
   assert(decoded[0] == 0x5a);
   assert(decoded[0x100] == 0x02);
   assert(decoded[SC88_WAVE_BANK_SIZE] == 0xa5);
-  assert(!sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, raw,
-                                     SC88_WAVE_CHIP_SIZE));
+  assert(!wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, raw,
+                                SC88_WAVE_CHIP_SIZE));
   free(decoded);
   free(raw);
 }
@@ -140,8 +142,8 @@ static void test_held_chip(const char *raw_path, const char *decoded_path)
          SC88_WAVE_CHIP_SIZE);
   assert(fgetc(file) == EOF);
   fclose(file);
-  assert(sc88_wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
-                                    SC88_WAVE_CHIP_SIZE));
+  assert(wave_descramble_chip(raw, SC88_WAVE_CHIP_SIZE, decoded,
+                               SC88_WAVE_CHIP_SIZE));
   assert(memcmp(decoded, expected, SC88_WAVE_CHIP_SIZE) == 0);
   free(expected);
   free(decoded);
@@ -154,9 +156,9 @@ static void expect_cursor(struct sc88_wave_cursor *cursor,
   size_t i;
   uint32_t address;
   for (i = 0; i < count; ++i) {
-    assert(sc88_wave_cursor_current(cursor, &address));
+    assert(wave_cursor_current(cursor, &address));
     assert(address == expected[i]);
-    assert(sc88_wave_cursor_advance(cursor));
+    assert(wave_cursor_advance(cursor));
   }
 }
 
@@ -171,20 +173,20 @@ static void test_cursors(void)
   static const uint32_t one_shot[] = {8, 9, 10, 11, 12};
   uint32_t address;
 
-  assert(sc88_wave_cursor_init(&cursor, &registers,
-                               SC88_WAVE_FORWARD_LOOP));
+  assert(wave_cursor_init(&cursor, &registers,
+                          SC88_WAVE_FORWARD_LOOP));
   expect_cursor(&cursor, forward, sizeof forward / sizeof forward[0]);
 
-  assert(sc88_wave_cursor_init(&cursor, &registers,
-                               SC88_WAVE_PING_PONG_LOOP));
+  assert(wave_cursor_init(&cursor, &registers,
+                          SC88_WAVE_PING_PONG_LOOP));
   expect_cursor(&cursor, ping_pong, sizeof ping_pong / sizeof ping_pong[0]);
 
-  assert(sc88_wave_cursor_init(&cursor, &registers,
-                               SC88_WAVE_FORWARD_ONE_SHOT));
+  assert(wave_cursor_init(&cursor, &registers,
+                          SC88_WAVE_FORWARD_ONE_SHOT));
   expect_cursor(&cursor, one_shot, sizeof one_shot / sizeof one_shot[0]);
-  assert(!sc88_wave_cursor_current(&cursor, &address));
-  assert(!sc88_wave_cursor_init(&cursor, &registers,
-                                SC88_WAVE_REVERSE_ONE_SHOT));
+  assert(!wave_cursor_current(&cursor, &address));
+  assert(!wave_cursor_init(&cursor, &registers,
+                           SC88_WAVE_REVERSE_ONE_SHOT));
 }
 
 int main(int argc, char **argv)

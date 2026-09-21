@@ -1,17 +1,19 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/delay.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 /* The recovered laws, against the firmware's own arithmetic. The topology
    is a labelled choice and is not asserted; the numbers are. */
-int main(void)
+int main()
 {
   uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
   static const uint8_t vectors[16] = {
@@ -26,7 +28,7 @@ int main(void)
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(sc88_rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
 
   /* the centre-time table is `0x8000 + floor(ms * 32)` over its 115 public
      entries, so 100 ms at index 80 and one second at index 0x73 */
@@ -37,11 +39,11 @@ int main(void)
   bytes[0x165ca + 0x30 * 2] = 0x02;
   bytes[0x165ca + 0x30 * 2 + 1] = 0x00;        /* twice */
 
-  assert(sc88_delay_init(&dl, 32000.0));
+  assert(delay_init(&dl, 32000.0));
 
   p[0] = 0; p[1] = 80; p[2] = 0x18; p[3] = 0x30;
   p[4] = 127; p[5] = 127; p[6] = 127; p[7] = 127; p[8] = 64; p[9] = 0;
-  assert(sc88_delay_set_params(&rom, &dl, p));
+  assert(delay_set_params(&rom, &dl, p));
   /* 100 ms at 32 kHz is 3200 samples; the right tap is twice the centre */
   assert(fabs(dl.centre_samples - 3200.0) < 1e-6);
   assert(fabs(dl.left_samples - 3200.0) < 1e-6);
@@ -52,29 +54,29 @@ int main(void)
   /* feedback is bipolar about 64 and exactly zero there */
   assert(dl.feedback == 0.0f);
   p[8] = 0;
-  assert(sc88_delay_set_params(&rom, &dl, p));
+  assert(delay_set_params(&rom, &dl, p));
   assert(fabs(dl.feedback + 0.96875) < 1e-6);
   p[8] = 127;
-  assert(sc88_delay_set_params(&rom, &dl, p));
+  assert(delay_set_params(&rom, &dl, p));
   assert(dl.feedback > 0.95f && dl.feedback < 1.0f);
 
   /* index zero is outside the public centre-time range and is refused
      rather than treated as a time */
   p[1] = 0;
-  assert(!sc88_delay_set_params(&rom, &dl, p));
+  assert(!delay_set_params(&rom, &dl, p));
   p[1] = 0x74;
-  assert(!sc88_delay_set_params(&rom, &dl, p));
+  assert(!delay_set_params(&rom, &dl, p));
 
   /* a macro is ten bytes copied over pre-LPF through reverb send */
   for (i = 0; i < 10; ++i)
     bytes[0x158be + 16 * 4 + i] = (uint8_t)(i + 1);
-  assert(sc88_delay_macro(&rom, 4, macro));
+  assert(delay_macro(&rom, 4, macro));
   for (i = 0; i < 10; ++i)
     assert(macro[i] == (uint8_t)(i + 1));
-  assert(!sc88_delay_macro(&rom, 10, macro));
+  assert(!delay_macro(&rom, 10, macro));
 
-  sc88_delay_destroy(&dl);
-  assert(!sc88_delay_init(&dl, 100.0));
+  delay_destroy(&dl);
+  assert(!delay_init(&dl, 100.0));
   free(bytes);
   return 0;
 }

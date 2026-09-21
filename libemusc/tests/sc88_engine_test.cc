@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/engine.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 static void put16(uint8_t *p, uint16_t value)
 {
@@ -131,7 +133,7 @@ static void count_service(void *user, unsigned periods)
   count->periods += periods;
 }
 
-int main(void)
+int main()
 {
   uint8_t *control = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
   uint8_t *wave = (uint8_t *)calloc(SC88_WAVE_BANK_SIZE, 1);
@@ -148,36 +150,36 @@ int main(void)
 
   assert(control && wave);
   make_fixture(control, wave, banks);
-  assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
+  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
                             banks, SC88_WAVE_BANK_COUNT, 32000.0,
                             SC88_WRAP_FULL_CARRY));
-  assert(sc88_engine_init(&engine, &renderer));
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_SINGLE, 0.25f));
-  assert(sc88_engine_active_slots(&engine) == 1);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(engine_active_slots(&engine) == 1);
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_SINGLE, 0.25f));
-  assert(sc88_engine_active_slots(&engine) == 1);
-  assert(sc88_engine_note_off(&engine, 0, 60));
-  assert(sc88_engine_released_slots(&engine) == 1);
+  assert(engine_active_slots(&engine) == 1);
+  assert(engine_note_off(&engine, 0, 60));
+  assert(engine_released_slots(&engine) == 1);
 
-  sc88_engine_hold(&engine, 0, true);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 61, 100, 0,
+  engine_hold(&engine, 0, true);
+  assert(engine_note_on(&engine, 0, 0, 0, 61, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(sc88_engine_note_off(&engine, 0, 61));
-  assert(sc88_engine_released_slots(&engine) == 2);
-  sc88_engine_hold(&engine, 0, false);
-  assert(sc88_engine_released_slots(&engine) == 2);
+  assert(engine_note_off(&engine, 0, 61));
+  assert(engine_released_slots(&engine) == 2);
+  engine_hold(&engine, 0, false);
+  assert(engine_released_slots(&engine) == 2);
 
   {
     const struct sc88_tva_levels muted = {0, 127, 127, 127};
     bool found_muted = false;
     put16(control + 0x14f3e, 0xffff);
-    assert(sc88_engine_note_on(&engine, 2, 0, 0, 63, 100, 0,
+    assert(engine_note_on(&engine, 2, 0, 0, 63, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-    sc88_engine_set_part_levels(&engine, 2, &muted);
-    sc88_engine_set_part_levels(&engine, 1, &muted);
-    assert(sc88_engine_note_on(&engine, 1, 0, 0, 62, 100, 0,
+    engine_set_part_levels(&engine, 2, &muted);
+    engine_set_part_levels(&engine, 1, &muted);
+    assert(engine_note_on(&engine, 1, 0, 0, 62, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 0.25f));
     for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
@@ -207,11 +209,11 @@ int main(void)
        rest of it reads them as it found them. */
     put16(control + 0x78702 + 63 * 2, 0x4000);
     put16(control + 0x78802 + 64 * 2, 0xffff);
-    sc88_engine_set_part_tvf_controls(&engine, 1, &tvf);
+    engine_set_part_tvf_controls(&engine, 1, &tvf);
     assert(engine.parts[1].tvf_dirty);
   }
-  sc88_engine_set_control_service(&engine, count_service, &count);
-  sc88_engine_render(&engine, stereo, 257);
+  engine_set_control_service(&engine, count_service, &count);
+  engine_render(&engine, stereo, 257);
   assert(count.calls == 1 && count.periods == 1);
   assert(!engine.parts[1].tvf_dirty);
   {
@@ -248,34 +250,34 @@ int main(void)
      rendered and are spending the next one gliding down to it, which is
      what the chip does with a target (`71c7`); they are still allocated
      until it ends. */
-  assert(sc88_engine_active_slots(&engine) == 4);
-  assert(sc88_engine_released_slots(&engine) == 2);
+  assert(engine_active_slots(&engine) == 4);
+  assert(engine_released_slots(&engine) == 2);
   engine.scheduler_clocks = 2.0 * 10001.0;
-  sc88_engine_render(&engine, stereo, 1);
+  engine_render(&engine, stereo, 1);
   assert(count.calls == 2 && count.periods == 3);
-  assert(sc88_engine_active_slots(&engine) == 2);
-  sc88_engine_destroy(&engine);
+  assert(engine_active_slots(&engine) == 2);
+  engine_destroy(&engine);
 
-  assert(sc88_engine_init(&engine, &renderer));
+  assert(engine_init(&engine, &renderer));
   for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, (uint8_t)i, 100, 0,
+    assert(engine_note_on(&engine, 0, 0, 0, (uint8_t)i, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
   /* One period so every voice's amplitude register has actually risen off
      zero - stopping a voice that has never been rendered has nothing to
      ramp down from, which would make the stolen-voice check below pass
      whether or not the steal path ever calls the stop ramp at all. */
-  sc88_engine_render(&engine, stereo, 257);
-  assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
-  assert(sc88_engine_note_off(&engine, 0, 0));
-  assert(sc88_engine_released_slots(&engine) == 1);
+  engine_render(&engine, stereo, 257);
+  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+  assert(engine_note_off(&engine, 0, 0));
+  assert(engine_released_slots(&engine) == 1);
   /* All 64 slots are full, so this note-on can only be served by stealing
      the one just released (TASK-189 AC#2: a stimulus that forces voice
      stealing). */
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
+  assert(engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(sc88_engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
-  assert(sc88_engine_released_slots(&engine) == 0);
+  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+  assert(engine_released_slots(&engine) == 0);
   /* The stolen voice must be handed to the chip's stop ramp rather than
      memset mid-note (TASK-189 AC#1, P-0358): it is still sounding down in
      engine.stopping[], not simply gone. */
@@ -286,44 +288,44 @@ int main(void)
         ++stopping;
     assert(stopping == 1);
   }
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_hold(&engine, 0, true);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_hold(&engine, 0, true);
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(sc88_engine_note_off(&engine, 0, 60));
-  sc88_engine_render(&engine, stereo, 257);
-  assert(sc88_engine_active_slots(&engine) == 1);
-  sc88_engine_hold(&engine, 0, false);
+  assert(engine_note_off(&engine, 0, 60));
+  engine_render(&engine, stereo, 257);
+  assert(engine_active_slots(&engine) == 1);
+  engine_hold(&engine, 0, false);
   /* One period for the release to run out, one for the glide to zero. */
-  sc88_engine_render(&engine, stereo, 257);
-  sc88_engine_render(&engine, stereo, 257);
-  assert(sc88_engine_active_slots(&engine) == 0);
-  sc88_engine_destroy(&engine);
+  engine_render(&engine, stereo, 257);
+  engine_render(&engine, stereo, 257);
+  assert(engine_active_slots(&engine) == 0);
+  engine_destroy(&engine);
 
   /* A rhythm note that does not receive Note Off keeps sounding after it.
      Every drum in demo song 1 is written as a 10 ms note, so releasing on
      Note Off cuts a crash to a tick (`M-015`). */
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, 1);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_rhythm(&engine, 0, 1);
+  assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  assert(sc88_engine_note_off(&engine, 0, 36));
+  assert(engine_note_off(&engine, 0, 36));
   /* The key is up, so the slot counts as released for stealing, but the
      envelope must not have been released - that is the whole point. */
-  assert(sc88_engine_active_slots(&engine) == 1);
+  assert(engine_active_slots(&engine) == 1);
   assert(!engine.slots[0].component.release.active);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* and the one whose kit does set the bit is released as usual */
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, 1);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_rhythm(&engine, 0, 1);
+  assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  assert(sc88_engine_note_off(&engine, 0, 38));
+  assert(engine_note_off(&engine, 0, 38));
   assert(engine.slots[0].component.release.active);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* A `41 mf rr` edit reaches the drum setup it names and no other. Demo
      song 3 addresses its kick's panpot to MAP1, which is the setup a part
@@ -333,31 +335,31 @@ int main(void)
   {
     double edited;
     double plain;
-    assert(sc88_engine_init(&engine, &renderer));
-    sc88_engine_set_part_rhythm(&engine, 0, 1);
-    assert(sc88_engine_set_drum_parameter(&engine, 1, 1, 36, 72));
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+    assert(engine_init(&engine, &renderer));
+    engine_set_part_rhythm(&engine, 0, 1);
+    assert(engine_set_drum_parameter(&engine, 1, 1, 36, 72));
+    assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     edited = engine.slots[0].component.oscillator.step;
-    sc88_engine_destroy(&engine);
+    engine_destroy(&engine);
 
-    assert(sc88_engine_init(&engine, &renderer));
-    sc88_engine_set_part_rhythm(&engine, 0, 2);
-    assert(sc88_engine_set_drum_parameter(&engine, 1, 1, 36, 72));
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+    assert(engine_init(&engine, &renderer));
+    engine_set_part_rhythm(&engine, 0, 2);
+    assert(engine_set_drum_parameter(&engine, 1, 1, 36, 72));
+    assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     plain = engine.slots[0].component.oscillator.step;
-    sc88_engine_destroy(&engine);
+    engine_destroy(&engine);
     assert(edited > plain * 1.5);
   }
 
   /* a melodic note is never exempt */
-  assert(sc88_engine_init(&engine, &renderer));
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  assert(sc88_engine_note_off(&engine, 0, 60));
+  assert(engine_note_off(&engine, 0, 60));
   assert(engine.slots[0].component.release.active);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* Tone-common `+0x15`, the guard `58c3` reads: the release ramps go up
      either way, but a tone carrying the byte skips the whole block from
@@ -380,11 +382,11 @@ int main(void)
        the distance from. */
     control[0x40000 + 34 + 0x2a] = 1;
 
-    assert(sc88_engine_init(&engine, &renderer));
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+    assert(engine_init(&engine, &renderer));
+    assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     assert(engine.slots[0].component.envelope.active);
-    assert(sc88_engine_note_off(&engine, 0, 60));
+    assert(engine_note_off(&engine, 0, 60));
     released = &engine.slots[0].component;
     assert(released->release.active && released->pitch_release.active);
     assert(!released->envelope.active);
@@ -395,14 +397,14 @@ int main(void)
                      (uint16_t)released->pitch_envelope.current));
     assert(released->pitch_release.delta !=
            released->pitch_release.destination);
-    sc88_engine_destroy(&engine);
+    engine_destroy(&engine);
 
     control[0x40000 + 0x15] = 1;
-    assert(sc88_engine_init(&engine, &renderer));
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+    assert(engine_init(&engine, &renderer));
+    assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     assert(engine.slots[0].component.continuous_hold_release);
-    assert(sc88_engine_note_off(&engine, 0, 60));
+    assert(engine_note_off(&engine, 0, 60));
     released = &engine.slots[0].component;
     assert(released->release.active && released->pitch_release.active);
     assert(released->envelope.active);
@@ -410,7 +412,7 @@ int main(void)
     assert(released->pitch_envelope.active);
     assert(released->pitch_release.delta ==
            released->pitch_release.destination);
-    sc88_engine_destroy(&engine);
+    engine_destroy(&engine);
 
     control[0x40000 + 0x15] = 0;
     put16(control + 0x40000 + 34 + 0x1a, 0);
@@ -422,79 +424,79 @@ int main(void)
   /* The send combination law, on its own: the firmware's rounded product
      maps a full note send to the part's own control and a zero note send
      to silence, and 127 against 127 must not overflow to 0. */
-  assert(sc88_send_combine(40, 127) == 40);
-  assert(sc88_send_combine(127, 127) == 127);
-  assert(sc88_send_combine(127, 0) == 0);
-  assert(sc88_send_combine(0, 127) == 0);
-  assert(sc88_send_combine(40, 50) == 16);
+  assert(send_combine(40, 127) == 40);
+  assert(send_combine(127, 127) == 127);
+  assert(send_combine(127, 0) == 0);
+  assert(send_combine(0, 127) == 0);
+  assert(send_combine(40, 50) == 16);
   /* and the send curve is LINEAR: control 64 is a shade over half, not the
      pan curve's -4.5 dB. The two tables are only three points apart over
      the whole range and reading the pan one here opens every send too far
      (`P-xxxx`). */
   {
     uint16_t gain;
-    assert(sc88_control_gain_q15(&renderer.rom, 0, &gain) && gain == 0);
-    assert(sc88_control_gain_q15(&renderer.rom, 64, &gain) &&
+    assert(control_gain_q15(&renderer.rom, 0, &gain) && gain == 0);
+    assert(control_gain_q15(&renderer.rom, 64, &gain) &&
            gain == 0x4080);
-    assert(sc88_control_gain_q15(&renderer.rom, 127, &gain) &&
+    assert(control_gain_q15(&renderer.rom, 127, &gain) &&
            gain == 0x8000);
     /* control 1 is a small open send, not a closed one: the pan table's
        first word is zero and using it here muted the send entirely */
-    assert(sc88_control_gain_q15(&renderer.rom, 1, &gain) && gain == 0x0100);
-    assert(!sc88_control_gain_q15(&renderer.rom, 128, &gain));
+    assert(control_gain_q15(&renderer.rom, 1, &gain) && gain == 0x0100);
+    assert(!control_gain_q15(&renderer.rom, 128, &gain));
   }
 
   /* The kit's per-note send reaches the bus. A dry key must put nothing in
      it while still being heard, which is what makes STANDARD 1's kick a
      kick and not a kick in a hall (`M-009`). */
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, 1);
-  sc88_engine_set_part_reverb_send(&engine, 0, 127);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_rhythm(&engine, 0, 1);
+  engine_set_part_reverb_send(&engine, 0, 127);
+  assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
+  engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(stereo[0] != 0.0f || stereo[1] != 0.0f);
   assert(send[0] == 0.0f);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, 1);
-  sc88_engine_set_part_reverb_send(&engine, 0, 127);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_rhythm(&engine, 0, 1);
+  engine_set_part_reverb_send(&engine, 0, 127);
+  assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
+  engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   wet = send[0];
   assert(wet != 0.0f);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* and the part send still scales it, so CC91 keeps authority over the
      whole kit */
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_rhythm(&engine, 0, 1);
-  sc88_engine_set_part_reverb_send(&engine, 0, 0);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_rhythm(&engine, 0, 1);
+  engine_set_part_reverb_send(&engine, 0, 0);
+  assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
+  engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == 0.0f);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* A melodic note carries no per-note send, so a fully wet drum key is
      exactly as wet as the same tone played melodically: the kit bytes only
      ever take away from the part send. The bus is summed before panning,
      so this holds whatever the two notes' pans are. */
-  assert(sc88_engine_init(&engine, &renderer));
-  sc88_engine_set_part_reverb_send(&engine, 0, 127);
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(engine_init(&engine, &renderer));
+  engine_set_part_reverb_send(&engine, 0, 127);
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
+  engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == wet);
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   /* Portamento. The switch, the time and the source all have to be there
      for a glide to start; every component of the note glides, on one
      shared source, target and rate; and the second note's source is where
      the first one's pitch stands, not where it was aimed. */
-  assert(sc88_engine_init(&engine, &renderer));
+  assert(engine_init(&engine, &renderer));
   {
     unsigned slot;
     unsigned glides;
@@ -506,23 +508,23 @@ int main(void)
 
     /* portamento off: the first note leaves its key behind and nothing
        glides */
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
+    assert(engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
+    assert(engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
       assert(!engine.slots[slot].component.portamento.active);
 
     /* the switch alone is not enough: CC5 = 0 is the firmware's own
        no-glide exit */
-    sc88_engine_set_part_portamento(&engine, 0, true);
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
+    engine_set_part_portamento(&engine, 0, true);
+    assert(engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
       assert(!engine.slots[slot].component.portamento.active);
 
-    sc88_engine_set_part_portamento_time(&engine, 0, 40);
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
+    engine_set_part_portamento_time(&engine, 0, 40);
+    assert(engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     /* EVERY component of the note glides, not one of them: the SC-55 path
        shipped twice with one partial starting at the target while the
@@ -550,7 +552,7 @@ int main(void)
     /* and they stay together: one shared source, target and rate leaves
        nothing that could make one component arrive before the other */
     for (i = 0; i < engine.notes[newest].slot_count; ++i)
-      sc88_portamento_advance(
+      portamento_advance(
         &engine.slots[engine.notes[newest].slots[i]].component.portamento, 7);
     first = engine.slots[engine.notes[newest].slots[0]]
               .component.portamento.current;
@@ -561,7 +563,7 @@ int main(void)
 
     /* a note arriving mid-glide starts from where the glide stands, not
        from where the note it follows was aimed */
-    assert(sc88_engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
+    assert(engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
                                SC88_SAME_NOTE_FULL_MULTI, 1.0f));
     newest = SC88_ENGINE_NONE;
     for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
@@ -578,7 +580,7 @@ int main(void)
       assert(g->target == 100u << 16);
     }
   }
-  sc88_engine_destroy(&engine);
+  engine_destroy(&engine);
 
   free(wave);
   free(control);

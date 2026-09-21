@@ -1,13 +1,15 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/reverb.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 #define POINTERS 0x1595eu
 #define PAGE 0x10000u
@@ -28,7 +30,7 @@ static const unsigned far_word[12] = {1, 3, 5, 7, 9, 13, 15, 19, 21, 25,
                                       27, 31};
 static const unsigned tap_word[8] = {11, 17, 23, 29, 12, 18, 24, 30};
 
-int main(void)
+int main()
 {
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
@@ -46,25 +48,25 @@ int main(void)
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(sc88_rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
 
   /* The pre-LPF law, both ends and the identity that fixes the order: p = 0
      is an exact bypass, and every other entry leaks one part in 64. */
-  assert(sc88_reverb_pre_lpf(0, &fb, &in) && fb == 0.0f && in == 1.0f);
+  assert(reverb_pre_lpf(0, &fb, &in) && fb == 0.0f && in == 1.0f);
   for (i = 1; i <= 7; ++i) {
-    assert(sc88_reverb_pre_lpf((uint8_t)i, &fb, &in));
+    assert(reverb_pre_lpf((uint8_t)i, &fb, &in));
     assert(fabsf(fb - (float)i / 8.0f) < 1e-6f);
     assert(fabsf((fb + in) - (1.0f - 1.0f / 64.0f)) < 1e-6f);
   }
-  assert(!sc88_reverb_pre_lpf(8, &fb, &in));
+  assert(!reverb_pre_lpf(8, &fb, &in));
 
   /* The tap gains live in the program's coefficient RAM: +0.500122 at the
      first tap instruction and exactly +1 at the other seven. */
-  assert(!sc88_reverb_tap_gains(&rom, gains));   /* an empty CRAM is refused */
+  assert(!reverb_tap_gains(&rom, gains));   /* an empty CRAM is refused */
   put16(bytes + IMAGE0_CRAM + 2 * 131, 0x1001);
   for (i = 1; i < 8; ++i)
     put16(bytes + IMAGE0_CRAM + 2 * (131 + 2 * i), 0x5000);
-  assert(sc88_reverb_tap_gains(&rom, gains));
+  assert(reverb_tap_gains(&rom, gains));
   assert(fabsf(gains[0] - 4097.0f / 8192.0f) < 1e-6f);
   for (i = 1; i < 8; ++i)
     assert(gains[i] == 1.0f);
@@ -96,7 +98,7 @@ int main(void)
 
   put16(bytes + block + 2 * 52, 32);     /* the character's return trim */
 
-  assert(sc88_reverb_read_character(&rom, 0, &ch));
+  assert(reverb_read_character(&rom, 0, &ch));
   assert(ch.allpasses == 7);
   /* the enabled pairs land on the eight buffers whose write carries +0.5,
      and the fourth diffuser section is the one this record disables */
@@ -116,22 +118,22 @@ int main(void)
   assert(fabsf(ch.damp_input[0] - 0.25f) < 1e-6f);
   assert(fabsf(ch.damp_input[1] - 0.484375f) < 1e-6f);
   /* out of range characters and a ROM too small are refused */
-  assert(!sc88_reverb_read_character(&rom, 10, &ch));
-  assert(!sc88_reverb_read_character(NULL, 0, &ch));
+  assert(!reverb_read_character(&rom, 10, &ch));
+  assert(!reverb_read_character(NULL, 0, &ch));
 
   /* The addresses are in 32 kHz samples, so a higher output rate stretches
      the whole delay memory. */
-  assert(sc88_reverb_init(&rv, &rom, 0, 64000.0));
+  assert(reverb_init(&rv, &rom, 0, 64000.0));
   assert(rv.active && rv.far[0] - rv.head[0] == 2 * (len[0] - 1));
-  sc88_reverb_destroy(&rv);
-  assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
+  reverb_destroy(&rv);
+  assert(reverb_init(&rv, &rom, 0, 32000.0));
   assert(rv.far[0] - rv.head[0] == len[0] - 1);
   assert(rv.eram_len == ch.extent + 1u);
   assert(fabsf(rv.tap_gain[0] - 4097.0f / 8192.0f) < 1e-6f);
 
   /* Level is the recovered 4*p against a 512 full scale, and silence in is
      silence out however long it runs. */
-  sc88_reverb_set_params(&rv, 128, 64, 3);
+  reverb_set_params(&rv, 128, 64, 3);
   assert(fabsf(rv.level - 127.0f * 4.0f / 512.0f) < 1e-6f);
   /* The character's own return trim, the record's 53rd word against the
      same 512 full scale: 32 is unity, which is what five of the six
@@ -147,16 +149,16 @@ int main(void)
     memset(send, 0, sizeof send);
     memset(stereo, 0, sizeof stereo);
     for (pass = 0; pass < 40; ++pass)
-      sc88_reverb_process(&rv, send, stereo, 64);
+      reverb_process(&rv, send, stereo, 64);
     for (i = 0; i < 128; ++i)
       assert(stereo[i] == 0.0f);
     /* an impulse comes back out, decaying rather than growing */
     send[0] = 1.0f;
-    sc88_reverb_process(&rv, send, stereo, 64);
+    reverb_process(&rv, send, stereo, 64);
     send[0] = 0.0f;
     for (pass = 0; pass < 200; ++pass) {
       memset(stereo, 0, sizeof stereo);
-      sc88_reverb_process(&rv, send, stereo, 64);
+      reverb_process(&rv, send, stereo, 64);
       for (i = 0; i < 128; ++i) {
         assert(fabsf(stereo[i]) < 4.0f);        /* bounded: it cannot run away */
         if (pass < 20)
@@ -168,7 +170,7 @@ int main(void)
     /* and the tail really is a tail */
     assert(first > 0.0 && later < first);
   }
-  sc88_reverb_destroy(&rv);
+  reverb_destroy(&rv);
   assert(!rv.active);
 
   /* The eight taps are inside the tank, so the response carries an early
@@ -177,12 +179,12 @@ int main(void)
   {
     static float send[6400], stereo[12800];
     double early = 0.0, total = 0.0;
-    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
-    sc88_reverb_set_params(&rv, 127, 64, 0);
+    assert(reverb_init(&rv, &rom, 0, 32000.0));
+    reverb_set_params(&rv, 127, 64, 0);
     memset(send, 0, sizeof send);
     memset(stereo, 0, sizeof stereo);
     send[0] = 1.0f;                             /* 200 ms of response */
-    sc88_reverb_process(&rv, send, stereo, 6400);
+    reverb_process(&rv, send, stereo, 6400);
     for (i = 0; i < 12800; ++i) {
       double e = (double)stereo[i] * stereo[i];
       total += e;
@@ -190,7 +192,7 @@ int main(void)
         early += e;
     }
     assert(total > 0.0 && early > 0.01 * total);
-    sc88_reverb_destroy(&rv);
+    reverb_destroy(&rv);
   }
 
   /* Hall 1's record carries 64 where the other five reverb characters
@@ -199,21 +201,21 @@ int main(void)
      hold, returns nothing at all. */
   {
     float unity;
-    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
-    sc88_reverb_set_params(&rv, 100, 64, 0);
+    assert(reverb_init(&rv, &rom, 0, 32000.0));
+    reverb_set_params(&rv, 100, 64, 0);
     unity = rv.wet_gain_left;
-    sc88_reverb_destroy(&rv);
+    reverb_destroy(&rv);
     put16(bytes + block + 2 * 52, 64);
-    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
-    sc88_reverb_set_params(&rv, 100, 64, 0);
+    assert(reverb_init(&rv, &rom, 0, 32000.0));
+    reverb_set_params(&rv, 100, 64, 0);
     assert(fabsf(rv.trim - 2.0f) < 1e-6f);
     assert(fabsf(rv.wet_gain_left - 2.0f * unity) < 1e-6f);
-    sc88_reverb_destroy(&rv);
+    reverb_destroy(&rv);
     put16(bytes + block + 2 * 52, 0);
-    assert(sc88_reverb_init(&rv, &rom, 0, 32000.0));
-    sc88_reverb_set_params(&rv, 100, 64, 0);
+    assert(reverb_init(&rv, &rom, 0, 32000.0));
+    reverb_set_params(&rv, 100, 64, 0);
     assert(rv.wet_gain_left == 0.0f && rv.wet_gain_right == 0.0f);
-    sc88_reverb_destroy(&rv);
+    reverb_destroy(&rv);
     put16(bytes + block + 2 * 52, 32);
   }
 
@@ -228,12 +230,12 @@ int main(void)
       for (j = 0; j < 8; ++j)
         bytes[0x1583e + m * 8 + j] = (uint8_t)(0x10 * m + j);
     for (m = 0; m < 8; ++m) {
-      assert(sc88_reverb_macro(&rom, (uint8_t)m, got));
+      assert(reverb_macro(&rom, (uint8_t)m, got));
       for (j = 0; j < 7; ++j)
         assert(got[j] == (uint8_t)(0x10 * m + j));
     }
-    assert(!sc88_reverb_macro(&rom, 8, got));
-    assert(!sc88_reverb_macro(NULL, 0, got));
+    assert(!reverb_macro(&rom, 8, got));
+    assert(!reverb_macro(NULL, 0, got));
   }
 
   free(bytes);

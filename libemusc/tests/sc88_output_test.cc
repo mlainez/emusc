@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/output.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <string.h>
+#include <cmath>
+#include <cstring>
 
-int main(void)
+using namespace EmuSC::Xp;
+
+int main()
 {
   struct sc88_output out;
   double rate = 44100.0;
@@ -30,7 +32,7 @@ int main(void)
   /* The response list is empty by design (output.cc's own finding), so
      init designs no biquad section - only the converter hold and the DC
      blocker. */
-  sc88_output_init(&out, rate);
+  output_init(&out, rate);
   assert(out.enabled);
   assert(out.sections == SC88_OUTPUT_RESPONSE_SECTIONS);
   assert(out.sections == 0);
@@ -68,7 +70,7 @@ int main(void)
     for (n = 0; n < 20000; ++n) {
       stereo[0] = 1.0f;
       stereo[1] = -1.0f;
-      sc88_output_process(&out, stereo, 1);
+      output_process(&out, stereo, 1);
     }
     assert(fabsf(stereo[0]) < 1e-3f);
     assert(fabsf(stereo[1]) < 1e-3f);
@@ -85,7 +87,7 @@ int main(void)
 
   /* Reset clears every piece of running state, not just the parts that
      happen to matter for the DC-decay check above. */
-  sc88_output_reset(&out);
+  output_reset(&out);
   assert(out.hold_pos == 0);
   assert(out.dc_x[0] == 0.0f && out.dc_x[1] == 0.0f);
   assert(out.dc_y[0] == 0.0f && out.dc_y[1] == 0.0f);
@@ -99,9 +101,9 @@ int main(void)
   {
     struct sc88_output disabled;
     float stereo[2] = {0.5f, 0.25f};
-    sc88_output_init(&disabled, rate);
+    output_init(&disabled, rate);
     disabled.enabled = false;
-    sc88_output_process(&disabled, stereo, 1);
+    output_process(&disabled, stereo, 1);
     assert(stereo[0] == 0.5f && stereo[1] == 0.25f);
   }
 

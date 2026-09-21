@@ -113,21 +113,19 @@ set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE
 # public API, these link the sc88_* sources directly, because the values they
 # report are internal to the engine and no measurement of the rendered audio
 # can separate them.
-add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.c
+add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.cc
   engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_tvf_probe PRIVATE m)
 endif()
-set_target_properties(sc88_tvf_probe PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
-add_executable(sc88_dump_samples ../tools/sc88_dump_samples.c
+add_executable(sc88_dump_samples ../tools/sc88_dump_samples.cc
   engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
 target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
   target_link_libraries(sc88_dump_samples PRIVATE m)
 endif()
-set_target_properties(sc88_dump_samples PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 
 if(BUILD_TESTING)
   # Every test here is assertion-driven: the assertions are the test, not a
@@ -143,7 +141,7 @@ if(BUILD_TESTING)
     engines/xp/wave.cc)
 
   function(sc88_test name)
-    add_executable(${name} ../tests/${name}.c ${ARGN})
+    add_executable(${name} ../tests/${name}.cc ${ARGN})
     target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(NOT MSVC)
       target_link_libraries(${name} PRIVATE m)
@@ -153,7 +151,6 @@ if(BUILD_TESTING)
     else()
       target_compile_options(${name} PRIVATE -UNDEBUG)
     endif()
-    set_target_properties(${name} PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
@@ -194,11 +191,11 @@ if(BUILD_TESTING)
   set_property(TEST sc88_renderer_test PROPERTY SKIP_RETURN_CODE 77)
   sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
 
-  # device_test is the one sc88_*_test analog written in C++: EmuSC::Xp::Device
-  # and EmuSC::Xp::ChannelState (engines/xp/device.h) are no longer a plain C
-  # compat struct with an extern "C" shim layer - synth.cc was their only
-  # caller outside this test, and it has always held them as an opaque
-  # pointer - so sc88_test()'s ../tests/${name}.c convention does not fit.
+  # EmuSC::Xp::Device and EmuSC::Xp::ChannelState (engines/xp/device.h) never
+  # had a plain C compat struct or extern "C" shim layer - synth.cc was their
+  # only caller outside this test, and it has always held them as an opaque
+  # pointer - so device_test needs its own source list rather than
+  # SC88_VOICE_SOURCES plus sc88_test()'s single shared-name convention.
   add_executable(device_test ../tests/device_test.cc engines/xp/device.cc
     engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc
     engines/xp/output.cc ${SC88_VOICE_SOURCES})

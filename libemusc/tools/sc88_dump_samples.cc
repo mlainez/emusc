@@ -17,11 +17,13 @@
 #include "engines/xp/rom.h"
 #include "engines/xp/wave.h"
 
-#include <math.h>
+#include <cmath>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 #define DIRECTORY_BASE 0x30000u
 #define DIRECTORY_END 0x3606cu
@@ -156,8 +158,8 @@ static int32_t *play(const int32_t *pcm, size_t count, uint32_t base,
   size_t initial, frames, fade, i;
   int32_t *out;
 
-  if (!sc88_wave_prepare_registers(desc, false, &registers) ||
-      !sc88_oscillator_init(&oscillator, pcm, count, base, &registers, loop,
+  if (!wave_prepare_registers(desc, false, &registers) ||
+      !oscillator_init(&oscillator, pcm, count, base, &registers, loop,
                             pitch_word, rate, SC88_WRAP_FULL_CARRY) ||
       oscillator.step <= 0.0)
     return NULL;
@@ -170,7 +172,7 @@ static int32_t *play(const int32_t *pcm, size_t count, uint32_t base,
     return NULL;
   for (i = 0; i < frames; ++i) {
     float sample;
-    if (!sc88_oscillator_next(&oscillator, &sample))
+    if (!oscillator_next(&oscillator, &sample))
       break;
     out[i] = (int32_t)lrint((double)sample * 8388608.0);
   }
@@ -261,7 +263,7 @@ int main(int argc, char **argv)
   }
 
   control = read_file(control_path, &control_size);
-  if (!control || !sc88_rom_init(&rom, control, control_size)) {
+  if (!control || !rom_init(&rom, control, control_size)) {
     fprintf(stderr, "the control ROM was refused\n");
     return 1;
   }
@@ -269,7 +271,7 @@ int main(int argc, char **argv)
     chips[i] = read_file(wave_paths[i], &chip_size[i]);
     decoded[i] = (uint8_t *)malloc(SC88_WAVE_CHIP_SIZE);
     if (!chips[i] || !decoded[i] ||
-        !sc88_wave_descramble_chip(chips[i], chip_size[i], decoded[i],
+        !wave_descramble_chip(chips[i], chip_size[i], decoded[i],
                                    SC88_WAVE_CHIP_SIZE)) {
       fprintf(stderr, "wave image %d was refused\n", i);
       return 1;
@@ -318,7 +320,7 @@ int main(int argc, char **argv)
           descriptor_offset + SC88_WAVE_DESCRIPTOR_SIZE <= DESCRIPTOR_END &&
           (descriptor_offset - DESCRIPTOR_BASE) %
             SC88_WAVE_DESCRIPTOR_SIZE == 0 &&
-          sc88_wave_descriptor_parse(control + descriptor_offset,
+          wave_descriptor_parse(control + descriptor_offset,
                                      SC88_WAVE_DESCRIPTOR_SIZE, &desc) &&
           (index_of_bank = bank_index(desc.bank_select)) >= 0) {
         uint32_t base = desc.address_a & ~UINT32_C(0x0f);
@@ -327,7 +329,7 @@ int main(int argc, char **argv)
         size_t count = 0;
         uint32_t decoded_base = base;
         if (pcm && desc.address_c > base &&
-            sc88_fce_decode_storage(banks[index_of_bank],
+            fce_decode_storage(banks[index_of_bank],
                                     SC88_WAVE_BANK_SIZE, &desc, pcm,
                                     capacity, &decoded_base, &count) &&
             count) {
@@ -337,7 +339,7 @@ int main(int argc, char **argv)
           size_t played_count = count;
           int16_t correction;
           long pitch_word;
-          if (!sc88_wave_descriptor_loop_type(&desc, &loop))
+          if (!wave_descriptor_loop_type(&desc, &loop))
             loop = SC88_WAVE_FORWARD_ONE_SHOT;
           loop_name =
             loop == SC88_WAVE_FORWARD_LOOP ? "forward"
@@ -345,7 +347,7 @@ int main(int argc, char **argv)
             : loop == SC88_WAVE_FORWARD_ONE_SHOT ? "one-shot"
             : "reverse-one-shot";
           correction = pitch_correction
-            ? sc88_wave_pitch_correction(&desc, true) : 0;
+            ? wave_pitch_correction(&desc, true) : 0;
           pitch_word = 0x38000 + (long)correction + pitch_word_offset;
           if (pitch_word < 0)
             pitch_word = 0;

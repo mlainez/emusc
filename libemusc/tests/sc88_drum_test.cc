@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/rom.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 /* The kit structure is verified against the held control ROM, so this
    fixture reproduces the parts of it the lookup depends on: the map at
@@ -22,7 +24,7 @@ static void put24(uint8_t *p, uint32_t v)
   p[0] = (uint8_t)(v >> 16); p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)v;
 }
 
-int main(void)
+int main()
 {
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
@@ -34,7 +36,7 @@ int main(void)
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(sc88_rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
 
   memset(bytes + MAP, 0xff, 256);
   for (i = 0; i < 24; ++i)
@@ -44,14 +46,14 @@ int main(void)
   bytes[MAP + 48] = 7;
   bytes[MAP + 128 + 48] = 19;
 
-  assert(sc88_rom_select_drum(&rom, 1, 48, &kit));
+  assert(rom_select_drum(&rom, 1, 48, &kit));
   assert(kit == KIT_BASE + 7 * STRIDE);
-  assert(sc88_rom_select_drum(&rom, 2, 48, &kit));
+  assert(rom_select_drum(&rom, 2, 48, &kit));
   assert(kit == KIT_BASE + 19 * STRIDE);
   /* a program with no kit, and the two maps that do not exist */
-  assert(!sc88_rom_select_drum(&rom, 1, 49, &kit));
-  assert(!sc88_rom_select_drum(&rom, 0, 48, &kit));
-  assert(!sc88_rom_select_drum(&rom, 3, 48, &kit));
+  assert(!rom_select_drum(&rom, 1, 49, &kit));
+  assert(!rom_select_drum(&rom, 0, 48, &kit));
+  assert(!rom_select_drum(&rom, 3, 48, &kit));
 
   kit = KIT_BASE + 19 * STRIDE;
   /* one key with a tone, and its own per-note bytes */
@@ -63,7 +65,7 @@ int main(void)
   bytes[kit + 0x380 + 36] = 40;
   bytes[kit + 0x400 + 36] = 50;
   bytes[kit + 0x480 + 36] = 1;
-  assert(sc88_rom_open_drum_note(&rom, kit, 36, &note));
+  assert(rom_open_drum_note(&rom, kit, 36, &note));
   assert(note.tone_offset == 0x40000);
   /* the key the tone plays at comes from the kit, so a kick is not the
      sample transposed to whatever key triggered it */
@@ -72,8 +74,8 @@ int main(void)
   assert(note.reverb_send == 40 && note.chorus_send == 50);
   assert(note.flags == 1);
   /* a key with no sound in this kit is refused rather than guessed at */
-  assert(!sc88_rom_open_drum_note(&rom, kit, 37, &note));
-  assert(!sc88_rom_open_drum_note(&rom, kit, 128, &note));
+  assert(!rom_open_drum_note(&rom, kit, 37, &note));
+  assert(!rom_open_drum_note(&rom, kit, 128, &note));
 
   free(bytes);
   return 0;

@@ -13,16 +13,17 @@
  *                  [--key 60] [--velocity 100] [--periods 250]
  */
 
-#include <math.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include "engines/xp/rom.h"
 #include "engines/xp/tvf.h"
 #include "engines/xp/tva.h"
 #include "engines/xp/wave.h"
+
+using namespace EmuSC::Xp;
 
 #define SC88_TVF_LIMIT_TABLE 0x78802u
 #define SC88_TVF_NATIVE_RATE 32000.0
@@ -39,7 +40,7 @@ static uint8_t *read_file(const char *path, size_t *size)
     return NULL;
   }
   rewind(f);
-  data = malloc((size_t)end);
+  data = (uint8_t *)malloc((size_t)end);
   if (!data || fread(data, 1, (size_t)end, f) != (size_t)end) {
     free(data);
     fclose(f);
@@ -57,7 +58,7 @@ static unsigned comp_bytes_at(const struct sc88_component *c, unsigned off)
 
 static double cutoff_hz(uint32_t word)
 {
-  return sc88_tvf_word_to_hz(word);
+  return tvf_word_to_hz(word);
 }
 
 int main(int argc, char **argv)
@@ -104,7 +105,7 @@ int main(int argc, char **argv)
     return 2;
   }
   control = read_file(control_path, &control_size);
-  if (!control || !sc88_rom_init(&rom, control, control_size)) {
+  if (!control || !rom_init(&rom, control, control_size)) {
     fprintf(stderr, "cannot read %s\n", control_path);
     return 1;
   }
@@ -125,15 +126,15 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+        if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
                                      (uint8_t)pr, &offset) ||
-            !sc88_rom_open_tone(&rom, offset, &t))
+            !rom_open_tone(&rom, offset, &t))
           continue;
-        sc88_rom_tone_name(&t, n);
+        rom_tone_name(&t, n);
         for (c = 0; c < t.component_count; ++c) {
           struct sc88_component comp;
           int16_t factor;
-          if (!sc88_rom_open_component(&rom, &t, c, &comp))
+          if (!rom_open_component(&rom, &t, c, &comp))
             continue;
           factor = (int16_t)((comp.bytes[0x14] << 8) | comp.bytes[0x15]);
           printf("%u\t%u\t%u\t%s\t%d\t%.5f\t%d\n", v, pr, c, n,
@@ -164,11 +165,11 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+        if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
                                      (uint8_t)pr, &offset) ||
-            !sc88_rom_open_tone(&rom, offset, &t))
+            !rom_open_tone(&rom, offset, &t))
           continue;
-        sc88_rom_tone_name(&t, n);
+        rom_tone_name(&t, n);
         for (c = 0; c < t.component_count; ++c) {
           struct sc88_component comp;
           struct sc88_tvf_registers r;
@@ -180,13 +181,13 @@ int main(int argc, char **argv)
           ctl.part_resonance = 64;
           ctl.secondary_resonance = 64;
           ctl.matrix_cutoff = 0;
-          if (!sc88_rom_open_component(&rom, &t, c, &comp))
+          if (!rom_open_component(&rom, &t, c, &comp))
             continue;
-          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 36, &k36);
-          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 60, &k60);
-          (void)sc88_tvf_key_modulation(&rom, &t, &comp, 84, &k84);
-          if (!sc88_tvf_prepare_registers(&rom, &comp, k60, &ctl, &r) ||
-              !sc88_tvf_envelope_prepare(&rom, &t, &comp, 60, 100, false,
+          (void)tvf_key_modulation(&rom, &t, &comp, 36, &k36);
+          (void)tvf_key_modulation(&rom, &t, &comp, 60, &k60);
+          (void)tvf_key_modulation(&rom, &t, &comp, 84, &k84);
+          if (!tvf_prepare_registers(&rom, &comp, k60, &ctl, &r) ||
+              !tvf_envelope_prepare(&rom, &t, &comp, 60, 100, false,
                                          &env))
             continue;
           printf("%u\t%u\t%u\t%s\t%u\t%u\t%u\t%u\t%d\t%d\t%d\t%d"
@@ -217,15 +218,15 @@ int main(int argc, char **argv)
     free(control);
     return 0;
   }
-  if (!sc88_rom_select_melodic(&rom, SC88_TONE_MAP_SC88,
+  if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88,
                                (uint8_t)variation, (uint8_t)program,
                                &tone_offset) ||
-      !sc88_rom_open_tone(&rom, tone_offset, &tone)) {
+      !rom_open_tone(&rom, tone_offset, &tone)) {
     fprintf(stderr, "no tone for variation %u program %u\n",
             variation, program);
     return 1;
   }
-  sc88_rom_tone_name(&tone, name);
+  rom_tone_name(&tone, name);
   printf("variation %u program %u  \"%s\"  %u component(s)"
          "  key %u velocity %u\n",
          variation, program, name, tone.component_count, key, velocity);
@@ -241,7 +242,7 @@ int main(int argc, char **argv)
     for (c = 0; c < tone.component_count; ++c) {
       struct sc88_component comp;
       unsigned k;
-      if (!sc88_rom_open_component(&rom, &tone, c, &comp))
+      if (!rom_open_component(&rom, &tone, c, &comp))
         continue;
       printf("\n  component %u zones by key:\n", c);
       printf("    %4s %9s %6s %9s %9s %9s %6s %6s %5s %7s %7s %5s\n", "key",
@@ -249,7 +250,7 @@ int main(int argc, char **argv)
              "basecor", "altcor", "ctrl");
       for (k = 0; k < sizeof probe_keys / sizeof *probe_keys; ++k) {
         struct sc88_zone_selection zone;
-        if (!sc88_rom_select_zone(&rom, &comp, (uint8_t)probe_keys[k],
+        if (!rom_select_zone(&rom, &comp, (uint8_t)probe_keys[k],
                                   &zone)) {
           printf("    %4u  (no zone)\n", probe_keys[k]);
           continue;
@@ -287,7 +288,7 @@ int main(int argc, char **argv)
 
     if (getenv("SC88_DUMP_BYTES")) {
       struct sc88_component cdump;
-      if (sc88_rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
+      if (rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
         unsigned b;
         printf("BYTES\t%u\t%u", (unsigned)program, i);
         for (b = 0; b < SC88_COMPONENT_SIZE; ++b)
@@ -295,14 +296,14 @@ int main(int argc, char **argv)
         printf("\n");
       }
     }
-    if (!sc88_rom_open_component(&rom, &tone, i, &component) ||
-        !sc88_tvf_key_modulation(&rom, &tone, &component, (uint8_t)key,
+    if (!rom_open_component(&rom, &tone, i, &component) ||
+        !tvf_key_modulation(&rom, &tone, &component, (uint8_t)key,
                                  &key_modulation) ||
-        !sc88_tvf_envelope_prepare(&rom, &tone, &component, (uint8_t)key,
+        !tvf_envelope_prepare(&rom, &tone, &component, (uint8_t)key,
                                    (uint8_t)velocity, false, &env) ||
-        !sc88_tvf_prepare_registers(&rom, &component, key_modulation,
+        !tvf_prepare_registers(&rom, &component, key_modulation,
                                     &controls, &regs) ||
-        !sc88_tvf_update_frequency(&rom, env.current, &regs)) {
+        !tvf_update_frequency(&rom, env.current, &regs)) {
       printf("  component %u: prepare failed\n", i);
       continue;
     }
@@ -323,7 +324,7 @@ int main(int argc, char **argv)
     for (p = 0; p < periods; ++p) {
       double hz;
       bool clamped;
-      sc88_tvf_update_frequency(&rom, env.current, &regs);
+      tvf_update_frequency(&rom, env.current, &regs);
       clamped = (uint16_t)(regs.base_value + (uint16_t)env.current) > limit;
       hz = cutoff_hz(regs.frequency_target);
       if (hz < lowest)
@@ -334,7 +335,7 @@ int main(int argc, char **argv)
         printf("    %6.1f %8d %8u %8s %9.0f %u\n", p * 8.0008,
                env.current, regs.combined, clamped ? "yes" : "", hz,
                env.stage);
-      if (!sc88_tvf_envelope_advance(&env, 1))
+      if (!tvf_envelope_advance(&env, 1))
         break;
     }
     printf("    swing over %u periods (%.0f ms): %.0f to %.0f Hz"
@@ -348,7 +349,7 @@ int main(int argc, char **argv)
     {
       struct sc88_tva_envelope env;
       struct sc88_tva_controls tva = {64, 64, 64, 64};
-      if (sc88_tva_envelope_prepare(&rom, &tone, &component,
+      if (tva_envelope_prepare(&rom, &tone, &component,
                                     (uint8_t)key, (uint8_t)velocity,
                                     &tva, &env)) {
         unsigned st;
@@ -377,7 +378,7 @@ int main(int argc, char **argv)
        for, not a stored constant. */
     {
       struct sc88_tva_release rel;
-      if (sc88_tva_release_prepare(&rom, &tone, &component, (uint8_t)key,
+      if (tva_release_prepare(&rom, &tone, &component, (uint8_t)key,
                                    &rel)) {
         double periods = rel.increment ? 65535.0 / rel.increment : 0.0;
         double ms = rel.increment ? periods * 8.0008 : 0.0;
@@ -399,8 +400,8 @@ int main(int argc, char **argv)
       struct sc88_tva_levels levels = {127, 127, 127, 127};
       uint16_t static_attenuation = 0;
       uint32_t gain = 0;
-      if (sc88_rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
-          sc88_tva_static_gain_q17(&rom, &tone, &component, &zone,
+      if (rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
+          tva_static_gain_q17(&rom, &tone, &component, &zone,
                                    (uint8_t)key, (uint8_t)velocity,
                                    &levels, SC88_TVA_NO_DRUM_LEVEL,
                                    &static_attenuation, &gain)) {

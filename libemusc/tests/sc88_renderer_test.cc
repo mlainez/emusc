@@ -2,14 +2,16 @@
 #include "engines/xp/renderer.h"
 #include "engines/xp/engine.h"
 
-#include <assert.h>
+#include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
 #endif
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace EmuSC::Xp;
 
 static void put16(uint8_t *p, uint16_t value)
 {
@@ -89,31 +91,31 @@ static void test_held_rom(char **paths)
     banks[i * 2 + 1].bytes = chips[i] + SC88_WAVE_BANK_SIZE;
     banks[i * 2 + 1].size = SC88_WAVE_BANK_SIZE;
   }
-  assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
+  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
                             banks, SC88_WAVE_BANK_COUNT, 48000.0,
                             SC88_WRAP_FULL_CARRY));
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
+  assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
   assert(voice.components[0].static_gain_q17 > 0);
   assert(voice.components[0].tvf.frequency_interpolation == 0x4100);
   assert(voice.components[0].tvf.resonance_interpolation == 0x095f);
-  assert(sc88_renderer_render(&voice, output, 16) == 16);
-  assert(sc88_renderer_voice_active(&voice));
-  sc88_renderer_voice_destroy(&voice);
-  assert(sc88_engine_init(&engine, &renderer));
-  assert(sc88_engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+  assert(renderer_render(&voice, output, 16) == 16);
+  assert(renderer_voice_active(&voice));
+  renderer_voice_destroy(&voice);
+  assert(engine_init(&engine, &renderer));
+  assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-  sc88_engine_render(&engine, engine_output, 4096);
+  engine_render(&engine, engine_output, 4096);
   for (i = 0; i < 8192; ++i)
     energy += fabs(engine_output[i]);
   assert(energy > 0.0);
-  assert(sc88_engine_note_off(&engine, 0, 60));
-  sc88_engine_destroy(&engine);
+  assert(engine_note_off(&engine, 0, 60));
+  engine_destroy(&engine);
   for (i = 0; i < 4; ++i)
     free(chips[i]);
   free(control);
 }
 
-int main(void)
+int main()
 {
   static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
@@ -191,10 +193,10 @@ int main(void)
   component.bytes = control + 0x40000 + 34;
   component.offset = 0x40000 + 34;
   component.directory_offset = 0x30000;
-  assert(sc88_renderer_selector_key(&component, 72) == 72);
+  assert(renderer_selector_key(&component, 72) == 72);
   put16(control + 0x40000 + 34 + 0x14, 0x2000);
-  assert(sc88_renderer_selector_key(&component, 59) == 59);
-  assert(sc88_renderer_selector_key(&component, 72) == 66);
+  assert(renderer_selector_key(&component, 59) == 59);
+  assert(renderer_selector_key(&component, 72) == 66);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
 
   for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
@@ -202,7 +204,7 @@ int main(void)
     banks[i].bytes = wave;
     banks[i].size = SC88_WAVE_BANK_SIZE;
   }
-  assert(sc88_renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
+  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
                             banks, SC88_WAVE_BANK_COUNT, 32000.0,
                             SC88_WRAP_FULL_CARRY));
   /* The velocity window gates the component, both bounds inclusive: inside
@@ -214,12 +216,12 @@ int main(void)
   control[0x40000 + 34 + 0x6c] = 100;
   control[0x40000 + 34 + 0x6d] = 110;
   memset(&voice, 0, sizeof voice);
-  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 99));
-  assert(!sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 111));
+  assert(!renderer_note_on(&renderer, &voice, 0, 0, 60, 99));
+  assert(!renderer_note_on(&renderer, &voice, 0, 0, 60, 111));
   memset(&voice, 0, sizeof voice);
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 110));
+  assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 110));
   assert(voice.component_count == 1);
-  sc88_renderer_voice_destroy(&voice);
+  renderer_voice_destroy(&voice);
   control[0x40000 + 34 + 0x6c] = 0;
   control[0x40000 + 34 + 0x6d] = 127;
 
@@ -243,22 +245,22 @@ int main(void)
             (uint32_t)((control[0x40000 + 0x10] << 8) |
                        control[0x40000 + 0x11])) == SC88_TEST_KEY_TABLE);
     put16(control + 0x40000 + 34 + 0x14, 0x2000);
-    assert(sc88_renderer_selector_key(&component, 72) == 66);
+    assert(renderer_selector_key(&component, 72) == 66);
     memset(&probe, 0, sizeof probe);
-    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     flat = probe.components[0].static_pitch_word;
-    sc88_renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&probe);
     put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 1000);
     memset(&probe, 0, sizeof probe);
-    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     with_raw = probe.components[0].static_pitch_word;
-    sc88_renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&probe);
     put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 0);
     put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 1000);
     memset(&probe, 0, sizeof probe);
-    assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
+    assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     with_transformed = probe.components[0].static_pitch_word;
-    sc88_renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&probe);
     put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 0);
     /* The entry at the raw key moves the word by its own value; the entry
        at the transformed key is not read at all. Both are asserted, so a
@@ -280,17 +282,17 @@ int main(void)
     for (k = 0; k < 128; ++k) {
       uint32_t here, above, half;
       memset(&probe, 0, sizeof probe);
-      assert(sc88_renderer_note_on(&renderer, &probe, 0, 0, (uint8_t)k, 100));
+      assert(renderer_note_on(&renderer, &probe, 0, 0, (uint8_t)k, 100));
       assert(probe.component_count > 0);
-      assert(sc88_renderer_pitch_word_at(&renderer.rom,
+      assert(renderer_pitch_word_at(&renderer.rom,
                                          &probe.components[0].portamento,
                                          (uint32_t)k << 16, &here));
       assert(here == probe.components[0].static_pitch_word);
       if (k + 1 < 128) {
-        assert(sc88_renderer_pitch_word_at(&renderer.rom,
+        assert(renderer_pitch_word_at(&renderer.rom,
                                            &probe.components[0].portamento,
                                            (uint32_t)(k + 1) << 16, &above));
-        assert(sc88_renderer_pitch_word_at(&renderer.rom,
+        assert(renderer_pitch_word_at(&renderer.rom,
                                            &probe.components[0].portamento,
                                            ((uint32_t)k << 16) | 0x8000u,
                                            &half));
@@ -302,26 +304,26 @@ int main(void)
         else
           assert(half == here);
       }
-      sc88_renderer_voice_destroy(&probe);
+      renderer_voice_destroy(&probe);
     }
   }
 
   memset(&voice, 0, sizeof voice);
-  assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
-  assert(sc88_renderer_voice_active(&voice));
+  assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
+  assert(renderer_voice_active(&voice));
   assert(voice.components[0].envelope.stage == 0);
   assert(voice.components[0].envelope.increments[0] == 0xffff);
   assert(voice.components[0].envelope.phase == 0xffff);
   assert(voice.components[0].envelope.targets_q17[0] == 0x1fffcu);
   /* zero attenuation is unity; full attenuation is silence, not the reverse */
   assert(voice.components[0].envelope.targets_q17[1] < 0x100u);
-  assert(sc88_tva_envelope_linear_q17(
+  assert(tva_envelope_linear_q17(
            &renderer.rom, &voice.components[0].envelope, 0.5) > 0);
-  assert(sc88_tva_envelope_advance(&renderer.rom,
+  assert(tva_envelope_advance(&renderer.rom,
                                    &voice.components[0].envelope, 1));
   assert(voice.components[0].envelope.stage == 1);
   assert(voice.components[0].envelope.current_q17 == 0x1fffcu);
-  assert(sc88_renderer_render(&voice, output, 2) == 2);
+  assert(renderer_render(&voice, output, 2) == 2);
   /* The frame is the SUM over the components this note sounds, each one
      sample * static gain * pan gain, and the renderer applies no output trim
      of its own. This tone sounds two, which is why the frame is twice one
@@ -354,26 +356,26 @@ int main(void)
   assert(output[0] == output[1]);
   assert(output[2] > output[0]);
   assert(output[2] == output[3]);
-  assert(!sc88_renderer_voice_active(&voice));
-  sc88_renderer_voice_destroy(&voice);
+  assert(!renderer_voice_active(&voice));
+  renderer_voice_destroy(&voice);
 
   {
     const struct sc88_pan_controls hard_left = {64, 1};
     put16(control + 0x15db6 + 126 * 2, 0x8000);
-    sc88_renderer_set_pan(&renderer, &hard_left);
-    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
-    assert(sc88_renderer_render(&voice, output, 1) == 1);
+    renderer_set_pan(&renderer, &hard_left);
+    assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
+    assert(renderer_render(&voice, output, 1) == 1);
     assert(output[0] > 0.0f && output[1] == 0.0f);
-    sc88_renderer_voice_destroy(&voice);
+    renderer_voice_destroy(&voice);
   }
 
   {
     const struct sc88_tva_levels muted = {0, 127, 127, 127};
     put16(control + 0x14f3e, 0xffff);
-    sc88_renderer_set_levels(&renderer, &muted);
-    assert(sc88_renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
+    renderer_set_levels(&renderer, &muted);
+    assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
     assert(voice.components[0].static_gain_q17 == 0);
-    sc88_renderer_voice_destroy(&voice);
+    renderer_voice_destroy(&voice);
   }
   free(wave);
   free(control);
