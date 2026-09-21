@@ -51,7 +51,8 @@ void list_pcm_devices() {
 }  // namespace
 
 class EmuscdDaemon {
-  snd_rawmidi_t* midi_in = nullptr;
+  snd_seq_t* seq = nullptr;
+  int seq_port = -1;
   snd_pcm_t* pcm_out = nullptr;
   unsigned int sample_rate;
   unsigned int block_frames;
@@ -61,8 +62,6 @@ class EmuscdDaemon {
   std::unique_ptr<EmuSC::Synth> synth;
   std::string device_name;
   std::string rom_dir;
-
-  MidiParser midi_parser;
 
   std::atomic<bool> running{true};
   std::atomic<bool> device_change_requested{false};
@@ -86,18 +85,31 @@ public:
 
   ~EmuscdDaemon() {
     running = false;
-    if (midi_in) snd_rawmidi_close(midi_in);
+    if (seq) snd_seq_close(seq);
     if (pcm_out) snd_pcm_close(pcm_out);
   }
 
+  // A real ALSA sequencer client, not a rawmidi "virtual:" port: the latter's
+  // string after the colon is the boolean `merge` argument of alsa.conf's
+  // rawmidi.virtual type, not a name, so it never made the port findable by
+  // --name (aconnect/aplaymidi always saw the generic "Client-N" instead).
+  // snd_seq_set_client_name() is what actually makes --name resolve, the same
+  // way fluidsynth/timidity's own ALSA MIDI input ports do.
   void init_alsa_midi(const std::string& port_name) {
-    int err = snd_rawmidi_open(&midi_in, nullptr,
-                               ("virtual:" + port_name).c_str(),
-                               SND_RAWMIDI_NONBLOCK);
+    int err = snd_seq_open(&seq, "default", SND_SEQ_OPEN_INPUT, 0);
     if (err < 0) {
-      std::cerr << "ALSA MIDI open error: " << snd_strerror(err) << std::endl;
+      std::cerr << "ALSA sequencer open error: " << snd_strerror(err) << std::endl;
       exit(1);
     }
+    snd_seq_set_client_name(seq, port_name.c_str());
+    seq_port = snd_seq_create_simple_port(
+        seq, "input", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+        SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_SYNTHESIZER);
+    if (seq_port < 0) {
+      std::cerr << "ALSA sequencer port error: " << snd_strerror(seq_port) << std::endl;
+      exit(1);
+    }
+    snd_seq_nonblock(seq, 1);
     std::cout << "ALSA MIDI input opened: " << port_name << std::endl;
   }
 
@@ -190,7 +202,6 @@ public:
   void run() {
     std::thread stdin_thread([this]() { read_stdin_commands(); });
 
-    unsigned char midi_buf[64];
     std::vector<int16_t> out_buf;
     out_buf.reserve(block_frames * 2);
     std::cout << "emuscd daemon running (device: " << device_name << "). "
@@ -207,17 +218,9 @@ public:
         load_device(dev);
       }
 
-      int count = snd_rawmidi_read(midi_in, midi_buf, sizeof(midi_buf));
-      if (count > 0 && synth) {
-        for (int i = 0; i < count; i++) {
-          midi_parser.feed(midi_buf[i],
-            [this](uint8_t status, uint8_t d1, uint8_t d2) {
-              synth->midi_input(status, d1, d2);
-            },
-            [this](uint8_t *data, uint16_t length) {
-              synth->midi_input_sysex(data, length);
-            });
-        }
+      snd_seq_event_t *ev;
+      while (snd_seq_event_input(seq, &ev) >= 0) {
+        if (synth) handle_seq_event(ev);
       }
 
       if (synth && pcm_out) {
@@ -238,6 +241,48 @@ public:
   }
 
 private:
+  // The sequencer has already resolved running status and reassembled SysEx
+  // into a single event by the time it reaches here, unlike ALSA's raw
+  // rawmidi byte stream - there is no byte-level parsing left to do.
+  void handle_seq_event(const snd_seq_event_t *ev) {
+    const auto &note = ev->data.note;
+    const auto &ctrl = ev->data.control;
+    switch (ev->type) {
+    case SND_SEQ_EVENT_NOTEON:
+      synth->midi_input(0x90 | (note.channel & 0x0f), note.note, note.velocity);
+      break;
+    case SND_SEQ_EVENT_NOTEOFF:
+      synth->midi_input(0x80 | (note.channel & 0x0f), note.note, note.velocity);
+      break;
+    case SND_SEQ_EVENT_KEYPRESS:
+      synth->midi_input(0xa0 | (note.channel & 0x0f), note.note, note.velocity);
+      break;
+    case SND_SEQ_EVENT_CONTROLLER:
+      synth->midi_input(0xb0 | (ctrl.channel & 0x0f), ctrl.param & 0x7f, ctrl.value & 0x7f);
+      break;
+    case SND_SEQ_EVENT_PGMCHANGE:
+      synth->midi_input(0xc0 | (ctrl.channel & 0x0f), ctrl.value & 0x7f, 0);
+      break;
+    case SND_SEQ_EVENT_CHANPRESS:
+      synth->midi_input(0xd0 | (ctrl.channel & 0x0f), ctrl.value & 0x7f, 0);
+      break;
+    case SND_SEQ_EVENT_PITCHBEND: {
+      // ALSA's seq value is signed -8192..8191; MIDI's 14-bit pitch bend is
+      // unsigned 0..16383 split into two 7-bit data bytes, LSB first.
+      int v = ctrl.value + 8192;
+      synth->midi_input(0xe0 | (ctrl.channel & 0x0f), v & 0x7f, (v >> 7) & 0x7f);
+      break;
+    }
+    case SND_SEQ_EVENT_SYSEX:
+      if (ev->data.ext.len > 0 && ev->data.ext.len <= 0xffff)
+        synth->midi_input_sysex(static_cast<uint8_t *>(ev->data.ext.ptr),
+                                static_cast<uint16_t>(ev->data.ext.len));
+      break;
+    default:
+      break;  // clock, active-sense and other event types the engine doesn't need
+    }
+  }
+
   // A batched write can legitimately return fewer frames than asked for, one
   // single-frame writei never could; retry the remainder, and recover once
   // on an xrun/suspend rather than dropping the rest of the block.

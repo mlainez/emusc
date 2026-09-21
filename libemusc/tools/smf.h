@@ -54,7 +54,13 @@ struct File {
 };
 
 // Parse an SMF from memory. Throws std::runtime_error with a descriptive
-// message on malformed input.
+// message only when the file cannot be interpreted at all (bad header,
+// unsupported format, unsupported division). A malformed or truncated chunk
+// or track does not fail the parse: that chunk or track simply stops where
+// the damage is, keeping whatever it already read and leaving every other
+// track untouched, since real-world files are truncated or corrupted often
+// enough that refusing the whole file over one bad byte would lose music
+// every other player still manages to render.
 File parse(const std::vector<uint8_t> &data);
 
 // Load a file from disk and parse it.
