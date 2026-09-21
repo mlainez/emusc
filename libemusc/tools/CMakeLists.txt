@@ -25,6 +25,9 @@ add_executable(emusc-render
   ${EMUSC_RENDER_AUDIO_OUT_SRC})
 
 target_link_libraries(emusc-render PRIVATE emusc_static)
+if(WIN32)
+  target_link_libraries(emusc-render PRIVATE win9x_compat)
+endif()
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../src")
 target_include_directories(emusc-render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
