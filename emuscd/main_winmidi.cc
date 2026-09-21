@@ -39,7 +39,7 @@ const char *USAGE =
 "  --wave-out N         Wave output device index (default: system default)\n"
 "  --list-midi-in       List MIDI input devices and exit\n"
 "  --list-wave-out      List wave output devices and exit\n"
-"  --rate HZ            Audio sample rate (default: 44100)\n"
+"  --rate HZ            Audio sample rate (default: 48000)\n"
 "  --block N            Audio frames per wave buffer (default: 256)\n"
 "  --latency MS         Requested output buffer size (default: 20)\n"
 "  --help               Show this help\n"
@@ -375,7 +375,7 @@ int main(int argc, char **argv) {
   std::string device = "sc88";
   int midiInId = 0;
   int waveOutId = -1;
-  unsigned rate = 44100;
+  unsigned rate = 48000;
   unsigned block = 256;
   unsigned latency = 20;
 
