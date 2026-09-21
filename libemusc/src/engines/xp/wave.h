@@ -58,44 +58,6 @@ struct sc88_wave_cursor {
   bool ended;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, and the sc88_wave_test.c fixture,
- * which exercises this exact ABI). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_wave_descriptor_parse(const uint8_t *raw, size_t size,
-                                struct sc88_wave_descriptor *out);
-bool sc88_wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
-                                    enum sc88_wave_loop_type *out);
-int16_t sc88_wave_pitch_correction(const struct sc88_wave_descriptor *desc,
-                                   bool alternate);
-bool sc88_wave_prepare_registers(const struct sc88_wave_descriptor *desc,
-                                 bool suppress_start_offset,
-                                 struct sc88_wave_registers *out);
-bool sc88_wave_descramble_chip(const uint8_t *raw, size_t raw_size,
-                               uint8_t *decoded, size_t decoded_size);
-bool sc88_fce_decoder_reset(struct sc88_fce_decoder *decoder,
-                            uint32_t sample_start);
-bool sc88_fce_decoder_read(struct sc88_fce_decoder *decoder,
-                           const uint8_t *bank, size_t bank_size,
-                           int32_t *pcm24);
-bool sc88_fce_decode_descriptor(const uint8_t *bank, size_t bank_size,
-                                const struct sc88_wave_descriptor *desc,
-                                int32_t *output, size_t capacity,
-                                size_t *written);
-bool sc88_fce_decode_storage(const uint8_t *bank, size_t bank_size,
-                             const struct sc88_wave_descriptor *desc,
-                             int32_t *output, size_t capacity,
-                             uint32_t *base_address, size_t *written);
-bool sc88_wave_loop_reads_double(const int32_t *pcm, size_t count,
-                                 uint32_t base_address,
-                                 const struct sc88_wave_descriptor *desc);
-bool sc88_wave_cursor_init(struct sc88_wave_cursor *cursor,
-                           const struct sc88_wave_registers *registers,
-                           enum sc88_wave_loop_type mode);
-bool sc88_wave_cursor_current(const struct sc88_wave_cursor *cursor,
-                              uint32_t *address);
-bool sc88_wave_cursor_advance(struct sc88_wave_cursor *cursor);
-
 #ifdef __cplusplus
 }
 
@@ -107,9 +69,7 @@ namespace EmuSC { namespace Xp {
 // behavior known to transfer to a sibling until measured on one.
 //
 // The plain C types above (sc88_wave_descriptor and friends) are shared,
-// unrenamed, with device_test.cc, which reads them directly, and with
-// the extern "C" compatibility surface every sibling engines/xp/ module
-// keeps for callers still using the pre-conversion sc88_* names.
+// unrenamed, with device_test.cc, which reads them directly.
 
 bool wave_descriptor_parse(const uint8_t *raw, size_t size,
                             struct sc88_wave_descriptor *out);

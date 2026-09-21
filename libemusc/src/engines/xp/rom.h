@@ -78,35 +78,6 @@ struct sc88_drum_overlay {
   uint8_t present[2][SC88_DRUM_FIELDS][128];
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, and the sc88_*_test.c fixtures
- * that exercise this exact ABI). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size);
-bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
-                          uint8_t program, uint32_t *kit_offset);
-bool sc88_rom_open_drum_note_overlaid(
-  const struct sc88_rom *rom, uint32_t kit_offset, uint8_t note,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *out);
-bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
-                             uint8_t note, struct sc88_drum_note *out);
-bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
-                             uint8_t variation, uint8_t program,
-                             uint32_t *tone_offset);
-bool sc88_rom_open_tone(const struct sc88_rom *rom, uint32_t tone_offset,
-                        struct sc88_tone *tone);
-bool sc88_rom_open_component(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone, unsigned index,
-                             struct sc88_component *component);
-bool sc88_rom_component_sounds(const struct sc88_component *component,
-                               uint8_t velocity);
-bool sc88_rom_select_zone(const struct sc88_rom *rom,
-                          const struct sc88_component *component,
-                          uint8_t selector_key,
-                          struct sc88_zone_selection *selection);
-void sc88_rom_tone_name(const struct sc88_tone *tone, char name[13]);
-
 #ifdef __cplusplus
 }
 

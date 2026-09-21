@@ -493,31 +493,3 @@ bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-double sc88_pitch_word_rate(uint32_t pitch_word, double output_rate)
-{
-  return EmuSC::Xp::pitch_word_rate(pitch_word, output_rate);
-}
-
-bool sc88_oscillator_init(struct sc88_oscillator *oscillator,
-                          const int32_t *pcm24, size_t pcm_count,
-                          uint32_t pcm_base,
-                          const struct sc88_wave_registers *registers,
-                          enum sc88_wave_loop_type mode,
-                          uint32_t pitch_word, double output_rate,
-                          enum sc88_fractional_wrap wrap)
-{
-  return EmuSC::Xp::oscillator_init(oscillator, pcm24, pcm_count, pcm_base,
-                                     registers, mode, pitch_word, output_rate,
-                                     wrap);
-}
-
-bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
-{
-  return EmuSC::Xp::oscillator_next(oscillator, sample);
-}
-
-}  // extern "C"

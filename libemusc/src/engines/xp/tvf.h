@@ -35,7 +35,7 @@ struct sc88_tvf_registers {
   /* The saturated table entry plus key, controller and LFO terms as
      routine 6ccd holds it before the shift right one. The envelope and
      release are not part of it: the firmware adds those to the halved
-     word (sc88_tvf_update_frequency / tvf_update_frequency). */
+     word (tvf_update_frequency). */
   uint16_t base_unshifted;
   uint16_t combined;
   uint32_t frequency_current;
@@ -101,54 +101,6 @@ struct sc88_tvf_audio_state {
 };
 
 typedef float (*sc88_tvf_audio_transfer_fn)(
-  void *user, struct sc88_tvf_audio_state *state,
-  const struct sc88_tvf_registers *registers,
-  double period_fraction, float input);
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, sc88_tvf_probe.c, and
- * sc88_tvf_test.c, all of which read these structs' fields directly).
- * Each forwards to the real implementation in namespace EmuSC::Xp. */
-bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
-                                const struct sc88_component *component,
-                                int16_t pre_base_modulation,
-                                const struct sc88_tvf_controls *controls,
-                                struct sc88_tvf_registers *registers);
-int16_t sc88_tvf_matrix_cutoff_term(int16_t cached);
-int16_t sc88_tvf_lfo_filter_term(int16_t faded_depth, int16_t waveform);
-bool sc88_tvf_key_modulation(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone,
-                             const struct sc88_component *component,
-                             uint8_t selector_key, int16_t *modulation);
-bool sc88_tvf_envelope_prepare(const struct sc88_rom *rom,
-                               const struct sc88_tone *tone,
-                               const struct sc88_component *component,
-                               uint8_t selector_key, uint8_t velocity,
-                               bool soft_pedal,
-                               struct sc88_tvf_envelope *envelope);
-bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
-                               unsigned elapsed_periods);
-bool sc88_tvf_release_prepare(const struct sc88_rom *rom,
-                              const struct sc88_tone *tone,
-                              const struct sc88_component *component,
-                              uint8_t selector_key, uint16_t envelope_depth,
-                              struct sc88_tvf_release *release);
-bool sc88_tvf_release_set_pedal(const struct sc88_rom *rom,
-                                uint8_t hold1, bool continuous_hold,
-                                bool keep_scale_at_zero,
-                                bool sostenuto_retained,
-                                struct sc88_tvf_release *release);
-bool sc88_tvf_release_advance(struct sc88_tvf_release *release,
-                              unsigned elapsed_periods);
-bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
-                               int16_t post_base_modulation,
-                               struct sc88_tvf_registers *registers);
-void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers);
-void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
-                                unsigned periods);
-double sc88_tvf_word_to_hz(uint32_t word);
-void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state);
-float sc88_tvf_audio_process_provisional(
   void *user, struct sc88_tvf_audio_state *state,
   const struct sc88_tvf_registers *registers,
   double period_fraction, float input);

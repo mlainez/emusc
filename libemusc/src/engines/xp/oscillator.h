@@ -39,21 +39,6 @@ struct sc88_oscillator {
   bool ended;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, sc88_dump_samples.c, and
- * sc88_oscillator_test.c, all of which read this struct's fields
- * directly). Each forwards to the real implementation in namespace
- * EmuSC::Xp. */
-double sc88_pitch_word_rate(uint32_t pitch_word, double output_rate);
-bool sc88_oscillator_init(struct sc88_oscillator *oscillator,
-                          const int32_t *pcm24, size_t pcm_count,
-                          uint32_t pcm_base,
-                          const struct sc88_wave_registers *registers,
-                          enum sc88_wave_loop_type mode,
-                          uint32_t pitch_word, double output_rate,
-                          enum sc88_fractional_wrap wrap);
-bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample);
-
 #ifdef __cplusplus
 }
 

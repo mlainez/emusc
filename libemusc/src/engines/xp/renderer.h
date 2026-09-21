@@ -163,7 +163,6 @@ struct sc88_render_component {
 /* The word at `71c7`, the exponential family's entry at rate index 2. */
 #define SC88_STATIC_AMPLITUDE_CURVE_WORD 0x02a7u
 
-#ifdef __cplusplus
 /* tva_curve_decode's result for SC88_STATIC_AMPLITUDE_CURVE_WORD never
    changes (linear false, rate 679/64 - a power-of-two divisor, so this
    is that exact double, not an approximation of it), so this inlines
@@ -182,7 +181,6 @@ static inline double sc88_static_gain_progress(double period_fraction)
   const double q = kRate * period_fraction;
   return q >= 40.0 ? 1.0 : 1.0 - std::exp(-q);
 }
-#endif
 
 static inline uint32_t sc88_render_static_gain_q17_from_progress(
   const struct sc88_render_component *component, double progress)
@@ -200,19 +198,8 @@ static inline uint32_t sc88_render_static_gain_q17(
 {
   if (period_fraction <= 0.0)
     return component->static_gain_current_q17;
-  /* The C fallback keeps this header usable from the plain-C test files
-     that still include it. */
-#ifdef __cplusplus
   return sc88_render_static_gain_q17_from_progress(
     component, sc88_static_gain_progress(period_fraction));
-#else
-  {
-    struct sc88_tva_curve curve;
-    sc88_tva_curve_decode(SC88_STATIC_AMPLITUDE_CURVE_WORD, &curve);
-    return sc88_render_static_gain_q17_from_progress(
-      component, sc88_tva_curve_progress(&curve, period_fraction));
-  }
-#endif
 }
 
 struct sc88_render_voice {
@@ -230,92 +217,6 @@ struct sc88_render_voice {
   void *tvf_audio_user;
   unsigned only_component;
 };
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds the structs above
- * by value through engine.h, and sc88_renderer_test.c, which reads their
- * fields directly). Each forwards to the real implementation in namespace
- * EmuSC::Xp. */
-uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
-                                   uint8_t midi_key);
-uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
-                                    uint8_t midi_key);
-bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
-                                    const struct sc88_tone *tone,
-                                    const struct sc88_component *component,
-                                    const struct sc88_wave_descriptor *desc,
-                                    struct sc88_portamento *portamento);
-bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
-                                 const struct sc88_portamento *portamento,
-                                 uint32_t key_q16, uint32_t *pitch_word);
-bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
-                                     const struct sc88_tone *tone,
-                                     const struct sc88_component *component,
-                                     const struct sc88_wave_descriptor *desc,
-                                     uint8_t midi_key,
-                                     uint8_t selector_key,
-                                     uint16_t key_fraction,
-                                     uint32_t *pitch_word);
-bool sc88_renderer_init(struct sc88_renderer *renderer,
-                        const uint8_t *control_rom, size_t control_rom_size,
-                        const struct sc88_wave_bank *banks, size_t bank_count,
-                        double output_rate, enum sc88_fractional_wrap wrap);
-void sc88_renderer_set_levels(struct sc88_renderer *renderer,
-                              const struct sc88_tva_levels *levels);
-void sc88_renderer_set_pan(struct sc88_renderer *renderer,
-                           const struct sc88_pan_controls *pan);
-void sc88_renderer_set_only_component(struct sc88_renderer *renderer,
-                                      unsigned which);
-void sc88_renderer_set_tvf_audio_transfer(
-  struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
-  void *user);
-void sc88_renderer_set_tvf_controls(
-  struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls);
-bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
-                           struct sc88_render_voice *voice,
-                           uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity);
-bool sc88_renderer_note_on_with_levels(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels);
-bool sc88_renderer_note_on_with_controls(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan);
-bool sc88_renderer_note_on_with_part_controls(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls);
-bool sc88_renderer_note_on_with_glide(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t zone_key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls);
-bool sc88_renderer_note_on_drum(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *note);
-void sc88_renderer_voice_destroy(struct sc88_render_voice *voice);
-bool sc88_renderer_voice_active(const struct sc88_render_voice *voice);
-size_t sc88_renderer_render(struct sc88_render_voice *voice,
-                            float *stereo, size_t frames);
 
 #ifdef __cplusplus
 }

@@ -22,27 +22,6 @@ struct sc88_pan_controls {
   uint8_t random_position;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules that read sc88_pan_controls
- * directly). Each forwards to the real implementation in namespace
- * EmuSC::Xp. */
-bool sc88_pan_component_offset(const struct sc88_rom *rom,
-                               const struct sc88_tone *tone,
-                               const struct sc88_component *component,
-                               uint8_t selector_key, int16_t *offset);
-bool sc88_control_gain_q15(const struct sc88_rom *rom, uint8_t control,
-                           uint16_t *gain_q15);
-uint8_t sc88_send_combine(uint8_t part, uint8_t note);
-bool sc88_pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
-                       uint16_t *left_q15, uint16_t *right_q15);
-bool sc88_pan_static_q15(const struct sc88_rom *rom,
-                         const struct sc88_tone *tone,
-                         const struct sc88_component *component,
-                         uint8_t selector_key,
-                         const struct sc88_pan_controls *controls,
-                         uint8_t *position, uint16_t *left_q15,
-                         uint16_t *right_q15);
-
 #ifdef __cplusplus
 }
 

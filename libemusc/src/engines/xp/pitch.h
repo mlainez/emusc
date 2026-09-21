@@ -67,37 +67,6 @@ struct sc88_pitch_release {
   bool active;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules and sc88_pitch_test.c, which read
- * these structs' fields directly). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time);
-void sc88_portamento_advance(struct sc88_portamento *portamento,
-                             unsigned elapsed_periods);
-bool sc88_pitch_envelope_prepare(const struct sc88_rom *rom,
-                                 const struct sc88_tone *tone,
-                                 const struct sc88_component *component,
-                                 uint8_t selector_key, uint8_t velocity,
-                                 struct sc88_pitch_envelope *envelope);
-bool sc88_pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
-                                 unsigned elapsed_periods);
-bool sc88_pitch_release_prepare(const struct sc88_rom *rom,
-                                const struct sc88_tone *tone,
-                                const struct sc88_component *component,
-                                uint8_t selector_key, uint16_t envelope_depth,
-                                struct sc88_pitch_release *release);
-bool sc88_pitch_release_activate(const struct sc88_rom *rom,
-                                 uint8_t hold1, bool continuous_hold,
-                                 bool keep_scale_at_zero,
-                                 bool sostenuto_retained,
-                                 struct sc88_pitch_release *release);
-bool sc88_pitch_release_advance(struct sc88_pitch_release *release,
-                                unsigned elapsed_periods);
-int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                                const struct sc88_pitch_release *release);
-uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
-                                 int16_t envelope_sum);
-
 #ifdef __cplusplus
 }
 

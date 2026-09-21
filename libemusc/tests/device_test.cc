@@ -205,7 +205,7 @@ int main(void)
   assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 32, 0));
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC88);
   assert(EmuSC::Xp::device_midi(&device, 0, 0x90, 60, 100));
-  assert(sc88_engine_active_slots(&device.engine) == 1);
+  assert(EmuSC::Xp::engine_active_slots(&device.engine) == 1);
   {
     double unity_step = device.engine.slots[0].component.oscillator.step;
     assert(EmuSC::Xp::device_midi(&device, 0, 0xe0, 127, 127));
@@ -251,7 +251,7 @@ int main(void)
                               [SC88_MATRIX_CUTOFF] == 0x7f);
     assert(EmuSC::Xp::device_matrix_cutoff_word(state) == 4000);
     assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 4000);
-    assert(sc88_tvf_matrix_cutoff_term(4000) == 8191);
+    assert(EmuSC::Xp::tvf_matrix_cutoff_term(4000) == 8191);
     /* Released, the wheel puts it back where it was. */
     assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 1, 0));
     assert(device.engine.parts[0].tvf_controls.matrix_cutoff == 0);
@@ -316,13 +316,13 @@ int main(void)
   assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 64, 127));
   assert(EmuSC::Xp::device_midi(&device, 0, 0x80, 60, 64));
   EmuSC::Xp::device_render(&device, output, 257);
-  assert(sc88_engine_active_slots(&device.engine) == 1);
+  assert(EmuSC::Xp::engine_active_slots(&device.engine) == 1);
   assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 64, 0));
   /* Two control periods: one for the release to run out and compose
      amplitude 0, one for the chip's register to glide to it. */
   EmuSC::Xp::device_render(&device, output, 257);
   EmuSC::Xp::device_render(&device, output, 257);
-  assert(sc88_engine_active_slots(&device.engine) == 0);
+  assert(EmuSC::Xp::engine_active_slots(&device.engine) == 0);
   assert(EmuSC::Xp::device_midi(&device, 1, 0xc0, 0, 0));
   assert(!EmuSC::Xp::device_midi(&device, 2, 0x90, 60, 100));
   /* The tone map reaches a melodic part, not only a rhythm one: this image
@@ -332,7 +332,7 @@ int main(void)
   assert(EmuSC::Xp::device_midi(&device, 0, 0xb0, 32, 1));
   assert(device.engine.parts[0].tone_map == SC88_TONE_MAP_SC55);
   assert(EmuSC::Xp::device_midi(&device, 0, 0x90, 62, 100));
-  assert(sc88_engine_active_slots(&device.engine) == 1);
+  assert(EmuSC::Xp::engine_active_slots(&device.engine) == 1);
   assert(EmuSC::Xp::device_midi(&device, 0, 0x80, 62, 64));
   /* `40 4x 00` writes the byte CC32 writes and `40 4x 01` the part's own
      map, which the forcing byte defers to when it is zero. Block 1 is

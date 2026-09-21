@@ -44,48 +44,6 @@ struct sc88_lfo_controls {
   uint8_t depth;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules and sc88_lfo_test.c, which read
- * these structs' fields directly). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_lfo_rate_control(int16_t routed, int16_t *out);
-bool sc88_lfo_common_rate_index(unsigned tone_rate, unsigned part_rate,
-                                unsigned user_rate, uint8_t *out);
-bool sc88_lfo_common_delay_index(int tone_delay, unsigned part_delay,
-                                 unsigned user_delay, int16_t *out);
-bool sc88_lfo_effective_increment(uint16_t base, int16_t control,
-                                  uint16_t *out);
-bool sc88_lfo_common_prepare(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone,
-                             unsigned part_rate, unsigned user_rate,
-                             unsigned part_delay, unsigned user_delay,
-                             struct sc88_lfo *lfo);
-bool sc88_lfo_local_prepare(const struct sc88_rom *rom,
-                            const struct sc88_component *component,
-                            struct sc88_lfo *lfo);
-bool sc88_lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
-                      int16_t rate_control, uint8_t catchup_count,
-                      uint16_t *seed);
-bool sc88_lfo_ramp_initialize(uint16_t delay_increment,
-                              uint16_t fade_increment,
-                              struct sc88_lfo_ramp *ramp);
-bool sc88_lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp);
-bool sc88_lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchup_count);
-int16_t sc88_lfo_square(uint16_t phase);
-int16_t sc88_lfo_triangle(uint16_t phase);
-int16_t sc88_lfo_rectified_triangle(uint16_t phase);
-int16_t sc88_lfo_slew_random(int16_t current, int16_t target);
-uint16_t sc88_lfo_random_target(uint16_t seed, uint16_t phase);
-bool sc88_lfo_phase_advance(uint16_t increment, uint8_t catchup_count,
-                            uint16_t *phase, uint16_t *seed,
-                            uint16_t *target);
-bool sc88_lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
-                           uint16_t phase, uint16_t increment, int16_t *out);
-bool sc88_lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
-                       uint16_t phase, uint16_t increment, int16_t previous,
-                       int16_t target, int16_t *out);
-double sc88_lfo_frequency(uint16_t increment);
-
 #ifdef __cplusplus
 }
 

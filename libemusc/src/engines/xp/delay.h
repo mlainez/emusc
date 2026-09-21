@@ -50,20 +50,6 @@ struct sc88_delay {
   bool active;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_delay
- * by value, and sc88_delay_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_delay_init(struct sc88_delay *dl, double output_rate);
-void sc88_delay_destroy(struct sc88_delay *dl);
-void sc88_delay_reset(struct sc88_delay *dl);
-bool sc88_delay_macro(const struct sc88_rom *rom, uint8_t macro,
-                      uint8_t out[10]);
-bool sc88_delay_set_params(const struct sc88_rom *rom,
-                           struct sc88_delay *dl, const uint8_t p[10]);
-void sc88_delay_process(struct sc88_delay *dl, const float *send,
-                        float *stereo, float *to_reverb, size_t frames);
-
 #ifdef __cplusplus
 }
 

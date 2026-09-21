@@ -356,24 +356,3 @@ void output_process(struct sc88_output *out, float *stereo, size_t frames)
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-void sc88_output_init(struct sc88_output *out, double rate)
-{
-  EmuSC::Xp::output_init(out, rate);
-}
-
-void sc88_output_reset(struct sc88_output *out)
-{
-  EmuSC::Xp::output_reset(out);
-}
-
-void sc88_output_process(struct sc88_output *out, float *stereo,
-                         size_t frames)
-{
-  EmuSC::Xp::output_process(out, stereo, frames);
-}
-
-}  // extern "C"

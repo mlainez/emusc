@@ -115,31 +115,3 @@ void eq_process(struct sc88_eq *eq, float *stereo, size_t frames)
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-void sc88_eq_init(struct sc88_eq *eq)
-{
-  EmuSC::Xp::eq_init(eq);
-}
-
-bool sc88_eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
-                        uint8_t low_frequency, uint8_t low_gain,
-                        uint8_t high_frequency, uint8_t high_gain)
-{
-  return EmuSC::Xp::eq_set_params(rom, eq, low_frequency, low_gain,
-                                   high_frequency, high_gain);
-}
-
-void sc88_eq_reset(struct sc88_eq *eq)
-{
-  EmuSC::Xp::eq_reset(eq);
-}
-
-void sc88_eq_process(struct sc88_eq *eq, float *stereo, size_t frames)
-{
-  EmuSC::Xp::eq_process(eq, stereo, frames);
-}
-
-}  // extern "C"

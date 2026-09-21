@@ -101,56 +101,6 @@ struct sc88_tva_envelope {
   bool active;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, sc88_tvf_probe.c, and
- * sc88_tva_test.c, all of which read these structs' fields directly or
- * call sc88_tva_curve_decode/_progress). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-void sc88_tva_curve_decode(uint16_t word, struct sc88_tva_curve *curve);
-double sc88_tva_curve_progress(const struct sc88_tva_curve *curve,
-                               double periods);
-bool sc88_tva_static_gain_q17(const struct sc88_rom *rom,
-                              const struct sc88_tone *tone,
-                              const struct sc88_component *component,
-                              const struct sc88_zone_selection *zone,
-                              uint8_t selector_key, uint8_t velocity,
-                              const struct sc88_tva_levels *levels,
-                              uint8_t drum_level,
-                              uint16_t *static_attenuation,
-                              uint32_t *gain_q17);
-bool sc88_tva_gain_from_headroom_q17(const struct sc88_rom *rom,
-                                     uint16_t headroom,
-                                     const struct sc88_tva_levels *levels,
-                                     uint8_t drum_level,
-                                     uint16_t static_attenuation,
-                                     uint32_t *gain_q17);
-bool sc88_tva_release_prepare(const struct sc88_rom *rom,
-                              const struct sc88_tone *tone,
-                              const struct sc88_component *component,
-                              uint8_t selector_key,
-                              struct sc88_tva_release *release);
-bool sc88_tva_release_set_pedal(const struct sc88_rom *rom,
-                                uint8_t hold1, bool continuous_hold,
-                                bool keep_scale_at_zero,
-                                bool sostenuto_retained,
-                                struct sc88_tva_release *release);
-bool sc88_tva_release_advance(struct sc88_tva_release *release,
-                              unsigned elapsed_periods);
-bool sc88_tva_envelope_prepare(const struct sc88_rom *rom,
-                               const struct sc88_tone *tone,
-                               const struct sc88_component *component,
-                               uint8_t selector_key, uint8_t velocity,
-                               const struct sc88_tva_controls *controls,
-                               struct sc88_tva_envelope *envelope);
-bool sc88_tva_envelope_advance(const struct sc88_rom *rom,
-                               struct sc88_tva_envelope *envelope,
-                               unsigned elapsed_periods);
-uint32_t sc88_tva_envelope_linear_q17(const struct sc88_rom *rom,
-  const struct sc88_tva_envelope *envelope, double period_fraction);
-void sc88_tva_envelope_freeze(const struct sc88_rom *rom,
-                              struct sc88_tva_envelope *envelope,
-                              double period_fraction);
-
 #ifdef __cplusplus
 }
 

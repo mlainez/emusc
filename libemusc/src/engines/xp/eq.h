@@ -36,17 +36,6 @@ struct sc88_eq {
   bool enabled;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_eq by
- * value, and sc88_eq_test.c). Each forwards to the real implementation in
- * namespace EmuSC::Xp. */
-void sc88_eq_init(struct sc88_eq *eq);
-bool sc88_eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
-                        uint8_t low_frequency, uint8_t low_gain,
-                        uint8_t high_frequency, uint8_t high_gain);
-void sc88_eq_reset(struct sc88_eq *eq);
-void sc88_eq_process(struct sc88_eq *eq, float *stereo, size_t frames);
-
 #ifdef __cplusplus
 }
 

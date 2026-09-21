@@ -113,27 +113,6 @@ struct sc88_reverb {
   bool active;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_reverb
- * by value, and sc88_reverb_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_reverb_read_character(const struct sc88_rom *rom, uint8_t character,
-                                struct sc88_reverb_character *out);
-bool sc88_reverb_pre_lpf(uint8_t p, float *feedback, float *input);
-bool sc88_reverb_tap_gains(const struct sc88_rom *rom,
-                           float gains[SC88_REVERB_TAPS]);
-bool sc88_reverb_macro(const struct sc88_rom *rom, uint8_t macro,
-                       uint8_t out[7]);
-bool sc88_reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
-                      uint8_t character, double output_rate);
-void sc88_reverb_destroy(struct sc88_reverb *rv);
-void sc88_reverb_reset(struct sc88_reverb *rv);
-void sc88_reverb_set_params(struct sc88_reverb *rv, uint8_t level,
-                            uint8_t time, uint8_t pre_lpf);
-void sc88_reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds);
-void sc88_reverb_process(struct sc88_reverb *rv, const float *send,
-                         float *stereo, size_t frames);
-
 #ifdef __cplusplus
 }
 

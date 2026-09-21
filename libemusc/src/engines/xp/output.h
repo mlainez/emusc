@@ -70,15 +70,6 @@ struct sc88_output {
   bool enabled;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_output
- * by value, and sc88_output_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-void sc88_output_init(struct sc88_output *out, double rate);
-void sc88_output_reset(struct sc88_output *out);
-void sc88_output_process(struct sc88_output *out, float *stereo,
-                         size_t frames);
-
 /* The profile itself, exposed so a test can assert its response. */
 extern const struct sc88_output_section SC88_OUTPUT_RESPONSE[];
 extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
