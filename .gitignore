@@ -39,4 +39,7 @@ libemusc/tools/build*
 # Build artefacts must never be tracked: a git worktree would check out a
 # stale binary at the conventional path, and a lane that builds there can
 # render against an engine that is not the one it thinks it is testing.
+# Covers build/ (native) and the README's own cross-compile directory names
+# (build-win32/, build-win64/, build-linux-x86/, build-linux-arm32/, ...).
 build/
+build-*/

@@ -116,12 +116,15 @@ You can verify your ROM dumps match known-good versions by checking their SHA1 a
   - Pan, pitch, and expression control
   - MIDI device interface for polyphonic playback
   
-- **`libemusc/tools/emusc-render`** — Headless MIDI-to-WAV renderer:
+- **`libemusc/tools/emusc-render`** — MIDI-to-WAV renderer, and MIDI-to-speakers with `--play`:
   - Parse Standard MIDI Files (SMF format 0 & 1)
   - Deterministic, sample-accurate event scheduling
   - Load SC-55/SC-88 ROM sets automatically
   - Configurable output rate and GM/GS reset mode
   - Reproducible output via fixed random seed
+  - `--play`: straight to the sound card as it renders (ALSA on Linux,
+    WinMM on Windows), no OS or user MIDI player in the way; combine with
+    `--out` to render a file and listen at the same time
   
 - **`libemusc/tools/`** — Analysis and test utilities:
   - ROM dumping and sample extraction
@@ -358,7 +361,18 @@ Once ROMs are obtained and placed in a directory, use `emusc-render` to render a
   --out output.wav
 ```
 
-See `emusc-render --help` for all options: `--reset` (GM/GS mode), `--tail` (trailing silence), `--seed`, `--bits` (16-bit or 32-bit float), `--float`, `--verbose`, and more.
+**Listen instead of (or as well as) writing a file, with `--play`:**
+```bash
+./build/libemusc/tools/emusc-render \
+  --device sc88 \
+  --rom-dir /path/to/roms \
+  --rate 44100 \
+  --play \
+  input.mid
+```
+No output file is required with `--play`; give both `--play` and `--out`/`output.wav` to render and listen at the same time. Audio goes straight to the sound card - ALSA on Linux, WinMM on Windows, including the 32-bit Windows binaries - so no OS or user MIDI player needs to sit in the way. The run is paced by the audio device itself and takes as long as the song does, rather than rendering as fast as possible.
+
+See `emusc-render --help` for all options: `--reset` (GM/GS mode), `--tail` (trailing silence), `--seed`, `--bits` (16-bit or 32-bit float), `--float`, `--play`, `--verbose`, and more.
 
 ---
 

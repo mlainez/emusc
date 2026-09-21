@@ -11,6 +11,7 @@
 
 #include "smf.h"
 #include "wav.h"
+#include "audio_out.h"
 #include "version.h"
 
 #include "synth.h"          // libEmuSC public API (emusc/libemusc/src)
@@ -34,7 +35,13 @@ Renders a Standard MIDI File through libEmuSC to a 16-bit stereo WAV.
 Input/output (either the two positional paths, or these two flags - for
 scripts that drive emusc-render and another renderer with the same options):
   --midi FILE            Input Standard MIDI File
-  --out FILE             Output WAV
+  --out FILE             Output WAV. Not required if --play is given; give
+                         both to render a file and listen at the same time.
+  --play                 Straight to the sound card as it renders - ALSA on
+                         Linux, WinMM on Windows - instead of relying on an
+                         OS or user MIDI player. Always 16-bit regardless of
+                         --bits/--float; paced by the audio device itself,
+                         so this run takes as long as the song does.
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
@@ -69,7 +76,8 @@ Rendering:
   --version              Print tool and libEmuSC version and exit
   --help                 This text
 
-Exit status: 0 success, 1 usage error, 2 ROM load failure, 3 MIDI/IO error.
+Exit status: 0 success, 1 usage error, 2 ROM load failure, 3 MIDI/IO error,
+             4 audio output error (--play).
 )";
 
 struct Options {
@@ -82,6 +90,7 @@ struct Options {
   unsigned seed = 1;
   bool as_float = false;
   bool verbose = false;
+  bool play = false;
 };
 
 [[noreturn]] void die(int code, const std::string &msg) {
@@ -117,6 +126,7 @@ Options parse_args(int argc, char **argv) {
       else die(1, "--bits must be 16 or 32");
     }
     else if (a == "--verbose")     o.verbose = true;
+    else if (a == "--play")        o.play = true;
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
       // twice reported the wrong thing on this project. The source hash is
@@ -137,13 +147,23 @@ Options parse_args(int argc, char **argv) {
     else positional.push_back(a);
   }
   if (!positional.empty()) {
-    if (!o.in.empty() || !o.out.empty() || positional.size() != 2)
+    if (!o.in.empty() || !o.out.empty())
       die(1, std::string("give either <input.mid> <output.wav>, or --midi and --out, not a mix\n") + USAGE);
-    o.in = positional[0];
-    o.out = positional[1];
+    if (positional.size() == 2) {
+      o.in = positional[0];
+      o.out = positional[1];
+    } else if (positional.size() == 1 && o.play) {
+      // <input.mid> alone is only unambiguous with --play: something has to
+      // consume the audio, and --out isn't there to be the mix partner it
+      // would be otherwise.
+      o.in = positional[0];
+    } else {
+      die(1, std::string("give either <input.mid> <output.wav>, or --midi and --out, not a mix\n") + USAGE);
+    }
   }
-  if (o.in.empty() || o.out.empty())
-    die(1, std::string("expected <input.mid> <output.wav>, or --midi and --out\n") + USAGE);
+  if (o.in.empty() || (o.out.empty() && !o.play))
+    die(1, std::string("expected <input.mid> <output.wav>, or --midi and --out; "
+                        "--out may be omitted only with --play\n") + USAGE);
 
   if (o.rate == 0) die(1, "--rate is required");
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
@@ -327,11 +347,23 @@ int main(int argc, char **argv) {
 
   // ---- Render ---------------------------------------------------------------
   try {
-    WavWriter wav(o.out, o.rate, 2, o.as_float);
+    std::unique_ptr<WavWriter> wav;
+    if (!o.out.empty()) wav.reset(new WavWriter(o.out, o.rate, 2, o.as_float));
+    // Opened after the WAV file, so a bad --out path is reported before the
+    // audio device claims the sound card for a run that was going to fail
+    // anyway.
+    std::unique_ptr<AudioOut> audio_out;
+    if (o.play) audio_out.reset(new AudioOut(o.rate));
+
     std::vector<int16_t> buf;
     std::vector<float> fbuf;
+    // --play always needs 16-bit frames to hand the audio device, even when
+    // --bits 32/--float is also given for the WAV file - kept separate from
+    // `buf` so the two flush independently and float mode still works.
+    std::vector<int16_t> play_buf;
     buf.reserve(2 * 4096);
     fbuf.reserve(2 * 4096);
+    play_buf.reserve(2 * 4096);
     // Enough lead for one control period (256 samples at 32 kHz, at most
     // 1024 output frames up to 128 kHz) plus the synth's own note-on delay,
     // so every event is queued before the period it belongs to is generated.
@@ -388,22 +420,41 @@ int main(int argc, char **argv) {
       }
       float l = 0.0f, r = 0.0f;
       synth.get_next_frame(l, r);
-      if (o.as_float) {
-        fbuf.push_back(l);
-        fbuf.push_back(r);
-        if (fbuf.size() >= 2 * 4096) { wav.write(fbuf.data(), fbuf.size() / 2); fbuf.clear(); }
-      } else {
-        buf.push_back(to_i16(l));
-        buf.push_back(to_i16(r));
-        if (buf.size() >= 2 * 4096) { wav.write(buf.data(), buf.size() / 2); buf.clear(); }
+      if (wav) {
+        if (o.as_float) {
+          fbuf.push_back(l);
+          fbuf.push_back(r);
+          if (fbuf.size() >= 2 * 4096) { wav->write(fbuf.data(), fbuf.size() / 2); fbuf.clear(); }
+        } else {
+          buf.push_back(to_i16(l));
+          buf.push_back(to_i16(r));
+          if (buf.size() >= 2 * 4096) { wav->write(buf.data(), buf.size() / 2); buf.clear(); }
+        }
+      }
+      if (audio_out) {
+        play_buf.push_back(to_i16(l));
+        play_buf.push_back(to_i16(r));
+        if (play_buf.size() >= 2 * 4096) {
+          audio_out->write(play_buf.data(), play_buf.size() / 2);
+          play_buf.clear();
+        }
       }
     }
-    if (!buf.empty()) wav.write(buf.data(), buf.size() / 2);
-    if (!fbuf.empty()) wav.write(fbuf.data(), fbuf.size() / 2);
-    wav.close();
-    std::cerr << "emusc-render: wrote " << wav.frames() << " frames to " << o.out
-              << "; libEmuSC reported " << synth.get_num_clipped_samples(false)
-              << " clipped samples" << std::endl;
+    if (wav) {
+      if (!buf.empty()) wav->write(buf.data(), buf.size() / 2);
+      if (!fbuf.empty()) wav->write(fbuf.data(), fbuf.size() / 2);
+      wav->close();
+      std::cerr << "emusc-render: wrote " << wav->frames() << " frames to " << o.out
+                << "; libEmuSC reported " << synth.get_num_clipped_samples(false)
+                << " clipped samples" << std::endl;
+    }
+    if (audio_out) {
+      if (!play_buf.empty()) audio_out->write(play_buf.data(), play_buf.size() / 2);
+      if (!wav)
+        std::cerr << "emusc-render: played " << total_frames << " frames; "
+                  << "libEmuSC reported " << synth.get_num_clipped_samples(false)
+                  << " clipped samples" << std::endl;
+    }
   } catch (const std::exception &e) {
     restore_cout();
     die(3, e.what());
