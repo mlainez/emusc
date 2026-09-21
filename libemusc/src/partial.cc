@@ -43,7 +43,7 @@
 #include "partial.h"
 #include "jv_ctrl_matrix.h"
 
-#include <iostream>
+#include <cstdio>
 #include <cmath>
 
 
@@ -138,8 +138,8 @@ Partial::Partial(int partialId, uint8_t key, uint8_t velocity,
   // TODO: Figure out why this works on the real hardware.
   // Example: Concert Cym. (Con_sym), #59 of Orchestra drumkit
   if (_ctrlSample->loopLen > _ctrlSample->sampleLen) {
-    std::cerr << "libEmuSC: Internal error, loop length > sample length!"
-              << std::endl << " => loop length = sample length" << std::endl;
+    std::fprintf(stderr, "libEmuSC: Internal error, loop length > sample length!\n"
+                 " => loop length = sample length\n");
     _ctrlSample->loopLen = _ctrlSample->sampleLen;
   }
 }

@@ -24,6 +24,7 @@
 #include "control_rom.h"
 #include "note.h"
 #include "settings.h"
+#include "simple_mutex.h"
 #include "wave_rom.h"
 
 #include <stdint.h>
@@ -152,7 +153,7 @@ private:
   };
 
   struct std::list<Note*> _notes;
-  std::mutex *_notesMutex;
+  SimpleMutex *_notesMutex;
 
   // The keys this part has DOWN, which ASSIGN MODE 1 consults before it cuts
   // anything: the firmware keeps the same thing as a 16-entry list at

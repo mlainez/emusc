@@ -19,8 +19,6 @@
 
 #include "svf.h"
 
-#include <iostream>
-
 
 namespace EmuSC {
 
@@ -36,21 +34,12 @@ SVF::SVF(Mode mode)
 void SVF::set_cutoff_freq(int coFreq)
 {
   _f = coFreq / 32768.0f;
-
-  if (0)
-    std::cout << "TVF COFreq = 0x" << std::hex << coFreq << std::endl;
 }
 
 
 void SVF::set_resonance(int resonance)
 {
   _q = resonance / 64.0f;
-
-  if (0) {
-    float Q = resonance ? 64.0 / resonance : 1e9;
-    std::cout << "TVF resonance = " << std::dec << resonance
-              << " (q = " << _q << " : Q = " << Q << ")" << std::endl;
-  }
 }
 
 

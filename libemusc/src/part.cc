@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
+#include <cstdio>
 
 
 namespace EmuSC {
@@ -37,7 +37,7 @@ Part::Part(uint8_t id, Settings *settings, ControlRom &ctrlRom, WaveRom &waveRom
     _lastPitchBendRange(2)
 {
   // TODO: Rename mode => synthMode and set proper defaults for MT32 mode
-  _notesMutex = new std::mutex();
+  _notesMutex = new SimpleMutex();
 
   _partialReserve = 2;           // TODO: Add this to settings with propoer val
 }
@@ -190,12 +190,6 @@ int Part::get_last_peak_sample(void)
     for (auto &n: _notes)
       tvaMax = std::max({tvaMax, n->get_current_tva(0), n->get_current_tva(1)});
   }
-
-  if (0)
-    std::cout << "PartScale=" << std::hex << scale
-              << " tvaMax=" << tvaMax
-              << " => " << ((scale * tvaMax) >> 11)
-              << std::endl;
 
   return (scale * tvaMax) >> 11;
 }
@@ -561,12 +555,6 @@ int Part::add_note(uint8_t key, uint8_t keyVelocity, uint32_t serial,
       n->sustain(true);
   }
 
-  if (0)
-    std::cout << "EmuSC: New note [ part=" << (int) _id
-	      << " key=" << (int) key
-	      << " velocity=" << (int) velocity
-	      << " ]" << std::endl;
-  
   return 1;
 }
 
@@ -892,10 +880,8 @@ int Part::control_change(uint8_t msgId, uint8_t value)
 
 int Part::poly_key_pressure(uint8_t key, uint8_t value)
 {
-  std::cout << "Polyphonic key pressure not implemented (ch="
-	    << _settings->get_param(PatchParam::RxChannel, _id)
-	    << ", key=" << (int) key << ", value=" << value << ")"
-	    << std::endl;
+  std::printf("Polyphonic key pressure not implemented (ch=%d, key=%d, value=%d)\n",
+	      _settings->get_param(PatchParam::RxChannel, _id), (int) key, value);
 
   return 0;
 }
@@ -1121,8 +1107,8 @@ int Part::set_program(uint8_t index, int8_t bank, bool ignRxFlags)
       dsIndex = _settings->update_drum_set(rhythm - 1, index);
     }
     if (dsIndex < 0) {
-      std::cerr << "libEmuSC: Illegal program for drum set ("
-		<< (int) index << ")" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Illegal program for drum set (%d)\n",
+		   (int) index);
       return 0;
     }
 

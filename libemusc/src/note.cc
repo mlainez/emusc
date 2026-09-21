@@ -21,7 +21,6 @@
 #include "pitch.h"
 
 #include <bitset>
-#include <iostream>
 #include <cmath>
 
 namespace EmuSC {

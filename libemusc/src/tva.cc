@@ -23,8 +23,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <string.h>
 
 
@@ -248,12 +248,6 @@ void TVA::update(bool reset)
     _dynLevelMode = (_dynLevel & 0xff00) | 0xb4;
 
   _update_panpot_level(reset);
-
-  if (0)
-    std::cout << "TVA dv=0x" << std::hex << _dynLevel
-              << " (mode=0x" << _dynLevelMode
-              << ")  env=0x" << _envLevel
-              << " (mode=0x" << _envLevelMode << ")" << std::endl;
 }
 
 
@@ -279,12 +273,6 @@ void TVA::_init_update(void)
 
   _slew_function_dynvol(_dynLevelMode);
 //  _slew_function_envelope(_envLevelMode);
-
-  if(0)
-    std::cout << "TVA init dv=0x" << std::hex << _dynLevel
-              << " (mode=0x" << _dynLevelMode
-              << ")  env=0x" << _envLevel
-              << " (mode=0x" << _envLevelMode << ")" << std::endl;
 }
 
 
@@ -472,8 +460,7 @@ void TVA::_iterate_phase(void)
   _prevEnvLevel = _envLevel;
 
   if (_phase == Phase::Terminated) {
-    std::cerr << "libEmuSC: Internal error, envelope used in Terminated phase"
-	      << std::endl;
+    std::fprintf(stderr, "libEmuSC: Internal error, envelope used in Terminated phase\n");
     return;
 
   } else if (_phase == Phase::Sustain) {
@@ -802,8 +789,7 @@ int TVA::_get_velocity_from_vcurve(uint8_t velocity)
 
   unsigned int address = curve * 128 + velocity;
   if (address > _LUT.VelocityCurves.size()) {
-    std::cerr << "libEmuSC internal error: Illegal velocity curve used"
-              << std::endl;
+    std::fprintf(stderr, "libEmuSC internal error: Illegal velocity curve used\n");
     return 0;
   }
 
@@ -1209,16 +1195,6 @@ void TVA::_init_new_phase(enum Phase newPhase)
     _phaseDuration = (_phaseDuration * _timeVelSensT1T2) >> 8;
   else
     _phaseDuration = (_phaseDuration * _timeVelSensT3T5) >> 8;
-
-  if (0) {
-    std::cout << " => DURATION=0x" << std::hex << _phaseDuration << std::endl;
-    std::cout << "New TVA envelope phase: -> "
-              << std::dec << static_cast<int>(newPhase)
-	      << " (" << _phaseName[static_cast<int>(newPhase)] << "): Level = "
-              << _phaseStartValue << " -> " << _phaseEndValue
-	      << " | Time = 0x" << std::hex << _phaseDuration << " => "
-	      << std::dec << (_phaseDuration * 8) / 32000.0 << "s" << std::endl;
-  }
 
   _phase = newPhase;
 }

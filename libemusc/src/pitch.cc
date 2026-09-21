@@ -29,6 +29,7 @@
 #include "jv_velocity.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 
@@ -37,7 +38,6 @@
 // so a render stays reproducible while each voice still gets its own drift.
 // See pitch.h for why the drift is seeded per voice rather than shared.
 static unsigned int _afSeedCounter = 0;
-#include <iostream>
 #include <string.h>
 
 
@@ -494,10 +494,6 @@ int Pitch::_init_portamento(bool portamento, bool legato)
     delta = _lastPitchOnPart[_partId] - _portaBasePitch[_pbpIndex];
   }
 
-  if (0)
-    std::cout << "Pitch init portamento(portamento=" << portamento
-              << ", legato=" << legato << ") delta=" << delta << std::endl;
-
   // If legato, accumulate instead of reset
   if (legato)
     return _portamentoDelta + delta;
@@ -872,8 +868,7 @@ void Pitch::_iterate_phase(void)
 void Pitch::_init_new_phase(enum Phase newPhase)
 {
   if (newPhase == Phase::Init) {
-    std::cerr << "libEmuSC: Internal error, envelope in illegal state"
-	      << std::endl;
+    std::fprintf(stderr, "libEmuSC: Internal error, envelope in illegal state\n");
     return;
 
   } else if (newPhase == Phase::Attack1 || newPhase == Phase::Attack2 ||
@@ -918,15 +913,6 @@ void Pitch::_init_new_phase(enum Phase newPhase)
   else
     _phaseDuration = (_phaseDuration * _timeVelSensT3T5) >> 8;
   */
-
-  if (0) {
-    std::cout << "New Pitch envelope phase: -> "
-              << std::dec << static_cast<int>(newPhase)
-	      << " (" << _phaseName[static_cast<int>(newPhase)] << "): Level = "
-              << _phaseStartValue << " -> " << _phaseEndValue
-	      << " | Time = 0x" << std::hex << _phaseDuration << " => "
-	      << std::dec << (_phaseDuration * 8) / 32000.0 << "s" << std::endl;
-  }
 
   _phase = newPhase;
 }

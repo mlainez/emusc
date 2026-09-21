@@ -21,8 +21,8 @@
 #include "config.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
-#include <iostream>
 
 #include <vector>
 #include <algorithm>
@@ -1145,7 +1145,7 @@ void Settings::_update_controller_input(enum PatchParam pp, int value, int part)
       ctrlInt = static_cast<int>(Controller::CC2);
       break;
     default:
-      std::cerr << "libEmuSC: Internal error (unkown controller)" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Internal error (unkown controller)\n");
       return;
   }
 
@@ -1197,16 +1197,6 @@ void Settings::_update_controller_input(enum PatchParam pp, int value, int part)
                     + ppMemOffset]) * value) / 4);
 
 
-  if (0) {
-    for (int i = 0; i < _controlParams[0].size(); i ++) {
-      for (int j = 0; j < _controlParams[0][i].size(); j ++) {
-	std::cout << _controlParams[0][i][j] << "," << std::flush;
-      }
-      std::cout << std::endl;
-    }
-  std::cout << std::endl;
-  }
-
   // FIXME: Should this one run once at 125Hz for each part? Move to Part calss?
   _update_controller_input_acc(part);
 }
@@ -1248,17 +1238,6 @@ void Settings::_update_controller_input_acc(int8_t part)
     _calc_controller_value(ControllerParam::LFO2TVADepth, part, 0xfc0, 16 * 0x8105);
 
 
-  if (0) {
-    std::cout << "Calculated control values per part:" << std::endl;
-    for (int p = 0; p < 16; p++) {
-      std::cout << "Part " << p << ": ";
-      for (int i = 0; i < _accControlParams[0].size(); i ++) {
-        std::cout << _accControlParams[p][i] << ",";
-      }
-      std::cout << std::endl;
-    }
-    std::cout << std::endl;
-  }
 }
 
 

@@ -28,11 +28,9 @@
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
-#include <iostream>
+#include <cstdio>
 #include <map>
 #include <algorithm>
-#include <iomanip>
 
 #include "config.h"
 
@@ -60,13 +58,13 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
   _parts.reserve(16);
 
   if (map == SoundMap::GS) {
-    std::cout << "libEmuSC: GS sound map initialized" << std::endl;
+    std::printf("libEmuSC: GS sound map initialized\n");
   } else if (map == SoundMap::GS_GM) {
-    std::cout << "libEmuSC: GS (GM system) sound map initialized" << std::endl;
+    std::printf("libEmuSC: GS (GM system) sound map initialized\n");
     _settings->set_gm_mode();
   } else if (map == SoundMap::MT32) {
     _settings->set_map_mt32();
-    std::cout << "libEmuSC: MT-32 sound map initialized" << std::endl;
+    std::printf("libEmuSC: MT-32 sound map initialized\n");
   }
 
   // The SC-88 is rendered by its own engine. None of what follows applies to
@@ -98,9 +96,9 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
   const std::vector<std::vector<uint8_t>> &chips = _waveRom.raw_chips();
 
   if (ctrl.empty() || chips.size() != SC88_WAVE_CHIP_COUNT) {
-    std::cerr << "libEmuSC: the SC-88 needs its control ROM and "
-              << (int) SC88_WAVE_CHIP_COUNT << " wave ROM images, got "
-              << chips.size() << std::endl;
+    std::fprintf(stderr, "libEmuSC: the SC-88 needs its control ROM and "
+                 "%d wave ROM images, got %zu\n",
+                 (int) SC88_WAVE_CHIP_COUNT, chips.size());
     return false;
   }
 
@@ -120,8 +118,7 @@ bool Synth::_sc88_configure(uint32_t sampleRate)
                            (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
     delete _sc88;
     _sc88 = nullptr;
-    std::cerr << "libEmuSC: the SC-88's engine refused these ROM images"
-              << std::endl;
+    std::fprintf(stderr, "libEmuSC: the SC-88's engine refused these ROM images\n");
     return false;
   }
 
@@ -342,25 +339,25 @@ int Synth::_steal_partial_jv(Part &requester)
       if (c.part == &requester) { own = &c; break; }
 
   if (dbg) {
-    std::cerr << "steal t=" << (_blockStart / 32000.0) << "s inUse="
-              << _partials_in_use() << " req=part" << requester.id() + 1;
+    std::fprintf(stderr, "steal t=%gs inUse=%d req=part%d",
+                 _blockStart / 32000.0, _partials_in_use(), requester.id() + 1);
     if (victim)
-      std::cerr << " victim=part" << victim->part->id() + 1 << " serial="
-                << victim->serial << " slot=" << victim->slot
-                << " gate=" << victim->gate;
+      std::fprintf(stderr, " victim=part%d serial=%u slot=%d gate=%d",
+                   victim->part->id() + 1, victim->serial, victim->slot,
+                   victim->gate);
     else if (own)
-      std::cerr << " victim=OWN serial=" << own->serial << " gate=" << own->gate;
+      std::fprintf(stderr, " victim=OWN serial=%u gate=%d", own->serial, own->gate);
     else
-      std::cerr << " victim=NONE";
-    std::cerr << " live/reserve=";
+      std::fprintf(stderr, " victim=NONE");
+    std::fprintf(stderr, " live/reserve=");
     for (auto &p : _parts) {
       std::vector<Part::LivePartial> live;
       p.live_partials(live);
       if (!live.empty() || _ctrlRom.device_voice_reserve(p.id()))
-        std::cerr << " p" << p.id() + 1 << ":" << live.size() << "/"
-                  << (int) _ctrlRom.device_voice_reserve(p.id());
+        std::fprintf(stderr, " p%d:%zu/%d", p.id() + 1, live.size(),
+                     (int) _ctrlRom.device_voice_reserve(p.id()));
     }
-    std::cerr << std::endl;
+    std::fprintf(stderr, "\n");
   }
 
   if (victim)
@@ -696,7 +693,7 @@ void Synth::_apply_midi(uint8_t status, uint8_t data1, uint8_t data2,
       break;
 
     default:
-      std::cout << "EmuSC MIDI: Unknown event received" << std::endl;
+      std::printf("EmuSC MIDI: Unknown event received\n");
       break;
     }
 }
@@ -827,20 +824,18 @@ void Synth::_apply_midi_sysex(uint8_t *data, uint16_t length)
   // the tail to T60 = 0.42 s, between the 0.40 s of time 0x0a and the 0.44 s
   // of time 0x0c, while libEmuSC discarded it and stayed at the default 1.93 s.
   if (data[length - 2] != ((128 - checksum) & 0x7f)) {
-    std::cerr << "libEmuSC: Roland SysEx message received with corrupt "
-	      << "checksum. Message discarded." << std::endl;
+    std::fprintf(stderr, "libEmuSC: Roland SysEx message received with corrupt "
+		 "checksum. Message discarded.\n");
     return;
   }
 
-  if (1) {
-    std::cout << "libEmuSC: Valid SysEx  message received: ";
-    for (int i = 0; i < length; i ++)
-      std::cout << std::hex << (int) data[i] << " " << std::flush;
-    std::cout << std::endl;
-  }
+  std::printf("libEmuSC: Valid SysEx  message received: ");
+  for (int i = 0; i < length; i ++)
+    std::printf("%x ", (int) data[i]);
+  std::printf("\n");
 
   if (data[4] == 0x11) {
-    std::cerr << "SysEx responses are not implemented yet" << std::endl;
+    std::fprintf(stderr, "SysEx responses are not implemented yet\n");
     return;
   }
 
@@ -955,8 +950,8 @@ void Synth::_process_samples(void)
   // not). Diagnostics only.
   static const bool dbgVoices = getenv("EMUSC_DEBUG_VOICES") != nullptr;
   if (dbgVoices)
-    std::cerr << "VOICES t=" << (_blockStart / 32000.0) << " n="
-              << _partials_in_use() << std::endl;
+    std::fprintf(stderr, "VOICES t=%g n=%d\n",
+                 _blockStart / 32000.0, _partials_in_use());
 
   _systemEffects->update();
 
@@ -1357,8 +1352,8 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 	dataLength = 1;
 
       if (length - dataLength != 3) {
-	std::cerr << "libemusc: Roland SysEx message has invalid data length! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid data length! "
+		    "Message discarded.\n");
 	return;
       }
 
@@ -1375,8 +1370,8 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 	dataLength = 0x10;
 
       if (length - dataLength != 3) {
-	std::cerr << "libemusc: Roland SysEx message has invalid data length! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid data length! "
+		    "Message discarded.\n");
 	return;
       }
 
@@ -1405,8 +1400,8 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 	}
 
       if (length - dataLength != 3) {
-	std::cerr << "libemusc: Roland SysEx message has invalid data length! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid data length! "
+		    "Message discarded.\n");
 	return;
       }
 
@@ -1422,15 +1417,15 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 
       // All relevant messages has data length of 1 byte
       if (length != 4) {
-	std::cerr << "libemusc: Roland SysEx message has invalid data length! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid data length! "
+		    "Message discarded.\n");
 	return;
       }
 
       // Verify that entire address is actually valid
       if (data[2] > 0x5a) {
-	std::cerr << "libemusc: Roland SysEx message has invalid address! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid address! "
+		    "Message discarded.\n");
 	return;
       }
 
@@ -1451,8 +1446,8 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 	}
 
       if (length - dataLength != 3) {
-	std::cerr << "libemusc: Roland SysEx message has invalid data length! "
-		  << "Message discarded." << std::endl;
+	std::fprintf(stderr, "libemusc: Roland SysEx message has invalid data length! "
+		    "Message discarded.\n");
 	return;
       }
 

@@ -20,7 +20,6 @@
 #include "wave_oscillator.h"
 
 #include <algorithm>
-#include <iostream>
 
 
 namespace EmuSC {

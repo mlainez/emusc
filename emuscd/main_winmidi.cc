@@ -11,19 +11,19 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "common.h"
 #include "../libemusc/src/synth.h"
 #include "../libemusc/src/control_rom.h"
 #include "../libemusc/src/wave_rom.h"
+#include "../libemusc/src/simple_mutex.h"
 
 using namespace emuscd;
 
@@ -70,21 +70,21 @@ inline MidiEvt unpack_midi_message(DWORD_PTR dwParam1) {
 
 void list_midi_in_devices() {
   UINT n = midiInGetNumDevs();
-  if (n == 0) { std::cout << "(no MIDI input devices found)" << std::endl; return; }
+  if (n == 0) { std::printf("(no MIDI input devices found)\n"); return; }
   for (UINT i = 0; i < n; i++) {
     MIDIINCAPSA caps;
     if (midiInGetDevCapsA(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
-      std::cout << i << ": " << caps.szPname << std::endl;
+      std::printf("%u: %s\n", i, caps.szPname);
   }
 }
 
 void list_wave_out_devices() {
   UINT n = waveOutGetNumDevs();
-  if (n == 0) { std::cout << "(no wave output devices found)" << std::endl; return; }
+  if (n == 0) { std::printf("(no wave output devices found)\n"); return; }
   for (UINT i = 0; i < n; i++) {
     WAVEOUTCAPSA caps;
     if (waveOutGetDevCapsA(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
-      std::cout << i << ": " << caps.szPname << std::endl;
+      std::printf("%u: %s\n", i, caps.szPname);
   }
 }
 
@@ -99,8 +99,8 @@ public:
     InitializeCriticalSection(&_midiLock);
     InitializeCriticalSection(&_sysexLock);
     if (!load_device(dev)) {
-      std::cerr << "emusc-winmidi: failed to load initial device '" << dev
-                << "'" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: failed to load initial device '%s'\n",
+                   dev.c_str());
       std::exit(2);
     }
     open_midi_in(midiInId);
@@ -119,8 +119,8 @@ public:
   // from the audio/MIDI backend underneath.
   bool load_device(const std::string &dev) {
     if (!device_supported(dev)) {
-      std::cerr << "emusc-winmidi: unsupported device '" << dev << "' (supported: "
-                << "sc55, sc55mkii, sc88, jv880)" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: unsupported device '%s' (supported: "
+                   "sc55, sc55mkii, sc88, jv880)\n", dev.c_str());
       return false;
     }
 
@@ -132,12 +132,12 @@ public:
       new_ctrl.reset(new EmuSC::ControlRom(roms.control_rom, roms.cpu_rom));
       new_wave.reset(new EmuSC::WaveRom(roms.wave_roms, *new_ctrl));
     } catch (const std::string &e) {
-      std::cerr << "emusc-winmidi: failed to load '" << dev << "' ROMs: " << e
-                << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: failed to load '%s' ROMs: %s\n",
+                   dev.c_str(), e.c_str());
       return false;
     } catch (const std::exception &e) {
-      std::cerr << "emusc-winmidi: failed to load '" << dev << "' ROMs: "
-                << e.what() << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: failed to load '%s' ROMs: %s\n",
+                   dev.c_str(), e.what());
       return false;
     }
 
@@ -155,23 +155,21 @@ public:
     _waveRom = std::move(new_wave);
     _synth = std::move(new_synth);
 
-    std::cerr << "emusc-winmidi: loaded device " << dev << " ("
-              << _ctrlRom->model() << " v" << _ctrlRom->version() << ")"
-              << std::endl;
+    std::fprintf(stderr, "emusc-winmidi: loaded device %s (%s v%s)\n",
+                 dev.c_str(), _ctrlRom->model().c_str(), _ctrlRom->version().c_str());
     return true;
   }
 
   void open_midi_in(int id) {
     UINT n = midiInGetNumDevs();
     if (n == 0) {
-      std::cerr << "emusc-winmidi: no MIDI input devices available - "
-                   "install a virtual MIDI cable (loopMIDI/Maple) first"
-                << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: no MIDI input devices available - "
+                   "install a virtual MIDI cable (loopMIDI/Maple) first\n");
       std::exit(1);
     }
     if (id < 0 || static_cast<UINT>(id) >= n) {
-      std::cerr << "emusc-winmidi: --midi-in " << id << " out of range (0.."
-                << (n - 1) << "); see --list-midi-in" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: --midi-in %d out of range (0..%u); "
+                   "see --list-midi-in\n", id, n - 1);
       std::exit(1);
     }
     MIDIINCAPSA caps{};
@@ -181,13 +179,14 @@ public:
                              reinterpret_cast<DWORD_PTR>(&midi_in_proc),
                              reinterpret_cast<DWORD_PTR>(this), CALLBACK_FUNCTION);
     if (r != MMSYSERR_NOERROR) {
-      std::cerr << "emusc-winmidi: midiInOpen failed (error " << r << ")" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: midiInOpen failed (error %u)\n",
+                   (unsigned) r);
       std::exit(1);
     }
     prepare_sysex_buffer();
     midiInStart(_hMidiIn);
-    std::cerr << "emusc-winmidi: MIDI input '" << caps.szPname
-              << "' (device " << id << ")" << std::endl;
+    std::fprintf(stderr, "emusc-winmidi: MIDI input '%s' (device %d)\n",
+                 caps.szPname, id);
   }
 
   void open_wave_out(int id, unsigned latencyMs) {
@@ -206,7 +205,8 @@ public:
     // midiInAddBuffer, so nothing here re-arms a buffer from a callback.
     MMRESULT r = waveOutOpen(&_hWaveOut, devId, &wfx, 0, 0, CALLBACK_NULL);
     if (r != MMSYSERR_NOERROR) {
-      std::cerr << "emusc-winmidi: waveOutOpen failed (error " << r << ")" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: waveOutOpen failed (error %u)\n",
+                   (unsigned) r);
       std::exit(1);
     }
 
@@ -222,22 +222,26 @@ public:
       fill_buffer(b);
       waveOutWrite(_hWaveOut, &b.hdr, sizeof(WAVEHDR));
     }
-    std::cerr << "emusc-winmidi: audio output at " << _sampleRate << " Hz, "
-              << numBuffers << " x " << _blockFrames << "-frame buffers"
-              << std::endl;
+    std::fprintf(stderr, "emusc-winmidi: audio output at %u Hz, %u x %u-frame buffers\n",
+                 _sampleRate, numBuffers, _blockFrames);
   }
 
   void run() {
-    std::thread stdin_thread([this]() { read_stdin_commands(); });
-
-    std::cerr << "emusc-winmidi running. Type a device name to switch, "
-                 "or 'quit' to exit." << std::endl;
+    // _running must already be true before the stdin thread starts: its own
+    // loop checks the same flag first thing, and if it started running
+    // before this thread set it, it would see it still false, return
+    // immediately without ever reading a line, and leave "quit" unable to
+    // stop the daemon at all.
     _running = true;
+    HANDLE stdinThread = CreateThread(nullptr, 0, &stdin_thread_proc, this, 0, nullptr);
+
+    std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
+                 "or 'quit' to exit.\n");
     while (_running) {
       if (_deviceChangeRequested.exchange(false)) {
         std::string dev;
         {
-          std::lock_guard<std::mutex> lock(_requestMutex);
+          std::lock_guard<EmuSC::SimpleMutex> lock(_requestMutex);
           dev = _requestedDevice;
         }
         load_device(dev);
@@ -249,7 +253,10 @@ public:
       Sleep(1);
     }
 
-    stdin_thread.join();
+    if (stdinThread) {
+      WaitForSingleObject(stdinThread, INFINITE);
+      CloseHandle(stdinThread);
+    }
   }
 
 private:
@@ -314,14 +321,25 @@ private:
     midiInAddBuffer(_hMidiIn, &_sysexHdr, sizeof(MIDIHDR));
   }
 
+  // Trampoline for CreateThread, whose LPTHREAD_START_ROUTINE signature takes
+  // a plain void* rather than a bindable callable the way std::thread does.
+  static DWORD WINAPI stdin_thread_proc(LPVOID param) {
+    reinterpret_cast<WinMidiDaemon *>(param)->read_stdin_commands();
+    return 0;
+  }
+
   void read_stdin_commands() {
-    std::string line;
+    char buf[4096];
     while (_running) {
-      if (std::getline(std::cin, line)) {
+      if (std::fgets(buf, sizeof(buf), stdin)) {
+        size_t len = std::strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+          buf[--len] = '\0';
+        std::string line(buf);
         if (line == "quit" || line == "exit") {
           _running = false;
         } else if (!line.empty()) {
-          std::lock_guard<std::mutex> lock(_requestMutex);
+          std::lock_guard<EmuSC::SimpleMutex> lock(_requestMutex);
           _requestedDevice = line;
           _deviceChangeRequested = true;
         }
@@ -369,7 +387,7 @@ private:
   std::vector<uint8_t> _sysexBuf;
 
   std::atomic<bool> _deviceChangeRequested{false};
-  std::mutex _requestMutex;
+  EmuSC::SimpleMutex _requestMutex;
   std::string _requestedDevice;
 };
 
@@ -386,7 +404,7 @@ int main(int argc, char **argv) {
     std::string a = argv[i];
     auto need = [&](const char *name) -> std::string {
       if (i + 1 >= argc) {
-        std::cerr << "emusc-winmidi: " << name << " requires an argument" << std::endl;
+        std::fprintf(stderr, "emusc-winmidi: %s requires an argument\n", name);
         std::exit(1);
       }
       return argv[++i];
@@ -400,20 +418,20 @@ int main(int argc, char **argv) {
     else if (a == "--latency")       latency = static_cast<unsigned>(std::stoul(need("--latency")));
     else if (a == "--list-midi-in")  { list_midi_in_devices(); return 0; }
     else if (a == "--list-wave-out") { list_wave_out_devices(); return 0; }
-    else if (a == "--help" || a == "-h") { std::cout << USAGE; return 0; }
+    else if (a == "--help" || a == "-h") { std::printf("%s", USAGE); return 0; }
     else {
-      std::cerr << "emusc-winmidi: unknown option '" << a << "'" << std::endl;
+      std::fprintf(stderr, "emusc-winmidi: unknown option '%s'\n", a.c_str());
       return 1;
     }
   }
 
   if (!device_supported(device)) {
-    std::cerr << "emusc-winmidi: unsupported device '" << device << "' (supported: "
-              << "sc55, sc55mkii, sc88, jv880)" << std::endl;
+    std::fprintf(stderr, "emusc-winmidi: unsupported device '%s' (supported: "
+                 "sc55, sc55mkii, sc88, jv880)\n", device.c_str());
     return 1;
   }
   if (block < 1) {
-    std::cerr << "emusc-winmidi: --block must be >= 1" << std::endl;
+    std::fprintf(stderr, "emusc-winmidi: --block must be >= 1\n");
     return 1;
   }
 

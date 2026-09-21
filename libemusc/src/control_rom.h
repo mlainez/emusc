@@ -27,9 +27,9 @@
 #include <stdint.h>
 
 #include "device_profile.h"
+#include "bin_file.h"
 
 #include <array>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -689,19 +689,19 @@ private:
   static const DeviceProfile *_profile_for(enum SynthModel model);
   const RomLookupTable *_find_lookup(RomLookup id);
 
-  int _read_lookup_tables_progrom(std::ifstream &romFile);
-  int _read_lookup_tables_cpurom(std::ifstream &romFile);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 11> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 21> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 47> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 128> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 129> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 130> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 136> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 256> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 257> &lut);
+  int _read_lookup_tables_progrom(BinFile &romFile);
+  int _read_lookup_tables_cpurom(BinFile &romFile);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 11> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 21> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 47> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 128> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 129> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 130> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 136> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 256> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 257> &lut);
 
-  int _identify_model(std::ifstream &romFile);
+  int _identify_model(BinFile &romFile);
   const std::vector<uint32_t> &_banks(void);
 
   // To be replaced with std::endian::native from C++20
@@ -725,7 +725,7 @@ private:
   static const DeviceEntry DEVICES[];
   static const int      DEVICE_COUNT;
 
-  bool _identify_device(std::ifstream &romFile);
+  bool _identify_device(BinFile &romFile);
   void _init_neutral_partial(struct InstPartial &ip);
   int  _read_device_waveforms(void);
   int  _read_device_samples(void);
@@ -773,11 +773,11 @@ private:   // set when the device is identified
   std::array<int, 16> _channelChorus;
   int _deviceDrumChannel = 9;
 
-  int _read_instruments(std::ifstream &romFile);
-  int _read_partials(std::ifstream &romFile);
-  int _read_variations(std::ifstream &romFile);
-  int _read_samples(std::ifstream &romFile);
-  int _read_drum_sets(std::ifstream &romFile);
+  int _read_instruments(BinFile &romFile);
+  int _read_partials(BinFile &romFile);
+  int _read_variations(BinFile &romFile);
+  int _read_samples(BinFile &romFile);
+  int _read_drum_sets(BinFile &romFile);
 
   std::array<uint8_t, 128> _drumSetsLUT;
 

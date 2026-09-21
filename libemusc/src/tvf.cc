@@ -46,7 +46,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
+#include <cstdio>
 #include <string.h>
 
 
@@ -240,10 +240,6 @@ void TVF::update(void)
   // _smooth_cutoff() from apply_sample_set(); the resonance is a control-rate
   // parameter and moves one step per period (_iterate_phase()).
   _svf->set_resonance(_resonance);
-
-  if (0)
-    std::cout << std::hex << "0x" << _envLevel << "  -  " << _resonance
-              << std::endl;
 }
 
 
@@ -304,21 +300,6 @@ void TVF::_init_envelope(void)
                     _instPartial.TVFJVTimeKF, _key, _velocity,
                     _instPartial.JVDelayKeyOff != 0);
 
-  if (0) {
-    std::cout << "\nNew TVF envelope [" << std::dec << (int) _key << "]\n"
-	      << " Attack 1: L=0 -> L=" << _phaseLevel[1]
-	      << " T=" << _phaseTime[1] << std::endl
-	      << " Attack 2: L=" << _phaseLevel[1] << " -> L=" << _phaseLevel[2]
-	      << " T=" << _phaseTime[2] << std::endl
-	      << " Decay 1: L=" << _phaseLevel[2] << " -> L=" << _phaseLevel[3]
-	      << " T=" << _phaseTime[3] << std::endl
-	      << " Decay 2: L=" << _phaseLevel[3] << " -> L=" << _phaseLevel[4]
-	      << " T=" << _phaseTime[4] << std::endl
-              << " Sustain: -- L=" << _phaseLevel[4] << std::endl
-              << " Release: --> L=" << _phaseLevel[5]
-	      << " T=" << _phaseTime[5] << std::endl;
-  }
-
   // Initialization run in Phase=Off and with manually update LFO1 depth
   _lfo1Depth = (_LFO1->fade() * _lfo1Depth) >> 16;
   _iterate_phase();
@@ -336,8 +317,7 @@ int TVF::_get_velocity_from_vcurve(uint8_t velocity)
 
   unsigned int address = curve * 128 + velocity;
   if (address > _LUT.VelocityCurves.size()) {
-    std::cerr << "libEmuSC internal error: Illegal velocity curve used"
-              << std::endl;
+    std::fprintf(stderr, "libEmuSC internal error: Illegal velocity curve used\n");
     return 0;
   }
 
@@ -446,13 +426,6 @@ int TVF::_get_cof_key_follow(int cofkfROM)
   int km = static_cast<int>(_native_endian_uint16((uint8_t *) &_LUT.KeyMapper[kmIndex + _key * 2]));
   int cofkf = _LUT.TVFCutoffFreqKF[std::abs(cofkfROM)];
   int res = ((km - 0x4000) * cofkf) >> 8;
-
-  if (0)
-    std::cout << "km=0x" << std::hex << km
-	      << " cofkfROM=" << std::dec << cofkfROM
-	      << " mulxu.w=0x" << std::hex << ((km - 0x4000) * cofkf)
-	      << " res=" << res << std::dec
-	      << std::endl;
 
   if (cofkfROM < 0)
     return  -res;
@@ -660,8 +633,6 @@ void TVF::_iterate_phase(void)
   for (int i = 0; i < 8; i++) {
     uint16_t prev = phaseAccumulator;
     phaseAccumulator <<= 1;
-    if(0)
-      std::cout << "prev=" << prev << std::endl;
     if (prev & 0x8000)
       break;
 
@@ -706,8 +677,7 @@ void TVF::_init_new_phase(enum Phase newPhase)
   }
 
   if (newPhase == Phase::Terminated) {
-    std::cerr << "libEmuSC: Internal error, envelope in illegal state"
-	      << std::endl;
+    std::fprintf(stderr, "libEmuSC: Internal error, envelope in illegal state\n");
     return;
 
   } else if (newPhase == Phase::Attack1) {
@@ -796,14 +766,6 @@ void TVF::_init_new_phase(enum Phase newPhase)
   else
     _phaseDuration = (_phaseDuration * _timeVelSensT3T5) >> 8;
 
-  if (0) {
-    std::cout << "New TVF envelope phase: -> "
-              << std::dec << static_cast<int>(newPhase)
-	      << " (" << _phaseName[static_cast<int>(newPhase)] << "): Level = "
-              << _phaseStartValue << " -> " << _phaseEndValue
-	      << " | Time = 0x" << std::hex << _phaseDuration << " => "
-	      << std::dec << (_phaseDuration * 8) / 32000.0 << "s" << std::endl;
-  }
 
   _phase = newPhase;
 }
@@ -1110,13 +1072,11 @@ void TVF::_jv_iterate(void)
 
   static const bool dbg = getenv("EMUSC_DEBUG_TVF") != nullptr;
   if (dbg)
-    std::cerr << "JV TVF: env=" << std::dec << (_jvEnvLevel >> 8)
-              << " x=" << x << " word=0x" << std::hex << word
-              << " chip=0x" << _jvWord
-              << " damp=0x" << damp << std::dec << " res=" << _jvRes
-              << " F1=" << ((float) _jvWord / 32768.0f)
-              << " Q1=" << _jvQ1
-              << std::endl;
+    std::fprintf(stderr,
+                 "JV TVF: env=%d x=%d word=0x%x chip=0x%x damp=0x%x res=%d "
+                 "F1=%g Q1=%g\n",
+                 _jvEnvLevel >> 8, x, word, _jvWord, damp, _jvRes,
+                 (float) _jvWord / 32768.0f, _jvQ1);
 }
 
 

@@ -20,7 +20,6 @@
 #include "envelope.h"
 
 #include <cstdlib>
-#include <iostream>
 
 
 namespace EmuSC {
@@ -78,14 +77,6 @@ void Envelope::set_time_key_follow(enum Type type, bool phase, int key,
   else
     _timeKeyFlwT5 = _LUT.EnvTimeScale[tkfIndex];
 
-  if (0)
-    std::cout << "ETKF: TVA phase=" << std::dec << phase
-              << " key=" << (int) key << " offset=" << offset
-              << " etkpROM=" << etkpROM
-              << " km[" << kmIndex + key << "]=" << km
-              << " tkf[" << tkfIndex << "]=" << _LUT.EnvTimeScale[tkfIndex]
-              << " => time change=" << _LUT.EnvTimeScale[tkfIndex] / 256.0
-              << std::endl;
 }
 
 
@@ -117,10 +108,6 @@ void Envelope::set_time_velocity_sensitivity(enum Type type, bool phase,
   else
     _timeVelSensT3T5 = timeVelSens;
 
-  if (0)
-    std::cout << "ETVS: phase (0:T1-2 1:T3-5)=" << std::dec << phase
-              << " etvsROM=" << etvsROM << " velocity=" << velocity
-              << " sensitivity=" << timeVelSens << std::endl;
 }
 
 

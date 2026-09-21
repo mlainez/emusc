@@ -36,11 +36,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <sstream>
-#include <iostream>
-#include <iomanip>
 
 // The banner of the LATER firmware revision of a device whose ROM tables move
 // between revisions. Only the JV-880 has two revisions here: v1.0.0 prints
@@ -63,7 +60,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   _drumSetsLUT.fill(0xff);
 
   // External EPROM containing control data
-  std::ifstream romFile(romPath, std::ios::binary | std::ios::in);
+  BinFile romFile(romPath, "rb");
   if (!romFile.is_open())
     throw(std::string("Unable to open control ROM|: ") + romPath);
 
@@ -78,7 +75,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   // sample tables with another machine's offsets rather than failing loudly.
   if (_synthModel == sm_SC88) {
     romFile.clear();
-    romFile.seekg(0, std::ios::end);
+    romFile.seekg(0, BinFile::kEnd);
     const size_t size = (size_t) romFile.tellg();
     romFile.seekg(0);
     _deviceRom.resize(size);
@@ -131,13 +128,13 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   romFile.close();
 
   // CPU EPROM
-  romFile.open(cpuRomPath, std::ios::binary | std::ios::in);
+  romFile.open(cpuRomPath, "rb");
   if (!romFile.is_open())
     throw(std::string("Unable to open CPU ROM: ") + romPath);
 
   // Verify size (always 32kB for all SC-55 variants)
   std::streampos fileSize = romFile.tellg();
-  romFile.seekg(0, std::ios::end);
+  romFile.seekg(0, BinFile::kEnd);
   fileSize = romFile.tellg() - fileSize;
   if (fileSize != 32768)
     throw(std::string("Invalid CPU ROM (size != 32kB): ") + romPath);
@@ -145,12 +142,6 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   _read_lookup_tables_cpurom(romFile);
 
   romFile.close();
-
-  if (0)
-    std::cout << "EmuSC: Found " << _instruments.size() << " instruments, "
-	      << _partials.size() << " parts, "
-	      << _samples.size() << " samples and "
-	      << _drumSets.size() << " drum sets" << std::endl;
 }
 
 
@@ -218,7 +209,7 @@ const int ControlRom::KNOWN_DEVICE_COUNT =
   (int) (sizeof(KNOWN_DEVICES) / sizeof(KNOWN_DEVICES[0]));
 
 
-int ControlRom::_identify_model(std::ifstream &romFile)
+int ControlRom::_identify_model(BinFile &romFile)
 {
   char data[64];
 
@@ -250,10 +241,11 @@ int ControlRom::_identify_model(std::ifstream &romFile)
       romFile.seekg(sig.versionOffset);
       romFile.read(data, 10);
       _version.assign(data, 4);
-      std::stringstream ss;
-      ss << "19" << std::hex << (int) (uint8_t) data[7] << "-"
-         << (int) (uint8_t) data[8] << "-" << (int) (uint8_t) data[9];
-      _date.assign(ss.str());
+      char dateBuf[16];
+      std::snprintf(dateBuf, sizeof(dateBuf), "19%x-%x-%x",
+                    (unsigned) (uint8_t) data[7], (unsigned) (uint8_t) data[8],
+                    (unsigned) (uint8_t) data[9]);
+      _date.assign(dateBuf);
       break;
     }
 
@@ -285,7 +277,7 @@ const std::vector<uint32_t> &ControlRom::_banks(void)
 }
 
 
-int ControlRom::_read_instruments(std::ifstream &romFile)
+int ControlRom::_read_instruments(BinFile &romFile)
 {
   // ROM is split in 8 banks
   const std::vector<uint32_t> &banks = _banks();
@@ -409,19 +401,13 @@ int ControlRom::_read_instruments(std::ifstream &romFile)
     }
 
     _instruments.push_back(i);
-
-    if (0)
-      std::cout << "  -> Instrument " << _instruments.size() << ": " << i.name
-          << " partial0=" << (int) i.partials[0].partialIndex
-          << " partial1=" << (int) i.partials[1].partialIndex
-          << std::endl;
     }
 
   return 0;
 }
 
 
-int ControlRom::_read_partials(std::ifstream &romFile)
+int ControlRom::_read_partials(BinFile &romFile)
 {
   // ROM is split in 8 banks
   const std::vector<uint32_t> &banks = _banks();
@@ -455,10 +441,6 @@ int ControlRom::_read_partials(std::ifstream &romFile)
     // Skip empty slots in the ROM file that has no partial name
     if (p.name[0]) {
       _partials.push_back(p);
-
-      if (0)
-	std::cout << "  -> Partial group " << _partials.size() <<  ": "
-		  << p.name << std::endl;
     }
   }
 
@@ -466,7 +448,7 @@ int ControlRom::_read_partials(std::ifstream &romFile)
 }
 
 
-int ControlRom::_read_variations(std::ifstream &romFile)
+int ControlRom::_read_variations(BinFile &romFile)
 {
   // ROM is split in 8 banks
   const std::vector<uint32_t> &banks = _banks();
@@ -483,24 +465,12 @@ int ControlRom::_read_variations(std::ifstream &romFile)
     }
   }
 
-  if (0) {
-    int i = 0;
-    for (auto v : _variations) {
-      std::cout << "  -> Variations " << i++ << ": ";
-      for (int y = 0; y < 128; y++)
-	if (v[y] == 0xffff)
-	  std::cout << "-,";
-	else
-	  std::cout << v[y] << ",";
-      std::cout << '\b' << " " << std::endl;
-    }
-  }
 
   return 0;
 }
 
 
-int ControlRom::_read_samples(std::ifstream &romFile)
+int ControlRom::_read_samples(BinFile &romFile)
 {
   // ROM is split in 8 banks
   const std::vector<uint32_t> &banks = _banks();
@@ -530,18 +500,6 @@ int ControlRom::_read_samples(std::ifstream &romFile)
     
     if (s.sampleLen) {                          // Ignore empty parts
       _samples.push_back(s);
-      
-      if (0)
-	std::cout << "  -> Sample " << std::setw(3) << _samples.size()
-		  << ": V=" << std::setw(3) << +s.volume
-		  << " AE=" << std::setw(5) << +s.portaOffset
-		  << " SL=" << std::setw(5) << +s.sampleLen
-		  << " LL=" << std::setw(5) << +s.loopLen
-		  << " LM=" << std::setw(3) << +s.loopMode
-		  << " RK=" << std::setw(3) << +s.rootKey
-		  << " PI=" << std::setw(5) << +s.pitchInit - 1024
-		  << " PS=" << std::setw(4) << +s.pitchSust - 1024
-		  << std::endl;
     }
   }
   
@@ -549,7 +507,7 @@ int ControlRom::_read_samples(std::ifstream &romFile)
 }           
 
 
-int ControlRom::_read_drum_sets(std::ifstream &romFile)
+int ControlRom::_read_drum_sets(BinFile &romFile)
 {
   // ROM is split in 8 banks
   const std::vector<uint32_t> &banks = _banks();
@@ -590,20 +548,16 @@ int ControlRom::_read_drum_sets(std::ifstream &romFile)
       continue;
 
     _drumSets.push_back(d);
-
-    if (0)
-      std::cout << "  -> Drum " << _drumSets.size() << ": " << d.name
-		<< std::endl;
   }
 
   return _drumSets.size();
 }
 
 
-int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
+int ControlRom::_read_lookup_tables_progrom(BinFile &romFile)
 {
   if (!_profile || !_profile->soundCanvas || !_profile->soundCanvas->program) {
-    std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
+    std::fprintf(stderr, "libEmuSC: Unsupported ROM file!\n");
     exit(0);
   }
   const ProgramRomMap *PROGmmLUT = _profile->soundCanvas->program;
@@ -638,10 +592,10 @@ int ControlRom::_read_lookup_tables_progrom(std::ifstream &romFile)
 }
 
 
-int ControlRom::_read_lookup_tables_cpurom(std::ifstream &romFile)
+int ControlRom::_read_lookup_tables_cpurom(BinFile &romFile)
 {
   if (!_profile || !_profile->soundCanvas || !_profile->soundCanvas->cpu) {
-    std::cerr << "libEmuSC: Unsupported ROM file!" << std::endl;
+    std::fprintf(stderr, "libEmuSC: Unsupported ROM file!\n");
     exit(0);
   }
   const CpuRomMap *CPUmmLUT = _profile->soundCanvas->cpu;
@@ -694,7 +648,7 @@ int ControlRom::_read_lookup_tables_cpurom(std::ifstream &romFile)
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 11> &lut)
 {
   ifs.seekg(pos);
@@ -702,7 +656,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 11; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -713,7 +667,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 21> &lut)
 {
   ifs.seekg(pos);
@@ -721,7 +675,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 21; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -732,7 +686,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 47> &lut)
 {
   ifs.seekg(pos);
@@ -740,7 +694,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 47; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -751,7 +705,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 128> &lut)
 {
   ifs.seekg(pos);
@@ -759,7 +713,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 128; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -770,7 +724,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 129> &lut)
 {
   ifs.seekg(pos);
@@ -778,7 +732,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 129; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -789,7 +743,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 130> &lut)
 {
   ifs.seekg(pos);
@@ -797,7 +751,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 130; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -808,7 +762,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 136> &lut)
 {
   ifs.seekg(pos);
@@ -816,7 +770,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 136; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -827,7 +781,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 256> &lut)
 {
   ifs.seekg(pos);
@@ -835,7 +789,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 256; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -846,7 +800,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
 }
 
 
-int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
+int ControlRom::_read_lut_16bit(BinFile &ifs, int pos,
                                 std::array<int, 257> &lut)
 {
   ifs.seekg(pos);
@@ -854,7 +808,7 @@ int ControlRom::_read_lut_16bit(std::ifstream &ifs, int pos,
   for (int i = 0; i < 257; i ++) {
     uint16_t value;
     if (!ifs.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      std::cerr << "libEmuSC: Error reading LUT from ROM" << std::endl;
+      std::fprintf(stderr, "libEmuSC: Error reading LUT from ROM\n");
       return i;
     }
 
@@ -912,11 +866,11 @@ bool ControlRom::device_patch_solo(int patch)
 int ControlRom::dump_demo_songs(std::string path)
 {
   int index = 1;
-  std::cout << "EmuSC: Searching for MIDI songs in control ROM..." << std::endl;
+  std::printf("EmuSC: Searching for MIDI songs in control ROM...\n");
 
-  std::ifstream romFile(_romPath, std::ios::binary | std::ios::in);
+  BinFile romFile(_romPath, "rb");
   if (!romFile.is_open()) {
-    std::cerr << "Unable to open control ROM: " << _romPath << std::endl;
+    std::fprintf(stderr, "Unable to open control ROM: %s\n", _romPath.c_str());
     return -1;
   }
 
@@ -927,7 +881,7 @@ int ControlRom::dump_demo_songs(std::string path)
   if (sc && !sc->demoSongRunsToRomEnd) {
     romSize = _banks()[0];
   } else {
-    romFile.seekg(0, std::ios::end);
+    romFile.seekg(0, BinFile::kEnd);
     romSize = romFile.tellg();
   }
 
@@ -965,23 +919,21 @@ int ControlRom::dump_demo_songs(std::string path)
 
       std::string fileName = "sc_song_" + std::to_string(index++) + ".mid";
 
-      std::ofstream midiFile(path + fileName, std::ios::out | std::ios::binary);
+      BinFile midiFile(path + fileName, "wb");
       midiFile.write((char*) &romData[i], fileSize);
       if (midiFile.good())
-	std::cout << " -> Found demo song at 0x" << std::hex << romIndex + i
-		  << " (" << std::dec << (int) fileSize << " bytes)"
-		  << std::endl
-		  << "  -> File written to " << path + fileName << std::endl;
+	std::printf(" -> Found demo song at 0x%x (%d bytes)\n"
+		    "  -> File written to %s\n",
+		    romIndex + i, (int) fileSize, (path + fileName).c_str());
       else
-	std::cout << " -> Error writing demo song to disk: " << path
-		  << " Check write permissions and available space."
-		  << std::endl;
+	std::printf(" -> Error writing demo song to disk: %s Check write "
+		    "permissions and available space.\n", path.c_str());
       midiFile.close();
     }
   }
 
   if (index == 1)
-    std::cout << "EmuSC: Control ROM contained no MIDI files " << std::endl;
+    std::printf("EmuSC: Control ROM contained no MIDI files \n");
 
   return index - 1;
 }
@@ -1091,9 +1043,9 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
   length   = sc->introAnimLength;
   romIndex = sc->introAnimOffset + animIndex * length;
 
-  std::ifstream romFile(_romPath, std::ios::binary | std::ios::in);
+  BinFile romFile(_romPath, "rb");
   if (!romFile.is_open()) {
-    std::cerr << "Unable to open control ROM: " << _romPath << std::endl;
+    std::fprintf(stderr, "Unable to open control ROM: %s\n", _romPath.c_str());
   }
 
   std::vector<uint8_t> romData(length);
@@ -1130,9 +1082,9 @@ const int ControlRom::DEVICE_COUNT =
 // The JV control ROMs carry no GS banner, so the machine is identified by its
 // tables: a run of 60-byte records whose first field is a printable name. Size
 // narrows the candidates; the table must then actually parse.
-bool ControlRom::_identify_device(std::ifstream &romFile)
+bool ControlRom::_identify_device(BinFile &romFile)
 {
-  romFile.seekg(0, std::ios::end);
+  romFile.seekg(0, BinFile::kEnd);
   size_t size = (size_t) romFile.tellg();
   romFile.seekg(0);
   _deviceRom.resize(size);

@@ -49,8 +49,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
-#include <iostream>
 
 #include <stdint.h>
 
@@ -86,15 +86,6 @@ WaveGenerator::WaveGenerator(struct ControlRom::Instrument &instrument,
   // Phase shift is done by moving the start off accumulated rate
   _accRate = ((instrument.LFO1Waveform & 0xf0) << 8);
 
-  if (0)
-    std::cout << "New LFO1: Waveform=" << (instrument.LFO1Waveform & 0x0f)
-              << " Phase=" << (instrument.LFO1Waveform & 0xf0)
-              << " Rate=" << _instRate
-              << " Delay=" << (int) instrument.LFO1Delay << " -> "
-              << _delayIncLUT << " -> " << 512.0 / _delayIncLUT << " s"
-              << " Fade=" << (int) instrument.LFO1Fade << " -> " << _fadeIncLUT
-              << " -> " << 512.0 / _fadeIncLUT << " s" << std::endl;
-
   update();
 }
 
@@ -122,14 +113,6 @@ WaveGenerator::WaveGenerator(struct ControlRom::InstPartial &instPartial,
   // Phase shift is done by moving the start off accumulated rate
   _accRate = ((instPartial.LFO2Waveform & 0xf0) << 8);
 
-  if (0)
-    std::cout << "New LFO2: Waveform=" << (instPartial.LFO2Waveform & 0x0f)
-              << " Phase=" << (instPartial.LFO2Waveform & 0xf0)
-              << " Rate=" << _instRate
-              << " Delay=" << (int) instPartial.LFO2Delay
-              << " -> " << 512.0 / _delayIncLUT << "s"
-              << " Fade=" << (int) instPartial.LFO2Fade
-              << " -> " << 512.0 / _fadeIncLUT << "s" << std::endl;
 }
 
 
@@ -189,8 +172,8 @@ void WaveGenerator::update(void)
     case Waveform::SampleHold: LFOValue = _generate_sample_hold(rate); break;
     case Waveform::Random:     LFOValue = _generate_random(rate);      break;
     default:
-      std::cerr << "libEmuSC: Internal error! Waveform generator called with "
-                << "illegal waveform ID: " << (int) _waveform << std::endl;
+      std::fprintf(stderr, "libEmuSC: Internal error! Waveform generator called "
+                   "with illegal waveform ID: %d\n", (int) _waveform);
       return;
   }
 

@@ -25,6 +25,7 @@
 #include "control_rom.h"
 #include "params.h"
 #include "resampler.h"
+#include "simple_mutex.h"
 #include "system_effects.h"
 #include "wave_rom.h"
 
@@ -32,7 +33,6 @@
 #include <atomic>
 #include <deque>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -179,7 +179,7 @@ private:
 
   std::atomic<uint32_t> _numClippedSamples;
 
-  std::mutex midiMutex;
+  SimpleMutex midiMutex;
 
   struct std::vector<Part> _parts;
   uint32_t _noteSerial = 0;   // Note on order, for voice allocation

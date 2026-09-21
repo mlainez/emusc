@@ -9,9 +9,9 @@
 #include <windows.h>
 #include <mmsystem.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <vector>
 
 namespace {
@@ -40,8 +40,8 @@ AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
 
   MMRESULT r = waveOutOpen(&_impl->hwo, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL);
   if (r != MMSYSERR_NOERROR) {
-    std::cerr << "emusc-render: --play: waveOutOpen failed (error " << r
-              << ")" << std::endl;
+    std::fprintf(stderr, "emusc-render: --play: waveOutOpen failed (error %u)\n",
+                 (unsigned) r);
     std::exit(4);
   }
 
@@ -54,8 +54,7 @@ AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
     waveOutPrepareHeader(_impl->hwo, &b.hdr, sizeof(WAVEHDR));
     b.hdr.dwFlags |= WHDR_DONE;   // free at startup, nothing queued yet
   }
-  std::cerr << "emusc-render: --play: WinMM output at " << rate << " Hz"
-            << std::endl;
+  std::fprintf(stderr, "emusc-render: --play: WinMM output at %u Hz\n", rate);
 }
 
 AudioOut::~AudioOut() {
