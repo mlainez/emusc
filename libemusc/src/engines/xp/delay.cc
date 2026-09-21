@@ -121,7 +121,7 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
     return false;
   unsigned centreUnits = centreWord - 0x8000u;
   double scale = dl->output_rate / (kDelayUnitsPerMs * 1000.0);
-  dl->centre_samples = (double)centreUnits * scale;
+  dl->centre_samples = (float)((double)centreUnits * scale);
 
   for (unsigned i = 0; i < 2; ++i) {
     uint8_t r = v[2 + i];
@@ -134,9 +134,9 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
         units = kDelayMaxUnits;
     }
     if (i == 0)
-      dl->left_samples = (double)units * scale;
+      dl->left_samples = (float)((double)units * scale);
     else
-      dl->right_samples = (double)units * scale;
+      dl->right_samples = (float)((double)units * scale);
   }
 
   /* `64*p` read as an XP coefficient is p/128 */

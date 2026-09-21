@@ -224,17 +224,21 @@ double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
    descending pass of a ping-pong applied.  The one position the reflection
    cannot read is address_b - 1, which can precede the first decoded frame;
    the ROM's zero-sum invariant answers it as x[c] exactly. */
+/* pcm24 samples are int32_t in [-2^23, 2^23), and a float's 24-bit
+   significand represents every integer in that range exactly, so this
+   float carries the sample - and the plain integer arithmetic below it -
+   with no precision loss versus double. */
 bool value_at(const struct sc88_oscillator *oscillator, size_t index,
-              double *out)
+              float *out)
 {
   uint32_t address = address_at(oscillator, index);
 
   if (reflected(oscillator, index)) {
-    double anchor = (double)oscillator->pcm24[oscillator->end -
-                                               oscillator->pcm_base];
+    float anchor = (float)oscillator->pcm24[oscillator->end -
+                                             oscillator->pcm_base];
     if (contains(oscillator, address)) {
-      *out = 2.0 * anchor -
-        (double)oscillator->pcm24[address - oscillator->pcm_base];
+      *out = 2.0f * anchor -
+        (float)oscillator->pcm24[address - oscillator->pcm_base];
       return true;
     }
     /* address_b - 1 only: it can precede the first decoded frame when a
@@ -248,7 +252,7 @@ bool value_at(const struct sc88_oscillator *oscillator, size_t index,
   }
   if (!contains(oscillator, address))
     return false;
-  *out = (double)oscillator->pcm24[address - oscillator->pcm_base];
+  *out = (float)oscillator->pcm24[address - oscillator->pcm_base];
   return true;
 }
 
@@ -411,8 +415,8 @@ bool previous_index(const struct sc88_oscillator *oscillator, size_t index,
    says what the chip reads when its address counter is still on the zone's
    first frame.  It costs at most the note's first 1/step output samples
    and weight (1-f)^3/6 of one of them. */
-double outer_tap(const struct sc88_oscillator *oscillator, size_t index,
-                  bool back, double inner)
+float outer_tap(const struct sc88_oscillator *oscillator, size_t index,
+                 bool back, float inner)
 {
   size_t at;
 
@@ -422,7 +426,7 @@ double outer_tap(const struct sc88_oscillator *oscillator, size_t index,
   } else {
     at = index + 1;
   }
-  double value;
+  float value;
   return value_at(oscillator, at, &value) ? value : inner;
 }
 
@@ -432,10 +436,18 @@ bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 {
   if (!oscillator || !sample || oscillator->ended)
     return false;
-  size_t index = (size_t)std::floor(oscillator->phase);
+  /* oscillator->phase is provably never negative: it starts at 0.0,
+     advances by a non-negative step (pitch_word_rate can't return a
+     negative rate), and every wrapped_phase branch also returns a
+     non-negative value. A truncating cast of a non-negative double is
+     the same integer as std::floor of it, so this skips std::floor's
+     FPU-control-word juggling (real cost on the 32-bit x87 target;
+     invisible on x86-64, which lowers std::floor to a single SSE2
+     instruction) for a value that already truncates to the same place. */
+  size_t index = (size_t)oscillator->phase;
   double fraction = oscillator->phase - (double)index;
-  double value0;
-  double value1;
+  float value0;
+  float value1;
   if (!value_at(oscillator, index, &value0) ||
       !value_at(oscillator, index + 1, &value1))
     return false;
@@ -451,8 +463,8 @@ bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 
      which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
      identity - and sums to one at every fraction. */
-  double left = outer_tap(oscillator, index, true, value0);
-  double right = outer_tap(oscillator, index + 1, false, value1);
+  float left = outer_tap(oscillator, index, true, value0);
+  float right = outer_tap(oscillator, index + 1, false, value1);
   double rest = 1.0 - fraction;
   *sample = (float)((rest * rest * rest / 6.0 * left +
                      (2.0 / 3.0 - fraction * fraction *

@@ -15,6 +15,10 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
+#include <cmath>
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -39,7 +43,29 @@ struct sc88_renderer {
   sc88_tvf_audio_transfer_fn tvf_audio_transfer;
   void *tvf_audio_user;
   unsigned only_component;
+  /* control_gain_q15's whole domain, decoded once at init instead of
+     once per active voice per output sample (reverb/chorus/delay sends
+     are read up to 3x per voice per sample, and the ROM table these come
+     from - kSendTable, pan.cc - never changes after rom_init): index by
+     the control byte directly, /32768.0f already folded in (exact, a
+     power of two), rather than repeating control_gain_q15's ROM read.
+     control_gain_q15's own false-return case (see pan.cc) is tracked
+     alongside it so a send whose bit pattern never means a clean gain
+     still gets skipped exactly as before. */
+  float send_gain[128];
+  bool send_ok[128];
 };
+
+/* See send_gain/send_ok above. Keeps control_gain_q15's own bounds check
+   (some callers pass a raw uint8_t send byte without pre-clamping). */
+static inline bool sc88_renderer_send_gain(
+  const struct sc88_renderer *renderer, uint8_t control, float *gain)
+{
+  if (control > 127)
+    return false;
+  *gain = renderer->send_gain[control];
+  return renderer->send_ok[control];
+}
 
 struct sc88_render_component {
   int32_t *pcm24;
@@ -137,23 +163,56 @@ struct sc88_render_component {
 /* The word at `71c7`, the exponential family's entry at rate index 2. */
 #define SC88_STATIC_AMPLITUDE_CURVE_WORD 0x02a7u
 
+#ifdef __cplusplus
+/* tva_curve_decode's result for SC88_STATIC_AMPLITUDE_CURVE_WORD never
+   changes (linear false, rate 679/64 - a power-of-two divisor, so this
+   is that exact double, not an approximation of it), so this inlines
+   tva_curve_progress's non-linear branch directly instead of redoing
+   both from scratch every call. Exposed separately from
+   sc88_render_static_gain_q17 below so a caller whose voices share one
+   period_fraction this sample - engine_render_with_send's per-voice
+   loop - can compute it once per sample instead of once per voice: at
+   period_fraction 0.0 this returns exactly 0.0 (exp(-0.0) is exactly
+   1.0), which sc88_render_static_gain_q17_from_progress below turns
+   back into component->static_gain_current_q17 unchanged, so no
+   separate period_fraction <= 0.0 case is needed here. */
+static inline double sc88_static_gain_progress(double period_fraction)
+{
+  constexpr double kRate = 679.0 / 64.0;
+  const double q = kRate * period_fraction;
+  return q >= 40.0 ? 1.0 : 1.0 - std::exp(-q);
+}
+#endif
+
+static inline uint32_t sc88_render_static_gain_q17_from_progress(
+  const struct sc88_render_component *component, double progress)
+{
+  const double from = (double)component->static_gain_current_q17;
+  const double to = (double)component->static_gain_q17;
+  const double value = from + progress * (to - from);
+  return value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
+}
+
 /* Where the chip's amplitude register stands `period_fraction` of the way
    through the control period. */
 static inline uint32_t sc88_render_static_gain_q17(
   const struct sc88_render_component *component, double period_fraction)
 {
-  struct sc88_tva_curve curve;
-  double from;
-  double to;
-  double value;
   if (period_fraction <= 0.0)
     return component->static_gain_current_q17;
-  from = (double)component->static_gain_current_q17;
-  to = (double)component->static_gain_q17;
-  sc88_tva_curve_decode(SC88_STATIC_AMPLITUDE_CURVE_WORD, &curve);
-  value = from +
-    sc88_tva_curve_progress(&curve, period_fraction) * (to - from);
-  return value <= 0.0 ? 0u : (uint32_t)(value + 0.5);
+  /* The C fallback keeps this header usable from the plain-C test files
+     that still include it. */
+#ifdef __cplusplus
+  return sc88_render_static_gain_q17_from_progress(
+    component, sc88_static_gain_progress(period_fraction));
+#else
+  {
+    struct sc88_tva_curve curve;
+    sc88_tva_curve_decode(SC88_STATIC_AMPLITUDE_CURVE_WORD, &curve);
+    return sc88_render_static_gain_q17_from_progress(
+      component, sc88_tva_curve_progress(&curve, period_fraction));
+  }
+#endif
 }
 
 struct sc88_render_voice {

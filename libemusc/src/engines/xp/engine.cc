@@ -650,7 +650,8 @@ void runScheduler(struct sc88_engine *engine)
     if (slot->component.pitch_release.active)
       (void)pitch_release_advance(&slot->component.pitch_release, elapsed);
     portamento_advance(&slot->component.portamento, elapsed);
-    if (std::getenv("SC88_TRACE_PITCH")) {
+    static const bool traceEnabled = std::getenv("SC88_TRACE_PITCH") != nullptr;
+    if (traceEnabled) {
       static unsigned n;
       if (n < 10)
         std::fprintf(stderr, "period %2u  pitch env current %6d stage %u "
@@ -1272,6 +1273,14 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
     float tapOsc = 0.0f, tapTvf = 0.0f, tapStatic = 0.0f;
     float tapTva = 0.0f, tapLfo = 0.0f;
     runScheduler(engine);
+    /* Loop-invariant: scheduler_clocks only moves inside runScheduler,
+       above, so this is the same value for every voice this frame - and
+       so is the static-gain glide's exp()-based progress derived from
+       it, which every voice below would otherwise recompute for itself. */
+    const double periodFraction =
+      engine->scheduler_clocks / kControlPeriodClocks;
+    const double staticGainProgress =
+      sc88_static_gain_progress(periodFraction);
     for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
       struct sc88_engine_slot *slot = engine->slots + i;
       float sample;
@@ -1283,19 +1292,16 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
         if (engine->renderer->tvf_audio_transfer)
           sample = engine->renderer->tvf_audio_transfer(
             engine->renderer->tvf_audio_user, &slot->component.tvf_audio,
-            &slot->component.tvf,
-            engine->scheduler_clocks / kControlPeriodClocks, sample);
+            &slot->component.tvf, periodFraction, sample);
         tapTvf += sample;
-        double periodFraction =
-          engine->scheduler_clocks / kControlPeriodClocks;
         uint32_t envelopeGain = tva_envelope_linear_q17(
           &engine->renderer->rom, &slot->component.envelope,
           periodFraction);
         /* The chip's amplitude register, not the CPU's composed target:
            the target is a step once per control period and the register
            is the ramp between two of them. */
-        float staticGain = sc88_render_static_gain_q17(
-          &slot->component, periodFraction) / 131072.0f;
+        float staticGain = sc88_render_static_gain_q17_from_progress(
+          &slot->component, staticGainProgress) / 131072.0f;
         tapStatic += sample * staticGain;
         tapTva += sample * staticGain * (envelopeGain / 131072.0f);
         float gained = sample * staticGain *
@@ -1310,32 +1316,32 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
            the ROM's send curve. A melodic component carries 127 and so
            keeps its part's control unchanged. */
         if (send && slot->note < SC88_ENGINE_NOTE_COUNT) {
-          uint16_t sendQ15;
+          float sendGain;
           uint8_t control = send_combine(
             engine->parts[engine->notes[slot->note].part].reverb_send,
             slot->component.reverb_send);
-          if (control_gain_q15(&engine->renderer->rom, control, &sendQ15))
-            bus += gained * (sendQ15 / 32768.0f);
+          if (sc88_renderer_send_gain(engine->renderer, control, &sendGain))
+            bus += gained * sendGain;
         }
         /* The delay bus takes the part's send alone: a rhythm note's own
            delay send lives in RAM at `+0x50c`, not in the kit record. */
         if (delaySend && slot->note < SC88_ENGINE_NOTE_COUNT) {
-          uint16_t sendQ15;
-          if (control_gain_q15(
-                &engine->renderer->rom,
+          float sendGain;
+          if (sc88_renderer_send_gain(
+                engine->renderer,
                 engine->parts[engine->notes[slot->note].part].delay_send,
-                &sendQ15))
-            delayBus += gained * (sendQ15 / 32768.0f);
+                &sendGain))
+            delayBus += gained * sendGain;
         }
         /* The chorus bus is formed the same way, from part byte `+0e` and
            the kit's `+0x400` (`08_effects/routing.md`). */
         if (chorusSend && slot->note < SC88_ENGINE_NOTE_COUNT) {
-          uint16_t sendQ15;
+          float sendGain;
           uint8_t control = send_combine(
             engine->parts[engine->notes[slot->note].part].chorus_send,
             slot->component.chorus_send);
-          if (control_gain_q15(&engine->renderer->rom, control, &sendQ15))
-            chorusBus += gained * (sendQ15 / 32768.0f);
+          if (sc88_renderer_send_gain(engine->renderer, control, &sendGain))
+            chorusBus += gained * sendGain;
         }
         if (slot->component.oscillator.ended)
           slot->component.active = false;
@@ -1365,8 +1371,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
       if (engine->renderer->tvf_audio_transfer)
         sample = engine->renderer->tvf_audio_transfer(
           engine->renderer->tvf_audio_user, &stop->component.tvf_audio,
-          &stop->component.tvf,
-          engine->scheduler_clocks / kControlPeriodClocks, sample);
+          &stop->component.tvf, periodFraction, sample);
       tapTvf += sample;
       /* One frozen product for the three amplitude taps: the envelope, the
          oscillators and the note gain no longer move apart. */
@@ -1377,25 +1382,25 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
       left += gained * (stop->component.left_gain_q15 / 32768.0f);
       right += gained * (stop->component.right_gain_q15 / 32768.0f);
       if (send) {
-        uint16_t sendQ15;
+        float sendGain;
         uint8_t control = send_combine(engine->parts[stop->part].reverb_send,
                                         stop->component.reverb_send);
-        if (control_gain_q15(&engine->renderer->rom, control, &sendQ15))
-          bus += gained * (sendQ15 / 32768.0f);
+        if (sc88_renderer_send_gain(engine->renderer, control, &sendGain))
+          bus += gained * sendGain;
       }
       if (delaySend) {
-        uint16_t sendQ15;
-        if (control_gain_q15(&engine->renderer->rom,
-                              engine->parts[stop->part].delay_send,
-                              &sendQ15))
-          delayBus += gained * (sendQ15 / 32768.0f);
+        float sendGain;
+        if (sc88_renderer_send_gain(engine->renderer,
+                                     engine->parts[stop->part].delay_send,
+                                     &sendGain))
+          delayBus += gained * sendGain;
       }
       if (chorusSend) {
-        uint16_t sendQ15;
+        float sendGain;
         uint8_t control = send_combine(engine->parts[stop->part].chorus_send,
                                         stop->component.chorus_send);
-        if (control_gain_q15(&engine->renderer->rom, control, &sendQ15))
-          chorusBus += gained * (sendQ15 / 32768.0f);
+        if (sc88_renderer_send_gain(engine->renderer, control, &sendGain))
+          chorusBus += gained * sendGain;
       }
       if (stop->component.oscillator.ended)
         stop->component.active = false;

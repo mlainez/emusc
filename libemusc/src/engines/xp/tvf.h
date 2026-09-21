@@ -89,6 +89,15 @@ struct sc88_tvf_audio_state {
   float integrator_low;
   float section_band[SC88_TVF_SECTIONS];
   float section_low[SC88_TVF_SECTIONS];
+  /* g's own memo: a pure function of the rounded word (see
+     tvf_audio_process_provisional), so a repeat word - the common case,
+     since the register glides in steps far coarser than one word per
+     sample - reuses it instead of paying exp2+asin+sin again.
+     tvf_audio_reset's memset leaves memo_valid false, which is correct:
+     word 0 is a real, distinct key, not "no memo yet". */
+  uint32_t memo_word;
+  double memo_g;
+  bool memo_valid;
 };
 
 typedef float (*sc88_tvf_audio_transfer_fn)(

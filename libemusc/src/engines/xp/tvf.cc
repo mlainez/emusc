@@ -277,9 +277,16 @@ int16_t scaleTarget(int16_t target, uint16_t depth)
 double frequencyProgress(const struct sc88_tvf_registers *registers,
                           double periods)
 {
-  struct sc88_tva_curve curve;
-  tva_curve_decode(registers->frequency_interpolation, &curve);
-  return tva_curve_progress(&curve, periods);
+  /* frequency_interpolation has exactly one writer, a few lines below in
+     tvf_prepare_registers: always the literal 0x4100 (also asserted by
+     sc88_rom_test.c, sc88_tvf_test.c and sc88_renderer_test.c). Decoding
+     that fixed word is always the linear family at rate 256/64 = 4.0
+     exactly - a power-of-two divisor, so this is that double, not an
+     approximation of it - which is what tva_curve_decode/_progress
+     reduce to below. Called once per voice per output sample, this skips
+     redoing that decode from scratch every time. */
+  const double q = 4.0 * periods;
+  return q >= 1.0 ? 1.0 : q;
 }
 
 }  // namespace
@@ -706,17 +713,30 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
     ((double)registers->frequency_target - registers->frequency_current);
   double g;
   {
-    /* The coefficient the ROM's word already is. At the chip's own rate
-       this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
-       taken out of the word by tvf_word_to_hz and put straight back -
-       and at any other host rate it is the same analog corner retuned
-       to that rate, which is the only part of this that is a choice. */
-    double rate = user ? *(const double *)user : kNativeRate;
-    double cutoff = tvf_word_to_hz((uint32_t)(word + 0.5));
-    double nyquist = rate * 0.5;
-    if (cutoff > nyquist * 0.99)
-      cutoff = nyquist * 0.99;
-    g = 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+    const uint32_t wordInt = (uint32_t)(word + 0.5);
+    /* g is a pure function of wordInt at a fixed host rate, and the host
+       rate is set once per Device and never changes mid-render (it comes
+       from renderer->tvf_audio_user, wired up once at device init) - so
+       memoizing on wordInt alone, per voice, is exact, not an
+       approximation of the rate-dependent case. */
+    if (state->memo_valid && state->memo_word == wordInt) {
+      g = state->memo_g;
+    } else {
+      /* The coefficient the ROM's word already is. At the chip's own rate
+         this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
+         taken out of the word by tvf_word_to_hz and put straight back -
+         and at any other host rate it is the same analog corner retuned
+         to that rate, which is the only part of this that is a choice. */
+      double rate = user ? *(const double *)user : kNativeRate;
+      double cutoff = tvf_word_to_hz(wordInt);
+      double nyquist = rate * 0.5;
+      if (cutoff > nyquist * 0.99)
+        cutoff = nyquist * 0.99;
+      g = 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+      state->memo_word = wordInt;
+      state->memo_g = g;
+      state->memo_valid = true;
+    }
   }
   /* Damping from the register the ROM supplies. `07_synthesis/tvf.md`:
    * the companion table at 0x78902 is exactly index * 512, expanded left

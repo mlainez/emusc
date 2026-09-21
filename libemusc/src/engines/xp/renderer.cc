@@ -544,6 +544,11 @@ bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
   std::memset(renderer, 0, sizeof *renderer);
   if (!rom_init(&renderer->rom, controlRom, controlRomSize))
     return false;
+  for (unsigned c = 0; c < 128; ++c) {
+    uint16_t raw = 0;
+    renderer->send_ok[c] = control_gain_q15(&renderer->rom, (uint8_t)c, &raw);
+    renderer->send_gain[c] = raw / 32768.0f;
+  }
   for (size_t i = 0; i < bankCount; ++i) {
     int index = bankIndex(banks[i].selector);
     if (index < 0 || occupied[index] || !banks[i].bytes ||

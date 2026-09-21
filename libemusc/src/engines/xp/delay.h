@@ -42,7 +42,7 @@ struct sc88_delay {
   size_t len;
   size_t pos;
   double output_rate;
-  double centre_samples, left_samples, right_samples;
+  float centre_samples, left_samples, right_samples;
   float centre_level, left_level, right_level;
   float overall, feedback;
   float pre_fb, pre_in, pre_state;
