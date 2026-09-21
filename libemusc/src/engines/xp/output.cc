@@ -18,7 +18,7 @@ namespace EmuSC { namespace Xp {
    trapezoidal integrators are a bilinear transform and left a double
    zero at Nyquist, so the two poles the ROM asks for rolled off like
    three. With the TVF realised in the topology the chip's limit table
-   names (tvf.cc, kLimitTable) there is nothing left for the
+   names (tvf.cc, XpDeviceProfile::limitTable) there is nothing left for the
    shelf to stand in for.
 
    Measured, 63 single notes against the archive recordings, median band
@@ -47,10 +47,10 @@ namespace EmuSC { namespace Xp {
    The stage stays, with the DC blocker in it, because it is the one
    labelled place for this class of thing. C has no empty array, so one
    zeroed entry stands in the list and the count is zero. */
-extern "C" const struct sc88_output_section SC88_OUTPUT_RESPONSE[1] = {
-  { SC88_OUTPUT_PEAKING, 0.0f, 0.0f, 0.0f },
+extern "C" const struct sc88_output_section XP_OUTPUT_RESPONSE[1] = {
+  { XP_OUTPUT_PEAKING, 0.0f, 0.0f, 0.0f },
 };
-extern "C" const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
+extern "C" const unsigned XP_OUTPUT_RESPONSE_SECTIONS = 0;
 
 /* THE CONVERTER'S HOLD, and it is measured rather than assumed.
 
@@ -154,7 +154,7 @@ extern "C" const unsigned SC88_OUTPUT_RESPONSE_SECTIONS = 0;
    where a bilinear transform has no pole to place, and the FIR is
    designed by frequency sampling, which does not care. */
 extern "C" const struct sc88_output_rc
-  SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS] = {
+  XP_OUTPUT_ANALOG[XP_OUTPUT_ANALOG_SECTIONS] = {
   { 4.7e3, 100e-12 },   /* IC110 R146 || C152 */
   { 22.0e3, 100e-12 },  /* IC109 R140 || C144 */
   { 100.0, 680e-12 },   /* R138 + C141        */
@@ -169,9 +169,9 @@ double analogMag(double f)
 {
   const double pi = 3.14159265358979323846;
   double mag = 1.0;
-  for (unsigned i = 0; i < SC88_OUTPUT_ANALOG_SECTIONS; ++i) {
-    double fc = 1.0 / (2.0 * pi * SC88_OUTPUT_ANALOG[i].r_ohm *
-                       SC88_OUTPUT_ANALOG[i].c_farad);
+  for (unsigned i = 0; i < XP_OUTPUT_ANALOG_SECTIONS; ++i) {
+    double fc = 1.0 / (2.0 * pi * XP_OUTPUT_ANALOG[i].r_ohm *
+                       XP_OUTPUT_ANALOG[i].c_farad);
     double r = f / fc;
     mag /= std::sqrt(1.0 + r * r);
   }
@@ -195,11 +195,11 @@ double besselI0(double x)
 void designHold(struct sc88_output *out, double rate)
 {
   const double pi = 3.14159265358979323846;
-  const int half = SC88_OUTPUT_HOLD_TAPS / 2;
+  const int half = XP_OUTPUT_HOLD_TAPS / 2;
   const int steps = 4096;
   const double beta = 7.0;
   const double i0beta = besselI0(beta);
-  double h[SC88_OUTPUT_HOLD_TAPS];
+  double h[XP_OUTPUT_HOLD_TAPS];
   double sum = 0.0;
 
   for (int k = -half; k <= half; ++k) {
@@ -219,9 +219,9 @@ void designHold(struct sc88_output *out, double rate)
     h[k + half] = acc * win;
     sum += h[k + half];
   }
-  for (int k = 0; k < SC88_OUTPUT_HOLD_TAPS; ++k)
+  for (int k = 0; k < XP_OUTPUT_HOLD_TAPS; ++k)
     out->hold[k] = (float)(h[k] / sum);
-  out->hold_taps = SC88_OUTPUT_HOLD_TAPS;
+  out->hold_taps = XP_OUTPUT_HOLD_TAPS;
   out->hold_pos = 0;
 }
 
@@ -243,7 +243,7 @@ void design(struct sc88_output_biquad *bq, const struct sc88_output_section *s,
 
   double b0, b1, b2, a0, a1, a2;
   switch (s->type) {
-  case SC88_OUTPUT_HIGH_SHELF: {
+  case XP_OUTPUT_HIGH_SHELF: {
     double sq = 2.0 * std::sqrt(a) * alpha;
     b0 = a * ((a + 1.0) + (a - 1.0) * cw + sq);
     b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cw);
@@ -253,7 +253,7 @@ void design(struct sc88_output_biquad *bq, const struct sc88_output_section *s,
     a2 = (a + 1.0) - (a - 1.0) * cw - sq;
     break;
   }
-  case SC88_OUTPUT_LOW_SHELF: {
+  case XP_OUTPUT_LOW_SHELF: {
     double sq = 2.0 * std::sqrt(a) * alpha;
     b0 = a * ((a + 1.0) - (a - 1.0) * cw + sq);
     b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cw);
@@ -288,11 +288,11 @@ void output_init(struct sc88_output *out, double rate)
   std::memset(out, 0, sizeof *out);
   if (!(rate > 0.0))
     rate = 32000.0;
-  out->sections = SC88_OUTPUT_RESPONSE_SECTIONS;
-  if (out->sections > SC88_OUTPUT_MAX_SECTIONS)
-    out->sections = SC88_OUTPUT_MAX_SECTIONS;
+  out->sections = XP_OUTPUT_RESPONSE_SECTIONS;
+  if (out->sections > XP_OUTPUT_MAX_SECTIONS)
+    out->sections = XP_OUTPUT_MAX_SECTIONS;
   for (unsigned i = 0; i < out->sections; ++i)
-    design(&out->section[i], &SC88_OUTPUT_RESPONSE[i], rate);
+    design(&out->section[i], &XP_OUTPUT_RESPONSE[i], rate);
   designHold(out, rate);
   /* A 10 Hz single-pole blocker: 0.03 dB at 111 Hz and unity everywhere
      the audit measures, so it is not what removes the high frequency
@@ -307,7 +307,7 @@ void output_reset(struct sc88_output *out)
 {
   if (!out)
     return;
-  for (unsigned i = 0; i < SC88_OUTPUT_MAX_SECTIONS; ++i) {
+  for (unsigned i = 0; i < XP_OUTPUT_MAX_SECTIONS; ++i) {
     std::memset(out->section[i].x1, 0, sizeof out->section[i].x1);
     std::memset(out->section[i].x2, 0, sizeof out->section[i].x2);
     std::memset(out->section[i].y1, 0, sizeof out->section[i].y1);

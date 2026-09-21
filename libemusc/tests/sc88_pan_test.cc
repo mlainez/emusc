@@ -20,13 +20,14 @@ static void put16(uint8_t *p, uint16_t v)
 
 int main()
 {
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   struct sc88_rom rom;
   uint16_t left, right, gain;
   uint8_t position;
   assert(bytes);
   rom.bytes = bytes;
-  rom.size = SC88_CONTROL_ROM_SIZE;
+  rom.size = XP_CONTROL_ROM_SIZE;
+  rom.profile = &SC88_PROFILE;
 
   /* sc88_pan_pair_q15: position 1 reads left from the table's LAST entry
      and right from its FIRST - the pan curve runs in opposite directions

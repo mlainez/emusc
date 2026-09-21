@@ -68,14 +68,14 @@ static bool split_wave_roms(const char *csv, char paths[4][512])
 
 static void test_held_rom(char **paths)
 {
-  static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
+  static const uint8_t selectors[XP_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
   };
-  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_render_voice voice = {0};
   struct sc88_engine engine;
-  uint8_t *control = read_exact(paths[0], SC88_CONTROL_ROM_SIZE);
+  uint8_t *control = read_exact(paths[0], XP_CONTROL_ROM_SIZE);
   uint8_t *chips[4];
   float output[32];
   float engine_output[8192];
@@ -83,17 +83,17 @@ static void test_held_rom(char **paths)
   size_t i;
 
   for (i = 0; i < 4; ++i) {
-    chips[i] = read_exact(paths[i + 1], SC88_WAVE_CHIP_SIZE);
+    chips[i] = read_exact(paths[i + 1], SC88_PROFILE.waveChipSize);
     banks[i * 2].selector = selectors[i * 2];
     banks[i * 2].bytes = chips[i];
-    banks[i * 2].size = SC88_WAVE_BANK_SIZE;
+    banks[i * 2].size = SC88_PROFILE.waveBankSize;
     banks[i * 2 + 1].selector = selectors[i * 2 + 1];
-    banks[i * 2 + 1].bytes = chips[i] + SC88_WAVE_BANK_SIZE;
-    banks[i * 2 + 1].size = SC88_WAVE_BANK_SIZE;
+    banks[i * 2 + 1].bytes = chips[i] + SC88_PROFILE.waveBankSize;
+    banks[i * 2 + 1].size = SC88_PROFILE.waveBankSize;
   }
-  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
-                            banks, SC88_WAVE_BANK_COUNT, 48000.0,
-                            SC88_WRAP_FULL_CARRY));
+  assert(renderer_init(&renderer, control, XP_CONTROL_ROM_SIZE,
+                            banks, XP_WAVE_BANK_COUNT, 48000.0,
+                            XP_WRAP_FULL_CARRY));
   assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
   assert(voice.components[0].static_gain_q17 > 0);
   assert(voice.components[0].tvf.frequency_interpolation == 0x4100);
@@ -103,7 +103,7 @@ static void test_held_rom(char **paths)
   renderer_voice_destroy(&voice);
   assert(engine_init(&engine, &renderer));
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   engine_render(&engine, engine_output, 4096);
   for (i = 0; i < 8192; ++i)
     energy += fabs(engine_output[i]);
@@ -117,16 +117,16 @@ static void test_held_rom(char **paths)
 
 int main()
 {
-  static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
+  static const uint8_t selectors[XP_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
   };
   static const uint8_t vectors[16] = {
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
     0x00, 0x00, 0x01, 0xf4, 0x00, 0x00, 0x01, 0xf4
   };
-  uint8_t *control = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
-  uint8_t *wave = (uint8_t *)calloc(SC88_WAVE_BANK_SIZE, 1);
-  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  uint8_t *control = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
+  uint8_t *wave = (uint8_t *)calloc(SC88_PROFILE.waveBankSize, 1);
+  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_render_voice voice;
   struct sc88_component component;
@@ -199,14 +199,14 @@ int main()
   assert(renderer_selector_key(&component, 72) == 66);
   put16(control + 0x40000 + 34 + 0x14, 0x4000);
 
-  for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
+  for (i = 0; i < XP_WAVE_BANK_COUNT; ++i) {
     banks[i].selector = selectors[i];
     banks[i].bytes = wave;
-    banks[i].size = SC88_WAVE_BANK_SIZE;
+    banks[i].size = SC88_PROFILE.waveBankSize;
   }
-  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
-                            banks, SC88_WAVE_BANK_COUNT, 32000.0,
-                            SC88_WRAP_FULL_CARRY));
+  assert(renderer_init(&renderer, control, XP_CONTROL_ROM_SIZE,
+                            banks, XP_WAVE_BANK_COUNT, 32000.0,
+                            XP_WRAP_FULL_CARRY));
   /* The velocity window gates the component, both bounds inclusive: inside
      it the note sounds, one count outside it there is no component to
      sound and the note is refused. Ignoring the window does not merely add

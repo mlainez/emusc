@@ -23,10 +23,10 @@ extern "C" {
  * that section's (-0.5, +0.5) coefficient pair; a disabled section still
  * has its buffer and runs as a plain delay. */
 struct sc88_reverb_character {
-  uint16_t head[SC88_REVERB_BUFFERS];
-  uint16_t far[SC88_REVERB_BUFFERS];
-  uint16_t tap[SC88_REVERB_TAPS];
-  bool allpass[SC88_REVERB_BUFFERS];
+  uint16_t head[XP_REVERB_BUFFERS];
+  uint16_t far[XP_REVERB_BUFFERS];
+  uint16_t tap[XP_REVERB_TAPS];
+  bool allpass[XP_REVERB_BUFFERS];
   uint8_t allpasses;                      /* how many pairs are enabled */
   uint16_t extent;                        /* the whole memory it spans */
   /* The per-half damping one-pole, from the character record's words
@@ -67,9 +67,13 @@ struct sc88_reverb {
      assignment to a buffer - they are just reads. */
   float *eram;
   unsigned eram_len, eram_pos;
-  unsigned head[SC88_REVERB_BUFFERS], far[SC88_REVERB_BUFFERS];
-  unsigned tap[SC88_REVERB_TAPS];
-  float tap_gain[SC88_REVERB_TAPS];
+  unsigned head[XP_REVERB_BUFFERS], far[XP_REVERB_BUFFERS];
+  unsigned tap[XP_REVERB_TAPS];
+  float tap_gain[XP_REVERB_TAPS];
+  /* The allpass sections' shared coefficient, cached from the device
+     profile at init: section() below runs per-sample on just `rv` and has
+     no rom/profile to read it from directly. */
+  float allpass_g;
   uint8_t character_index;
   float damp_state[2];
   float tank_return;             /* half 2's output, held for half 1 */
@@ -114,7 +118,7 @@ bool reverb_pre_lpf(uint8_t p, float *feedback, float *input);
 /* The eight tap gains, read from the DSP program's own coefficient RAM at
  * the tap instructions. They are not part of the character record - every
  * character shares them, and both program images carry the same eight. */
-bool reverb_tap_gains(const struct sc88_rom *rom, float gains[SC88_REVERB_TAPS]);
+bool reverb_tap_gains(const struct sc88_rom *rom, float gains[XP_REVERB_TAPS]);
 
 /* One of the eight macro presets at `0x1583e + 8*macro`: character, pre-LPF,
  * level, time, delay feedback, the reserved byte the reverb block has at

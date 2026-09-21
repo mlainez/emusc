@@ -13,22 +13,22 @@
 extern "C" {
 #endif
 
-#define SC88_ENGINE_NONE 0xffu
+#define XP_ENGINE_NONE 0xffu
 
 /* engine_init()'s default max_voices, absent a --max-voices override - what
-   the real hardware did. SC88_DEFAULT_MAX_VOICES (devices/sc88.h) is a
-   device fact and can differ per device; SC88_ENGINE_SLOT_COUNT (also
+   the real hardware did. XpDeviceProfile::defaultMaxVoices (devices/sc88.h)
+   is a device fact and can differ per device; XP_ENGINE_SLOT_COUNT (also
    devices/sc88.h) stays this engine's own fixed array size and hard
    ceiling regardless of which device's default is in effect. */
 
 enum sc88_same_note_mode {
-  SC88_SAME_NOTE_SINGLE = 0,
-  SC88_SAME_NOTE_LIMITED_MULTI = 1,
-  SC88_SAME_NOTE_FULL_MULTI = 2
+  XP_SAME_NOTE_SINGLE = 0,
+  XP_SAME_NOTE_LIMITED_MULTI = 1,
+  XP_SAME_NOTE_FULL_MULTI = 2
 };
 
 struct sc88_engine_note {
-  uint8_t slots[SC88_MAX_TONE_COMPONENTS];
+  uint8_t slots[XP_MAX_TONE_COMPONENTS];
   uint8_t slot_count;
   uint8_t part;
   uint8_t key;
@@ -111,7 +111,7 @@ struct sc88_engine_slot {
    a slot, is not counted by `sc88_engine_active_slots`, and cannot delay or
    reorder an allocation. A full pool ends the voice where it stands: the
    stop is what the song can spare, never the allocation. */
-#define SC88_ENGINE_STOPPING_COUNT 32u
+#define XP_ENGINE_STOPPING_COUNT 32u
 
 struct sc88_engine_stopping {
   struct sc88_render_component component;
@@ -153,7 +153,7 @@ struct sc88_engine_part {
      of two kit working areas. */
   uint8_t rhythm_setup;
   /* Which kit set a rhythm part's program indexes, and which bank a
-     melodic one's does: `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`.
+     melodic one's does: `XP_TONE_MAP_SC55` or `XP_TONE_MAP_SC88`.
      The firmware derives it from the part's bank word at `d820` - the
      forcing byte CC32 writes if that is nonzero, otherwise the part's
      selected map - and the drum lookup at `2e7a` indexes
@@ -191,7 +191,7 @@ typedef void (*sc88_control_service_fn)(void *user,
    unconditionally". These entries are that shared state: one oscillator per
    tone (and per component, for the local one), advanced once per control
    period, read by every voice that shares it. */
-#define SC88_ENGINE_SHARED_LFO_COUNT 48u
+#define XP_ENGINE_SHARED_LFO_COUNT 48u
 
 struct sc88_engine_shared_lfo {
   uint32_t tone_offset;
@@ -219,11 +219,11 @@ struct sc88_engine_stage_taps {
 
 struct sc88_engine {
   const struct sc88_renderer *renderer;
-  struct sc88_engine_shared_lfo shared_lfo[SC88_ENGINE_SHARED_LFO_COUNT];
-  struct sc88_engine_note notes[SC88_ENGINE_NOTE_COUNT];
-  struct sc88_engine_slot slots[SC88_ENGINE_SLOT_COUNT];
-  struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
-  struct sc88_engine_stopping stopping[SC88_ENGINE_STOPPING_COUNT];
+  struct sc88_engine_shared_lfo shared_lfo[XP_ENGINE_SHARED_LFO_COUNT];
+  struct sc88_engine_note notes[XP_ENGINE_NOTE_COUNT];
+  struct sc88_engine_slot slots[XP_ENGINE_SLOT_COUNT];
+  struct sc88_engine_part parts[XP_ENGINE_PART_COUNT];
+  struct sc88_engine_stopping stopping[XP_ENGINE_STOPPING_COUNT];
   /* one random word shared by every oscillator, as the firmware has */
   uint16_t lfo_seed;
   /* Draws the position a part-pan of zero asks for. Separate from
@@ -233,11 +233,11 @@ struct sc88_engine {
   struct sc88_drum_overlay drum_overlay;
   uint8_t free_note_head;
   uint8_t free_note_tail;
-  uint8_t note_next_free[SC88_ENGINE_NOTE_COUNT];
+  uint8_t note_next_free[XP_ENGINE_NOTE_COUNT];
   uint8_t free_slot_head;
   uint8_t free_slot_tail;
   unsigned free_slot_count;
-  /* The real SC-88 is SC88_ENGINE_SLOT_COUNT (64-voice polyphony); this
+  /* The real SC-88 is XP_ENGINE_SLOT_COUNT (64-voice polyphony); this
      can only lower that, never raise it, for hardware too slow to keep
      up with the real ceiling - see engine_set_max_voices. */
   unsigned max_voices;
@@ -246,7 +246,18 @@ struct sc88_engine {
   sc88_control_service_fn control_service;
   struct sc88_engine_stage_taps stage_taps;
   void *control_user;
+  /* Set by engine_init(). Never read directly - use xp_profile_e()
+     (below), which falls back to SC88_PROFILE when this is null. */
+  const struct XpDeviceProfile *profile;
 };
+
+/* Never-null equivalent of xp_profile() (devices/sc88.h) for an engine
+   rather than a rom. */
+static inline const struct XpDeviceProfile *xp_profile_e(
+    const struct sc88_engine *engine)
+{
+  return (engine && engine->profile) ? engine->profile : &SC88_PROFILE;
+}
 
 #ifdef __cplusplus
 }
@@ -275,9 +286,9 @@ namespace EmuSC { namespace Xp {
 bool engine_init(struct sc88_engine *engine,
                   const struct sc88_renderer *renderer);
 void engine_destroy(struct sc88_engine *engine);
-/* Lowers the engine's own voice ceiling below SC88_ENGINE_SLOT_COUNT, for
+/* Lowers the engine's own voice ceiling below XP_ENGINE_SLOT_COUNT, for
    hardware too slow to sustain the real 64-voice worst case - clamped to
-   [1, SC88_ENGINE_SLOT_COUNT], and only meaningful called right after
+   [1, XP_ENGINE_SLOT_COUNT], and only meaningful called right after
    engine_init, before any note has taken a slot (it rebuilds the free
    list from scratch, which would strand a sounding voice's slot outside
    it if called later). Returns false, changing nothing, if engine is

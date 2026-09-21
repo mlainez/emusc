@@ -29,9 +29,9 @@ extern "C" {
 #endif
 
 enum sc88_output_section_type {
-  SC88_OUTPUT_LOW_SHELF,
-  SC88_OUTPUT_PEAKING,
-  SC88_OUTPUT_HIGH_SHELF
+  XP_OUTPUT_LOW_SHELF,
+  XP_OUTPUT_PEAKING,
+  XP_OUTPUT_HIGH_SHELF
 };
 
 struct sc88_output_section {
@@ -50,15 +50,15 @@ struct sc88_output_biquad {
    0.003 dB through 13.9 kHz and 0.05 dB at 15 kHz at the chip's own
    32 kHz, 0.007 dB across the whole band at 44.1 kHz; only the last few
    hundred hertz before Nyquist fall short, where the target is a cusp.
-   The cost is a constant group delay of SC88_OUTPUT_HOLD_TAPS / 2
+   The cost is a constant group delay of XP_OUTPUT_HOLD_TAPS / 2
    samples on the whole render, 0.47 ms at 32 kHz. */
 
 struct sc88_output {
-  struct sc88_output_biquad section[SC88_OUTPUT_MAX_SECTIONS];
+  struct sc88_output_biquad section[XP_OUTPUT_MAX_SECTIONS];
   unsigned sections;
   /* The DAC's zero-order hold. See output.cc for the measurement. */
-  float hold[SC88_OUTPUT_HOLD_TAPS];
-  float hold_z[2][SC88_OUTPUT_HOLD_TAPS];
+  float hold[XP_OUTPUT_HOLD_TAPS];
+  float hold_z[2][XP_OUTPUT_HOLD_TAPS];
   unsigned hold_taps;
   unsigned hold_pos;
   /* The DC blocker, which lived inline in sc88_device.c until it was
@@ -70,14 +70,14 @@ struct sc88_output {
 };
 
 /* The profile itself, exposed so a test can assert its response. */
-extern const struct sc88_output_section SC88_OUTPUT_RESPONSE[];
-extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
+extern const struct sc88_output_section XP_OUTPUT_RESPONSE[];
+extern const unsigned XP_OUTPUT_RESPONSE_SECTIONS;
 
 /* The analog board's own poles, as the R and C that make them. See
    output.cc for the schematic they are read from. */
 struct sc88_output_rc { double r_ohm, c_farad; };
 extern const struct sc88_output_rc
-  SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS];
+  XP_OUTPUT_ANALOG[XP_OUTPUT_ANALOG_SECTIONS];
 
 #ifdef __cplusplus
 }

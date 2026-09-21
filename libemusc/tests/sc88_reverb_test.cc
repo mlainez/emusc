@@ -38,17 +38,17 @@ int main()
   /* twelve buffers, laid out contiguously with a one-address boundary */
   static const unsigned len[12] = {100, 80, 40, 20, 60, 300, 50, 400,
                                    70, 320, 55, 380};
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   struct sc88_rom rom;
   struct sc88_reverb_character ch;
   struct sc88_reverb rv;
-  float fb, in, gains[SC88_REVERB_TAPS];
+  float fb, in, gains[XP_REVERB_TAPS];
   unsigned i, head[12], at = 0;
   uint32_t block = 0x15992u;             /* where Room 1's record really is */
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   /* The pre-LPF law, both ends and the identity that fixes the order: p = 0
      is an exact bypass, and every other entry leaks one part in 64. */
@@ -140,7 +140,7 @@ int main()
      reverb characters carry. */
   assert(ch.return_trim == 32);
   assert(fabsf(rv.trim - 1.0f) < 1e-6f);
-  assert(fabsf(rv.wet_gain_left - rv.level / sqrtf((float)SC88_REVERB_TAPS))
+  assert(fabsf(rv.wet_gain_left - rv.level / sqrtf((float)XP_REVERB_TAPS))
          < 1e-6f);
   {
     float send[64], stereo[128];

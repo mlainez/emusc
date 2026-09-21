@@ -48,11 +48,11 @@ int main()
   file = fopen(romPath, "rb");
   if (!file)
     return 77;
-  bytes = (uint8_t *)malloc(SC88_CONTROL_ROM_SIZE);
+  bytes = (uint8_t *)malloc(XP_CONTROL_ROM_SIZE);
   assert(bytes);
-  size = fread(bytes, 1, SC88_CONTROL_ROM_SIZE, file);
+  size = fread(bytes, 1, XP_CONTROL_ROM_SIZE, file);
   fclose(file);
-  if (size != SC88_CONTROL_ROM_SIZE || !rom_init(&rom, bytes, size)) {
+  if (size != XP_CONTROL_ROM_SIZE || !rom_init(&rom, bytes, size)) {
     free(bytes);
     return 77;
   }

@@ -15,7 +15,7 @@ using namespace EmuSC::Xp;
    is a labelled choice and is not asserted; the numbers are. */
 int main()
 {
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
   };
@@ -28,7 +28,7 @@ int main()
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   /* the centre-time table is `0x8000 + floor(ms * 32)` over its 115 public
      entries, so 100 ms at index 80 and one second at index 0x73 */
@@ -39,7 +39,7 @@ int main()
   bytes[0x165ca + 0x30 * 2] = 0x02;
   bytes[0x165ca + 0x30 * 2 + 1] = 0x00;        /* twice */
 
-  assert(delay_init(&dl, 32000.0));
+  assert(delay_init(&dl, 32000.0, &SC88_PROFILE));
 
   p[0] = 0; p[1] = 80; p[2] = 0x18; p[3] = 0x30;
   p[4] = 127; p[5] = 127; p[6] = 127; p[7] = 127; p[8] = 64; p[9] = 0;
@@ -76,7 +76,7 @@ int main()
   assert(!delay_macro(&rom, 10, macro));
 
   delay_destroy(&dl);
-  assert(!delay_init(&dl, 100.0));
+  assert(!delay_init(&dl, 100.0, &SC88_PROFILE));
   free(bytes);
   return 0;
 }

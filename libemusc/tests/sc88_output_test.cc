@@ -34,9 +34,9 @@ int main()
      blocker. */
   output_init(&out, rate);
   assert(out.enabled);
-  assert(out.sections == SC88_OUTPUT_RESPONSE_SECTIONS);
+  assert(out.sections == XP_OUTPUT_RESPONSE_SECTIONS);
   assert(out.sections == 0);
-  assert(out.hold_taps == SC88_OUTPUT_HOLD_TAPS);
+  assert(out.hold_taps == XP_OUTPUT_HOLD_TAPS);
   assert(out.hold_pos == 0);
 
   /* The hold FIR is normalised to unity DC gain by construction: each tap
@@ -52,13 +52,13 @@ int main()
 
   /* The analog board's five one-pole sections, read off the schematic:
      R146||C152, R140||C144, R138+C141, R127||C131, R101+C113. */
-  assert(SC88_OUTPUT_ANALOG_SECTIONS == 5);
-  assert(SC88_OUTPUT_ANALOG[0].r_ohm == 4.7e3 &&
-         SC88_OUTPUT_ANALOG[0].c_farad == 100e-12);
-  assert(SC88_OUTPUT_ANALOG[2].r_ohm == 100.0 &&
-         SC88_OUTPUT_ANALOG[2].c_farad == 680e-12);
-  assert(SC88_OUTPUT_ANALOG[4].r_ohm == 1.8e3 &&
-         SC88_OUTPUT_ANALOG[4].c_farad == 1000e-12);
+  assert(XP_OUTPUT_ANALOG_SECTIONS == 5);
+  assert(XP_OUTPUT_ANALOG[0].r_ohm == 4.7e3 &&
+         XP_OUTPUT_ANALOG[0].c_farad == 100e-12);
+  assert(XP_OUTPUT_ANALOG[2].r_ohm == 100.0 &&
+         XP_OUTPUT_ANALOG[2].c_farad == 680e-12);
+  assert(XP_OUTPUT_ANALOG[4].r_ohm == 1.8e3 &&
+         XP_OUTPUT_ANALOG[4].c_farad == 1000e-12);
 
   /* With no biquad section, a held DC input passes through the hold FIR
      (unity DC gain) and then only the DC blocker acts on it - and a

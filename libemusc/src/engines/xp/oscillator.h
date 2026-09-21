@@ -13,13 +13,13 @@ extern "C" {
 #endif
 
 /* What the phase accumulator does at a loop wrap.  The ROM says
-   SC88_WRAP_FULL_CARRY, and the evidence is at
+   XP_WRAP_FULL_CARRY, and the evidence is at
    `sc88_oscillator_wrapped_phase`.  The other two are kept only so that
    arithmetic stays testable; neither is a candidate. */
 enum sc88_fractional_wrap {
-  SC88_WRAP_FULL_CARRY,
-  SC88_WRAP_FULL_RESET,
-  SC88_WRAP_FRACTION_ONLY
+  XP_WRAP_FULL_CARRY,
+  XP_WRAP_FULL_RESET,
+  XP_WRAP_FRACTION_ONLY
 };
 
 struct sc88_oscillator {
@@ -53,7 +53,8 @@ namespace EmuSC { namespace Xp {
 // read its fields directly.
 
 double pitch_word_rate(uint32_t pitchWord, double outputRate);
-bool oscillator_init(struct sc88_oscillator *oscillator,
+bool oscillator_init(const struct XpDeviceProfile *profile,
+                      struct sc88_oscillator *oscillator,
                       const int32_t *pcm24, size_t pcmCount,
                       uint32_t pcmBase,
                       const struct sc88_wave_registers *registers,

@@ -147,7 +147,8 @@ static bool write_wav(const char *path, const int32_t *pcm24, size_t count,
  * sample is followed for `seconds` and faded at the end so the file does
  * not click. A one-shot runs to its end.
  */
-static int32_t *play(const int32_t *pcm, size_t count, uint32_t base,
+static int32_t *play(const struct XpDeviceProfile *profile,
+                     const int32_t *pcm, size_t count, uint32_t base,
                      const struct sc88_wave_descriptor *desc,
                      enum sc88_wave_loop_type loop, uint32_t pitch_word,
                      unsigned rate, double seconds, size_t *out_count)
@@ -158,9 +159,9 @@ static int32_t *play(const int32_t *pcm, size_t count, uint32_t base,
   size_t initial, frames, fade, i;
   int32_t *out;
 
-  if (!wave_prepare_registers(desc, false, &registers) ||
-      !oscillator_init(&oscillator, pcm, count, base, &registers, loop,
-                            pitch_word, rate, SC88_WRAP_FULL_CARRY) ||
+  if (!wave_prepare_registers(profile, desc, false, &registers) ||
+      !oscillator_init(profile, &oscillator, pcm, count, base, &registers,
+                            loop, pitch_word, rate, XP_WRAP_FULL_CARRY) ||
       oscillator.step <= 0.0)
     return NULL;
   /* the first pass in output frames, so a long sample is never cut */
@@ -267,17 +268,18 @@ int main(int argc, char **argv)
     fprintf(stderr, "the control ROM was refused\n");
     return 1;
   }
+  const struct XpDeviceProfile *profile = xp_profile(&rom);
   for (i = 0; i < 4; ++i) {
     chips[i] = read_file(wave_paths[i], &chip_size[i]);
-    decoded[i] = (uint8_t *)malloc(SC88_WAVE_CHIP_SIZE);
+    decoded[i] = (uint8_t *)malloc(profile->waveChipSize);
     if (!chips[i] || !decoded[i] ||
-        !wave_descramble_chip(chips[i], chip_size[i], decoded[i],
-                                   SC88_WAVE_CHIP_SIZE)) {
+        !wave_descramble_chip(profile, chips[i], chip_size[i], decoded[i],
+                                   profile->waveChipSize)) {
       fprintf(stderr, "wave image %d was refused\n", i);
       return 1;
     }
     banks[i * 2] = decoded[i];
-    banks[i * 2 + 1] = decoded[i] + SC88_WAVE_BANK_SIZE;
+    banks[i * 2 + 1] = decoded[i] + profile->waveBankSize;
   }
 
   snprintf(index_path, sizeof index_path, "%s/index.tsv", out_dir);
@@ -317,11 +319,11 @@ int main(int argc, char **argv)
       previous = boundary;
       if (pointer != 0xffff &&
           descriptor_offset >= DESCRIPTOR_BASE &&
-          descriptor_offset + SC88_WAVE_DESCRIPTOR_SIZE <= DESCRIPTOR_END &&
+          descriptor_offset + profile->waveDescriptorSize <= DESCRIPTOR_END &&
           (descriptor_offset - DESCRIPTOR_BASE) %
-            SC88_WAVE_DESCRIPTOR_SIZE == 0 &&
-          wave_descriptor_parse(control + descriptor_offset,
-                                     SC88_WAVE_DESCRIPTOR_SIZE, &desc) &&
+            profile->waveDescriptorSize == 0 &&
+          wave_descriptor_parse(profile, control + descriptor_offset,
+                                     profile->waveDescriptorSize, &desc) &&
           (index_of_bank = bank_index(desc.bank_select)) >= 0) {
         uint32_t base = desc.address_a & ~UINT32_C(0x0f);
         size_t capacity = (size_t)(desc.address_c - base) + 1u;
@@ -329,8 +331,8 @@ int main(int argc, char **argv)
         size_t count = 0;
         uint32_t decoded_base = base;
         if (pcm && desc.address_c > base &&
-            fce_decode_storage(banks[index_of_bank],
-                                    SC88_WAVE_BANK_SIZE, &desc, pcm,
+            fce_decode_storage(profile, banks[index_of_bank],
+                                    profile->waveBankSize, &desc, pcm,
                                     capacity, &decoded_base, &count) &&
             count) {
           char path[1024];
@@ -340,11 +342,11 @@ int main(int argc, char **argv)
           int16_t correction;
           long pitch_word;
           if (!wave_descriptor_loop_type(&desc, &loop))
-            loop = SC88_WAVE_FORWARD_ONE_SHOT;
+            loop = XP_WAVE_FORWARD_ONE_SHOT;
           loop_name =
-            loop == SC88_WAVE_FORWARD_LOOP ? "forward"
-            : loop == SC88_WAVE_PING_PONG_LOOP ? "ping-pong"
-            : loop == SC88_WAVE_FORWARD_ONE_SHOT ? "one-shot"
+            loop == XP_WAVE_FORWARD_LOOP ? "forward"
+            : loop == XP_WAVE_PING_PONG_LOOP ? "ping-pong"
+            : loop == XP_WAVE_FORWARD_ONE_SHOT ? "one-shot"
             : "reverse-one-shot";
           correction = pitch_correction
             ? wave_pitch_correction(&desc, true) : 0;
@@ -353,7 +355,7 @@ int main(int argc, char **argv)
             pitch_word = 0;
           if (pitch_word > 0x3ffff)
             pitch_word = 0x3ffff;
-          played = play(pcm, count, decoded_base, &desc, loop,
+          played = play(profile, pcm, count, decoded_base, &desc, loop,
                         (uint32_t)pitch_word, NATIVE_RATE, loop_seconds,
                         &played_count);
           snprintf(path, sizeof path, "%s/%05x_%s_k%03u.wav", out_dir,

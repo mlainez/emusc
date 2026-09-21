@@ -70,7 +70,8 @@ namespace EmuSC { namespace Xp {
  * sibling and calls the same copy helper. */
 bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8]);
 
-bool chorus_init(struct sc88_chorus *ch, double outputRate);
+bool chorus_init(struct sc88_chorus *ch, double outputRate,
+                  const struct XpDeviceProfile *profile);
 void chorus_destroy(struct sc88_chorus *ch);
 void chorus_reset(struct sc88_chorus *ch);
 

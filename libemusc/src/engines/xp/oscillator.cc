@@ -48,7 +48,7 @@ uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
   index %= oscillator->cycle_count;
-  if (oscillator->mode == SC88_WAVE_FORWARD_LOOP)
+  if (oscillator->mode == XP_WAVE_FORWARD_LOOP)
     return oscillator->loop + (uint32_t)index;
   if (index < span)
     return oscillator->end - 1 - (uint32_t)index;
@@ -59,7 +59,7 @@ uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
 bool cycle_reflected(const struct sc88_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
-  if (oscillator->mode != SC88_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
+  if (oscillator->mode != XP_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
     return false;
   return (index % oscillator->cycle_count) < span;
 }
@@ -78,13 +78,13 @@ uint32_t address_at(const struct sc88_oscillator *oscillator, size_t index)
 {
   if (oscillator->initial) {
     if (index < oscillator->initial_count) {
-      if (oscillator->mode == SC88_WAVE_REVERSE_ONE_SHOT)
+      if (oscillator->mode == XP_WAVE_REVERSE_ONE_SHOT)
         return oscillator->start - (uint32_t)index;
       return oscillator->start + (uint32_t)index;
     }
     if (oscillator->cycle_count)
       return cycle_address(oscillator, index - oscillator->initial_count);
-    return oscillator->mode == SC88_WAVE_REVERSE_ONE_SHOT
+    return oscillator->mode == XP_WAVE_REVERSE_ONE_SHOT
       ? oscillator->end + 1 : oscillator->end;
   }
   return cycle_address(oscillator, index);
@@ -98,7 +98,8 @@ bool contains(const struct sc88_oscillator *oscillator, uint32_t address)
 
 }  // namespace
 
-bool oscillator_init(struct sc88_oscillator *oscillator,
+bool oscillator_init(const struct XpDeviceProfile *profile,
+                      struct sc88_oscillator *oscillator,
                       const int32_t *pcm24, size_t pcmCount,
                       uint32_t pcmBase,
                       const struct sc88_wave_registers *registers,
@@ -106,12 +107,14 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
                       uint32_t pitchWord, double outputRate,
                       enum sc88_fractional_wrap wrap)
 {
+  if (!profile)
+    profile = &SC88_PROFILE;
   if (!oscillator || !pcm24 || !pcmCount || !registers ||
       outputRate <= 0.0 || pitchWord > kXpPitchSaturation ||
-      wrap < SC88_WRAP_FULL_CARRY || wrap > SC88_WRAP_FRACTION_ONLY ||
-      registers->start >= SC88_WAVE_BANK_SIZE ||
-      registers->loop >= SC88_WAVE_BANK_SIZE ||
-      registers->end >= SC88_WAVE_BANK_SIZE)
+      wrap < XP_WRAP_FULL_CARRY || wrap > XP_WRAP_FRACTION_ONLY ||
+      registers->start >= profile->waveBankSize ||
+      registers->loop >= profile->waveBankSize ||
+      registers->end >= profile->waveBankSize)
     return false;
 
   oscillator->pcm24 = pcm24;
@@ -129,7 +132,7 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
   oscillator->cycle_count = 0;
 
   uint32_t last;
-  if (mode == SC88_WAVE_REVERSE_ONE_SHOT) {
+  if (mode == XP_WAVE_REVERSE_ONE_SHOT) {
     last = registers->end + 1;
     if (last > registers->start)
       return false;
@@ -139,17 +142,17 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
       return false;
     oscillator->initial_count =
       (size_t)(registers->end - registers->start) + 1;
-    if (mode == SC88_WAVE_FORWARD_LOOP ||
-        mode == SC88_WAVE_PING_PONG_LOOP) {
+    if (mode == XP_WAVE_FORWARD_LOOP ||
+        mode == XP_WAVE_PING_PONG_LOOP) {
       if (registers->loop > registers->end)
         return false;
       size_t span = (size_t)(registers->end - registers->loop) + 1;
-      oscillator->cycle_count = mode == SC88_WAVE_FORWARD_LOOP
+      oscillator->cycle_count = mode == XP_WAVE_FORWARD_LOOP
         ? span : span * 2;
     }
   }
 
-  last = mode == SC88_WAVE_REVERSE_ONE_SHOT
+  last = mode == XP_WAVE_REVERSE_ONE_SHOT
     ? registers->end + 1 : registers->end;
   return contains(oscillator, registers->start) &&
     contains(oscillator, last) &&
@@ -212,11 +215,11 @@ namespace {
 double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
 {
   switch (oscillator->wrap) {
-  case SC88_WRAP_FULL_CARRY:
+  case XP_WRAP_FULL_CARRY:
     return std::fmod(overflow, (double)oscillator->cycle_count);
-  case SC88_WRAP_FULL_RESET:
+  case XP_WRAP_FULL_RESET:
     return 0.0;
-  case SC88_WRAP_FRACTION_ONLY:
+  case XP_WRAP_FRACTION_ONLY:
     return overflow - std::floor(overflow);
   }
   return 0.0;

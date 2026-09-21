@@ -40,13 +40,14 @@ bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *to
 bool control_gain_q15(const struct sc88_rom *rom, uint8_t control,
                        uint16_t *gainQ15)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !gainQ15 || control > 127 ||
-      kSendTable + 128u * 2 > rom->size)
+      profile->sendTable + 128u * 2 > rom->size)
     return false;
   /* The word carries the gain in its top ten bits and the XP destination
      selector in its low six; the table's own low six are zero, and the
      selector this engine does not plumb. */
-  uint16_t word = be16(rom->bytes + kSendTable + (unsigned)control * 2);
+  uint16_t word = be16(rom->bytes + profile->sendTable + (unsigned)control * 2);
   *gainQ15 = (uint16_t)(word & 0xffc0u);
   return (word & 0x3fu) == 0;
 }
@@ -61,13 +62,14 @@ uint8_t send_combine(uint8_t part, uint8_t note)
 bool pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
                    uint16_t *leftQ15, uint16_t *rightQ15)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !leftQ15 || !rightQ15 || position < 1 ||
-      position > 127 || kPanTable + 127u * 2 > rom->size)
+      position > 127 || profile->panTable + 127u * 2 > rom->size)
     return false;
   uint8_t leftIndex = (uint8_t)(127 - position);
   uint8_t rightIndex = (uint8_t)(position - 1);
-  *leftQ15 = be16(rom->bytes + kPanTable + leftIndex * 2);
-  *rightQ15 = be16(rom->bytes + kPanTable + rightIndex * 2);
+  *leftQ15 = be16(rom->bytes + profile->panTable + leftIndex * 2);
+  *rightQ15 = be16(rom->bytes + profile->panTable + rightIndex * 2);
   return (*leftQ15 & 0x3f) == 0 && (*rightQ15 & 0x3f) == 0;
 }
 

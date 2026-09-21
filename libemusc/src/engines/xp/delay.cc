@@ -42,13 +42,16 @@ float tap(const struct sc88_delay *dl, double back)
 
 }  // namespace
 
-bool delay_init(struct sc88_delay *dl, double outputRate)
+bool delay_init(struct sc88_delay *dl, double outputRate,
+                 const struct XpDeviceProfile *profile)
 {
   if (!dl || outputRate < 8000.0 || outputRate > 192000.0)
     return false;
+  if (!profile)
+    profile = &SC88_PROFILE;
   std::memset(dl, 0, sizeof *dl);
   /* one second of delay plus a little for interpolation */
-  dl->len = (size_t)(kDelayMaxMs * outputRate / 1000.0) + 8u;
+  dl->len = (size_t)(profile->delayMaxMs * outputRate / 1000.0) + 8u;
   dl->buf = (float *)std::calloc(dl->len, sizeof *dl->buf);
   if (!dl->buf)
     return false;
@@ -79,7 +82,7 @@ bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10])
 {
   if (!rom || !rom->bytes || !out || macro > 9)
     return false;
-  uint32_t base = kDelayMacroTable + (uint32_t)macro * 16u;
+  uint32_t base = xp_profile(rom)->delayMacroTable + (uint32_t)macro * 16u;
   if (base + 10u > rom->size)
     return false;
   for (unsigned i = 0; i < 10; ++i)
@@ -92,6 +95,7 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
 {
   if (!rom || !rom->bytes || !dl || !p)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint8_t v[10];
   for (unsigned i = 0; i < 10; ++i)
     v[i] = p[i] > 127 ? 127 : p[i];
@@ -105,25 +109,26 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
      range and must not be treated as a time. */
   if (v[1] < 1 || v[1] > 0x73)
     return false;
-  if (kDelayCentreTable + (uint32_t)v[1] * 2u + 2u > rom->size)
+  if (profile->delayCentreTable + (uint32_t)v[1] * 2u + 2u > rom->size)
     return false;
-  uint16_t centreWord = be16(rom->bytes + kDelayCentreTable +
+  uint16_t centreWord = be16(rom->bytes + profile->delayCentreTable +
                              (uint32_t)v[1] * 2u);
   if (centreWord < 0x8000u)
     return false;
   unsigned centreUnits = centreWord - 0x8000u;
-  double scale = dl->output_rate / (kDelayUnitsPerMs * 1000.0);
+  double scale = dl->output_rate / (profile->delayUnitsPerMs * 1000.0);
   dl->centre_samples = (float)((double)centreUnits * scale);
 
   for (unsigned i = 0; i < 2; ++i) {
     uint8_t r = v[2 + i];
     unsigned units = 0;
     if (r >= 1 && r <= 0x78 &&
-        kDelayRatioTable + (uint32_t)r * 2u + 2u <= rom->size) {
-      uint32_t ratio = be16(rom->bytes + kDelayRatioTable + (uint32_t)r * 2u);
+        profile->delayRatioTable + (uint32_t)r * 2u + 2u <= rom->size) {
+      uint32_t ratio = be16(rom->bytes + profile->delayRatioTable +
+                             (uint32_t)r * 2u);
       units = (unsigned)((ratio * (uint32_t)centreUnits) / 256u);
-      if (units > kDelayMaxUnits)
-        units = kDelayMaxUnits;
+      if (units > profile->delayMaxUnits)
+        units = profile->delayMaxUnits;
     }
     if (i == 0)
       dl->left_samples = (float)((double)units * scale);

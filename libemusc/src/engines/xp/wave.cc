@@ -28,19 +28,19 @@ int16_t s16(uint16_t value)
     : (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
 }
 
-uint8_t descramble_byte(uint8_t value)
+uint8_t descramble_byte(const struct XpDeviceProfile *profile, uint8_t value)
 {
   uint8_t result = 0;
   for (unsigned bit = 0; bit < 8; ++bit)
-    result |= (uint8_t)(((value >> kWaveDataLinePermutation[bit]) & 1u) << bit);
+    result |= (uint8_t)(((value >> profile->waveDataLinePermutation[bit]) & 1u) << bit);
   return result;
 }
 
-uint32_t descramble_address(uint32_t value)
+uint32_t descramble_address(const struct XpDeviceProfile *profile, uint32_t value)
 {
   uint32_t result = 0;
   for (unsigned bit = 0; bit < 21; ++bit)
-    result |= ((value >> kWaveAddressLinePermutation[bit]) & 1u) << bit;
+    result |= ((value >> profile->waveAddressLinePermutation[bit]) & 1u) << bit;
   return result;
 }
 
@@ -65,26 +65,32 @@ double bin_power(const int32_t *x, size_t count, size_t k)
 
 }  // namespace
 
-bool wave_descramble_chip(const uint8_t *raw, size_t rawSize,
+bool wave_descramble_chip(const struct XpDeviceProfile *profile,
+                           const uint8_t *raw, size_t rawSize,
                            uint8_t *decoded, size_t decodedSize)
 {
-  if (!raw || !decoded || raw == decoded || rawSize != SC88_WAVE_CHIP_SIZE ||
-      decodedSize < SC88_WAVE_CHIP_SIZE)
+  if (!profile)
+    profile = &SC88_PROFILE;
+  if (!raw || !decoded || raw == decoded || rawSize != profile->waveChipSize ||
+      decodedSize < profile->waveChipSize)
     return false;
-  for (uint32_t source = 0; source < SC88_WAVE_CHIP_SIZE; ++source) {
+  for (uint32_t source = 0; source < profile->waveChipSize; ++source) {
     const bool header = source < 0x20 ||
-      (source >= SC88_WAVE_BANK_SIZE &&
-       source < SC88_WAVE_BANK_SIZE + 0x20);
-    decoded[header ? source : descramble_address(source)] =
-      header ? raw[source] : descramble_byte(raw[source]);
+      (source >= profile->waveBankSize &&
+       source < profile->waveBankSize + 0x20);
+    decoded[header ? source : descramble_address(profile, source)] =
+      header ? raw[source] : descramble_byte(profile, raw[source]);
   }
   return true;
 }
 
-bool wave_descriptor_parse(const uint8_t *raw, size_t size,
+bool wave_descriptor_parse(const struct XpDeviceProfile *profile,
+                            const uint8_t *raw, size_t size,
                             struct sc88_wave_descriptor *out)
 {
-  if (!raw || !out || size < SC88_WAVE_DESCRIPTOR_SIZE)
+  if (!profile)
+    profile = &SC88_PROFILE;
+  if (!raw || !out || size < profile->waveDescriptorSize)
     return false;
 
   out->bank_select = raw[0];
@@ -108,7 +114,7 @@ bool wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
 
   switch (desc->control) {
   case 0x00:
-    *out = SC88_WAVE_FORWARD_LOOP;
+    *out = XP_WAVE_FORWARD_LOOP;
     return true;
   case 0x10:
     /* Ping-pong, and the ROM says so by itself.
@@ -149,13 +155,13 @@ bool wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
        hardware dips we now dip with it. The 0x00 renders are unchanged
        byte for byte, and the corrected 63-instrument audit does not move:
        median MAD 2.1 dB, 46 within 3 dB, 7 past 6. */
-    *out = SC88_WAVE_PING_PONG_LOOP;
+    *out = XP_WAVE_PING_PONG_LOOP;
     return true;
   case 0x80:
-    *out = SC88_WAVE_FORWARD_ONE_SHOT;
+    *out = XP_WAVE_FORWARD_ONE_SHOT;
     return true;
   case 0x88:
-    *out = SC88_WAVE_REVERSE_ONE_SHOT;
+    *out = XP_WAVE_REVERSE_ONE_SHOT;
     return true;
   default:
     return false;
@@ -225,13 +231,16 @@ int16_t wave_pitch_correction(const struct sc88_wave_descriptor *desc,
   return s16(value);
 }
 
-bool wave_prepare_registers(const struct sc88_wave_descriptor *desc,
+bool wave_prepare_registers(const struct XpDeviceProfile *profile,
+                             const struct sc88_wave_descriptor *desc,
                              bool suppressStartOffset,
                              struct sc88_wave_registers *out)
 {
-  if (!desc || !out || desc->address_a >= SC88_WAVE_BANK_SIZE ||
-      desc->address_b >= SC88_WAVE_BANK_SIZE ||
-      desc->address_c >= SC88_WAVE_BANK_SIZE)
+  if (!profile)
+    profile = &SC88_PROFILE;
+  if (!desc || !out || desc->address_a >= profile->waveBankSize ||
+      desc->address_b >= profile->waveBankSize ||
+      desc->address_c >= profile->waveBankSize)
     return false;
 
   out->bank_flags = UINT32_C(0x8000) |
@@ -250,7 +259,7 @@ bool wave_prepare_registers(const struct sc88_wave_descriptor *desc,
   } else {
     first = desc->address_a;
     if (!suppressStartOffset) {
-      if (desc->start_offset >= SC88_WAVE_BANK_SIZE - first)
+      if (desc->start_offset >= profile->waveBankSize - first)
         return false;
       first += desc->start_offset;
       out->state_a = ((desc->state_a < 0 ? UINT32_C(3) : 0) << 16) |
@@ -266,13 +275,17 @@ bool wave_prepare_registers(const struct sc88_wave_descriptor *desc,
   return true;
 }
 
-bool fce_decoder_reset(struct sc88_fce_decoder *decoder,
+bool fce_decoder_reset(const struct XpDeviceProfile *profile,
+                        struct sc88_fce_decoder *decoder,
                         uint32_t sampleStart)
 {
-  if (!decoder || sampleStart >= SC88_WAVE_BANK_SIZE)
+  if (!profile)
+    profile = &SC88_PROFILE;
+  if (!decoder || sampleStart >= profile->waveBankSize)
     return false;
   decoder->next_address = sampleStart & ~UINT32_C(0x0f);
   decoder->accumulator = 0;
+  decoder->profile = profile;
   return true;
 }
 
@@ -280,8 +293,9 @@ bool fce_decoder_read(struct sc88_fce_decoder *decoder,
                        const uint8_t *bank, size_t bankSize,
                        int32_t *pcm24)
 {
-  if (!decoder || !bank || !pcm24 || bankSize < SC88_WAVE_BANK_SIZE ||
-      decoder->next_address >= SC88_WAVE_BANK_SIZE)
+  if (!decoder || !decoder->profile || !bank || !pcm24 ||
+      bankSize < decoder->profile->waveBankSize ||
+      decoder->next_address >= decoder->profile->waveBankSize)
     return false;
 
   uint32_t address = decoder->next_address++;
@@ -300,21 +314,24 @@ bool fce_decoder_read(struct sc88_fce_decoder *decoder,
   return true;
 }
 
-bool fce_decode_descriptor(const uint8_t *bank, size_t bankSize,
+bool fce_decode_descriptor(const struct XpDeviceProfile *profile,
+                            const uint8_t *bank, size_t bankSize,
                             const struct sc88_wave_descriptor *desc,
                             int32_t *output, size_t capacity,
                             size_t *written)
 {
+  if (!profile)
+    profile = &SC88_PROFILE;
   if (written)
     *written = 0;
   if (!bank || !desc || !output || !written ||
       desc->address_a > desc->address_c ||
-      desc->address_c >= SC88_WAVE_BANK_SIZE)
+      desc->address_c >= profile->waveBankSize)
     return false;
 
   size_t count = (size_t)(desc->address_c - desc->address_a) + 1;
   struct sc88_fce_decoder decoder;
-  if (capacity < count || !fce_decoder_reset(&decoder, desc->address_a))
+  if (capacity < count || !fce_decoder_reset(profile, &decoder, desc->address_a))
     return false;
 
   size_t index = 0;
@@ -330,24 +347,27 @@ bool fce_decode_descriptor(const uint8_t *bank, size_t bankSize,
   return true;
 }
 
-bool fce_decode_storage(const uint8_t *bank, size_t bankSize,
+bool fce_decode_storage(const struct XpDeviceProfile *profile,
+                         const uint8_t *bank, size_t bankSize,
                          const struct sc88_wave_descriptor *desc,
                          int32_t *output, size_t capacity,
                          uint32_t *baseAddress, size_t *written)
 {
+  if (!profile)
+    profile = &SC88_PROFILE;
   if (baseAddress)
     *baseAddress = 0;
   if (written)
     *written = 0;
   if (!bank || !desc || !output || !baseAddress || !written ||
       desc->address_a > desc->address_c ||
-      desc->address_c >= SC88_WAVE_BANK_SIZE)
+      desc->address_c >= profile->waveBankSize)
     return false;
 
   uint32_t base = desc->address_a & ~UINT32_C(0x0f);
   size_t count = (size_t)(desc->address_c - base) + 1;
   struct sc88_fce_decoder decoder;
-  if (capacity < count || !fce_decoder_reset(&decoder, desc->address_a))
+  if (capacity < count || !fce_decoder_reset(profile, &decoder, desc->address_a))
     return false;
   for (size_t index = 0; index < count; ++index)
     if (!fce_decoder_read(&decoder, bank, bankSize, output + index))
@@ -410,13 +430,16 @@ bool fce_decode_storage(const uint8_t *bank, size_t bankSize,
 
    `pcm` is the decoded sample, `base_address` the wave address its first
    entry holds. */
-bool wave_loop_reads_double(const int32_t *pcm, size_t count,
+bool wave_loop_reads_double(const struct XpDeviceProfile *profile,
+                             const int32_t *pcm, size_t count,
                              uint32_t baseAddress,
                              const struct sc88_wave_descriptor *desc)
 {
+  if (!profile)
+    profile = &SC88_PROFILE;
   enum sc88_wave_loop_type mode;
   if (!pcm || !desc || !wave_descriptor_loop_type(desc, &mode) ||
-      mode != SC88_WAVE_FORWARD_LOOP || desc->root_key > 127 ||
+      mode != XP_WAVE_FORWARD_LOOP || desc->root_key > 127 ||
       desc->address_c <= desc->address_b || desc->address_b < baseAddress)
     return false;
   size_t first = (size_t)(desc->address_b - baseAddress);
@@ -448,25 +471,28 @@ bool wave_loop_reads_double(const int32_t *pcm, size_t count,
      Tom out - its loop spans thirty root-key cycles and carries 37 dB more
      energy below bin fifteen than in it. */
   for (size_t k = 1u; k < half; ++k) {
-    if (bin_power(pcm + first, length, k) > atHalf * kBelowPower)
+    if (bin_power(pcm + first, length, k) > atHalf * profile->belowPower)
       return false;
   }
   /* And it is a partial, not a seam artefact: the clean low zones of these
      same organ sets carry a bin there 30 dB down. */
-  return atHalf >= atRoot * kPartialPower;
+  return atHalf >= atRoot * profile->partialPower;
 }
 
-bool wave_cursor_init(struct sc88_wave_cursor *cursor,
+bool wave_cursor_init(const struct XpDeviceProfile *profile,
+                       struct sc88_wave_cursor *cursor,
                        const struct sc88_wave_registers *registers,
                        enum sc88_wave_loop_type mode)
 {
-  if (!cursor || !registers || registers->start >= SC88_WAVE_BANK_SIZE ||
-      registers->loop >= SC88_WAVE_BANK_SIZE ||
-      registers->end >= SC88_WAVE_BANK_SIZE ||
-      mode == SC88_WAVE_REVERSE_ONE_SHOT)
+  if (!profile)
+    profile = &SC88_PROFILE;
+  if (!cursor || !registers || registers->start >= profile->waveBankSize ||
+      registers->loop >= profile->waveBankSize ||
+      registers->end >= profile->waveBankSize ||
+      mode == XP_WAVE_REVERSE_ONE_SHOT)
     return false;
   if (registers->start > registers->end ||
-      (mode != SC88_WAVE_FORWARD_ONE_SHOT && registers->loop > registers->end))
+      (mode != XP_WAVE_FORWARD_ONE_SHOT && registers->loop > registers->end))
     return false;
 
   cursor->position = registers->start;
@@ -493,12 +519,12 @@ bool wave_cursor_advance(struct sc88_wave_cursor *cursor)
     return false;
 
   switch (cursor->mode) {
-  case SC88_WAVE_FORWARD_LOOP:
+  case XP_WAVE_FORWARD_LOOP:
     cursor->position = cursor->position == cursor->end
       ? cursor->loop : cursor->position + 1;
     return true;
 
-  case SC88_WAVE_PING_PONG_LOOP:
+  case XP_WAVE_PING_PONG_LOOP:
     if (cursor->direction > 0) {
       if (cursor->position == cursor->end)
         cursor->direction = -1;
@@ -512,14 +538,14 @@ bool wave_cursor_advance(struct sc88_wave_cursor *cursor)
     }
     return true;
 
-  case SC88_WAVE_FORWARD_ONE_SHOT:
+  case XP_WAVE_FORWARD_ONE_SHOT:
     if (cursor->position == cursor->end)
       cursor->ended = true;
     else
       ++cursor->position;
     return true;
 
-  case SC88_WAVE_REVERSE_ONE_SHOT:
+  case XP_WAVE_REVERSE_ONE_SHOT:
     break;
   }
   return false;

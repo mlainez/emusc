@@ -50,6 +50,7 @@ set(EMUSC_SOURCES
   engines/gp/wave_oscillator.h
   engines/xp/device.cc
   engines/xp/device.h
+  engines/xp/devices/sc88.cc
   engines/xp/devices/sc88.h
   engines/xp/engine.cc
   engines/xp/engine.h
@@ -115,6 +116,7 @@ set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE
 # report are internal to the engine and no measurement of the rendered audio
 # can separate them.
 add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.cc
+  engines/xp/devices/sc88.cc
   engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
 target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
@@ -122,6 +124,7 @@ if(NOT MSVC)
 endif()
 
 add_executable(sc88_dump_samples ../tools/sc88_dump_samples.cc
+  engines/xp/devices/sc88.cc
   engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
 target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
@@ -135,6 +138,7 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(SC88_VOICE_SOURCES
+    engines/xp/devices/sc88.cc
     engines/xp/engine.cc engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/renderer.cc engines/xp/reverb.cc
@@ -155,13 +159,13 @@ if(BUILD_TESTING)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
-  sc88_test(sc88_wave_test engines/xp/wave.cc)
-  sc88_test(sc88_oscillator_test engines/xp/oscillator.cc)
-  sc88_test(sc88_pan_test engines/xp/pan.cc)
-  sc88_test(sc88_reverb_test engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_chorus_test engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_delay_test engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_eq_test engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_wave_test engines/xp/devices/sc88.cc engines/xp/wave.cc)
+  sc88_test(sc88_oscillator_test engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
+  sc88_test(sc88_pan_test engines/xp/devices/sc88.cc engines/xp/pan.cc)
+  sc88_test(sc88_reverb_test engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_chorus_test engines/xp/devices/sc88.cc engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_delay_test engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_eq_test engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
   sc88_test(sc88_output_test engines/xp/output.cc)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
@@ -169,11 +173,11 @@ if(BUILD_TESTING)
   # test itself, at run time, so ctest's own environment carries it
   # whatever the tree was configured with.
   set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
-  sc88_test(sc88_drum_test engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_lfo_test engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_pitch_test engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_tvf_test engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
-  sc88_test(sc88_tva_test engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_drum_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_lfo_test engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_pitch_test engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
+  sc88_test(sc88_tvf_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
+  sc88_test(sc88_tva_test engines/xp/devices/sc88.cc engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.

@@ -23,7 +23,7 @@ int main()
   unsigned i;
   double sweep_span;
 
-  assert(chorus_init(&ch, 32000.0));
+  assert(chorus_init(&ch, 32000.0, &SC88_PROFILE));
 
   /* Delay is `3*p` samples of delay memory, so at the native 32 kHz it is
      the sample count itself: GS's default 0x50 is 240 samples, 7.5 ms. */
@@ -99,6 +99,6 @@ int main()
   assert(sweep_span > 0.0);
 
   chorus_destroy(&ch);
-  assert(!chorus_init(&ch, 1000.0));
+  assert(!chorus_init(&ch, 1000.0, &SC88_PROFILE));
   return 0;
 }

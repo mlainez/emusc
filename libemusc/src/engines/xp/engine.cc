@@ -14,8 +14,8 @@ namespace {
 
 void queueNote(struct sc88_engine *engine, uint8_t note)
 {
-  engine->note_next_free[note] = SC88_ENGINE_NONE;
-  if (engine->free_note_tail == SC88_ENGINE_NONE)
+  engine->note_next_free[note] = XP_ENGINE_NONE;
+  if (engine->free_note_tail == XP_ENGINE_NONE)
     engine->free_note_head = note;
   else
     engine->note_next_free[engine->free_note_tail] = note;
@@ -25,19 +25,19 @@ void queueNote(struct sc88_engine *engine, uint8_t note)
 uint8_t popNote(struct sc88_engine *engine)
 {
   uint8_t note = engine->free_note_head;
-  if (note == SC88_ENGINE_NONE)
+  if (note == XP_ENGINE_NONE)
     return note;
   engine->free_note_head = engine->note_next_free[note];
-  if (engine->free_note_head == SC88_ENGINE_NONE)
-    engine->free_note_tail = SC88_ENGINE_NONE;
-  engine->note_next_free[note] = SC88_ENGINE_NONE;
+  if (engine->free_note_head == XP_ENGINE_NONE)
+    engine->free_note_tail = XP_ENGINE_NONE;
+  engine->note_next_free[note] = XP_ENGINE_NONE;
   return note;
 }
 
 void queueSlot(struct sc88_engine *engine, uint8_t slot)
 {
-  engine->slots[slot].next_free = SC88_ENGINE_NONE;
-  if (engine->free_slot_tail == SC88_ENGINE_NONE)
+  engine->slots[slot].next_free = XP_ENGINE_NONE;
+  if (engine->free_slot_tail == XP_ENGINE_NONE)
     engine->free_slot_head = slot;
   else
     engine->slots[engine->free_slot_tail].next_free = slot;
@@ -48,12 +48,12 @@ void queueSlot(struct sc88_engine *engine, uint8_t slot)
 uint8_t popSlot(struct sc88_engine *engine)
 {
   uint8_t slot = engine->free_slot_head;
-  if (slot == SC88_ENGINE_NONE)
+  if (slot == XP_ENGINE_NONE)
     return slot;
   engine->free_slot_head = engine->slots[slot].next_free;
-  if (engine->free_slot_head == SC88_ENGINE_NONE)
-    engine->free_slot_tail = SC88_ENGINE_NONE;
-  engine->slots[slot].next_free = SC88_ENGINE_NONE;
+  if (engine->free_slot_head == XP_ENGINE_NONE)
+    engine->free_slot_tail = XP_ENGINE_NONE;
+  engine->slots[slot].next_free = XP_ENGINE_NONE;
   --engine->free_slot_count;
   return slot;
 }
@@ -106,7 +106,7 @@ int32_t lfoPitchOffset(const struct sc88_engine *engine,
      field's anchor, so the unit can be calibrated against a direct
      observable instead of a whole-song proxy. Off unless asked. */
   if (common) {
-    const char *scale = std::getenv("SC88_COMMON_VIBRATO");
+    const char *scale = std::getenv("XP_COMMON_VIBRATO");
     if (scale) {
       double k = std::atof(scale);
       if (k != 0.0)
@@ -190,7 +190,7 @@ void updateSlotPitch(struct sc88_engine *engine,
                       struct sc88_engine_slot *slot)
 {
   if (!engine || !slot || !slot->allocated ||
-      slot->note >= SC88_ENGINE_NOTE_COUNT)
+      slot->note >= XP_ENGINE_NOTE_COUNT)
     return;
   const struct sc88_engine_note *note = engine->notes + slot->note;
   uint32_t base = slot->component.static_pitch_word;
@@ -228,11 +228,11 @@ void freeSlot(struct sc88_engine *engine, uint8_t slotIndex, bool prepend)
   if (!slot->allocated)
     return;
   uint8_t noteIndex = slot->note;
-  if (noteIndex < SC88_ENGINE_NOTE_COUNT) {
+  if (noteIndex < XP_ENGINE_NOTE_COUNT) {
     struct sc88_engine_note *note = engine->notes + noteIndex;
-    for (unsigned i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
+    for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i) {
       if (note->slots[i] == slotIndex) {
-        note->slots[i] = SC88_ENGINE_NONE;
+        note->slots[i] = XP_ENGINE_NONE;
         --note->slot_count;
         break;
       }
@@ -240,17 +240,17 @@ void freeSlot(struct sc88_engine *engine, uint8_t slotIndex, bool prepend)
   }
   std::free(slot->component.pcm24);
   std::memset(slot, 0, sizeof *slot);
-  slot->note = SC88_ENGINE_NONE;
+  slot->note = XP_ENGINE_NONE;
   if (prepend) {
     slot->next_free = engine->free_slot_head;
     engine->free_slot_head = slotIndex;
-    if (engine->free_slot_tail == SC88_ENGINE_NONE)
+    if (engine->free_slot_tail == XP_ENGINE_NONE)
       engine->free_slot_tail = slotIndex;
     ++engine->free_slot_count;
   } else {
     queueSlot(engine, slotIndex);
   }
-  if (noteIndex < SC88_ENGINE_NOTE_COUNT)
+  if (noteIndex < XP_ENGINE_NOTE_COUNT)
     freeNoteIfEmpty(engine, noteIndex);
 }
 
@@ -260,9 +260,9 @@ void startRelease(struct sc88_engine *engine, uint8_t noteIndex)
   if (!note->allocated || note->key_down || note->hold_retained ||
       note->sostenuto_retained)
     return;
-  for (unsigned i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
+  for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i) {
     uint8_t slotIndex = note->slots[i];
-    if (slotIndex == SC88_ENGINE_NONE)
+    if (slotIndex == XP_ENGINE_NONE)
       continue;
     struct sc88_render_component *component = &engine->slots[slotIndex].component;
     if (!component->release.active) {
@@ -318,11 +318,11 @@ void startRelease(struct sc88_engine *engine, uint8_t noteIndex)
 
 uint8_t oldestSlot(const struct sc88_engine *engine, bool releasedOnly)
 {
-  uint8_t candidate = SC88_ENGINE_NONE;
+  uint8_t candidate = XP_ENGINE_NONE;
   uint64_t serial = UINT64_MAX;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i) {
     const struct sc88_engine_slot *slot = engine->slots + i;
-    if (!slot->allocated || slot->note >= SC88_ENGINE_NOTE_COUNT)
+    if (!slot->allocated || slot->note >= XP_ENGINE_NOTE_COUNT)
       continue;
     const struct sc88_engine_note *note = engine->notes + slot->note;
     if (releasedOnly && note->key_down)
@@ -341,9 +341,9 @@ void reclaimSlots(struct sc88_engine *engine, unsigned count)
 {
   while (count--) {
     uint8_t slot = oldestSlot(engine, true);
-    if (slot == SC88_ENGINE_NONE)
+    if (slot == XP_ENGINE_NONE)
       slot = oldestSlot(engine, false);
-    if (slot == SC88_ENGINE_NONE)
+    if (slot == XP_ENGINE_NONE)
       return;
     /* A stolen voice is still sounding when the CPU takes its slot back
        for a different note - the same circumstance same-note recycle
@@ -375,12 +375,12 @@ void stopVoice(struct sc88_engine *engine, uint8_t slotIndex)
   struct sc88_engine_slot *slot = engine->slots + slotIndex;
   double fraction = engine->scheduler_clocks / kXpControlPeriodClocks;
   if (!slot->allocated || !slot->component.active ||
-      slot->note >= SC88_ENGINE_NOTE_COUNT)
+      slot->note >= XP_ENGINE_NOTE_COUNT)
     return;
   uint32_t current = sc88_render_static_gain_q17(&slot->component, fraction);
   if (!current)
     return;
-  for (unsigned i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_STOPPING_COUNT; ++i) {
     struct sc88_engine_stopping *stop = engine->stopping + i;
     if (stop->active)
       continue;
@@ -406,11 +406,11 @@ void stopVoice(struct sc88_engine *engine, uint8_t slotIndex)
 
 void recycleNote(struct sc88_engine *engine, uint8_t noteIndex)
 {
-  uint8_t slots[SC88_MAX_TONE_COMPONENTS];
+  uint8_t slots[XP_MAX_TONE_COMPONENTS];
   std::memcpy(slots, engine->notes[noteIndex].slots, sizeof slots);
-  for (unsigned i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i) {
-    uint8_t slot = slots[SC88_MAX_TONE_COMPONENTS - 1 - i];
-    if (slot == SC88_ENGINE_NONE)
+  for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i) {
+    uint8_t slot = slots[XP_MAX_TONE_COMPONENTS - 1 - i];
+    if (slot == XP_ENGINE_NONE)
       continue;
     /* The slot goes back on the free list this instant and at its head, as
        `0x2333` does; the sound of the voice it held runs down separately. */
@@ -424,12 +424,12 @@ void applySameNoteMode(struct sc88_engine *engine,
                         uint8_t key, uint8_t context,
                         enum sc88_same_note_mode mode)
 {
-  uint8_t oldest = SC88_ENGINE_NONE;
+  uint8_t oldest = XP_ENGINE_NONE;
   uint64_t oldestSerial = UINT64_MAX;
   unsigned matches = 0;
-  if (mode == SC88_SAME_NOTE_FULL_MULTI)
+  if (mode == XP_SAME_NOTE_FULL_MULTI)
     return;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
     const struct sc88_engine_note *note = engine->notes + i;
     if (!noteMatches(note, part, key, voice->tone_offset, context))
       continue;
@@ -439,8 +439,8 @@ void applySameNoteMode(struct sc88_engine *engine,
       oldestSerial = note->serial;
     }
   }
-  if (oldest != SC88_ENGINE_NONE &&
-      (mode == SC88_SAME_NOTE_SINGLE || matches >= 2))
+  if (oldest != XP_ENGINE_NONE &&
+      (mode == XP_SAME_NOTE_SINGLE || matches >= 2))
     recycleNote(engine, oldest);
 }
 
@@ -494,18 +494,18 @@ bool glideSource(struct sc88_engine *engine, uint8_t part, uint32_t *from)
     *from = (uint32_t)control << 16;
     return true;
   }
-  uint8_t newest = SC88_ENGINE_NONE;
+  uint8_t newest = XP_ENGINE_NONE;
   uint64_t serial = 0;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
     const struct sc88_engine_note *note = engine->notes + i;
     if (!note->allocated || note->part != part || note->slot_count == 0)
       continue;
-    if (newest == SC88_ENGINE_NONE || note->serial > serial) {
+    if (newest == XP_ENGINE_NONE || note->serial > serial) {
       newest = (uint8_t)i;
       serial = note->serial;
     }
   }
-  if (newest == SC88_ENGINE_NONE)
+  if (newest == XP_ENGINE_NONE)
     return false;
   *from = engine->slots[engine->notes[newest].slots[0]].component
             .portamento.current;
@@ -520,7 +520,7 @@ bool glideSource(struct sc88_engine *engine, uint8_t part, uint32_t *from)
 int sharedLfoSlot(struct sc88_engine *engine, uint32_t tone, uint32_t comp,
                    uint8_t which)
 {
-  for (unsigned i = 0; i < SC88_ENGINE_SHARED_LFO_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_SHARED_LFO_COUNT; ++i) {
     const struct sc88_engine_shared_lfo *e = engine->shared_lfo + i;
     if (e->active && e->which == which && e->tone_offset == tone &&
         e->component_offset == comp)
@@ -542,7 +542,7 @@ void sharedLfoJoin(struct sc88_engine *engine, uint32_t tone, uint32_t comp,
     lfo->random_target = shared->random_target;
     return;
   }
-  for (unsigned i = 0; i < SC88_ENGINE_SHARED_LFO_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_SHARED_LFO_COUNT; ++i) {
     struct sc88_engine_shared_lfo *e = engine->shared_lfo + i;
     if (e->active)
       continue;
@@ -571,7 +571,7 @@ void runScheduler(struct sc88_engine *engine)
      before any voice reads it. Entries nothing used last period are
      retired, which is how a shared oscillator outlives its first owner
      and stops when the last voice of its tone does. */
-  for (unsigned k = 0; k < SC88_ENGINE_SHARED_LFO_COUNT; ++k) {
+  for (unsigned k = 0; k < XP_ENGINE_SHARED_LFO_COUNT; ++k) {
     struct sc88_engine_shared_lfo *e = engine->shared_lfo + k;
     if (!e->active)
       continue;
@@ -586,7 +586,7 @@ void runScheduler(struct sc88_engine *engine)
   /* Slots at or past max_voices are never allocated (engine_set_max_voices
      never adds them to the free list), so bounding this - the per-voice
      per-control-tick work - to max_voices instead of the full
-     SC88_ENGINE_SLOT_COUNT is exact, not an approximation. */
+     XP_ENGINE_SLOT_COUNT is exact, not an approximation. */
   for (unsigned i = 0; i < engine->max_voices; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
     if (!slot->allocated)
@@ -653,7 +653,7 @@ void runScheduler(struct sc88_engine *engine)
     if (slot->component.pitch_release.active)
       (void)pitch_release_advance(&slot->component.pitch_release, elapsed);
     portamento_advance(&slot->component.portamento, elapsed);
-    static const bool traceEnabled = std::getenv("SC88_TRACE_PITCH") != nullptr;
+    static const bool traceEnabled = std::getenv("XP_TRACE_PITCH") != nullptr;
     if (traceEnabled) {
       static unsigned n;
       if (n < 10)
@@ -775,7 +775,7 @@ void runScheduler(struct sc88_engine *engine)
       slot->component.release_zeroed = true;
     }
   }
-  for (unsigned i = 0; i < SC88_ENGINE_PART_COUNT; ++i)
+  for (unsigned i = 0; i < XP_ENGINE_PART_COUNT; ++i)
     engine->parts[i].tvf_dirty = false;
   if (engine->control_service)
     engine->control_service(engine->control_user, elapsed);
@@ -791,23 +791,24 @@ bool engine_init(struct sc88_engine *engine,
   std::memset(engine, 0, sizeof *engine);
   engine->renderer = renderer;
   engine->free_note_head = 0;
-  engine->free_note_tail = SC88_ENGINE_NOTE_COUNT - 1;
+  engine->free_note_tail = XP_ENGINE_NOTE_COUNT - 1;
   engine->free_slot_head = 0;
-  engine->free_slot_tail = SC88_ENGINE_SLOT_COUNT - 1;
-  engine->free_slot_count = SC88_ENGINE_SLOT_COUNT;
-  engine->max_voices = SC88_DEFAULT_MAX_VOICES;
+  engine->free_slot_tail = XP_ENGINE_SLOT_COUNT - 1;
+  engine->free_slot_count = XP_ENGINE_SLOT_COUNT;
+  engine->profile = xp_profile(&renderer->rom);
+  engine->max_voices = engine->profile->defaultMaxVoices;
   engine->lfo_seed = 0x1234u;
   engine->next_serial = 1;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
-    engine->note_next_free[i] = i + 1 < SC88_ENGINE_NOTE_COUNT
-      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
-    engine->slots[i].note = SC88_ENGINE_NONE;
-    engine->slots[i].next_free = i + 1 < SC88_ENGINE_SLOT_COUNT
-      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i)
+    engine->note_next_free[i] = i + 1 < XP_ENGINE_NOTE_COUNT
+      ? (uint8_t)(i + 1) : XP_ENGINE_NONE;
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i) {
+    engine->slots[i].note = XP_ENGINE_NONE;
+    engine->slots[i].next_free = i + 1 < XP_ENGINE_SLOT_COUNT
+      ? (uint8_t)(i + 1) : XP_ENGINE_NONE;
   }
   engine->pan_seed = 0x4d55u;
-  for (unsigned i = 0; i < SC88_ENGINE_PART_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_PART_COUNT; ++i) {
     engine->parts[i].levels.master = 127;
     engine->parts[i].levels.secondary = 127;
     engine->parts[i].levels.part = 127;
@@ -816,7 +817,7 @@ bool engine_init(struct sc88_engine *engine,
     engine->parts[i].pan.part = 64;
     engine->parts[i].pan.random_position = 64;
     engine->parts[i].delay_send = 0;
-    engine->parts[i].tone_map = SC88_TONE_MAP_SC88;
+    engine->parts[i].tone_map = XP_TONE_MAP_SC88;
     engine->parts[i].lfo1_pitch_depth = 0;
     engine->parts[i].lfo_controls.rate = 64;
     engine->parts[i].lfo_controls.delay = 64;
@@ -836,34 +837,34 @@ bool engine_init(struct sc88_engine *engine,
 
 bool engine_set_max_voices(struct sc88_engine *engine, unsigned max_voices)
 {
-  if (!engine || engine->free_slot_count != SC88_ENGINE_SLOT_COUNT)
+  if (!engine || engine->free_slot_count != XP_ENGINE_SLOT_COUNT)
     return false;
   if (max_voices < 1)
     max_voices = 1;
-  else if (max_voices > SC88_ENGINE_SLOT_COUNT)
-    max_voices = SC88_ENGINE_SLOT_COUNT;
+  else if (max_voices > XP_ENGINE_SLOT_COUNT)
+    max_voices = XP_ENGINE_SLOT_COUNT;
   engine->max_voices = max_voices;
   engine->free_slot_head = 0;
   engine->free_slot_tail = (uint8_t)(max_voices - 1);
   engine->free_slot_count = max_voices;
   for (unsigned i = 0; i < max_voices; ++i)
     engine->slots[i].next_free = i + 1 < max_voices
-      ? (uint8_t)(i + 1) : SC88_ENGINE_NONE;
+      ? (uint8_t)(i + 1) : XP_ENGINE_NONE;
   return true;
 }
 
 void engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
                           const struct sc88_pan_controls *pan)
 {
-  if (!engine || !pan || part >= SC88_ENGINE_PART_COUNT ||
+  if (!engine || !pan || part >= XP_ENGINE_PART_COUNT ||
       pan->master < 1 || pan->master > 127 || pan->part > 127)
     return;
   engine->parts[part].pan = *pan;
   if (pan->part == 0)
     return;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
-    if (!slot->allocated || slot->note >= SC88_ENGINE_NOTE_COUNT ||
+    if (!slot->allocated || slot->note >= XP_ENGINE_NOTE_COUNT ||
         engine->notes[slot->note].part != part)
       continue;
     int target = pan->part + ((int)pan->master - 64) +
@@ -879,7 +880,7 @@ void engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
                              uint8_t setup)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || setup > 2)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || setup > 2)
     return;
   engine->parts[part].rhythm_setup = setup;
 }
@@ -887,8 +888,8 @@ void engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
                                uint8_t map)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT ||
-      map < SC88_TONE_MAP_SC55 || map > SC88_TONE_MAP_SC88)
+  if (!engine || part >= XP_ENGINE_PART_COUNT ||
+      map < XP_TONE_MAP_SC55 || map > XP_TONE_MAP_SC88)
     return;
   engine->parts[part].tone_map = map;
 }
@@ -896,7 +897,7 @@ void engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
                                        uint8_t part, uint16_t depth)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+  if (!engine || part >= XP_ENGINE_PART_COUNT)
     return;
   engine->parts[part].lfo1_pitch_depth = depth;
 }
@@ -904,7 +905,7 @@ void engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
 void engine_set_part_reverb_send(struct sc88_engine *engine, uint8_t part,
                                   uint8_t send)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || send > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || send > 127)
     return;
   engine->parts[part].reverb_send = send;
 }
@@ -912,7 +913,7 @@ void engine_set_part_reverb_send(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
                                  bool enabled)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+  if (!engine || part >= XP_ENGINE_PART_COUNT)
     return;
   engine->parts[part].portamento = enabled;
 }
@@ -920,7 +921,7 @@ void engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_portamento_time(struct sc88_engine *engine, uint8_t part,
                                       uint8_t time)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || time > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || time > 127)
     return;
   engine->parts[part].portamento_time = time;
 }
@@ -928,7 +929,7 @@ void engine_set_part_portamento_time(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_portamento_control(struct sc88_engine *engine,
                                          uint8_t part, uint8_t key)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+  if (!engine || part >= XP_ENGINE_PART_COUNT)
     return;
   engine->parts[part].portamento_control = key;
 }
@@ -937,7 +938,7 @@ bool engine_set_drum_parameter(struct sc88_engine *engine, uint8_t setup,
                                 uint8_t field, uint8_t note, uint8_t value)
 {
   if (!engine || setup < 1 || setup > 2 || field < 1 ||
-      field > SC88_DRUM_FIELDS || note > 127)
+      field > XP_DRUM_FIELDS || note > 127)
     return false;
   engine->drum_overlay.value[setup - 1u][field - 1u][note] = value;
   engine->drum_overlay.present[setup - 1u][field - 1u][note] = 1u;
@@ -955,7 +956,7 @@ void engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t setup)
 void engine_set_part_delay_send(struct sc88_engine *engine, uint8_t part,
                                  uint8_t send)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || send > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || send > 127)
     return;
   engine->parts[part].delay_send = send;
 }
@@ -963,7 +964,7 @@ void engine_set_part_delay_send(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_chorus_send(struct sc88_engine *engine, uint8_t part,
                                   uint8_t send)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || send > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || send > 127)
     return;
   engine->parts[part].chorus_send = send;
 }
@@ -971,12 +972,12 @@ void engine_set_part_chorus_send(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_pitch_offset(struct sc88_engine *engine, uint8_t part,
                                    int32_t pitchOffset)
 {
-  if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT)
+  if (!engine || !engine->renderer || part >= XP_ENGINE_PART_COUNT)
     return;
   engine->parts[part].pitch_offset = pitchOffset;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i) {
     struct sc88_engine_slot *slot = engine->slots + i;
-    if (slot->allocated && slot->note < SC88_ENGINE_NOTE_COUNT &&
+    if (slot->allocated && slot->note < XP_ENGINE_NOTE_COUNT &&
         engine->notes[slot->note].part == part) {
       updateSlotPitch(engine, slot);
     }
@@ -986,7 +987,7 @@ void engine_set_part_pitch_offset(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_lfo_controls(struct sc88_engine *engine, uint8_t part,
                                    const struct sc88_lfo_controls *controls)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || !controls)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || !controls)
     return;
   engine->parts[part].lfo_controls = *controls;
 }
@@ -994,7 +995,7 @@ void engine_set_part_lfo_controls(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_tva_controls(struct sc88_engine *engine, uint8_t part,
                                    const struct sc88_tva_controls *controls)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || !controls)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || !controls)
     return;
   engine->parts[part].tva_controls = *controls;
 }
@@ -1002,7 +1003,7 @@ void engine_set_part_tva_controls(struct sc88_engine *engine, uint8_t part,
 void engine_set_part_tvf_controls(struct sc88_engine *engine, uint8_t part,
                                    const struct sc88_tvf_controls *controls)
 {
-  if (!engine || !controls || part >= SC88_ENGINE_PART_COUNT ||
+  if (!engine || !controls || part >= XP_ENGINE_PART_COUNT ||
       controls->part_cutoff > 127 || controls->secondary_cutoff > 127 ||
       controls->part_resonance > 127 ||
       controls->secondary_resonance > 127)
@@ -1015,10 +1016,10 @@ void engine_destroy(struct sc88_engine *engine)
 {
   if (!engine)
     return;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
     if (engine->slots[i].allocated)
       std::free(engine->slots[i].component.pcm24);
-  for (unsigned i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i)
+  for (unsigned i = 0; i < XP_ENGINE_STOPPING_COUNT; ++i)
     if (engine->stopping[i].active)
       std::free(engine->stopping[i].component.pcm24);
   std::memset(engine, 0, sizeof *engine);
@@ -1036,20 +1037,20 @@ void engine_set_control_service(struct sc88_engine *engine,
 void engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
                              const struct sc88_tva_levels *levels)
 {
-  if (!engine || !levels || part >= SC88_ENGINE_PART_COUNT ||
+  if (!engine || !levels || part >= XP_ENGINE_PART_COUNT ||
       levels->master > 127 || levels->secondary > 127 ||
       levels->part > 127 || levels->expression > 127)
     return;
   engine->parts[part].levels = *levels;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
     struct sc88_engine_note *note = engine->notes + i;
     if (!note->allocated || note->part != part)
       continue;
     note->levels = *levels;
     for (unsigned componentIndex = 0;
-         componentIndex < SC88_MAX_TONE_COMPONENTS; ++componentIndex) {
+         componentIndex < XP_MAX_TONE_COMPONENTS; ++componentIndex) {
       uint8_t slotIndex = note->slots[componentIndex];
-      if (slotIndex == SC88_ENGINE_NONE)
+      if (slotIndex == XP_ENGINE_NONE)
         continue;
       struct sc88_render_component *component =
         &engine->slots[slotIndex].component;
@@ -1070,16 +1071,16 @@ bool engine_note_on(struct sc88_engine *engine, uint8_t part,
   uint32_t glideFrom = 0;
   bool glide = false;
 
-  if (engine && part < SC88_ENGINE_PART_COUNT &&
+  if (engine && part < XP_ENGINE_PART_COUNT &&
       engine->parts[part].pan.part == 0)
     engine->parts[part].pan.random_position = panDraw(engine);
   /* Read before anything is allocated: the note the glide starts from can be
      the one a same-note recycle or a slot reclaim is about to take. */
-  if (engine && part < SC88_ENGINE_PART_COUNT && key <= 127 &&
+  if (engine && part < XP_ENGINE_PART_COUNT && key <= 127 &&
       !engine->parts[part].rhythm_setup)
     glide = glideSource(engine, part, &glideFrom);
-  if (!engine || !engine->renderer || part >= SC88_ENGINE_PART_COUNT ||
-      mode > SC88_SAME_NOTE_FULL_MULTI || velocity == 0 ||
+  if (!engine || !engine->renderer || part >= XP_ENGINE_PART_COUNT ||
+      mode > XP_SAME_NOTE_FULL_MULTI || velocity == 0 ||
       !(engine->parts[part].rhythm_setup
           ? renderer_note_on_drum(
               engine->renderer, &voice, engine->parts[part].tone_map,
@@ -1107,15 +1108,15 @@ bool engine_note_on(struct sc88_engine *engine, uint8_t part,
   if (engine->free_slot_count < voice.component_count)
     reclaimSlots(engine, voice.component_count - engine->free_slot_count);
   uint8_t noteIndex = popNote(engine);
-  if (noteIndex == SC88_ENGINE_NONE ||
+  if (noteIndex == XP_ENGINE_NONE ||
       engine->free_slot_count < voice.component_count) {
     renderer_voice_destroy(&voice);
     return false;
   }
   struct sc88_engine_note *note = engine->notes + noteIndex;
   std::memset(note, 0, sizeof *note);
-  note->slots[0] = SC88_ENGINE_NONE;
-  note->slots[1] = SC88_ENGINE_NONE;
+  note->slots[0] = XP_ENGINE_NONE;
+  note->slots[1] = XP_ENGINE_NONE;
   note->allocated = true;
   note->key_down = true;
   note->part = part;
@@ -1174,11 +1175,11 @@ bool engine_note_on(struct sc88_engine *engine, uint8_t part,
 
 bool engine_note_off(struct sc88_engine *engine, uint8_t part, uint8_t key)
 {
-  uint8_t candidate = SC88_ENGINE_NONE;
+  uint8_t candidate = XP_ENGINE_NONE;
   uint64_t serial = UINT64_MAX;
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || key > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || key > 127)
     return false;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
     const struct sc88_engine_note *note = engine->notes + i;
     if (note->allocated && note->key_down && note->part == part &&
         note->key == key && note->serial < serial) {
@@ -1188,12 +1189,12 @@ bool engine_note_off(struct sc88_engine *engine, uint8_t part, uint8_t key)
   }
   /* A note the kit exempts is left sounding: the key is no longer down but
      nothing is released, so the sample and its envelope run to their end. */
-  if (candidate != SC88_ENGINE_NONE &&
+  if (candidate != XP_ENGINE_NONE &&
       engine->notes[candidate].ignore_note_off) {
     engine->notes[candidate].key_down = false;
     return true;
   }
-  if (candidate == SC88_ENGINE_NONE)
+  if (candidate == XP_ENGINE_NONE)
     return false;
   engine->notes[candidate].key_down = false;
   engine->notes[candidate].hold_retained = engine->parts[part].hold;
@@ -1213,14 +1214,14 @@ void engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled)
 void engine_hold_value(struct sc88_engine *engine, uint8_t part,
                         uint8_t value)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT || value > 127)
+  if (!engine || part >= XP_ENGINE_PART_COUNT || value > 127)
     return;
   bool enabled = value >= 64;
   engine->parts[part].hold = enabled;
   engine->parts[part].hold_value = value;
   if (enabled)
     return;
-  for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+  for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
     if (engine->notes[i].allocated && engine->notes[i].part == part) {
       engine->notes[i].hold_retained = false;
       startRelease(engine, (uint8_t)i);
@@ -1230,20 +1231,20 @@ void engine_hold_value(struct sc88_engine *engine, uint8_t part,
 
 void engine_sostenuto(struct sc88_engine *engine, uint8_t part, bool enabled)
 {
-  if (!engine || part >= SC88_ENGINE_PART_COUNT)
+  if (!engine || part >= XP_ENGINE_PART_COUNT)
     return;
   engine->parts[part].sostenuto = enabled;
   std::memset(engine->parts[part].sostenuto_keys, 0,
               sizeof engine->parts[part].sostenuto_keys);
   if (enabled) {
-    for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
       const struct sc88_engine_note *note = engine->notes + i;
       if (note->allocated && note->key_down && note->part == part)
         engine->parts[part].sostenuto_keys[note->key >> 3] |=
           (uint8_t)(1u << (note->key & 7));
     }
   } else {
-    for (unsigned i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i) {
+    for (unsigned i = 0; i < XP_ENGINE_NOTE_COUNT; ++i) {
       if (engine->notes[i].allocated && engine->notes[i].part == part) {
         engine->notes[i].sostenuto_retained = false;
         startRelease(engine, (uint8_t)i);
@@ -1262,7 +1263,7 @@ unsigned engine_released_slots(const struct sc88_engine *engine)
   unsigned count = 0;
   if (!engine)
     return 0;
-  for (unsigned i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+  for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
     if (engine->slots[i].allocated &&
         !engine->notes[engine->slots[i].note].key_down)
       ++count;
@@ -1342,7 +1343,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
            from its kit record, through the firmware's rounded product and
            the ROM's send curve. A melodic component carries 127 and so
            keeps its part's control unchanged. */
-        if (send && slot->note < SC88_ENGINE_NOTE_COUNT) {
+        if (send && slot->note < XP_ENGINE_NOTE_COUNT) {
           float sendGain;
           uint8_t control = send_combine(
             engine->parts[engine->notes[slot->note].part].reverb_send,
@@ -1352,7 +1353,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
         }
         /* The delay bus takes the part's send alone: a rhythm note's own
            delay send lives in RAM at `+0x50c`, not in the kit record. */
-        if (delaySend && slot->note < SC88_ENGINE_NOTE_COUNT) {
+        if (delaySend && slot->note < XP_ENGINE_NOTE_COUNT) {
           float sendGain;
           if (sc88_renderer_send_gain(
                 engine->renderer,
@@ -1362,7 +1363,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
         }
         /* The chorus bus is formed the same way, from part byte `+0e` and
            the kit's `+0x400` (`08_effects/routing.md`). */
-        if (chorusSend && slot->note < SC88_ENGINE_NOTE_COUNT) {
+        if (chorusSend && slot->note < XP_ENGINE_NOTE_COUNT) {
           float sendGain;
           uint8_t control = send_combine(
             engine->parts[engine->notes[slot->note].part].chorus_send,
@@ -1380,7 +1381,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
        composes for them any more: the amplitude register runs down to the
        zero the stop wrote, on its own clock, and the rest of the voice -
        oscillator, filter, pan - carries on from exactly where it stood. */
-    for (unsigned i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i) {
+    for (unsigned i = 0; i < XP_ENGINE_STOPPING_COUNT; ++i) {
       struct sc88_engine_stopping *stop = engine->stopping + i;
       if (!stop->active)
         continue;

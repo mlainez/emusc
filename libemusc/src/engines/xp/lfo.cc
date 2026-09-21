@@ -93,8 +93,8 @@ bool lfo_effective_increment(uint16_t base, int16_t control, uint16_t *out)
   uint16_t sum = (uint16_t)(base + (uint16_t)control);
   if (s16(sum) <= 0)
     sum = 0;
-  else if (sum > kMaxIncrement)
-    sum = kMaxIncrement;
+  else if (sum > kXpLfoMaxIncrement)
+    sum = kXpLfoMaxIncrement;
   *out = sum;
   return true;
 }
@@ -124,10 +124,10 @@ int16_t lfo_slew_random(int16_t current, int16_t target)
 {
   int32_t candidate;
   if (target >= current) {
-    candidate = (int32_t)current + kSlewStep;
+    candidate = (int32_t)current + kXpLfoSlewStep;
     return candidate > target ? target : (int16_t)candidate;
   }
-  candidate = (int32_t)current - kSlewStep;
+  candidate = (int32_t)current - kXpLfoSlewStep;
   return candidate < target ? target : (int16_t)candidate;
 }
 
@@ -141,7 +141,7 @@ bool lfo_phase_advance(uint16_t increment, uint8_t catchupCount,
                         uint16_t *phase, uint16_t *seed, uint16_t *target)
 {
   if (!phase || !seed || !target || increment == 0 ||
-      increment > kMaxIncrement)
+      increment > kXpLfoMaxIncrement)
     return false;
   unsigned steps = (unsigned)catchupCount + 1u;
   for (unsigned index = 0; index < steps; ++index) {
@@ -161,12 +161,13 @@ bool lfo_phase_advance(uint16_t increment, uint8_t catchupCount,
 bool lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
                        uint16_t phase, uint16_t increment, int16_t *out)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !out ||
-      rom->size < table + kTablePoints * 2u)
+      rom->size < table + profile->tablePoints * 2u)
     return false;
   unsigned index = phase >> 9;
   uint16_t first = be16(rom->bytes + table + index * 2u);
-  if (increment >= kInterpolateBelow) {
+  if (increment >= profile->interpolateBelow) {
     *out = s16(first);
     return true;
   }
@@ -187,9 +188,10 @@ bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
 {
   if (!out || (selector & 1u) || selector > 0x1e)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   switch (selector) {
   case 0x00:
-    return lfo_table_sample(rom, kSineTable, phase, increment, out);
+    return lfo_table_sample(rom, profile->sineTable, phase, increment, out);
   case 0x02:
     *out = lfo_square(phase);
     return true;
@@ -206,13 +208,13 @@ bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
     *out = lfo_slew_random(previous, target);
     return true;
   case 0x10:
-    return lfo_table_sample(rom, kTable10, phase, increment, out);
+    return lfo_table_sample(rom, profile->table10, phase, increment, out);
   case 0x12:
-    return lfo_table_sample(rom, kTable12, phase, increment, out);
+    return lfo_table_sample(rom, profile->table12, phase, increment, out);
   case 0x14:
-    return lfo_table_sample(rom, kTable14, phase, increment, out);
+    return lfo_table_sample(rom, profile->table14, phase, increment, out);
   case 0x16:
-    return lfo_table_sample(rom, kTable16, phase, increment, out);
+    return lfo_table_sample(rom, profile->table16, phase, increment, out);
   default:
     /* 0x04, 0x0e and 0x18..0x1e all return the phase word itself */
     *out = s16(phase);
@@ -274,8 +276,9 @@ bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone
                          unsigned partDelay, unsigned userDelay,
                          struct sc88_lfo *lfo)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !tone->common || !lfo ||
-      rom->size < kDelayTable + 256u)
+      rom->size < profile->delayTable + 256u)
     return false;
   uint8_t rateIndex;
   int16_t delayIndex;
@@ -288,10 +291,11 @@ bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone
   lfo->share_request = tone->common[0x18];
   /* the initial phase is a high byte; the low byte is cleared */
   lfo->phase = (uint16_t)((uint16_t)tone->common[0x19] << 8);
-  lfo->base_increment = be16(rom->bytes + kRateTable + (unsigned)rateIndex * 2u);
+  lfo->base_increment = be16(rom->bytes + profile->rateTable +
+                             (unsigned)rateIndex * 2u);
   /* a negative delay byte bypasses the table rather than indexing it */
   uint16_t delay = delayIndex < 0 ? 0 : be16(
-    rom->bytes + kDelayTable + (unsigned)delayIndex * 2u);
+    rom->bytes + profile->delayTable + (unsigned)delayIndex * 2u);
   return prepare_ramp(lfo, delay, be16(tone->common + 0x1c));
 }
 

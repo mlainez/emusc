@@ -25,9 +25,11 @@ float coefficient(uint16_t raw)
 bool readBand(const struct sc88_rom *rom, uint32_t block, uint8_t gain,
               struct sc88_eq_band *band)
 {
-  if (!rom || !rom->bytes || !band || gain < kEqGainMin || gain > kEqGainMax)
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (!rom || !rom->bytes || !band || gain < profile->eqGainMin ||
+      gain > profile->eqGainMax)
     return false;
-  uint32_t base = block + 6u * (uint32_t)(gain - kEqGainMin);
+  uint32_t base = block + 6u * (uint32_t)(gain - profile->eqGainMin);
   if (base + 6u > rom->size)
     return false;
   float c[3];
@@ -63,9 +65,12 @@ bool eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
 {
   if (!eq || lowFrequency > 1 || highFrequency > 1)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   struct sc88_eq_band low, high;
-  if (!readBand(rom, lowFrequency ? kEqLow400 : kEqLow200, lowGain, &low) ||
-      !readBand(rom, highFrequency ? kEqHigh6k : kEqHigh3k, highGain, &high))
+  if (!readBand(rom, lowFrequency ? profile->eqLow400 : profile->eqLow200,
+                lowGain, &low) ||
+      !readBand(rom, highFrequency ? profile->eqHigh6k : profile->eqHigh3k,
+                highGain, &high))
     return false;
   eq->low.c0 = low.c0;
   eq->low.c1 = low.c1;

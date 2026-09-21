@@ -26,9 +26,9 @@ int main()
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
   };
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
-  uint8_t common[SC88_TONE_COMMON_SIZE] = {0};
-  uint8_t component_bytes[SC88_COMPONENT_SIZE] = {0};
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
+  uint8_t common[34u] = {0};            /* SC88_PROFILE.toneCommonSize */
+  uint8_t component_bytes[148u] = {0};  /* SC88_PROFILE.componentSize */
   struct sc88_rom rom;
   struct sc88_tone tone = {common, 0x40000, 1};
   struct sc88_component component = {component_bytes, 0, 0};
@@ -40,7 +40,7 @@ int main()
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   /* The live rate contribution clips at +-4000 before doubling and keeps the
      signed product's high word, so the span is asymmetric: -5244..5243. */

@@ -180,7 +180,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
         // 45 Hz on both paths, and the 76-instrument set is unchanged at 65
         // within 6 dB, because the loop points are separate from the start
         // address and the sustain never moves.
-        !wave_prepare_registers(&zone.descriptor, true, &registers) ||
+        !wave_prepare_registers(xp_profile(&renderer->rom), &zone.descriptor,
+                                 true, &registers) ||
         !renderer_static_pitch_word(&renderer->rom, &tone, &component,
                                      &zone.descriptor, key,
                                      (uint8_t)selectorKey, keyFraction,
@@ -271,7 +272,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
         idx = -127;
       else if (idx > 127)
         idx = 127;
-      uint32_t at = (uint32_t)(kPitchCurveCentre + 2 * idx);
+      uint32_t at = (uint32_t)(
+        xp_profile(&renderer->rom)->pitchCurveCentre + 2 * idx);
       renderComponent->lfo1_pitch_depth =
         at + 2 <= renderer->rom.size
           ? s16(be16(renderer->rom.bytes + at))
@@ -312,7 +314,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
     renderComponent->pcm24 = (int32_t *)std::malloc(
       capacity * sizeof *renderComponent->pcm24);
     if (!renderComponent->pcm24 ||
-        !fce_decode_storage(bank->bytes, bank->size, &zone.descriptor,
+        !fce_decode_storage(xp_profile(&renderer->rom), bank->bytes,
+                             bank->size, &zone.descriptor,
                              renderComponent->pcm24, capacity, &pcmBase,
                              &renderComponent->pcm_count))
       goto fail;
@@ -324,7 +327,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
        gaps it sits in the middle of, and the standing of the claim.  It is
        applied to the static word, so the per-period recomposition carries it
        for the life of the note. */
-    if (wave_loop_reads_double(renderComponent->pcm24,
+    if (wave_loop_reads_double(xp_profile(&renderer->rom),
+                                renderComponent->pcm24,
                                 renderComponent->pcm_count, pcmBase,
                                 &zone.descriptor)) {
       pitchWord += kXpPitchUnitsPerOctave;
@@ -334,7 +338,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
     renderComponent->static_pitch_word = pitchWord;
     pitchWord = pitch_current_word(pitchWord, 0,
                                     renderComponent->pitch_envelope.current);
-    if (!oscillator_init(&renderComponent->oscillator, renderComponent->pcm24,
+    if (!oscillator_init(xp_profile(&renderer->rom),
+                          &renderComponent->oscillator, renderComponent->pcm24,
                           renderComponent->pcm_count, pcmBase, &registers,
                           mode, pitchWord, renderer->output_rate,
                           renderer->wrap))
@@ -534,11 +539,11 @@ bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
                     size_t bankCount, double outputRate,
                     enum sc88_fractional_wrap wrap)
 {
-  bool occupied[SC88_WAVE_BANK_COUNT] = {false};
+  bool occupied[XP_WAVE_BANK_COUNT] = {false};
 
-  if (!renderer || !banks || bankCount != SC88_WAVE_BANK_COUNT ||
-      outputRate <= 0.0 || wrap < SC88_WRAP_FULL_CARRY ||
-      wrap > SC88_WRAP_FRACTION_ONLY)
+  if (!renderer || !banks || bankCount != XP_WAVE_BANK_COUNT ||
+      outputRate <= 0.0 || wrap < XP_WRAP_FULL_CARRY ||
+      wrap > XP_WRAP_FRACTION_ONLY)
     return false;
   std::memset(renderer, 0, sizeof *renderer);
   if (!rom_init(&renderer->rom, controlRom, controlRomSize))
@@ -551,7 +556,7 @@ bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
   for (size_t i = 0; i < bankCount; ++i) {
     int index = bankIndex(banks[i].selector);
     if (index < 0 || occupied[index] || !banks[i].bytes ||
-        banks[i].size != SC88_WAVE_BANK_SIZE)
+        banks[i].size != xp_profile(&renderer->rom)->waveBankSize)
       return false;
     occupied[index] = true;
     renderer->banks[index] = banks[i];
@@ -626,7 +631,7 @@ void renderer_voice_destroy(struct sc88_render_voice *voice)
 {
   if (!voice)
     return;
-  for (unsigned i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i)
+  for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i)
     std::free(voice->components[i].pcm24);
   std::memset(voice, 0, sizeof *voice);
 }
@@ -664,7 +669,7 @@ bool renderer_note_on_with_controls(const struct sc88_renderer *renderer,
   if (!renderer)
     return false;
   return renderer_note_on_with_part_controls(
-    renderer, voice, SC88_TONE_MAP_SC88, variation, program, key, velocity,
+    renderer, voice, XP_TONE_MAP_SC88, variation, program, key, velocity,
     levels, pan, &renderer->tvf_controls, &renderer->tva_controls, nullptr);
 }
 
@@ -683,7 +688,7 @@ bool renderer_note_on_with_glide(
                            &toneOffset))
     return false;
   return noteOnTone(renderer, voice, toneOffset, key, zoneKey, velocity,
-                     levels, SC88_TVA_NO_DRUM_LEVEL, pan, tvfControls,
+                     levels, XP_TVA_NO_DRUM_LEVEL, pan, tvfControls,
                      tvaControls, lfoControls);
 }
 
@@ -735,7 +740,7 @@ bool renderer_note_on_drum(
   struct sc88_tva_levels drumLevels = *levels;
   struct sc88_pan_controls drumPan = *pan;
   uint8_t drumLevel = ((slot.assign_group & 0x80u) == 0u && slot.level <= 127)
-    ? slot.level : (uint8_t)SC88_TVA_NO_DRUM_LEVEL;
+    ? slot.level : (uint8_t)XP_TVA_NO_DRUM_LEVEL;
   if (slot.pan >= 1 && slot.pan <= 127)
     drumPan.part = slot.pan;
   if (note)

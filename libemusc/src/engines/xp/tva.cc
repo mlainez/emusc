@@ -40,7 +40,7 @@ int32_t floor_div_pow2(int32_t value, unsigned shift)
 
 bool level_word(const struct sc88_rom *rom, uint8_t index, uint16_t *word)
 {
-  uint32_t offset = kLevelTable + (uint32_t)index * 2;
+  uint32_t offset = xp_profile(rom)->levelTable + (uint32_t)index * 2;
   if (!rom || !rom->bytes || !word || offset + 2 > rom->size)
     return false;
   *word = be16(rom->bytes + offset);
@@ -124,12 +124,13 @@ bool component_attenuation(const struct sc88_rom *rom, const struct sc88_tone *t
 bool envelope_target_q17(const struct sc88_rom *rom, uint16_t attenuation,
                           uint32_t *gainQ17)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint16_t level = (uint16_t)(UINT16_MAX - attenuation);
   if (!rom || !rom->bytes || !gainQ17 ||
-      kFineGainTable + (uint32_t)(level & 0xff) * 2 + 2 > rom->size)
+      profile->fineGainTable + (uint32_t)(level & 0xff) * 2 + 2 > rom->size)
     return false;
-  uint16_t coarse = be16(rom->bytes + kCoarseGainTable + (uint32_t)(level >> 8) * 2);
-  uint16_t fine = be16(rom->bytes + kFineGainTable + (uint32_t)(level & 0xff) * 2);
+  uint16_t coarse = be16(rom->bytes + profile->coarseGainTable + (uint32_t)(level >> 8) * 2);
+  uint16_t fine = be16(rom->bytes + profile->fineGainTable + (uint32_t)(level & 0xff) * 2);
   uint16_t gainQ16 = (uint16_t)(((uint32_t)coarse * fine) >> 16);
   *gainQ17 = (uint32_t)gainQ16 << 1;
   return true;
@@ -152,7 +153,7 @@ bool key_rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   int index = floor_div_pow2(keyValue * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + xp_profile(rom)->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -165,7 +166,7 @@ bool velocity_rate_scale(const struct sc88_rom *rom, uint8_t velocity,
   int index = floor_div_pow2((2 * ((int)velocity - 64)) * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + xp_profile(rom)->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -325,7 +326,7 @@ bool tva_gain_from_headroom_q17(const struct sc88_rom *rom, uint16_t headroom,
   if (drumLevel <= 127) {
     sources[4] = drumLevel;
     sourceCount = 5;
-  } else if (drumLevel != SC88_TVA_NO_DRUM_LEVEL) {
+  } else if (drumLevel != XP_TVA_NO_DRUM_LEVEL) {
     return false;
   }
   uint16_t remaining = headroom;
@@ -341,10 +342,11 @@ bool tva_gain_from_headroom_q17(const struct sc88_rom *rom, uint16_t headroom,
   }
   remaining = remaining <= staticAttenuation
     ? 1 : (uint16_t)(remaining - staticAttenuation);
-  if (kFineGainTable + (uint32_t)(remaining & 0xff) * 2 + 2 > rom->size)
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (profile->fineGainTable + (uint32_t)(remaining & 0xff) * 2 + 2 > rom->size)
     return false;
-  uint16_t coarse = be16(rom->bytes + kCoarseGainTable + (uint32_t)(remaining >> 8) * 2);
-  uint16_t fine = be16(rom->bytes + kFineGainTable + (uint32_t)(remaining & 0xff) * 2);
+  uint16_t coarse = be16(rom->bytes + profile->coarseGainTable + (uint32_t)(remaining >> 8) * 2);
+  uint16_t fine = be16(rom->bytes + profile->fineGainTable + (uint32_t)(remaining & 0xff) * 2);
   uint16_t gainQ15 = (uint16_t)(((uint32_t)coarse * fine) >> 17);
   *gainQ17 = (uint32_t)gainQ15 << 2;
   return true;
@@ -357,11 +359,12 @@ bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !release || selectorKey > 127)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint32_t page = (uint32_t)tone->common[0x21] << 16;
   uint32_t keyCurve = page | be16(component->bytes + 0x8c);
   if (keyCurve + selectorKey >= rom->size ||
-      kXpRateScaleTable + 129u * 2 > rom->size ||
-      kXpEnvelopeRateTable + 128u * 2 > rom->size)
+      profile->rateScaleTable + 129u * 2 > rom->size ||
+      profile->envelopeRateTable + 128u * 2 > rom->size)
     return false;
   int keyValue = s8(rom->bytes[keyCurve + selectorKey]);
   int factor = s8((uint8_t)(0u - component->bytes[0x8f]));
@@ -369,8 +372,8 @@ bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   unsigned scaleIndex = (unsigned)(productHigh + 64);
   if (scaleIndex > 128)
     return false;
-  uint16_t scale = be16(rom->bytes + kXpRateScaleTable + scaleIndex * 2);
-  uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
+  uint16_t scale = be16(rom->bytes + profile->rateScaleTable + scaleIndex * 2);
+  uint16_t rate = be16(rom->bytes + profile->envelopeRateTable +
                        (uint32_t)component->bytes[0x84] * 2);
   if (rate < 16)
     rate = UINT16_MAX;
@@ -401,7 +404,7 @@ bool tva_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = xp_profile(rom)->releasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -436,10 +439,11 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
                            struct sc88_tva_envelope *envelope)
 {
   uint16_t keyScale;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kXpRateScaleTable + 129u * 2 > rom->size ||
-      kXpEnvelopeRateTable + 128u * 2 > rom->size ||
+      profile->rateScaleTable + 129u * 2 > rom->size ||
+      profile->envelopeRateTable + 128u * 2 > rom->size ||
       !key_rate_scale(rom, tone, component, selectorKey, 0x8a, 0x8e, &keyScale))
     return false;
   for (unsigned stage = 0; stage < 4; ++stage) {
@@ -455,7 +459,7 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
       return false;
     uint16_t finalScale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
     uint32_t curveTable = component->bytes[0x85 + stage] == 0
-      ? kAmpCurve0Table : kAmpCurve1Table;
+      ? profile->ampCurve0Table : profile->ampCurve1Table;
     if (curveTable + (uint32_t)rateIndex * 2 + 2 > rom->size)
       return false;
     uint16_t curveEntry = be16(rom->bytes + curveTable + (uint32_t)rateIndex * 2);
@@ -463,8 +467,8 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
       curveEntry |= 0x4000;
     envelope->curve_words[stage] = curve_pack(curveEntry, finalScale);
     tva_curve_decode(envelope->curve_words[stage], envelope->curves + stage);
-    uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable + (uint32_t)rateIndex * 2);
-    if (std::getenv("SC88_TRACE_TVA"))
+    uint16_t rate = be16(rom->bytes + profile->envelopeRateTable + (uint32_t)rateIndex * 2);
+    if (std::getenv("XP_TRACE_TVA"))
       std::fprintf(stderr, "  stage %u: rate_index %3u rate %5u key_scale %5u "
               "vel_scale %5u final_scale %5u\n",
               stage, rateIndex, rate, keyScale, velocityScale, finalScale);

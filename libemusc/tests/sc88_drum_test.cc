@@ -29,14 +29,14 @@ int main()
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
   };
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   struct sc88_rom rom;
   struct sc88_drum_note note;
   uint32_t kit, i;
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   memset(bytes + MAP, 0xff, 256);
   for (i = 0; i < 24; ++i)

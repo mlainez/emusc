@@ -24,26 +24,26 @@ extern "C" {
  * structure holds the same six groups twelve bytes apart at +0x28, with a
  * byte at +3 this routine does not read (`05_data_model/part_state.md`). */
 enum sc88_matrix_source {
-  SC88_MATRIX_MODULATION = 0,
-  SC88_MATRIX_PITCH_BEND = 1,
-  SC88_MATRIX_CHANNEL_PRESSURE = 2,
-  SC88_MATRIX_POLY_PRESSURE = 3,
-  SC88_MATRIX_CC1 = 4,
-  SC88_MATRIX_CC2 = 5
+  XP_MATRIX_MODULATION = 0,
+  XP_MATRIX_PITCH_BEND = 1,
+  XP_MATRIX_CHANNEL_PRESSURE = 2,
+  XP_MATRIX_POLY_PRESSURE = 3,
+  XP_MATRIX_CC1 = 4,
+  XP_MATRIX_CC2 = 5
 };
 
 enum sc88_matrix_destination {
-  SC88_MATRIX_PITCH = 0,
-  SC88_MATRIX_CUTOFF = 1,
-  SC88_MATRIX_AMPLITUDE = 2,
-  SC88_MATRIX_LFO1_RATE = 3,
-  SC88_MATRIX_LFO1_PITCH_DEPTH = 4,
-  SC88_MATRIX_LFO1_TVF_DEPTH = 5,
-  SC88_MATRIX_LFO1_TVA_DEPTH = 6,
-  SC88_MATRIX_LFO2_RATE = 7,
-  SC88_MATRIX_LFO2_PITCH_DEPTH = 8,
-  SC88_MATRIX_LFO2_TVF_DEPTH = 9,
-  SC88_MATRIX_LFO2_TVA_DEPTH = 10
+  XP_MATRIX_PITCH = 0,
+  XP_MATRIX_CUTOFF = 1,
+  XP_MATRIX_AMPLITUDE = 2,
+  XP_MATRIX_LFO1_RATE = 3,
+  XP_MATRIX_LFO1_PITCH_DEPTH = 4,
+  XP_MATRIX_LFO1_TVF_DEPTH = 5,
+  XP_MATRIX_LFO1_TVA_DEPTH = 6,
+  XP_MATRIX_LFO2_RATE = 7,
+  XP_MATRIX_LFO2_PITCH_DEPTH = 8,
+  XP_MATRIX_LFO2_TVF_DEPTH = 9,
+  XP_MATRIX_LFO2_TVA_DEPTH = 10
 };
 
 #ifdef __cplusplus
@@ -143,14 +143,14 @@ struct ChannelState {
      applied so far; the rest are held so a song's settings are not lost,
      and so the one consumer that does exist - modulation to LFO1 pitch
      depth - reads the same bytes every other destination will. */
-  uint8_t matrix_depth[SC88_MATRIX_SOURCE_COUNT][SC88_MATRIX_DEST_COUNT];
+  uint8_t matrix_depth[XP_MATRIX_SOURCE_COUNT][XP_MATRIX_DEST_COUNT];
   enum sc88_same_note_mode same_note_mode;
 };
 
 struct Device {
   uint8_t *control_rom;
-  uint8_t *decoded_chips[SC88_WAVE_CHIP_COUNT];
-  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  uint8_t *decoded_chips[XP_WAVE_CHIP_COUNT];
+  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_engine engine;
   struct sc88_reverb reverb;
@@ -198,7 +198,7 @@ struct Device {
   float *chorus_bus;
   float *delay_bus;
   size_t send_capacity;
-  struct ChannelState channels[SC88_ENGINE_PART_COUNT];
+  struct ChannelState channels[XP_ENGINE_PART_COUNT];
   uint8_t master_volume;
   uint8_t secondary_level;
   uint8_t master_pan;
@@ -213,13 +213,13 @@ struct Device {
 
 bool device_init_raw(Device *device, const uint8_t *controlRom,
                       size_t controlRomSize,
-                      const uint8_t *const rawChips[SC88_WAVE_CHIP_COUNT],
-                      const size_t rawSizes[SC88_WAVE_CHIP_COUNT],
+                      const uint8_t *const rawChips[XP_WAVE_CHIP_COUNT],
+                      const size_t rawSizes[XP_WAVE_CHIP_COUNT],
                       double outputRate, enum sc88_fractional_wrap wrap);
 bool device_init_decoded(
   Device *device, const uint8_t *controlRom, size_t controlRomSize,
-  const uint8_t *const decodedChips[SC88_WAVE_CHIP_COUNT],
-  const size_t decodedSizes[SC88_WAVE_CHIP_COUNT], double outputRate,
+  const uint8_t *const decodedChips[XP_WAVE_CHIP_COUNT],
+  const size_t decodedSizes[XP_WAVE_CHIP_COUNT], double outputRate,
   enum sc88_fractional_wrap wrap);
 void device_destroy(Device *device);
 void device_reset_controllers(Device *device);

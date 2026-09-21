@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/oscillator.h"
 
+#include "engines/xp/devices/sc88.h"
+
 #include <cassert>
 #ifdef NDEBUG
 #error "this test is assertion-driven; NDEBUG compiles it away"
@@ -72,8 +74,8 @@ static double traversal(uint32_t pitch_word, enum sc88_fractional_wrap wrap,
   size_t i, wraps = 0, first = 0, last = 0;
   float sample;
 
-  assert(oscillator_init(&oscillator, pcm, count, registers->start,
-                         registers, SC88_WAVE_FORWARD_LOOP, pitch_word,
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, count, registers->start,
+                         registers, XP_WAVE_FORWARD_LOOP, pitch_word,
                          32000.0, wrap));
   assert(oscillator.cycle_count == 86);
   assert(oscillator.initial_count == 117);
@@ -115,30 +117,30 @@ static void short_loop_wrap(void)
 
   /* The +4 correction tunes this loop to its own root key, and only if the
      traversal is 86/step output samples. */
-  period = traversal(root_word, SC88_WRAP_FULL_CARRY, pcm,
+  period = traversal(root_word, XP_WRAP_FULL_CARRY, pcm,
                      sizeof pcm / sizeof pcm[0], &registers);
   assert(fabs(period - 86.0 / pow(2.0, -136.0 / 16384.0)) < 1e-3);
   assert(fabs(1200.0 * log2((32000.0 / period) / fsharp4)) < 0.25);
 
   /* Cleared, the traversal has to end on an output sample, and the zone is
      ten cents flat of the key it is cut for. */
-  period = traversal(root_word, SC88_WRAP_FULL_RESET, pcm,
+  period = traversal(root_word, XP_WRAP_FULL_RESET, pcm,
                      sizeof pcm / sizeof pcm[0], &registers);
   assert(fabs(period - 87.0) < 1e-9);
   assert(1200.0 * log2((32000.0 / period) / fsharp4) < -10.0);
 
   /* Key 60, the case the task names. */
-  period = traversal(key60_word, SC88_WRAP_FULL_CARRY, pcm,
+  period = traversal(key60_word, XP_WRAP_FULL_CARRY, pcm,
                      sizeof pcm / sizeof pcm[0], &registers);
   assert(fabs(period - 115.65092) < 1e-3);
-  period = traversal(key60_word, SC88_WRAP_FULL_RESET, pcm,
+  period = traversal(key60_word, XP_WRAP_FULL_RESET, pcm,
                      sizeof pcm / sizeof pcm[0], &registers);
   assert(fabs(period - 116.0) < 1e-9);
 
   /* Dropping only the integer part of the overshoot is the same as carrying
      it whenever the rate is at or below unity, which every key in this zone
      is; it separates from carrying only above. */
-  assert(fabs(traversal(key60_word, SC88_WRAP_FRACTION_ONLY, pcm,
+  assert(fabs(traversal(key60_word, XP_WRAP_FRACTION_ONLY, pcm,
                         sizeof pcm / sizeof pcm[0], &registers) -
               115.65092) < 1e-3);
 }
@@ -172,31 +174,31 @@ int main()
 
   assert(fabs(pitch_word_rate(0x38000, 32000.0) - 1.0) < 1e-12);
   assert(fabs(pitch_word_rate(0x3c000, 32000.0) - 2.0) < 1e-12);
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   expect(&oscillator, forward, sizeof forward / sizeof forward[0]);
 
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_PING_PONG_LOOP, 0x38000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_PING_PONG_LOOP, 0x38000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   expect(&oscillator, ping_pong, sizeof ping_pong / sizeof ping_pong[0]);
 
-  assert(oscillator_init(&oscillator, closed, 5, 8, &registers,
-                         SC88_WAVE_PING_PONG_LOOP, 0x38000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, closed, 5, 8, &registers,
+                         XP_WAVE_PING_PONG_LOOP, 0x38000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   expect(&oscillator, closed_ping_pong,
          sizeof closed_ping_pong / sizeof closed_ping_pong[0]);
 
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_FORWARD_ONE_SHOT, 0x38000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_FORWARD_ONE_SHOT, 0x38000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   expect(&oscillator, one_shot, sizeof one_shot / sizeof one_shot[0]);
   assert(!oscillator_next(&oscillator, &sample));
 
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_FORWARD_LOOP, 0x34000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_FORWARD_LOOP, 0x34000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   /* Half-step.  The first read sits on position 0 with the tap before it
      folded back, weights [1/6, 2/3, 1/6, 0] over 8, 8, 9 and a zero.  The
      second sits exactly between 0 and 1, where all four weights are
@@ -215,9 +217,9 @@ int main()
      one-shot holds there exactly as the mandatory tap at index + 1
      already did.  At 4.5, the last read before the note ends, both
      forward taps are that held last position. */
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_FORWARD_ONE_SHOT, 0x34000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_FORWARD_ONE_SHOT, 0x34000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   for (i = 0; i < 8; ++i)
     assert(oscillator_next(&oscillator, &sample));
   assert(fabs((double)sample * 8388608.0 -
@@ -237,9 +239,9 @@ int main()
      fold back onto position zero: at fraction 1/4 the weights are
      [27, 235, 121, 1]/384, so folding would read 10 there and land on
      3963/384 instead of 4017/384 - a step of 0.14 into every loop turn. */
-  assert(oscillator_init(&oscillator, pcm, 5, 8, &registers,
-                         SC88_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
-                         SC88_WRAP_FULL_CARRY));
+  assert(oscillator_init(&SC88_PROFILE, &oscillator, pcm, 5, 8, &registers,
+                         XP_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
+                         XP_WRAP_FULL_CARRY));
   oscillator.initial = false;
   oscillator.phase = 0.25;
   assert(oscillator_next(&oscillator, &sample));

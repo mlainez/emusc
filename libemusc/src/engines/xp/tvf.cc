@@ -77,31 +77,33 @@ bool keyRateScale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !scale || selectorKey > 127)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
   if (curve + selectorKey >= rom->size ||
-      kXpRateScaleTable + 129u * 2 > rom->size)
+      profile->rateScaleTable + 129u * 2 > rom->size)
     return false;
   int keyValue = s8(rom->bytes[curve + selectorKey]);
   int factor = s8((uint8_t)(0u - component->bytes[factorAt]));
   int index = floorDivPow2(keyValue * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
 bool velocityRateScale(const struct sc88_rom *rom, uint8_t velocity,
                         int factor, uint16_t *scale)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !scale || velocity > 127 ||
       factor < -128 || factor > 127 ||
-      kXpRateScaleTable + 129u * 2 > rom->size)
+      profile->rateScaleTable + 129u * 2 > rom->size)
     return false;
   int index = floorDivPow2((2 * ((int)velocity - 64)) * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
@@ -189,7 +191,7 @@ double frequencyProgress(const struct sc88_tvf_registers *registers,
 
    The SC-88's base table at 0x78702 is that same quantity in the XP pitch
    register's log domain and decodes to the bit; see the note on
-   kNyquistWord. Reading the word as a log FREQUENCY instead leaves an sd
+   XP_TVF_NYQUIST_WORD. Reading the word as a log FREQUENCY instead leaves an sd
    of 2072 word units and up to 0.67 octave, because it has no account of
    why the table's steps shrink from 1368 to 0 over its last twelve
    entries. That compression is the sine approaching one; the frequency
@@ -211,7 +213,7 @@ double frequencyProgress(const struct sc88_tvf_registers *registers,
    top. */
 double tvf_word_to_hz(uint32_t word)
 {
-  double sine = std::exp2(((double)word - kNyquistWord) / kOctaveUnits);
+  double sine = std::exp2(((double)word - XP_TVF_NYQUIST_WORD) / kXpTvfOctaveUnits);
 
   if (sine >= 1.0)
     return 0.5 * kXpNativeRate;
@@ -273,7 +275,8 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
                             const struct sc88_tvf_controls *controls,
                             struct sc88_tvf_registers *registers)
 {
-  if (!rom || !rom->bytes || rom->size < kLimitTable + 256u ||
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (!rom || !rom->bytes || rom->size < profile->limitTable + 256u ||
       !component || !component->bytes || !controls || !registers ||
       controls->part_cutoff > 127 || controls->secondary_cutoff > 127 ||
       controls->part_resonance > 127 ||
@@ -317,7 +320,7 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   int16_t accumulator = s16(
     (uint16_t)((uint16_t)preBaseModulation +
                (uint16_t)tvf_matrix_cutoff_term(controls->matrix_cutoff)));
-  int32_t combined = be16(rom->bytes + kBaseTable + (unsigned)cutoffIndex * 2u);
+  int32_t combined = be16(rom->bytes + profile->baseTable + (unsigned)cutoffIndex * 2u);
   combined += accumulator;
   if (combined < 0)
     combined = 0;
@@ -327,7 +330,7 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   combined >>= 1;
   registers->base_value = (uint16_t)combined;
   uint16_t limit = (uint16_t)(be16(
-    rom->bytes + kLimitTable + (unsigned)resonanceIndex * 2u) >> 1);
+    rom->bytes + profile->limitTable + (unsigned)resonanceIndex * 2u) >> 1);
   if (combined > limit)
     combined = limit;
 
@@ -365,9 +368,10 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
                            uint8_t selectorKey, uint8_t velocity, bool softPedal,
                            struct sc88_tvf_envelope *envelope)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kXpEnvelopeRateTable + 128u * 2 > rom->size ||
+      profile->envelopeRateTable + 128u * 2 > rom->size ||
       !envelopeDepth(rom, tone, component, velocity, softPedal,
                      &envelope->depth))
     return false;
@@ -388,7 +392,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
     if (!velocityRateScale(rom, velocity, factor, &velocityScale))
       return false;
     uint16_t finalScale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
-    uint16_t tableRate = be16(rom->bytes + kXpEnvelopeRateTable +
+    uint16_t tableRate = be16(rom->bytes + profile->envelopeRateTable +
       (uint32_t)component->bytes[0x54 + stage] * 2);
     prepareIncrement(tableRate, finalScale, envelope->initial_phases + stage,
                       envelope->increments + stage);
@@ -457,7 +461,7 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !release || selectorKey > 127 ||
-      kXpEnvelopeRateTable + 128u * 2 > rom->size)
+      xp_profile(rom)->envelopeRateTable + 128u * 2 > rom->size)
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
@@ -466,7 +470,7 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   uint16_t keyScale;
   if (!keyRateScale(rom, tone, component, selectorKey, 0x5c, 0x5f, &keyScale))
     return false;
-  uint16_t tableRate = be16(rom->bytes + kXpEnvelopeRateTable +
+  uint16_t tableRate = be16(rom->bytes + xp_profile(rom)->envelopeRateTable +
                             (uint32_t)component->bytes[0x58] * 2);
   uint16_t initialPhase;
   prepareIncrement(tableRate, keyScale, &initialPhase, &release->increment);
@@ -493,7 +497,7 @@ bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = xp_profile(rom)->releasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -528,7 +532,8 @@ bool tvf_update_frequency(const struct sc88_rom *rom,
                            int16_t postBaseModulation,
                            struct sc88_tvf_registers *registers)
 {
-  if (!rom || !rom->bytes || !registers || rom->size < kLimitTable + 256u)
+  if (!rom || !rom->bytes || !registers ||
+      rom->size < xp_profile(rom)->limitTable + 256u)
     return false;
   if (registers->fixed_tuple)
     return true;
@@ -545,7 +550,8 @@ bool tvf_update_frequency(const struct sc88_rom *rom,
   uint16_t combined = (uint16_t)((uint16_t)registers->base_value +
                                  (uint16_t)postBaseModulation);
   uint16_t limit = (uint16_t)(be16(
-    rom->bytes + kLimitTable + (uint32_t)registers->resonance_index * 2) >> 1);
+    rom->bytes + xp_profile(rom)->limitTable +
+    (uint32_t)registers->resonance_index * 2) >> 1);
   if (combined > limit)
     combined = limit;
   registers->combined = combined;
@@ -637,7 +643,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
    * (`M-105`). The fixed-tuple path's TVF-Q current 0x20000 is what index
    * 64 produces, so 64 is the neutral resonance; the index runs opposite
    * to the player's setting, so a low index is a high Q. */
-  double damping = (double)registers->resonance_current / kQUnity;
+  double damping = (double)registers->resonance_current / kXpTvfQUnity;
   /* The register runs to index 127, which asks for 3.97. The topology is
      stable for any positive damping, so the only bound needed is one that
      keeps the denominator away from zero; refusing the overdamped end
@@ -647,8 +653,8 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
   else if (damping > 4.0)
     damping = 4.0;
   /* The two poles are realised with forward-Euler integrators, the
-     topology the chip's limit table names (see kLimitTable) and the one
-     libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal form
+     topology the chip's limit table names (see XpDeviceProfile::limitTable)
+     and the one libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal form
      this replaced is a bilinear transform: it leaves a double zero at
      Nyquist, so the two poles the ROM asks for rolled off like three near
      the top of the band - 0.5 dB darker than its own analog prototype at
@@ -660,7 +666,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
   float high = 0.0f;
   float band = 0.0f;
   float low = 0.0f;
-  for (section = 0; section < SC88_TVF_SECTIONS; ++section) {
+  for (section = 0; section < XP_TVF_SECTIONS; ++section) {
     float d = section == 0 ? (float)damping : 2.0f;
     float f = (float)g;
     float sb = section == 0 ? state->integrator_band

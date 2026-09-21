@@ -31,8 +31,8 @@ static void put24(uint8_t *p, uint32_t value)
 static void test_held_rom(const char *path)
 {
   FILE *file = fopen(path, "rb");
-  uint8_t *bytes = (uint8_t *)malloc(SC88_CONTROL_ROM_SIZE);
-  bool seen[SC88_CONTROL_ROM_SIZE] = {false};
+  uint8_t *bytes = (uint8_t *)malloc(XP_CONTROL_ROM_SIZE);
+  bool seen[XP_CONTROL_ROM_SIZE] = {false};
   struct sc88_rom rom;
   unsigned map;
   unsigned variation;
@@ -45,15 +45,15 @@ static void test_held_rom(const char *path)
   const struct sc88_tvf_controls tvf_controls = {64, 64, 64, 64, 0};
 
   assert(file && bytes);
-  assert(fread(bytes, 1, SC88_CONTROL_ROM_SIZE, file) ==
-         SC88_CONTROL_ROM_SIZE);
+  assert(fread(bytes, 1, XP_CONTROL_ROM_SIZE, file) ==
+         XP_CONTROL_ROM_SIZE);
   assert(fgetc(file) == EOF);
   fclose(file);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   /* Both rows of the lookup, in order, so that the counts below separate
      the SC-55 map's tones from the ones only the SC-88 map reaches. */
-  for (map = SC88_TONE_MAP_SC55; map <= SC88_TONE_MAP_SC88; ++map) {
+  for (map = XP_TONE_MAP_SC55; map <= XP_TONE_MAP_SC88; ++map) {
     for (variation = 0; variation < 128; ++variation) {
       for (program = 0; program < 128; ++program) {
         struct sc88_tone tone;
@@ -98,7 +98,7 @@ static void test_held_rom(const char *path)
             assert(wave_descriptor_loop_type(&zone.descriptor, &mode));
             if (!tva_static_gain_q17(
                   &rom, &tone, &component, &zone, (uint8_t)key, 100, &levels,
-                  SC88_TVA_NO_DRUM_LEVEL, &attenuation, &gain_q17)) {
+                  XP_TVA_NO_DRUM_LEVEL, &attenuation, &gain_q17)) {
               fprintf(stderr, "TVA failed tone=%#x component=%#x key=%u\n",
                       tone.offset, component.offset, key);
               assert(false);
@@ -151,9 +151,9 @@ static void test_held_rom(const char *path)
        tones of 469 components. The SC-88 row's own 418 selections are all
        distinct, and 95 of them are tones the SC-55 row already reached, so
        it adds 323 - leaving 259 tones the SC-55 row alone can play. */
-    assert(selection_count == (map == SC88_TONE_MAP_SC55 ? 418u : 836u));
-    assert(tone_count == (map == SC88_TONE_MAP_SC55 ? 354u : 677u));
-    assert(component_count == (map == SC88_TONE_MAP_SC55 ? 469u : 973u));
+    assert(selection_count == (map == XP_TONE_MAP_SC55 ? 418u : 836u));
+    assert(tone_count == (map == XP_TONE_MAP_SC55 ? 354u : 677u));
+    assert(component_count == (map == XP_TONE_MAP_SC55 ? 469u : 973u));
   }
   free(bytes);
 }
@@ -172,7 +172,7 @@ int main()
     0x00, 0x01, 0xee, 0x60, 0x00, 0x20, 0x24, 0x02, 0x6f, 0x9c,
     0x00, 0x02, 0x92, 0x0d, 0x00, 0x00, 0x0a, 0x00, 0xf4, 0x30
   };
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   struct sc88_rom rom;
   struct sc88_tone tone;
   struct sc88_component component;
@@ -201,8 +201,8 @@ int main()
   bytes[0x30015] = 0x00;
   memcpy(bytes + 0x36100, descriptor, sizeof descriptor);
 
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
-  assert(rom_select_melodic(&rom, SC88_TONE_MAP_SC88, 0, 0,
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
+  assert(rom_select_melodic(&rom, XP_TONE_MAP_SC88, 0, 0,
                             &tone_offset));
   assert(tone_offset == 0x40000);
   assert(rom_open_tone(&rom, tone_offset, &tone));
@@ -220,20 +220,20 @@ int main()
   /* The map is an axis of its own. The same variation and program on the
      SC-55 row resolve nothing while that row is empty and the tone once it
      is filled; a map outside 1..2 is what `2d59` refuses outright. */
-  assert(!rom_select_melodic(&rom, SC88_TONE_MAP_SC55, 0, 0,
+  assert(!rom_select_melodic(&rom, XP_TONE_MAP_SC55, 0, 0,
                              &tone_offset));
   bytes[0x2fc00] = 0;
-  assert(rom_select_melodic(&rom, SC88_TONE_MAP_SC55, 0, 0,
+  assert(rom_select_melodic(&rom, XP_TONE_MAP_SC55, 0, 0,
                             &tone_offset));
   assert(tone_offset == 0x40000);
   assert(!rom_select_melodic(&rom, 0, 0, 0, &tone_offset));
   assert(!rom_select_melodic(&rom, 3, 0, 0, &tone_offset));
-  assert(!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, 0, 128,
+  assert(!rom_select_melodic(&rom, XP_TONE_MAP_SC88, 0, 128,
                              &tone_offset));
-  assert(!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, 128, 0,
+  assert(!rom_select_melodic(&rom, XP_TONE_MAP_SC88, 128, 0,
                              &tone_offset));
   bytes[0] ^= 1;
-  assert(!rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(!rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
   free(bytes);
 
   {

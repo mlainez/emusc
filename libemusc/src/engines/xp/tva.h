@@ -28,8 +28,8 @@ struct sc88_tva_levels {
  * `4d76` sets the flag `7295` tests from bit 7 of the kit's `+0x280`
  * assign-group byte - clear means subtract. The melodic note-on path at
  * `1bb4` stages `0xff` there, so bit 7 is set and the term is skipped;
- * `SC88_TVA_NO_DRUM_LEVEL` is that case. */
-#define SC88_TVA_NO_DRUM_LEVEL 0xffu
+ * `XP_TVA_NO_DRUM_LEVEL` is that case. */
+#define XP_TVA_NO_DRUM_LEVEL 0xffu
 
 struct sc88_tva_release {
   uint16_t current;

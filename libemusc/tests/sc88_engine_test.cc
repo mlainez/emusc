@@ -24,9 +24,9 @@ static void put24(uint8_t *p, uint32_t value)
 }
 
 static void make_fixture(uint8_t *control, uint8_t *wave,
-                         struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT])
+                         struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT])
 {
-  static const uint8_t selectors[SC88_WAVE_BANK_COUNT] = {
+  static const uint8_t selectors[XP_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
   };
   static const uint8_t vectors[16] = {
@@ -114,10 +114,10 @@ static void make_fixture(uint8_t *control, uint8_t *wave,
   control[0x23c30 + 0x480 + 38] = 0x11;
   wave[0x8000] = 1;
   wave[0x8001] = 1;
-  for (i = 0; i < SC88_WAVE_BANK_COUNT; ++i) {
+  for (i = 0; i < XP_WAVE_BANK_COUNT; ++i) {
     banks[i].selector = selectors[i];
     banks[i].bytes = wave;
-    banks[i].size = SC88_WAVE_BANK_SIZE;
+    banks[i].size = SC88_PROFILE.waveBankSize;
   }
 }
 
@@ -135,9 +135,9 @@ static void count_service(void *user, unsigned periods)
 
 int main()
 {
-  uint8_t *control = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
-  uint8_t *wave = (uint8_t *)calloc(SC88_WAVE_BANK_SIZE, 1);
-  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  uint8_t *control = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
+  uint8_t *wave = (uint8_t *)calloc(SC88_PROFILE.waveBankSize, 1);
+  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
   struct sc88_renderer renderer;
   struct sc88_engine engine;
   struct service_count count = {0, 0};
@@ -145,27 +145,27 @@ int main()
   float send[514];
   float wet;
   unsigned i;
-  unsigned retarget_slot = SC88_ENGINE_SLOT_COUNT;
+  unsigned retarget_slot = XP_ENGINE_SLOT_COUNT;
   uint32_t standing_target;
 
   assert(control && wave);
   make_fixture(control, wave, banks);
-  assert(renderer_init(&renderer, control, SC88_CONTROL_ROM_SIZE,
-                            banks, SC88_WAVE_BANK_COUNT, 32000.0,
-                            SC88_WRAP_FULL_CARRY));
+  assert(renderer_init(&renderer, control, XP_CONTROL_ROM_SIZE,
+                            banks, XP_WAVE_BANK_COUNT, 32000.0,
+                            XP_WRAP_FULL_CARRY));
   assert(engine_init(&engine, &renderer));
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_SINGLE, 0.25f));
+                             XP_SAME_NOTE_SINGLE, 0.25f));
   assert(engine_active_slots(&engine) == 1);
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_SINGLE, 0.25f));
+                             XP_SAME_NOTE_SINGLE, 0.25f));
   assert(engine_active_slots(&engine) == 1);
   assert(engine_note_off(&engine, 0, 60));
   assert(engine_released_slots(&engine) == 1);
 
   engine_hold(&engine, 0, true);
   assert(engine_note_on(&engine, 0, 0, 0, 61, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+                             XP_SAME_NOTE_FULL_MULTI, 0.25f));
   assert(engine_note_off(&engine, 0, 61));
   assert(engine_released_slots(&engine) == 2);
   engine_hold(&engine, 0, false);
@@ -176,12 +176,12 @@ int main()
     bool found_muted = false;
     put16(control + 0x14f3e, 0xffff);
     assert(engine_note_on(&engine, 2, 0, 0, 63, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+                               XP_SAME_NOTE_FULL_MULTI, 0.25f));
     engine_set_part_levels(&engine, 2, &muted);
     engine_set_part_levels(&engine, 1, &muted);
     assert(engine_note_on(&engine, 1, 0, 0, 62, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+                               XP_SAME_NOTE_FULL_MULTI, 0.25f));
+    for (i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
           (engine.notes[engine.slots[i].note].part == 1 ||
            engine.notes[engine.slots[i].note].part == 2)) {
@@ -194,13 +194,13 @@ int main()
 
   {
     const struct sc88_tvf_controls tvf = {127, 64, 32, 64, 0};
-    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+    for (i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
           engine.notes[engine.slots[i].note].part == 1) {
         retarget_slot = i;
         break;
       }
-    assert(retarget_slot < SC88_ENGINE_SLOT_COUNT);
+    assert(retarget_slot < XP_ENGINE_SLOT_COUNT);
     standing_target =
       engine.slots[retarget_slot].component.tvf.frequency_target;
     /* The cutoff base for index 63 and the limit for resonance index 64,
@@ -218,7 +218,7 @@ int main()
   assert(!engine.parts[1].tvf_dirty);
   {
     bool found = false;
-    for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+    for (i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
           engine.notes[engine.slots[i].note].part == 1) {
         assert(engine.slots[i].component.tvf.cutoff_index == 63);
@@ -259,31 +259,31 @@ int main()
   engine_destroy(&engine);
 
   assert(engine_init(&engine, &renderer));
-  for (i = 0; i < SC88_ENGINE_SLOT_COUNT; ++i)
+  for (i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
     assert(engine_note_on(&engine, 0, 0, 0, (uint8_t)i, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+                               XP_SAME_NOTE_FULL_MULTI, 0.25f));
+  assert(engine_active_slots(&engine) == XP_ENGINE_SLOT_COUNT);
   /* One period so every voice's amplitude register has actually risen off
      zero - stopping a voice that has never been rendered has nothing to
      ramp down from, which would make the stolen-voice check below pass
      whether or not the steal path ever calls the stop ramp at all. */
   engine_render(&engine, stereo, 257);
-  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+  assert(engine_active_slots(&engine) == XP_ENGINE_SLOT_COUNT);
   assert(engine_note_off(&engine, 0, 0));
   assert(engine_released_slots(&engine) == 1);
   /* All 64 slots are full, so this note-on can only be served by stealing
      the one just released (TASK-189 AC#2: a stimulus that forces voice
      stealing). */
   assert(engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 0.25f));
-  assert(engine_active_slots(&engine) == SC88_ENGINE_SLOT_COUNT);
+                             XP_SAME_NOTE_FULL_MULTI, 0.25f));
+  assert(engine_active_slots(&engine) == XP_ENGINE_SLOT_COUNT);
   assert(engine_released_slots(&engine) == 0);
   /* The stolen voice must be handed to the chip's stop ramp rather than
      memset mid-note (TASK-189 AC#1, P-0358): it is still sounding down in
      engine.stopping[], not simply gone. */
   {
     unsigned stopping = 0;
-    for (i = 0; i < SC88_ENGINE_STOPPING_COUNT; ++i)
+    for (i = 0; i < XP_ENGINE_STOPPING_COUNT; ++i)
       if (engine.stopping[i].active)
         ++stopping;
     assert(stopping == 1);
@@ -293,7 +293,7 @@ int main()
   assert(engine_init(&engine, &renderer));
   engine_hold(&engine, 0, true);
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 0.25f));
+                             XP_SAME_NOTE_FULL_MULTI, 0.25f));
   assert(engine_note_off(&engine, 0, 60));
   engine_render(&engine, stereo, 257);
   assert(engine_active_slots(&engine) == 1);
@@ -310,7 +310,7 @@ int main()
   assert(engine_init(&engine, &renderer));
   engine_set_part_rhythm(&engine, 0, 1);
   assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   assert(engine_note_off(&engine, 0, 36));
   /* The key is up, so the slot counts as released for stealing, but the
      envelope must not have been released - that is the whole point. */
@@ -322,7 +322,7 @@ int main()
   assert(engine_init(&engine, &renderer));
   engine_set_part_rhythm(&engine, 0, 1);
   assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   assert(engine_note_off(&engine, 0, 38));
   assert(engine.slots[0].component.release.active);
   engine_destroy(&engine);
@@ -339,7 +339,7 @@ int main()
     engine_set_part_rhythm(&engine, 0, 1);
     assert(engine_set_drum_parameter(&engine, 1, 1, 36, 72));
     assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     edited = engine.slots[0].component.oscillator.step;
     engine_destroy(&engine);
 
@@ -347,7 +347,7 @@ int main()
     engine_set_part_rhythm(&engine, 0, 2);
     assert(engine_set_drum_parameter(&engine, 1, 1, 36, 72));
     assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     plain = engine.slots[0].component.oscillator.step;
     engine_destroy(&engine);
     assert(edited > plain * 1.5);
@@ -356,7 +356,7 @@ int main()
   /* a melodic note is never exempt */
   assert(engine_init(&engine, &renderer));
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   assert(engine_note_off(&engine, 0, 60));
   assert(engine.slots[0].component.release.active);
   engine_destroy(&engine);
@@ -384,7 +384,7 @@ int main()
 
     assert(engine_init(&engine, &renderer));
     assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     assert(engine.slots[0].component.envelope.active);
     assert(engine_note_off(&engine, 0, 60));
     released = &engine.slots[0].component;
@@ -402,7 +402,7 @@ int main()
     control[0x40000 + 0x15] = 1;
     assert(engine_init(&engine, &renderer));
     assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     assert(engine.slots[0].component.continuous_hold_release);
     assert(engine_note_off(&engine, 0, 60));
     released = &engine.slots[0].component;
@@ -453,7 +453,7 @@ int main()
   engine_set_part_rhythm(&engine, 0, 1);
   engine_set_part_reverb_send(&engine, 0, 127);
   assert(engine_note_on(&engine, 0, 0, 0, 36, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(stereo[0] != 0.0f || stereo[1] != 0.0f);
   assert(send[0] == 0.0f);
@@ -463,7 +463,7 @@ int main()
   engine_set_part_rhythm(&engine, 0, 1);
   engine_set_part_reverb_send(&engine, 0, 127);
   assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   wet = send[0];
   assert(wet != 0.0f);
@@ -475,7 +475,7 @@ int main()
   engine_set_part_rhythm(&engine, 0, 1);
   engine_set_part_reverb_send(&engine, 0, 0);
   assert(engine_note_on(&engine, 0, 0, 0, 38, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == 0.0f);
   engine_destroy(&engine);
@@ -487,7 +487,7 @@ int main()
   assert(engine_init(&engine, &renderer));
   engine_set_part_reverb_send(&engine, 0, 127);
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
-                             SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                             XP_SAME_NOTE_FULL_MULTI, 1.0f));
   engine_render_with_send(&engine, stereo, send, NULL, NULL, 1);
   assert(send[0] == wet);
   engine_destroy(&engine);
@@ -509,33 +509,33 @@ int main()
     /* portamento off: the first note leaves its key behind and nothing
        glides */
     assert(engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     assert(engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-    for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
+    for (slot = 0; slot < XP_ENGINE_SLOT_COUNT; ++slot)
       assert(!engine.slots[slot].component.portamento.active);
 
     /* the switch alone is not enough: CC5 = 0 is the firmware's own
        no-glide exit */
     engine_set_part_portamento(&engine, 0, true);
     assert(engine_note_on(&engine, 0, 0, 0, 40, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-    for (slot = 0; slot < SC88_ENGINE_SLOT_COUNT; ++slot)
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
+    for (slot = 0; slot < XP_ENGINE_SLOT_COUNT; ++slot)
       assert(!engine.slots[slot].component.portamento.active);
 
     engine_set_part_portamento_time(&engine, 0, 40);
     assert(engine_note_on(&engine, 0, 0, 0, 76, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
     /* EVERY component of the note glides, not one of them: the SC-55 path
        shipped twice with one partial starting at the target while the
        other glided (TASK-088, then TASK-113). */
-    newest = SC88_ENGINE_NONE;
-    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+    newest = XP_ENGINE_NONE;
+    for (i = 0; i < XP_ENGINE_NOTE_COUNT; ++i)
       if (engine.notes[i].allocated && engine.notes[i].part == 0 &&
-          (newest == SC88_ENGINE_NONE ||
+          (newest == XP_ENGINE_NONE ||
            engine.notes[i].serial > engine.notes[newest].serial))
         newest = (uint8_t)i;
-    assert(newest != SC88_ENGINE_NONE);
+    assert(newest != XP_ENGINE_NONE);
     assert(engine.notes[newest].slot_count >= 1);
     glides = 0;
     for (i = 0; i < engine.notes[newest].slot_count; ++i) {
@@ -564,14 +564,14 @@ int main()
     /* a note arriving mid-glide starts from where the glide stands, not
        from where the note it follows was aimed */
     assert(engine_note_on(&engine, 0, 0, 0, 100, 100, 0,
-                               SC88_SAME_NOTE_FULL_MULTI, 1.0f));
-    newest = SC88_ENGINE_NONE;
-    for (i = 0; i < SC88_ENGINE_NOTE_COUNT; ++i)
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
+    newest = XP_ENGINE_NONE;
+    for (i = 0; i < XP_ENGINE_NOTE_COUNT; ++i)
       if (engine.notes[i].allocated && engine.notes[i].part == 0 &&
-          (newest == SC88_ENGINE_NONE ||
+          (newest == XP_ENGINE_NONE ||
            engine.notes[i].serial > engine.notes[newest].serial))
         newest = (uint8_t)i;
-    assert(newest != SC88_ENGINE_NONE);
+    assert(newest != XP_ENGINE_NONE);
     for (i = 0; i < engine.notes[newest].slot_count; ++i) {
       const struct sc88_portamento *g =
         &engine.slots[engine.notes[newest].slots[i]].component.portamento;

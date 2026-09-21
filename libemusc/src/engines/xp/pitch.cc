@@ -43,9 +43,10 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
                  uint16_t pointerAt, uint8_t factorAt, uint8_t velocity,
                  int velocityFactor, bool useVelocity, uint16_t *scale)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !scale || key > 127 || velocity > 127 ||
-      kXpRateScaleTable + 258u > rom->size)
+      profile->rateScaleTable + 258u > rom->size)
     return false;
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
@@ -55,7 +56,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
                       s8((uint8_t)(0u - component->bytes[factorAt])) * 256) + 64;
   if (index < 0 || index > 128)
     return false;
-  uint16_t keyScale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+  uint16_t keyScale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   uint16_t velocityScale = 0x0100;
   if (useVelocity) {
     int product = 2 * ((int)velocity - 64) * velocityFactor;
@@ -63,7 +64,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
              -(int)(((unsigned)(-product) + 255u) >> 8)) + 64;
     if (index < 0 || index > 128)
       return false;
-    velocityScale = be16(rom->bytes + kXpRateScaleTable + (uint32_t)index * 2);
+    velocityScale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   }
   *scale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
   return true;
@@ -106,9 +107,10 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
                              uint8_t selectorKey, uint8_t velocity,
                              struct sc88_pitch_envelope *envelope)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kXpEnvelopeRateTable + 256u > rom->size)
+      profile->envelopeRateTable + 256u > rom->size)
     return false;
   uint16_t scale;
   if (!rate_scale(rom, tone, component, selectorKey, 0x30, 0x34,
@@ -118,7 +120,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
   envelope->depth = velocity_depth(be16(component->bytes + 0x1a), velocity,
                                    s16(be16(component->bytes + 0x36)));
   for (unsigned stage = 0; stage < 4; ++stage) {
-    uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
+    uint16_t rate = be16(rom->bytes + profile->envelopeRateTable +
                          (uint32_t)component->bytes[0x2a + stage] * 2);
     envelope->targets[stage] = scale_target(
       s16(be16(component->bytes + 0x20 + stage * 2)), envelope->depth);
@@ -190,7 +192,7 @@ bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *t
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
-  uint16_t rate = be16(rom->bytes + kXpEnvelopeRateTable +
+  uint16_t rate = be16(rom->bytes + xp_profile(rom)->envelopeRateTable +
                        (uint32_t)component->bytes[0x2e] * 2);
   uint16_t phase;
   prepare_increment(rate, scale, &phase, &release->increment);
@@ -224,7 +226,7 @@ bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kXpReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = xp_profile(rom)->releasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -288,7 +290,7 @@ uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time)
 {
   if (!rom || !rom->bytes || time == 0 || time > 127)
     return 0;
-  uint32_t at = kPortamentoRateTable + (uint32_t)time * 4u;
+  uint32_t at = xp_profile(rom)->portamentoRateTable + (uint32_t)time * 4u;
   if (at + 4u > rom->size)
     return 0;
   return ((uint32_t)be16(rom->bytes + at) << 16) | be16(rom->bytes + at + 2);

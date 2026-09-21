@@ -31,7 +31,7 @@ struct sc88_wave_bank {
 
 struct sc88_renderer {
   struct sc88_rom rom;
-  struct sc88_wave_bank banks[SC88_WAVE_BANK_COUNT];
+  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
   double output_rate;
   enum sc88_fractional_wrap wrap;
   struct sc88_tva_levels levels;
@@ -44,7 +44,8 @@ struct sc88_renderer {
   /* control_gain_q15's whole domain, decoded once at init instead of
      once per active voice per output sample (reverb/chorus/delay sends
      are read up to 3x per voice per sample, and the ROM table these come
-     from - kSendTable, pan.cc - never changes after rom_init): index by
+     from - XpDeviceProfile::sendTable, pan.cc - never changes after
+     rom_init): index by
      the control byte directly, /32768.0f already folded in (exact, a
      power of two), rather than repeating control_gain_q15's ROM read.
      control_gain_q15's own false-return case (see pan.cc) is tracked
@@ -110,7 +111,7 @@ struct sc88_render_component {
   /* the kit's `+0x400`, or 127 for a melodic note */
   uint8_t chorus_send;
   uint16_t static_attenuation;
-  /* The rhythm kit's own level for this note, or `SC88_TVA_NO_DRUM_LEVEL`
+  /* The rhythm kit's own level for this note, or `XP_TVA_NO_DRUM_LEVEL`
      on a melodic one. It is a fifth term in the composed amplitude, so it
      is kept beside the attenuation it is subtracted with: the release and
      a part-level change both recompose that amplitude from the stored
@@ -158,7 +159,7 @@ struct sc88_render_component {
   bool active;
 };
 
-/* tva_curve_decode's result for SC88_STATIC_AMPLITUDE_CURVE_WORD never
+/* tva_curve_decode's result for XP_STATIC_AMPLITUDE_CURVE_WORD never
    changes (linear false, rate 679/64 - a power-of-two divisor, so this
    is that exact double, not an approximation of it), so this inlines
    tva_curve_progress's non-linear branch directly instead of redoing
@@ -172,7 +173,7 @@ struct sc88_render_component {
    separate period_fraction <= 0.0 case is needed here. */
 static inline double sc88_static_gain_progress(double period_fraction)
 {
-  const double q = kRate * period_fraction;
+  const double q = kXpStaticAmplitudeRate * period_fraction;
   return q >= 40.0 ? 1.0 : 1.0 - std::exp(-q);
 }
 
@@ -197,7 +198,7 @@ static inline uint32_t sc88_render_static_gain_q17(
 }
 
 struct sc88_render_voice {
-  struct sc88_render_component components[SC88_MAX_TONE_COMPONENTS];
+  struct sc88_render_component components[XP_MAX_TONE_COMPONENTS];
   unsigned component_count;
   uint32_t tone_offset;
   uint8_t key;
@@ -317,7 +318,7 @@ bool renderer_note_on_with_controls(const struct sc88_renderer *renderer,
 /* `map` is the tone map, which chooses the row of the variation lookup the
  * bank is taken from, exactly as it chooses a rhythm part's kit set. The
  * three entry points above have no part state to take it from and use the
- * reset default, `SC88_TONE_MAP_SC88`. */
+ * reset default, `XP_TONE_MAP_SC88`. */
 bool renderer_note_on_with_part_controls(
   const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
   uint8_t map, uint8_t variation, uint8_t program, uint8_t key,

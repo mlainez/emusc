@@ -39,12 +39,15 @@ float tap(const struct sc88_chorus *ch, double back)
 
 }  // namespace
 
-bool chorus_init(struct sc88_chorus *ch, double outputRate)
+bool chorus_init(struct sc88_chorus *ch, double outputRate,
+                  const struct XpDeviceProfile *profile)
 {
   if (!ch || outputRate < 8000.0 || outputRate > 192000.0)
     return false;
+  if (!profile)
+    profile = &SC88_PROFILE;
   std::memset(ch, 0, sizeof *ch);
-  ch->len = (size_t)(kChorusMaxMs * outputRate / 1000.0) + 4u;
+  ch->len = (size_t)(profile->chorusMaxMs * outputRate / 1000.0) + 4u;
   ch->buf = (float *)std::calloc(ch->len, sizeof *ch->buf);
   if (!ch->buf)
     return false;
@@ -81,7 +84,7 @@ bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8])
 {
   if (!rom || !rom->bytes || !out || macro > 7)
     return false;
-  uint32_t base = kChorusMacroTable + (uint32_t)macro * 8u;
+  uint32_t base = xp_profile(rom)->chorusMacroTable + (uint32_t)macro * 8u;
   if (base + 8u > rom->size)
     return false;
   for (unsigned i = 0; i < 8; ++i)

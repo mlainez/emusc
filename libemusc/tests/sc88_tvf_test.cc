@@ -55,11 +55,11 @@ int main()
     0x00, 0x00, 'P', 'i', 'a', 'n', 'o', ' ',
     '1', 'A', ' ', ' ', ' ', ' ', 0x03, 0xff
   };
-  uint8_t *bytes = (uint8_t *)calloc(SC88_CONTROL_ROM_SIZE, 1);
-  uint8_t component_bytes[SC88_COMPONENT_SIZE] = {0};
+  uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
+  uint8_t component_bytes[148u] = {0};  /* SC88_PROFILE.componentSize */
   struct sc88_rom rom;
   struct sc88_component component = {component_bytes, 0, 0};
-  uint8_t tone_common[SC88_TONE_COMMON_SIZE] = {0};
+  uint8_t tone_common[34u] = {0};       /* SC88_PROFILE.toneCommonSize */
   struct sc88_tone tone = {tone_common, 0x40000, 1};
   const struct sc88_tvf_controls neutral = {64, 64, 64, 64, 0};
   struct sc88_tvf_registers registers;
@@ -67,7 +67,7 @@ int main()
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, first_directory, sizeof first_directory);
-  assert(rom_init(&rom, bytes, SC88_CONTROL_ROM_SIZE));
+  assert(rom_init(&rom, bytes, XP_CONTROL_ROM_SIZE));
 
   component_bytes[0x3c] = 60;
   component_bytes[0x3d] = 12;

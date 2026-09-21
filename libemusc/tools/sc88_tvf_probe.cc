@@ -126,7 +126,7 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+        if (!rom_select_melodic(&rom, XP_TONE_MAP_SC88, (uint8_t)v,
                                      (uint8_t)pr, &offset) ||
             !rom_open_tone(&rom, offset, &t))
           continue;
@@ -165,7 +165,7 @@ int main(int argc, char **argv)
         struct sc88_tone t;
         unsigned c;
         char n[13];
-        if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88, (uint8_t)v,
+        if (!rom_select_melodic(&rom, XP_TONE_MAP_SC88, (uint8_t)v,
                                      (uint8_t)pr, &offset) ||
             !rom_open_tone(&rom, offset, &t))
           continue;
@@ -218,7 +218,7 @@ int main(int argc, char **argv)
     free(control);
     return 0;
   }
-  if (!rom_select_melodic(&rom, SC88_TONE_MAP_SC88,
+  if (!rom_select_melodic(&rom, XP_TONE_MAP_SC88,
                                (uint8_t)variation, (uint8_t)program,
                                &tone_offset) ||
       !rom_open_tone(&rom, tone_offset, &tone)) {
@@ -291,7 +291,7 @@ int main(int argc, char **argv)
       if (rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
         unsigned b;
         printf("BYTES\t%u\t%u", (unsigned)program, i);
-        for (b = 0; b < SC88_COMPONENT_SIZE; ++b)
+        for (b = 0; b < 148u; ++b)  /* SC88_PROFILE.componentSize */
           printf("\t%u", (unsigned)cdump.bytes[b]);
         printf("\n");
       }
@@ -403,7 +403,7 @@ int main(int argc, char **argv)
       if (rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&
           tva_static_gain_q17(&rom, &tone, &component, &zone,
                                    (uint8_t)key, (uint8_t)velocity,
-                                   &levels, SC88_TVA_NO_DRUM_LEVEL,
+                                   &levels, XP_TVA_NO_DRUM_LEVEL,
                                    &static_attenuation, &gain)) {
         printf("    pitch env: depth %6d  rates %3u %3u %3u %3u  release %3u\n",
            (int)(int16_t)((comp_bytes_at(&component, 0x1a) << 8) |

@@ -13,10 +13,10 @@ extern "C" {
 #endif
 
 enum sc88_wave_loop_type {
-  SC88_WAVE_FORWARD_LOOP = 0,
-  SC88_WAVE_PING_PONG_LOOP = 1,
-  SC88_WAVE_FORWARD_ONE_SHOT = 2,
-  SC88_WAVE_REVERSE_ONE_SHOT = 6
+  XP_WAVE_FORWARD_LOOP = 0,
+  XP_WAVE_PING_PONG_LOOP = 1,
+  XP_WAVE_FORWARD_ONE_SHOT = 2,
+  XP_WAVE_REVERSE_ONE_SHOT = 6
 };
 
 struct sc88_wave_descriptor {
@@ -44,6 +44,7 @@ struct sc88_wave_registers {
 struct sc88_fce_decoder {
   uint32_t next_address;
   int64_t accumulator;
+  const struct XpDeviceProfile *profile;
 };
 
 struct sc88_wave_cursor {
@@ -68,13 +69,15 @@ namespace EmuSC { namespace Xp {
 // The plain C types above (sc88_wave_descriptor and friends) are shared,
 // unrenamed, with device_test.cc, which reads them directly.
 
-bool wave_descriptor_parse(const uint8_t *raw, size_t size,
+bool wave_descriptor_parse(const struct XpDeviceProfile *profile,
+                            const uint8_t *raw, size_t size,
                             struct sc88_wave_descriptor *out);
 bool wave_descriptor_loop_type(const struct sc88_wave_descriptor *desc,
                                 enum sc88_wave_loop_type *out);
 int16_t wave_pitch_correction(const struct sc88_wave_descriptor *desc,
                                bool alternate);
-bool wave_prepare_registers(const struct sc88_wave_descriptor *desc,
+bool wave_prepare_registers(const struct XpDeviceProfile *profile,
+                             const struct sc88_wave_descriptor *desc,
                              bool suppressStartOffset,
                              struct sc88_wave_registers *out);
 
@@ -82,19 +85,23 @@ bool wave_prepare_registers(const struct sc88_wave_descriptor *desc,
  * One physical dump contains two logical one-MiB banks. Source and
  * destination must not overlap. The two 32-byte plaintext headers pass
  * through unchanged. */
-bool wave_descramble_chip(const uint8_t *raw, size_t rawSize,
+bool wave_descramble_chip(const struct XpDeviceProfile *profile,
+                           const uint8_t *raw, size_t rawSize,
                            uint8_t *decoded, size_t decodedSize);
 
-bool fce_decoder_reset(struct sc88_fce_decoder *decoder,
+bool fce_decoder_reset(const struct XpDeviceProfile *profile,
+                        struct sc88_fce_decoder *decoder,
                         uint32_t sampleStart);
 bool fce_decoder_read(struct sc88_fce_decoder *decoder,
                        const uint8_t *bank, size_t bankSize,
                        int32_t *pcm24);
-bool fce_decode_descriptor(const uint8_t *bank, size_t bankSize,
+bool fce_decode_descriptor(const struct XpDeviceProfile *profile,
+                            const uint8_t *bank, size_t bankSize,
                             const struct sc88_wave_descriptor *desc,
                             int32_t *output, size_t capacity,
                             size_t *written);
-bool fce_decode_storage(const uint8_t *bank, size_t bankSize,
+bool fce_decode_storage(const struct XpDeviceProfile *profile,
+                         const uint8_t *bank, size_t bankSize,
                          const struct sc88_wave_descriptor *desc,
                          int32_t *output, size_t capacity,
                          uint32_t *baseAddress, size_t *written);
@@ -102,14 +109,16 @@ bool fce_decode_storage(const uint8_t *bank, size_t bankSize,
 /* The thirty organ descriptors the SC-88 reads at twice the rate.
    See wave.cc for the full measurement this predicate encodes: it models
    the decoded waveform's own harmonic content, not the chip. */
-bool wave_loop_reads_double(const int32_t *pcm, size_t count,
+bool wave_loop_reads_double(const struct XpDeviceProfile *profile,
+                             const int32_t *pcm, size_t count,
                              uint32_t baseAddress,
                              const struct sc88_wave_descriptor *desc);
 
 /* Integer-address playback only. Fractional phase conversion, interpolation
  * rounding and reverse one-shot termination deliberately remain outside this
  * API until their XP semantics are recovered or explicitly parameterized. */
-bool wave_cursor_init(struct sc88_wave_cursor *cursor,
+bool wave_cursor_init(const struct XpDeviceProfile *profile,
+                       struct sc88_wave_cursor *cursor,
                        const struct sc88_wave_registers *registers,
                        enum sc88_wave_loop_type mode);
 bool wave_cursor_current(const struct sc88_wave_cursor *cursor,

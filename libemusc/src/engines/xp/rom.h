@@ -16,6 +16,11 @@ extern "C" {
 struct sc88_rom {
   const uint8_t *bytes;
   size_t size;
+  /* Set by rom_init() on success. Never read directly - use xp_profile()
+     (devices/sc88.h), which falls back to SC88_PROFILE when this is
+     null, including for the several tests that build a sc88_rom by hand
+     without calling rom_init(). */
+  const struct XpDeviceProfile *profile;
 };
 
 struct sc88_tone {
@@ -51,8 +56,8 @@ struct sc88_zone_selection {
  * take the low byte if that goes negative and the high byte otherwise,
  * refuse anything at 2 or above - so map 1 is as reachable melodically as
  * it is rhythmically, over CC32 or `40 4x 00`/`40 4x 01`. */
-#define SC88_TONE_MAP_SC55 1u
-#define SC88_TONE_MAP_SC88 2u
+#define XP_TONE_MAP_SC55 1u
+#define XP_TONE_MAP_SC88 2u
 
 /* A rhythm part's note. Every field is a per-note byte from the kit record,
  * whose structure is verified against the ROM: twenty-four BE24 pointers at
@@ -70,8 +75,8 @@ struct sc88_drum_note {
 };
 
 struct sc88_drum_overlay {
-  uint8_t value[2][SC88_DRUM_FIELDS][128];
-  uint8_t present[2][SC88_DRUM_FIELDS][128];
+  uint8_t value[2][XP_DRUM_FIELDS][128];
+  uint8_t present[2][XP_DRUM_FIELDS][128];
 };
 
 #ifdef __cplusplus
@@ -108,7 +113,7 @@ bool rom_open_drum_note_overlaid(
 bool rom_open_drum_note(const struct sc88_rom *rom, uint32_t kitOffset,
                          uint8_t note, struct sc88_drum_note *out);
 
-/* `map` is `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`, the row of the
+/* `map` is `XP_TONE_MAP_SC55` or `XP_TONE_MAP_SC88`, the row of the
  * lookup at `0x2fc00` the variation indexes. The two rows hold different
  * banks: the SC-55 row's fifteen physical banks are 0..14 and the SC-88
  * row's twenty-two are 15..36, so 259 of the 677 melodic tones - the

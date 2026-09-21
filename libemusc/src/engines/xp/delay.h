@@ -60,7 +60,8 @@ namespace EmuSC { namespace Xp {
 // unrenamed, with EmuSC::Xp::Device (device.h), which embeds it by
 // value, and with sc88_delay_test.c, which reads it directly.
 
-bool delay_init(struct sc88_delay *dl, double outputRate);
+bool delay_init(struct sc88_delay *dl, double outputRate,
+                 const struct XpDeviceProfile *profile);
 void delay_destroy(struct sc88_delay *dl);
 void delay_reset(struct sc88_delay *dl);
 

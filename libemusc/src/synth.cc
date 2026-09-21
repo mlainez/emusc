@@ -95,16 +95,16 @@ bool Synth::_xp_configure(uint32_t sampleRate)
   const std::vector<uint8_t> &ctrl = _ctrlRom.device_rom();
   const std::vector<std::vector<uint8_t>> &chips = _waveRom.raw_chips();
 
-  if (ctrl.empty() || chips.size() != SC88_WAVE_CHIP_COUNT) {
+  if (ctrl.empty() || chips.size() != XP_WAVE_CHIP_COUNT) {
     std::fprintf(stderr, "libEmuSC: the SC-88 needs its control ROM and "
                  "%d wave ROM images, got %zu\n",
-                 (int) SC88_WAVE_CHIP_COUNT, chips.size());
+                 (int) XP_WAVE_CHIP_COUNT, chips.size());
     return false;
   }
 
-  const uint8_t *raw[SC88_WAVE_CHIP_COUNT];
-  size_t sizes[SC88_WAVE_CHIP_COUNT];
-  for (int i = 0; i < (int) SC88_WAVE_CHIP_COUNT; i++) {
+  const uint8_t *raw[XP_WAVE_CHIP_COUNT];
+  size_t sizes[XP_WAVE_CHIP_COUNT];
+  for (int i = 0; i < (int) XP_WAVE_CHIP_COUNT; i++) {
     raw[i]   = chips[i].data();
     sizes[i] = chips[i].size();
   }
@@ -115,7 +115,7 @@ bool Synth::_xp_configure(uint32_t sampleRate)
      what carrying the remainder gives. `sc88_oscillator_wrapped_phase` holds
      the evidence and `sc88_oscillator_test` holds the arithmetic. */
   if (!Xp::device_init_raw(_xpDevice, ctrl.data(), ctrl.size(), raw, sizes,
-                           (double) sampleRate, SC88_WRAP_FULL_CARRY)) {
+                           (double) sampleRate, XP_WRAP_FULL_CARRY)) {
     delete _xpDevice;
     _xpDevice = nullptr;
     std::fprintf(stderr, "libEmuSC: the SC-88's engine refused these ROM images\n");

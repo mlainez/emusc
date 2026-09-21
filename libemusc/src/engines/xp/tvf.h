@@ -79,8 +79,8 @@ struct sc88_tvf_release {
 struct sc88_tvf_audio_state {
   float integrator_band;
   float integrator_low;
-  float section_band[SC88_TVF_SECTIONS];
-  float section_low[SC88_TVF_SECTIONS];
+  float section_band[XP_TVF_SECTIONS];
+  float section_low[XP_TVF_SECTIONS];
   /* g's own memo: a pure function of the rounded word (see
      tvf_audio_process_provisional), so a repeat word - the common case,
      since the register glides in steps far coarser than one word per
