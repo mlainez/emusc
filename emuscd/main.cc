@@ -60,6 +60,7 @@ class EmuscdDaemon {
   std::unique_ptr<EmuSC::WaveRom> wave_rom;
   std::unique_ptr<EmuSC::Synth> synth;
   std::string device_name;
+  std::string rom_dir;
 
   MidiParser midi_parser;
 
@@ -70,9 +71,10 @@ class EmuscdDaemon {
 
 public:
   EmuscdDaemon(const std::string& dev, const std::string& port_name,
-               const std::string& pcm_device, unsigned int requested_rate,
-               unsigned int latency_ms, unsigned int block)
-      : sample_rate(requested_rate), block_frames(block) {
+               const std::string& pcm_device, const std::string& rom_directory,
+               unsigned int requested_rate, unsigned int latency_ms,
+               unsigned int block)
+      : sample_rate(requested_rate), block_frames(block), rom_dir(rom_directory) {
     init_alsa_midi(port_name);
     init_alsa_audio(pcm_device, latency_ms);
     if (!load_device(dev)) {
@@ -137,9 +139,6 @@ public:
       return false;
     }
 
-    std::string rom_dir = std::getenv("EMUSCD_ROM_DIR")
-                             ? std::getenv("EMUSCD_ROM_DIR")
-                             : "/usr/share/emuscd/roms";
     DeviceRoms roms = resolve_device_roms(dev, rom_dir);
 
     std::unique_ptr<EmuSC::ControlRom> new_ctrl;
@@ -284,6 +283,7 @@ int main(int argc, char* argv[]) {
   std::string device = "sc88";
   std::string port_name = "emuscd";
   std::string pcm_device = "default";
+  std::string rom_dir;
   unsigned int rate = 48000;
   unsigned int latency_ms = 20;
   unsigned int block = 256;
@@ -303,6 +303,8 @@ int main(int argc, char* argv[]) {
       port_name = need("--name");
     } else if (arg == "--pcm") {
       pcm_device = need("--pcm");
+    } else if (arg == "--rom-dir") {
+      rom_dir = need("--rom-dir");
     } else if (arg == "--list-pcm") {
       list_pcm_devices();
       return 0;
@@ -326,15 +328,16 @@ int main(int argc, char* argv[]) {
           << "  --name NAME         ALSA MIDI port name (default: emuscd)\n"
           << "  --pcm DEVICE        ALSA PCM output device (default: default)\n"
           << "  --list-pcm          List ALSA PCM devices and exit\n"
+          << "  --rom-dir DIR       Directory holding device ROM files (default:\n"
+          << "                       $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)\n"
           << "  --rate HZ           Requested audio sample rate (default: 48000)\n"
           << "  --latency MS        Requested output buffer size (default: 20)\n"
           << "  --block N           Audio frames per ALSA write (default: 256)\n"
           << "  --help              Show this help\n"
           << "\n"
-          << "ROM files are read from $EMUSCD_ROM_DIR (default:\n"
-          << "/usr/share/emuscd/roms), named <device>_control.bin,\n"
-          << "<device>_cpu.bin (SC-55/SC-55mkII only) and\n"
-          << "<device>_waverom<N>.bin. See README.md for exact ROM hashes.\n";
+          << "ROM files are named <device>_control.bin, <device>_cpu.bin\n"
+          << "(SC-55/SC-55mkII only) and <device>_waverom<N>.bin. See\n"
+          << "README.md for exact ROM hashes.\n";
       return 0;
     } else {
       std::cerr << "emuscd: unknown option '" << arg << "'" << std::endl;
@@ -348,8 +351,14 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  if (rom_dir.empty()) {
+    const char *env_dir = std::getenv("EMUSCD_ROM_DIR");
+    rom_dir = (env_dir && *env_dir) ? env_dir : "/usr/share/emuscd/roms";
+  }
+
   try {
-    EmuscdDaemon daemon(device, port_name, pcm_device, rate, latency_ms, block);
+    EmuscdDaemon daemon(device, port_name, pcm_device, rom_dir, rate,
+                         latency_ms, block);
     daemon.run();
   } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << std::endl;

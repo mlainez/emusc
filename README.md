@@ -64,9 +64,9 @@ All four supported devices use the same unified naming scheme:
 `<device>` is one of: `sc55`, `sc55mkii`, `sc88`, `jv880`.
 
 `emusc-render`, `emuscd` and `emusc-winmidi` all resolve ROM files using this
-same naming convention, given a directory via `--device X --rom-dir DIR`
-(`emusc-render`) or `--device X` with `$EMUSCD_ROM_DIR` set (all three tools
-read that variable; `--rom-dir` overrides it for `emusc-render`).
+same naming convention, given a directory via `--device X --rom-dir DIR` or
+`--device X` with `$EMUSCD_ROM_DIR` set - all three tools read that variable,
+and `--rom-dir` overrides it in all three.
 
 ### Verified ROM dumps
 
@@ -366,7 +366,7 @@ See `emusc-render --help` for all options: `--reset` (GM/GS mode), `--tail` (tra
 
 **emuscd** is a realtime ALSA MIDI daemon for Linux that synthesizes MIDI input through libEmuSC and outputs audio to your sound card. It runs in the background, allowing you to play MIDI files or live input through a standard ALSA MIDI sequencer port.
 
-Set the `$EMUSCD_ROM_DIR` environment variable to your ROM directory, then start the daemon:
+Set the `$EMUSCD_ROM_DIR` environment variable to your ROM directory, or pass `--rom-dir` instead, then start the daemon:
 
 ```bash
 export EMUSCD_ROM_DIR=/path/to/roms
@@ -380,6 +380,8 @@ Common options:
   --name NAME         ALSA MIDI port name (default: emuscd)
   --pcm DEVICE        ALSA PCM output device (default: default)
   --list-pcm          List ALSA PCM devices and exit
+  --rom-dir DIR       Directory holding device ROM files (default:
+                      $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)
   --rate HZ           Requested audio sample rate (default: 48000)
   --latency MS        Requested output buffer size in ms (default: 20)
   --block N           Audio frames per ALSA write (default: 256)
@@ -407,8 +409,9 @@ own MIDI port - WinMM's `midiIn` API only opens an *existing* one - so route
 MIDI into it with a virtual MIDI cable (loopMIDI on Windows 7+, Maple Virtual
 MIDI Cable on 95/98/ME/2000/XP), then point `--midi-in` at that port.
 
-Set the `EMUSCD_ROM_DIR` environment variable to your ROM directory (falls
-back to `.\roms`, relative to the working directory, if unset), then start it:
+Set the `EMUSCD_ROM_DIR` environment variable to your ROM directory, or pass
+`--rom-dir` instead (falls back to `.\roms`, relative to the working
+directory, if neither is given), then start it:
 
 ```bat
 set EMUSCD_ROM_DIR=C:\path\to\roms
@@ -424,6 +427,8 @@ Common options:
   --wave-out N         Wave output device index (default: system default)
   --list-midi-in       List MIDI input devices and exit
   --list-wave-out      List wave output devices and exit
+  --rom-dir DIR        Directory holding device ROM files (default:
+                        %EMUSCD_ROM_DIR%, or .\roms if unset)
   --rate HZ            Audio sample rate (default: 48000)
   --block N            Audio frames per wave buffer (default: 256)
   --latency MS         Requested output buffer size in ms (default: 20)

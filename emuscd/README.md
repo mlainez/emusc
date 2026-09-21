@@ -15,7 +15,8 @@ README](../README.md#building) for build and cross-compilation instructions.
 ## ROM Files
 
 Both binaries need Roland ROM files for the devices they emulate. Set
-`$EMUSCD_ROM_DIR` to the directory holding them:
+`$EMUSCD_ROM_DIR` to the directory holding them, or pass `--rom-dir` instead
+(it overrides the environment variable when both are given):
 
 - `sc55_control.bin`, `sc55_cpu.bin`, `sc55_waverom{1,2,3}.bin` (SC-55)
 - `sc55mkii_control.bin`, `sc55mkii_cpu.bin`, `sc55mkii_waverom{1,2}.bin` (SC-55mkII)
@@ -47,6 +48,8 @@ emuscd --device sc88 --name "My Synth"
 --name NAME         ALSA MIDI port name (default: emuscd)
 --pcm DEVICE        ALSA PCM output device (default: default)
 --list-pcm          List ALSA PCM devices and exit
+--rom-dir DIR       Directory holding device ROM files (default:
+                    $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)
 --rate HZ           Requested audio sample rate (default: 48000)
 --latency MS        Requested output buffer size in ms (default: 20)
 --block N           Audio frames per ALSA write (default: 256)
@@ -117,6 +120,8 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 --wave-out N         Wave output device index (default: system default)
 --list-midi-in       List MIDI input devices and exit
 --list-wave-out      List wave output devices and exit
+--rom-dir DIR        Directory holding device ROM files (default:
+                      %EMUSCD_ROM_DIR%, or .\roms if unset)
 --rate HZ            Audio sample rate (default: 48000)
 --block N            Audio frames per wave buffer (default: 256)
 --latency MS         Requested output buffer size in ms (default: 20)

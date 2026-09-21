@@ -39,14 +39,16 @@ const char *USAGE =
 "  --wave-out N         Wave output device index (default: system default)\n"
 "  --list-midi-in       List MIDI input devices and exit\n"
 "  --list-wave-out      List wave output devices and exit\n"
+"  --rom-dir DIR        Directory holding device ROM files (default:\n"
+"                        %EMUSCD_ROM_DIR%, or .\\roms if unset)\n"
 "  --rate HZ            Audio sample rate (default: 48000)\n"
 "  --block N            Audio frames per wave buffer (default: 256)\n"
 "  --latency MS         Requested output buffer size (default: 20)\n"
 "  --help               Show this help\n"
 "\n"
-"ROM files are read from %EMUSCD_ROM_DIR% (default: .\\roms), named\n"
-"<device>_control.bin, <device>_cpu.bin (SC-55/SC-55mkII only) and\n"
-"<device>_waverom<N>.bin. See README.md for exact ROM hashes.\n"
+"ROM files are named <device>_control.bin, <device>_cpu.bin\n"
+"(SC-55/SC-55mkII only) and <device>_waverom<N>.bin. See README.md\n"
+"for exact ROM hashes.\n"
 "\n"
 "emusc-winmidi does not create a MIDI port itself. Route MIDI into it with\n"
 "a virtual MIDI cable (loopMIDI, or Maple Virtual MIDI Cable on Windows\n"
@@ -90,9 +92,10 @@ void list_wave_out_devices() {
 
 class WinMidiDaemon {
 public:
-  WinMidiDaemon(const std::string &dev, int midiInId, int waveOutId,
-                unsigned rate, unsigned block, unsigned latencyMs)
-      : _sampleRate(rate), _blockFrames(block) {
+  WinMidiDaemon(const std::string &dev, const std::string &romDir,
+                int midiInId, int waveOutId, unsigned rate, unsigned block,
+                unsigned latencyMs)
+      : _sampleRate(rate), _blockFrames(block), _romDir(romDir) {
     InitializeCriticalSection(&_midiLock);
     InitializeCriticalSection(&_sysexLock);
     if (!load_device(dev)) {
@@ -121,9 +124,7 @@ public:
       return false;
     }
 
-    const char *envDir = std::getenv("EMUSCD_ROM_DIR");
-    std::string rom_dir = (envDir && *envDir) ? envDir : "roms";
-    DeviceRoms roms = resolve_device_roms(dev, rom_dir);
+    DeviceRoms roms = resolve_device_roms(dev, _romDir);
 
     std::unique_ptr<EmuSC::ControlRom> new_ctrl;
     std::unique_ptr<EmuSC::WaveRom> new_wave;
@@ -348,6 +349,7 @@ private:
   static const DWORD SYSEX_BUFFER_SIZE = 4096;
 
   unsigned _sampleRate, _blockFrames;
+  std::string _romDir;
   std::atomic<bool> _running{false};
 
   std::unique_ptr<EmuSC::ControlRom> _ctrlRom;
@@ -373,6 +375,7 @@ private:
 
 int main(int argc, char **argv) {
   std::string device = "sc88";
+  std::string romDir;
   int midiInId = 0;
   int waveOutId = -1;
   unsigned rate = 48000;
@@ -389,6 +392,7 @@ int main(int argc, char **argv) {
       return argv[++i];
     };
     if      (a == "--device")        device = need("--device");
+    else if (a == "--rom-dir")       romDir = need("--rom-dir");
     else if (a == "--midi-in")       midiInId = std::stoi(need("--midi-in"));
     else if (a == "--wave-out")      waveOutId = std::stoi(need("--wave-out"));
     else if (a == "--rate")          rate = static_cast<unsigned>(std::stoul(need("--rate")));
@@ -413,7 +417,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  WinMidiDaemon daemon(device, midiInId, waveOutId, rate, block, latency);
+  if (romDir.empty()) {
+    const char *envDir = std::getenv("EMUSCD_ROM_DIR");
+    romDir = (envDir && *envDir) ? envDir : "roms";
+  }
+
+  WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency);
   daemon.run();
   return 0;
 }
