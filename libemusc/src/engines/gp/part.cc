@@ -108,11 +108,19 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
       }
     }
 
-    // Store last (highest) value for future queries (typically for bar display)
-    auto itL = std::max_element(partBus[0].begin(), partBus[0].end());
-    _lastPeakSample = *itL;
-    auto itR = std::max_element(partBus[1].begin(), partBus[1].end());
-    _lastPeakSample = std::max(_lastPeakSample, *itR);
+    // Store last (highest) value for future queries (typically for bar
+    // display). One pass tracking both channels at once instead of two
+    // separate std::max_element scans - same result, since the maximum of
+    // a sequence does not depend on the order elements are compared in.
+    float peakL = partBus[0][0];
+    float peakR = partBus[1][0];
+    for (int i = 1; i < 256; i++) {
+      if (partBus[0][i] > peakL)
+        peakL = partBus[0][i];
+      if (partBus[1][i] > peakR)
+        peakR = partBus[1][i];
+    }
+    _lastPeakSample = std::max(peakL, peakR);
 
 
     // The send scale is the DEVICE's, not a constant (ReverbLaw::sendDivisor).
