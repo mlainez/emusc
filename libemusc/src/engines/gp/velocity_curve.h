@@ -37,8 +37,8 @@
 // SAW Lead's +35, 1.8 dB too quiet for Glass Pad's +13 on curve 2), and the
 // TVF's positive high arm was a mirror guessed from the negative one.
 
-#ifndef __JV_VELOCITY_H__
-#define __JV_VELOCITY_H__
+#ifndef __VELOCITY_CURVE_H__
+#define __VELOCITY_CURVE_H__
 
 #include <array>
 #include <cstdint>
@@ -80,4 +80,4 @@ inline int jv_velocity_attenuation(const std::array<uint8_t, 896> &curves,
 
 }}  // namespace EmuSC::Gp
 
-#endif  // __JV_VELOCITY_H__
+#endif  // __VELOCITY_CURVE_H__

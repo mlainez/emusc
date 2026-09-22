@@ -19,8 +19,8 @@
 //
 // Everything here is integer and exact; nothing is approximated.
 
-#ifndef __JV_CTRL_MATRIX_H__
-#define __JV_CTRL_MATRIX_H__
+#ifndef __CTRL_MATRIX_H__
+#define __CTRL_MATRIX_H__
 
 #include "../../device_profile.h"
 
@@ -127,4 +127,4 @@ inline void jv_ctrl_accumulate(const CtrlMatrixJvLaw &law,
 
 }}  // namespace EmuSC::Gp
 
-#endif  // __JV_CTRL_MATRIX_H__
+#endif  // __CTRL_MATRIX_H__

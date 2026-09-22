@@ -41,7 +41,7 @@
 
 
 #include "partial.h"
-#include "jv_ctrl_matrix.h"
+#include "ctrl_matrix.h"
 
 #include <cstdio>
 #include <cmath>

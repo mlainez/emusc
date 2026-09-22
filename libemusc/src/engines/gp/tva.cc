@@ -18,8 +18,8 @@
 
 
 #include "tva.h"
-#include "jv_velocity.h"
-#include "jv_ctrl_matrix.h"
+#include "velocity_curve.h"
+#include "ctrl_matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -970,7 +970,7 @@ void TVA::_init_envelope(ControlRom &ctrlRom, int sampleIndex,
     // multiplicatively: ROM1 0x48b6 calls the shared velocity helper with the
     // TVA curve (tone +0x47 & 7) and TVA velocity sensitivity (+0x48) and
     // stores the factor per voice; the level routine at ROM1 0x4451-0x445b then
-    // takes `index -= (index * w) >> 16` (jv_velocity.h; scdb D-35). A
+    // takes `index -= (index * w) >> 16` (velocity_curve.h; scdb D-35). A
     // sensitivity of 0 means no velocity effect at all.
     //
     // This used to apply the helper's `sens >= 32` arm to every positive

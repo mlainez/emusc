@@ -25,8 +25,8 @@
 
 
 #include "pitch.h"
-#include "jv_ctrl_matrix.h"
-#include "jv_velocity.h"
+#include "ctrl_matrix.h"
+#include "velocity_curve.h"
 
 #include <algorithm>
 #include <cstdio>

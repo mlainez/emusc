@@ -41,8 +41,8 @@
 
 
 #include "tvf.h"
-#include "jv_velocity.h"
-#include "jv_ctrl_matrix.h"
+#include "velocity_curve.h"
+#include "ctrl_matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -812,7 +812,7 @@ void TVF::_jv_init(uint8_t velocity)
   }
 
   // ROM1 0x489d: the shared velocity helper with this tone's TVF curve and
-  // TVF-ENV velocity sensitivity (jv_velocity.h).
+  // TVF-ENV velocity sensitivity (velocity_curve.h).
   _jvVelAtten = jv_velocity_attenuation(_LUT.JVVelCurves,
                                         _instPartial.TVFCOFVelCur,
                                         _instPartial.TVFEnvVelSens, velocity);
