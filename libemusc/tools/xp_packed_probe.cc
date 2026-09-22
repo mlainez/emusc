@@ -24,6 +24,7 @@
  * the engine would play.
  */
 #include "engines/xp/devices/jv1080.h"
+#include "engines/xp/efx.h"
 #include "engines/xp/packed_rom.h"
 #include "engines/xp/rom.h"
 #include "engines/xp/wave.h"
@@ -518,6 +519,52 @@ int main(int argc, char **argv)
                               x.size() - 11u,
                               tone[x[6] * XP_JV1080_TONES_PER_PATCH + t].data(),
                               XP_JV1080_TONE_FIELDS);
+    }
+    /* The patch commons too, so the EFX source can be followed to the
+       block it actually names. */
+    std::vector<std::vector<uint8_t>> pcommon(
+      kParts, std::vector<uint8_t>(XP_JV1080_PATCH_COMMON_FIELDS, 0));
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x02u || x[6] >= kParts || x[7] != 0x00u)
+        continue;
+      if (x[8] >= XP_JV1080_PATCH_COMMON_FIELDS)
+        continue;
+      packed_apply_wire_block(&rom, patchCommonGroup, x[8], x.data() + 9,
+                              x.size() - 11u, pcommon[x[6]].data(),
+                              XP_JV1080_PATCH_COMMON_FIELDS);
+    }
+    {
+      unsigned src = common[0x0c];
+      bool own = false; unsigned image = 0;
+      const char *where = "?";
+      unsigned type = 0;
+      if (efx_resolve_source(src, &own, &image)) {
+        if (own) { where = "PERFORM"; type = common[0x0d]; }
+        else if (image < kParts) { where = "patch"; type = pcommon[image][0x0c]; }
+      }
+      std::printf("  EFX switch %u  chorus switch %u  reverb switch %u\n",
+                  common[0x08], common[0x09], common[0x0a]);
+      std::printf("  EFX source %u -> %s", src, where);
+      if (!own) std::printf(" image %u", image);
+      std::printf("   EFFECTIVE TYPE %u (0-based)\n", type);
+    }
+    {
+      const struct XpVoiceFieldMap &tf = profile->toneFields;
+      std::printf("part 0 tones: enable/waveGroup/groupId/waveNumber\n");
+      for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+        const uint8_t *r = tone[t].data();
+        std::printf("   tone %u  en %u  group %u  id %u  number %u\n", t,
+                    tf.enable < XP_JV1080_TONE_FIELDS ? r[tf.enable] : 0u,
+                    tf.waveGroup < XP_JV1080_TONE_FIELDS ? r[tf.waveGroup] : 0u,
+                    tf.waveGroupId < XP_JV1080_TONE_FIELDS ? r[tf.waveGroupId] : 0u,
+                    tf.waveNumber < XP_JV1080_TONE_FIELDS ? r[tf.waveNumber] : 0u);
+      }
     }
     static const char *kAssign[] = { "MIX", "EFX", "OUT1", "OUT2", "PATCH" };
     std::printf("output assign per part (0-based), and its tones:\n");

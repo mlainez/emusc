@@ -122,6 +122,52 @@ const unsigned kEfxFirstParameterField = 0x0eu;
 const unsigned kEfxParameters = 12u;
 const unsigned kEfxPatchBlockShift = 1u;
 
+/* THE PURE-DELAY FAMILY, so far type 17 (0-based 16), STEREO-DELAY.
+
+   THE STORED BYTE ORDER IS MEASURED AND IS NOT THE DISPLAY ORDER
+   (`M-091`, `M-092`, per-parameter maxima read off the machine):
+
+     p1 Mode(1)  p2 DelayL(126)  p3 DelayR(126)  p4 PhaseL(1)  p5 PhaseR(1)
+     p6 Fbk(98)  p7 HFDamp(17)   p8 LowGain(30)  p9 HiGain(30)
+     p10 Balance(100)  p11 Level(127)
+
+   Delay L and R are independently named by an isolated audio probe rather
+   than by the label page, which this family proves unreliable - EFX 19's
+   labels start at parameter 1 where EFX 17's start at 2 (`M-065`,
+   `M-104`: "STEREO-DELAY's parameter 3 is the right delay, so 2 is the
+   left").
+
+   Each maximum pins its table: DelayL/R max 126 against `0x038FC8`'s 127
+   entries, HF Damp max 17 against `0x039700`'s 18 rows, Balance max 100
+   against the 101-step D100:0W..D0:100W display, Level max 127 against
+   `0x03856C`. The delay table is raw SAMPLE COUNTS at 32 kHz, measured
+   1.000 at all eight values over 0.4 to 60 ms plus 140 ms (`M-067`,
+   `M-065`).
+
+   FEEDBACK IS BIPOLAR AND ITS RAW ZERO IS 49, NOT 0 (`M-101`): 99 raw
+   steps of 2 % span -98 to +98 %, so the gain is (raw - 49) / 50 and
+   writing 0 asks for maximum NEGATIVE feedback.
+
+   THE FEEDBACK CROSSES THE TWO LINES. Its cepstrum on noise carries an
+   even-only series - 2T, 4T, 6T, 8T - with the single echo at T present
+   but weak, which is a loop crossing the two delay lines rather than each
+   feeding itself, and both output channels read the same so it is not a
+   ping-pong between them (`M-067`, confirmed independently by `M-091`'s
+   Mode 0 = CROSS / 1 = NORMAL range fingerprint).
+
+   LOW GAIN AND HI GAIN ARE NOT IMPLEMENTED. They are a two-band shelving
+   EQ, and this device's filter topology is silicon (`U-R5-02`) with only a
+   nine-octave-band magnitude picture available to constrain it. Fitting
+   one would be a fit, not a recovery. They are read and ignored, which is
+   said here rather than left to be discovered. */
+const unsigned kEfxTypeStereoDelay = 16u;
+const double kEfxFeedbackZero = 49.0;
+const double kEfxFeedbackStep = 50.0;
+const unsigned kEfxDelayTable = 10u;      /* XP_EFX_TABLE_DELAY */
+const unsigned kEfxBalanceTable = 14u;
+const unsigned kEfxDampTable = 15u;
+const unsigned kEfxLevelTableIndex = 0u;
+
 const unsigned kEfxOutputAssignField = 0x1au;
 const unsigned kEfxOutputLevelField = 0x1bu;
 const unsigned kEfxChorusSendField = 0x1cu;
@@ -278,6 +324,22 @@ struct Engine {
   uint8_t efx_type;
   uint8_t efx_parameter[kEfxParameters];
   bool efx_dirty;
+  /* The pure-delay family's two lines, and what the parameters made of
+     them. `efx_ready` is false for every type this engine does not yet
+     render, and then nothing is routed anywhere. */
+  float *efx_buf[2];
+  size_t efx_len;
+  size_t efx_pos;
+  double efx_delay[2];
+  float efx_feedback;
+  bool efx_cross;
+  float efx_phase[2];
+  float efx_damp;
+  float efx_damp_state[2];
+  float efx_wet;
+  float efx_dry;
+  float efx_level;
+  bool efx_ready;
 };
 
 /* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
@@ -610,6 +672,118 @@ void efx_block_refresh(struct Engine *engine)
   }
 }
 
+/* One table entry as a fraction of unity, 0 where the table has no such
+   row - the same 8192 unity the rest of this device's coefficients use. */
+double efx_unit(const struct Engine *engine, unsigned table, unsigned index,
+                 unsigned column)
+{
+  uint16_t v = 0;
+  if (!efx_table_value(&engine->rom, table, index, column, &v))
+    return 0.0;
+  return (double)v / 8192.0;
+}
+
+/* STEREO-DELAY. Two lines, each fed by the input plus the feedback from
+   the other - or from itself where Mode says NORMAL. */
+void efx_stereo_delay_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  for (unsigned c = 0; c < 2u; ++c) {
+    uint16_t samples = 0;
+    efx_table_value(&engine->rom, kEfxDelayTable, p[1u + c], 0, &samples);
+    engine->efx_delay[c] = (double)samples * scale;
+    /* Phase: NORMAL or INVERT, one bit each. */
+    engine->efx_phase[c] = p[3u + c] ? -1.0f : 1.0f;
+  }
+  /* Bipolar, raw zero 49, 2 % a step. */
+  engine->efx_feedback =
+    (float)(((double)p[5] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  engine->efx_cross = p[0] == 0u;
+  /* The damping one-pole's pole, the same 18-row table the reverb reads;
+     its last row is a bypass rather than a pair. */
+  {
+    unsigned row = p[6];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0)
+                                : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[9], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[9], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[10], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+float efx_tap(const struct Engine *engine, unsigned channel, double back)
+{
+  if (back < 1.0)
+    back = 1.0;
+  if (back > (double)(engine->efx_len - 2u))
+    back = (double)(engine->efx_len - 2u);
+  double read = (double)engine->efx_pos - back;
+  while (read < 0.0)
+    read += (double)engine->efx_len;
+  size_t i0 = (size_t)read;
+  double frac = read - (double)i0;
+  size_t i1 = i0 + 1u >= engine->efx_len ? 0u : i0 + 1u;
+  const float *b = engine->efx_buf[channel];
+  return (float)((1.0 - frac) * b[i0] + frac * b[i1]);
+}
+
+/* The insert, in place: `stereo` holds the dry the effect was fed, and is
+   replaced by the balance of that dry against the effect's own output. */
+void efx_process(struct Engine *engine, const float *inL, const float *inR,
+                  float *wetL, float *wetR, size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    float l = efx_tap(engine, 0, engine->efx_delay[0]);
+    float r = efx_tap(engine, 1, engine->efx_delay[1]);
+    /* the damping one-pole, on the way round the loop */
+    for (unsigned c = 0; c < 2u; ++c) {
+      float x = c ? r : l;
+      engine->efx_damp_state[c] = x * (1.0f - engine->efx_damp) +
+        engine->efx_damp_state[c] * engine->efx_damp;
+    }
+    float dl = engine->efx_damp_state[0];
+    float dr = engine->efx_damp_state[1];
+    /* CROSS is the measured default shape: each line is fed by the OTHER
+       one's output, which is what puts the cepstrum's series on the even
+       multiples of the delay. */
+    engine->efx_buf[0][engine->efx_pos] =
+      inL[k] + engine->efx_feedback * (engine->efx_cross ? dr : dl);
+    engine->efx_buf[1][engine->efx_pos] =
+      inR[k] + engine->efx_feedback * (engine->efx_cross ? dl : dr);
+    if (++engine->efx_pos >= engine->efx_len)
+      engine->efx_pos = 0;
+    wetL[k] = engine->efx_phase[0] * l;
+    wetR[k] = engine->efx_phase[1] * r;
+  }
+}
+
+void efx_algorithm_refresh(struct Engine *engine)
+{
+  engine->efx_ready = false;
+  if (engine->efx_type == kEfxTypeStereoDelay)
+    efx_stereo_delay_refresh(engine);
+}
+
 /* The EFX output block: level, and the two sends the assign may mask out. */
 void efx_refresh(struct Engine *engine)
 {
@@ -854,6 +1028,8 @@ void engine_free(void *state)
   if (engine->chorus_ready)
     chorus_destroy(&engine->chorus);
   std::free(engine->delay_buf);
+  std::free(engine->efx_buf[0]);
+  std::free(engine->efx_buf[1]);
   std::free(engine);
 }
 
@@ -1097,6 +1273,7 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     chorus_refresh(engine);
     efx_refresh(engine);
     efx_block_refresh(engine);
+    efx_algorithm_refresh(engine);
     return true;
   }
   if (a1 == 0x03u)
@@ -1179,6 +1356,10 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
   float send[kChunk];
   float csend[kChunk];
   float cwet[kChunk * 2u];
+  float efxL[kChunk];
+  float efxR[kChunk];
+  float efxWetL[kChunk];
+  float efxWetR[kChunk];
   size_t done = 0;
   while (done < frames) {
     size_t n = frames - done;
@@ -1188,6 +1369,8 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
     std::memset(right, 0, n * sizeof *right);
     std::memset(send, 0, n * sizeof *send);
     std::memset(csend, 0, n * sizeof *csend);
+    std::memset(efxL, 0, n * sizeof *efxL);
+    std::memset(efxR, 0, n * sizeof *efxR);
     bool sending = false;
     for (unsigned i = 0; i < kMaxVoices; ++i) {
       struct Voice *voice = engine->voices + i;
@@ -1211,6 +1394,21 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
         std::memset(vr, 0, n * sizeof *vr);
         if (!jv1080_voice_render(&voice->voice, vl, vr, n))
           free_voice(voice);
+        continue;
+      }
+      /* A voice bound for the insert goes to the insert's own bus, but
+         only while there is an insert to go to: an effect type this engine
+         does not render leaves its voices on the mix, where they have been
+         all along, rather than dropping them into a bus nothing reads. */
+      if (voice->destination == kOutputEfx && engine->efx_ready) {
+        std::memset(vl, 0, n * sizeof *vl);
+        std::memset(vr, 0, n * sizeof *vr);
+        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+          free_voice(voice);
+        for (size_t k = 0; k < n; ++k) {
+          efxL[k] += vl[k];
+          efxR[k] += vr[k];
+        }
         continue;
       }
       /* The reverb bus is live whichever shape the module has taken: the
@@ -1241,6 +1439,27 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
         dc_blocker_step(&engine->dc_left, left[k]);
       stereo[(done + k) * 2u + 1u] +=
         dc_blocker_step(&engine->dc_right, right[k]);
+    }
+    /* The insert returns to the mix through its own balance and level, and
+       feeds the chorus and reverb through the two sends the output assign
+       may have masked to zero. The dry side of the balance is the signal
+       the effect was fed, which is why the bus is kept rather than summed
+       into the mix on the way in. */
+    if (engine->efx_ready) {
+      efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      for (size_t k = 0; k < n; ++k) {
+        float l = engine->efx_level *
+          (engine->efx_wet * efxWetL[k] + engine->efx_dry * efxL[k]);
+        float r = engine->efx_level *
+          (engine->efx_wet * efxWetR[k] + engine->efx_dry * efxR[k]);
+        stereo[(done + k) * 2u] += l;
+        stereo[(done + k) * 2u + 1u] += r;
+        float mono = 0.5f * (l + r);
+        csend[k] += engine->efx_chorus_send * mono;
+        send[k] += engine->efx_reverb_send * mono;
+        if (engine->efx_reverb_send > 0.0f)
+          sending = true;
+      }
     }
     /* The chorus's wet signal is formed once and then returned through up
        to two paths, because that is what the firmware does: the level
