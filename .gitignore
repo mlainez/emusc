@@ -43,3 +43,7 @@ libemusc/tools/build*
 # (build-win32/, build-win64/, build-linux-x86/, build-linux-arm32/, ...).
 build/
 build-*/
+
+# Consolidated device ROMs, named per emusc-render/emuscd's --rom-dir
+# convention (README.md). Roland's own data, never tracked or published.
+roms/
