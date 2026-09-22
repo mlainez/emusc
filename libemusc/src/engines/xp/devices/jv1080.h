@@ -50,8 +50,101 @@ inline constexpr unsigned XP_JV1080_TONES_PER_PATCH = 4u;
 
 extern const struct XpDeviceProfile JV1080_PROFILE;
 
+/* ONE TONE, SOUNDING. A BEHAVIOURAL MODEL, NOT THE CHIP.
+ *
+ *   Everything below responds the way the hardware measures - the wave it
+ *   reads and the rate it reads it at, the amplitude envelope, the filter's
+ *   corner, the pan split - and none of it is the arithmetic the machine
+ *   uses, because that arithmetic is in an undumped mask ROM. What IS in
+ *   this device's readable ROM is the wave data and the parameter values;
+ *   those are exact, and this turns them into sound by the measured
+ *   transfer functions listed against each field in jv1080.cc.
+ *
+ *   What this model does NOT yet include, so that nothing reading it
+ *   mistakes silence for a measurement: the two LFOs and all their
+ *   destinations, the pitch and filter envelopes, FXM, the booster, the
+ *   ten structures (six of which ring-modulate), tone delay, the TVA bias,
+ *   every key-follow field, the alternate and random pan depths, velocity
+ *   curves 1 to 6 (measured in M-029, not yet transcribed here), the
+ *   element record's own attenuation and fine-tune fields (units open,
+ *   U-R3-03), and the insert, chorus and reverb effects, which are
+ *   bypassed rather than approximated.
+ */
+struct XpJv1080Voice {
+  bool active;
+  bool releasing;
+
+  /* The decoded element, and where in it the read head is. */
+  const int32_t *pcm;
+  size_t pcm_count;
+  double position;               /* fractional index into pcm */
+  double increment;              /* wave samples per output sample */
+  size_t loop_first;
+  size_t loop_last;
+  bool looping;
+  bool reverse;
+
+  /* Amplitude. static_gain is everything that does not move: the level
+     fields' square law, the velocity curve and the wave gain. */
+  double static_gain;
+  double gain_left;
+  double gain_right;
+
+  /* The four-segment amplitude envelope. level[] is linear amplitude,
+     time[] is seconds for that segment. */
+  double level[4];
+  double time[4];
+  unsigned segment;
+  double envelope;               /* current linear amplitude */
+  double segment_start;
+  double segment_total;          /* this segment's own duration, seconds */
+  double segment_remaining;      /* seconds left in this segment */
+  double sample_period;
+
+  /* The filter, as a two-pole section. */
+  int filter_type;
+  double b0, b1, b2, a1, a2;
+  double x1, x2, y1, y2;
+};
+
 #ifdef __cplusplus
 }
+
+struct xp_rom;
+struct xp_packed_record;
+
+namespace EmuSC { namespace Xp {
+
+/* Set a voice up to play one tone. `tone` is the tone's 130 decoded bytes -
+ * the form the packed record decodes to, and the same form the device's own
+ * SysEx tone frames carry - and patchLevel/patchPan are the patch common's.
+ * `banks` are the eight descrambled 1 MiB wave banks. The element is decoded
+ * into `pcm`, which must outlive the voice; false means this tone does not
+ * sound for this key and velocity, which is not an error.
+ */
+bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
+                         unsigned patchLevel, unsigned patchPan,
+                         unsigned key, unsigned velocity,
+                         const uint8_t *const banks[XP_WAVE_BANK_COUNT],
+                         const size_t bankSizes[XP_WAVE_BANK_COUNT],
+                         int32_t *pcm, size_t capacity,
+                         double outputRate, struct XpJv1080Voice *voice);
+
+/* Decode one patch's tone into `tone` (130 bytes) and its patch common's
+ * level and pan, ready for jv1080_voice_start. */
+bool jv1080_patch_tone(const struct xp_rom *rom,
+                        const struct xp_packed_record *patch, unsigned index,
+                        uint8_t *tone, unsigned *patchLevel,
+                        unsigned *patchPan);
+
+void jv1080_voice_release(struct XpJv1080Voice *voice);
+
+/* Adds this voice's output into l/r. Returns false once it has finished,
+ * having written whatever it had left. */
+bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
+                          size_t frames);
+
+}}  // namespace EmuSC::Xp
 #endif
 
 #endif

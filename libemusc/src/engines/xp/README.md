@@ -21,14 +21,53 @@ architecturally nothing like Class G's: it reads the control ROM itself,
 owns every table it needs, and is driven from `synth.cc` through an
 opaque `Xp::Device*` rather than through `Part`/`Note`/`Partial`.
 
-**Why it's SC-88-shaped today:** SC-88 is currently the only Class-X
-member with usable research in this project. That is a fact about where
-the research stands, not a design decision - see
-`scdb/devices/jv1080/12_implementation/implementation_plan.md` for
-JV-1080's own, substantial but not yet complete, research and
-implementation plan. Nothing here is built ahead of that research
-landing. If and when it does, expect a sibling implementation in this
-directory rather than a shared class hierarchy: JV-1080's planned
-approach is a behavioral model fit to measured hardware transfer
-functions, not a port of disassembled firmware the way SC-88's is, even
-though both run the same chip.
+## Two devices, two kinds of knowledge
+
+SC-88 came first and the shared code still carries its shape. Its
+firmware is dumped and disassembles, so its engine is a **port**: every
+table it reads is the ROM's own and every law is firmware-exact.
+
+JV-1080 is the second member here, and it cannot be a port. Its
+synthesis engine lives in the SH7034's 64 KB internal mask ROM, which
+has never been dumped. What its readable external ROM holds - the
+bit-packed preset records behind a 468-entry field descriptor table, the
+parameter map, the wave chain, the effect coefficient data - is read
+from it and is exact. Everything the voice path does with those values
+is a **behavioural model** fitted to laws measured on the owner's own
+unit, each carrying its measurement id: a transfer function that
+responds the way the machine does, not the arithmetic the machine uses.
+
+**Nothing about JV-1080 in this tree may be cited as firmware-exact**,
+and a law measured on one generation is not assumed to hold on another
+without its own measurement.
+
+The two share what genuinely is shared and nothing else. One descramble
+serves both boards, described by the width of their chips rather than by
+their names (`XpDeviceProfile::waveUnitBytes` and the two line counts).
+The two ROM layouts live in two readers - `rom.h` for flat fixed-offset
+records, `packed_rom.h` for descriptor-packed ones - and both are
+generic, taking every address, stride and record layout from the
+profile. Neither engine file names a device.
+
+## What JV-1080 does not do yet
+
+The gaps are listed here rather than left to be discovered as silence:
+
+- **`Synth` cannot play it.** `ControlRom` identifies it, `WaveRom`
+  keeps its chips and `Xp::Device` opens on it without complaint, but
+  the MIDI and note-on path in `device.cc`/`engine.cc`/`renderer.cc` is
+  the SC-88's - it resolves a tone through `rom_select_melodic` and
+  `rom_open_tone`, which this device has no counterpart for. The result
+  is digital silence, not a crash and not noise. Its voice path is
+  reached through `engines/xp/devices/jv1080.h` instead.
+- **The insert, chorus and reverb effects are bypassed**, not
+  approximated. All forty insert types are characterised behaviourally
+  in the research, but their DSP topology needs the chip's instruction
+  set and is open; a bypass is honest where a guessed topology would
+  not be.
+- **The two LFOs, the pitch and filter envelopes, FXM, the booster, the
+  ten structures, tone delay, the TVA bias and every key-follow field**
+  are not modelled. Nor are TVA velocity curves 1 to 6, which are
+  measured but not yet transcribed here, so a tone selecting one is
+  rendered on curve 0.
+- **The rhythm part** is decoded but not played.

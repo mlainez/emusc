@@ -67,10 +67,10 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
     std::printf("libEmuSC: MT-32 sound map initialized\n");
   }
 
-  // The SC-88 is rendered by its own engine. None of what follows applies to
-  // it: it has no DeviceProfile for the analog stage to read, its effects are
-  // its own, and it resamples internally to whatever rate it is opened at.
-  // Settings above is kept so the parameter API still answers.
+  // An XP-family device is rendered by its own engine. None of what follows
+  // applies to it: it has no DeviceProfile for the analog stage to read, its
+  // effects are its own, and it resamples internally to whatever rate it is
+  // opened at. Settings above is kept so the parameter API still answers.
   if (_ctrlRom.uses_xp_engine())
     return;
 
@@ -80,7 +80,7 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
 }
 
 
-// Open the SC-88's engine at the host's rate. It resamples internally, so the
+// Open the XP engine at the host's rate. It resamples internally, so the
 // rate is handed straight to it rather than run through Resampler. Re-opening
 // on a rate change is what the engine's own interface asks for: the rate is
 // fixed at init.
@@ -96,8 +96,8 @@ bool Synth::_xp_configure(uint32_t sampleRate)
   const std::vector<std::vector<uint8_t>> &chips = _waveRom.raw_chips();
 
   if (ctrl.empty() || chips.size() != XP_WAVE_CHIP_COUNT) {
-    std::fprintf(stderr, "libEmuSC: the SC-88 needs its control ROM and "
-                 "%d wave ROM images, got %zu\n",
+    std::fprintf(stderr, "libEmuSC: %s needs its control ROM and "
+                 "%d wave ROM images, got %zu\n", _ctrlRom.model().c_str(),
                  (int) XP_WAVE_CHIP_COUNT, chips.size());
     return false;
   }
@@ -118,7 +118,8 @@ bool Synth::_xp_configure(uint32_t sampleRate)
                            (double) sampleRate, XP_WRAP_FULL_CARRY)) {
     delete _xpDevice;
     _xpDevice = nullptr;
-    std::fprintf(stderr, "libEmuSC: the SC-88's engine refused these ROM images\n");
+    std::fprintf(stderr, "libEmuSC: the XP engine refused %s's ROM images\n",
+                 _ctrlRom.model().c_str());
     return false;
   }
   if (_maxVoicesSet)

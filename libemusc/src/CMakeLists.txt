@@ -58,6 +58,7 @@ set(EMUSC_SOURCES
   engines/xp/device.h
   engines/xp/devices/jv1080.cc
   engines/xp/devices/jv1080.h
+  engines/xp/devices/jv1080_voice.cc
   engines/xp/devices/profile.h
   engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc
   engines/xp/devices/sc88.h
@@ -134,6 +135,20 @@ if(NOT MSVC)
   target_link_libraries(xp_tvf_probe PRIVATE m)
 endif()
 
+# Probe for the descriptor-packed ROM layout: the descramble's own output,
+# a factory patch's whole resolution chain, and a song whose SysEx programs
+# the machine itself. Links the engine sources directly for the same reason
+# the two above do - what it reports is internal to the engine.
+add_executable(xp_packed_probe ../tools/xp_packed_probe.cc ../tools/smf.cc
+  engines/xp/devices/jv1080.cc engines/xp/devices/jv1080_voice.cc
+  engines/xp/devices/sc88.cc
+  engines/xp/packed_rom.cc engines/xp/rom.cc engines/xp/wave.cc)
+target_include_directories(xp_packed_probe PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
+if(NOT MSVC)
+  target_link_libraries(xp_packed_probe PRIVATE m)
+endif()
+
 add_executable(xp_dump_samples ../tools/xp_dump_samples.cc
   engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc
   engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
@@ -185,6 +200,13 @@ if(BUILD_TESTING)
   # whatever the tree was configured with.
   set_property(TEST xp_eq_test PROPERTY SKIP_RETURN_CODE 77)
   xp_test(xp_drum_test engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/wave.cc)
+  # The descriptor-packed ROM layout, checked against the held image of a
+  # device that uses it; skipped without JV1080_CONTROL_ROM, since a
+  # synthetic image would only re-check this test's own arithmetic.
+  xp_test(xp_packed_rom_test engines/xp/devices/jv1080.cc
+    engines/xp/devices/sc88.cc engines/xp/packed_rom.cc engines/xp/rom.cc
+    engines/xp/wave.cc)
+  set_property(TEST xp_packed_rom_test PROPERTY SKIP_RETURN_CODE 77)
   xp_test(xp_lfo_test engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
   xp_test(xp_pitch_test engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
   xp_test(xp_tvf_test engines/xp/devices/jv1080.cc engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
