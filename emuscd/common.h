@@ -14,13 +14,14 @@
 
 namespace emuscd {
 
-inline const char *SUPPORTED_DEVICES[] = { "sc55", "sc55mkii", "sc88", "jv880" };
+inline const char *SUPPORTED_DEVICES[] = { "sc55", "sc55mkii", "sc88",
+                                           "jv880", "jv1080" };
 
 // The sound map emuscd runs in. Named once so that the value handed to the
 // Synth constructor and the value handed to its power-on reset cannot drift
 // apart: reset(sm, ...) re-applies the map, so passing a different one there
 // would silently switch the device into another mode. GS is the Synth default
-// and the mode all four supported devices are addressed in; emuscd exposes no
+// and the mode every supported device is addressed in; emuscd exposes no
 // option to change it.
 inline const EmuSC::Synth::SoundMap SOUND_MAP = EmuSC::Synth::SoundMap::GS;
 
@@ -35,7 +36,7 @@ struct DeviceRoms {
   std::vector<std::string> wave_roms;
 };
 
-// One naming convention for all four devices, shared with emusc-render's
+// One naming convention for every device, shared with emusc-render's
 // --device preset (libemusc/tools/main.cc): <device>_control.bin is always
 // the control/program ROM, <device>_cpu.bin is the internal CPU ROM that
 // only SC-55 and SC-55mkII have. See README.md for exact file hashes.
@@ -45,7 +46,9 @@ inline DeviceRoms resolve_device_roms(const std::string &device, const std::stri
   if (device == "sc55" || device == "sc55mkii")
     r.cpu_rom = rom_dir + "/" + device + "_cpu.bin";
 
-  int n = (device == "sc55") ? 3 : (device == "sc88") ? 4 : 2;  // sc55mkii, jv880
+  // Wave chip counts: SC-55 3, the two XP devices 4, the rest 2.
+  int n = (device == "sc55") ? 3
+          : (device == "sc88" || device == "jv1080") ? 4 : 2;
   for (int k = 1; k <= n; k++)
     r.wave_roms.push_back(rom_dir + "/" + device + "_waverom" + std::to_string(k) + ".bin");
   return r;

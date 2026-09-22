@@ -21,6 +21,8 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .identFirstDirectory = {
     0x00, 0x00, 'P', 'i', 'a', 'n', 'o', ' ',
     '1', 'A', ' ', ' ', ' ', ' ', 0x03, 0xff },
+  /* The first tone directory record, which is also .directoryBase below. */
+  .identSecondOffset = 0x30000u,
 
   .defaultMaxVoices = 64u,          /* the real hardware's polyphony */
 
@@ -231,6 +233,24 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .allpassBuffer = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u },
   /* PRAM indices of the eight taps in the single-module image. */
   .tapInstruction = { 131u, 133u, 135u, 137u, 139u, 141u, 143u, 145u },
+  /* This device's own record map, in words from the record's start: the
+     eight allpass coefficient pairs at 0, the two damping pairs at 16, the
+     thirty-two delay-memory addresses at 20, and the return trim at 52.
+     Ten characters of 53 words each, reached through a u16 offset from
+     `reverbPage`. There is no per-character input filter in the record -
+     the pre-LPF is a parameter on this device (`M-010`) - so that index is
+     absent. */
+  .reverbCharacters = 10u,
+  .reverbRecordWords = 53u,
+  .reverbAllpassWord = 0u,
+  .reverbDampWord = 16u,
+  .reverbAddressWord = 20u,
+  .reverbTrimWord = 52u,
+  .reverbInputWord = XP_REVERB_WORD_NONE,
+  .reverbPointerBytes = 2u,
+  .reverbPointerBase = 0u,
+  .reverbDampTable = 0u,
+  .reverbLevelTable = 0u,
 
   /* The eight macro presets, 8 bytes each, read by SC88-CTL handler
      0x3400 and by the power-on loader at 0x44a8. The reset image at ROM
@@ -254,11 +274,22 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .waveBankSize = 0x100000u,
   .waveChipSize = 0x200000u,
 
-  /* The wave ROM board's bit-permutation tables (wave_descramble_chip). */
+  /* The wave ROM board's bit-permutation tables (wave_descramble_chip).
+     This board carries byte-wide mask ROMs, so one storage unit is one
+     byte, eight data lines are permuted, and the address permutation runs
+     over the 21 lines that address 2 MiB of bytes. */
+  .waveUnitBytes = 1u,
+  .waveDataLineCount = 8u,
+  .waveAddressLineCount = 21u,
   .waveDataLinePermutation = { 2u, 0u, 4u, 5u, 7u, 6u, 3u, 1u },
   .waveAddressLinePermutation = {
     0u, 4u, 2u, 3u, 1u, 13u, 7u, 12u, 5u, 10u, 16u,
     9u, 6u, 8u, 14u, 17u, 11u, 15u, 18u, 19u, 20u },
+
+  /* One 32-byte plaintext header per 1 MiB logical bank - two per chip -
+     and the board leaves both out of the scrambling. */
+  .waveHeaderBytes = 0x20u,
+  .waveHeaderStride = 0x100000u,
 
   /* -15 dB and -7 dB as power ratios; see wave_loop_reads_double's own
      comment for the measured gaps these sit in the middle of. */
@@ -268,6 +299,14 @@ const struct XpDeviceProfile SC88_PROFILE = {
   /* The wave-bank selector byte for each of the eight banks across the
      four wave ROM chips. */
   .selectors = { 0x00u, 0x01u, 0x10u, 0x11u, 0x20u, 0x21u, 0x30u, 0x31u },
+
+  /* GS: model id 42, three address bytes. */
+  .sysexModelId = 0x42u,
+  .sysexAddressBytes = 3u,
+
+  /* This device's voice path is the shared firmware port in engine.h and
+     renderer.h, which is what a null here selects. */
+  .voiceEngine = nullptr,
 };
 
 const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom)

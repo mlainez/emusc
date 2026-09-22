@@ -148,7 +148,7 @@ public:
   bool load_device(const std::string& dev) {
     if (!device_supported(dev)) {
       std::cerr << "emuscd: unsupported device '" << dev << "' (supported: "
-                << "sc55, sc55mkii, sc88, jv880)" << std::endl;
+                << "sc55, sc55mkii, sc88, jv880, jv1080)" << std::endl;
       return false;
     }
 
@@ -377,7 +377,7 @@ int main(int argc, char* argv[]) {
           << "Usage: emuscd [options]\n"
           << "Options:\n"
           << "  --device NAME       Device to emulate (default: sc88)\n"
-          << "                       Supported: sc55, sc55mkii, sc88, jv880\n"
+          << "                       Supported: sc55, sc55mkii, sc88, jv880, jv1080\n"
           << "  --name NAME         ALSA MIDI port name (default: emuscd)\n"
           << "  --pcm DEVICE        ALSA PCM output device (default: default)\n"
           << "  --list-pcm          List ALSA PCM devices and exit\n"
@@ -400,7 +400,7 @@ int main(int argc, char* argv[]) {
 
   if (!device_supported(device)) {
     std::cerr << "emuscd: unsupported device '" << device << "' (supported: "
-              << "sc55, sc55mkii, sc88, jv880)" << std::endl;
+              << "sc55, sc55mkii, sc88, jv880, jv1080)" << std::endl;
     return 1;
   }
 

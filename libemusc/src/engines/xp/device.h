@@ -208,6 +208,13 @@ struct Device {
      a render reporting zero is exact in this respect. */
   /* Parts that asked for random pan; the engine draws each voice. */
   unsigned long random_pan_requests;
+  /* A device whose voice path is its own (XpDeviceProfile::voiceEngine)
+     keeps its state here and the members above are unused: the engine,
+     renderer and effects chain in this struct are the shared firmware
+     port's, and a device with no dumped firmware has no use for them.
+     Null on a device the port serves, which is what selects it. */
+  const struct XpVoiceEngineOps *voice_ops;
+  void *voice_state;
   bool initialized;
 };
 
@@ -223,6 +230,10 @@ bool device_init_decoded(
   enum xp_fractional_wrap wrap);
 void device_destroy(Device *device);
 void device_reset_controllers(Device *device);
+/* Caps simultaneous voices below the device's own polyphony. Dispatches
+ * to whichever voice path the loaded device uses, so a caller does not
+ * have to know which one that is. */
+bool device_set_max_voices(Device *device, unsigned maxVoices);
 void device_set_master_volume(Device *device, uint8_t value);
 void device_set_master_pan(Device *device, uint8_t value);
 

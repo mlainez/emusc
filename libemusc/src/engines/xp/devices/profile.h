@@ -1,0 +1,575 @@
+/* SPDX-License-Identifier: CC0-1.0 */
+/*
+ *  The XP engine's per-device parameter block, and this engine's own fixed
+ *  array sizes.
+ *
+ *  struct XpDeviceProfile is the vocabulary type engines/xp/'s generic code
+ *  reads every device-specific fact through, injected at runtime via
+ *  xp_rom::profile / xp_engine::profile. A device's values live in its own
+ *  devices/<device>.cc beside their provenance comments; nothing in this
+ *  file names a device, so a second device on this engine adds no field
+ *  here that only it would fill.
+ *
+ *  A handful of constants stay compile-time values below instead: they size
+ *  this engine's own fixed C arrays, which requires the value to be known
+ *  at compile time wherever it is used, not just at one definition site.
+ *  The older engine has the identical exception
+ *  (DeviceProfile::MAX_PARTIALS) - this isn't a compromise unique to this
+ *  engine.
+ */
+#ifndef EMUSC_XP_DEVICES_PROFILE_H
+#define EMUSC_XP_DEVICES_PROFILE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct xp_rom;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* This engine's own fixed array sizes and hard ceilings: concurrently
+   active slots, notes and parts, tone components per note, wave chips
+   and banks, reverb buffers/taps, output filter sections, TVF sections,
+   the per-tone controller matrix, and the two record sizes used to size
+   a stack buffer in the test suite. Regardless of which device's default
+   polyphony is in effect (see XpDeviceProfile::defaultMaxVoices) - these
+   are the engine's, not the device's. */
+inline constexpr unsigned XP_ENGINE_SLOT_COUNT = 64u;
+inline constexpr unsigned XP_ENGINE_NOTE_COUNT = 64u;
+inline constexpr unsigned XP_ENGINE_PART_COUNT = 32u;
+inline constexpr unsigned XP_MAX_TONE_COMPONENTS = 2u;
+inline constexpr unsigned XP_WAVE_CHIP_COUNT = 4u;
+inline constexpr unsigned XP_WAVE_BANK_COUNT = 8u;
+inline constexpr unsigned XP_MIDI_PORT_COUNT = 2u;
+inline constexpr unsigned XP_MATRIX_SOURCE_COUNT = 6u;
+inline constexpr unsigned XP_MATRIX_DEST_COUNT = 11u;
+/* A record part this device does not carry (see the reverb word indices). */
+inline constexpr uint8_t XP_REVERB_WORD_NONE = 0xffu;
+
+/* How a device sweeps its chorus delay; see `chorusModulator`. */
+inline constexpr uint8_t XP_CHORUS_MOD_SINE = 0u;
+inline constexpr uint8_t XP_CHORUS_MOD_TRIANGLE_UP = 1u;
+
+inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
+inline constexpr unsigned XP_REVERB_TAPS = 8u;
+inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
+inline constexpr int XP_OUTPUT_HOLD_TAPS = 31;
+inline constexpr int XP_OUTPUT_ANALOG_SECTIONS = 5;
+inline constexpr int XP_OUTPUT_MAX_SECTIONS = 4;
+inline constexpr unsigned XP_TVF_SECTIONS = 1u;
+inline constexpr unsigned XP_DRUM_FIELDS = 10u;
+
+/* Ceilings for the descriptor-packed record tables below. Sized by what a
+   member of this family declares, not by what one device happens to have:
+   the widest wave ROM permutation is sixteen data lines and twenty-one
+   address lines, and the largest record schema seen so far is ten groups
+   and thirteen banks. */
+inline constexpr unsigned XP_WAVE_DATA_LINES_MAX = 16u;
+inline constexpr unsigned XP_WAVE_ADDRESS_LINES_MAX = 21u;
+inline constexpr unsigned XP_PACKED_GROUP_MAX = 12u;
+inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
+inline constexpr unsigned XP_WAVE_SOURCE_MAX = 2u;
+inline constexpr unsigned XP_MULTISAMPLE_BANK_MAX = 2u;
+
+/* A DEVICE'S OWN VOICE PATH, INJECTED.
+ *
+ *   Two members of this family need two of these and share nothing
+ *   per-voice. One is a firmware port: its firmware is dumped, its voice
+ *   state is the chip's own register and RAM layout, and its scheduler
+ *   recomposes every voice from ROM tables once per control period
+ *   (engine.h, renderer.h). The other's synthesis engine is in an undumped
+ *   internal mask ROM, so its voice path is a behavioural model fitted to
+ *   measured hardware and has no control period, no amplitude register and
+ *   no ROM table to read. A shared per-voice struct would be a lie about
+ *   both.
+ *
+ *   What IS shared is everything above the voice: the top-level MIDI
+ *   device, its channel state, the wave ROM descramble, the record readers
+ *   and the output mixing. So a device supplies this table and the shared
+ *   device layer calls through it, naming no device.
+ *
+ *   A device that leaves XpDeviceProfile::voiceEngine null is served by
+ *   engine.h/renderer.h instead, which is where this family started.
+ *
+ *   `rom` and `banks` stay owned by the caller and outlive the state.
+ *   `sysex_block` receives one DT1 payload whole, with its address as the
+ *   bytes that arrived. Whole, because a device's own frames may run past
+ *   an address-byte boundary and a per-address call has nowhere to carry;
+ *   as bytes, because how those bytes pack into a number is the device's
+ *   own convention and not something shared code should decide. */
+struct XpVoiceEngineOps {
+  bool (*create)(void **state, const struct xp_rom *rom,
+                  const uint8_t *const banks[], const size_t bankSizes[],
+                  unsigned bankCount, double outputRate);
+  void (*destroy)(void *state);
+  void (*reset)(void *state);
+  bool (*note_on)(void *state, unsigned part, unsigned key,
+                   unsigned velocity);
+  bool (*note_off)(void *state, unsigned part, unsigned key);
+  bool (*control_change)(void *state, unsigned channel, unsigned controller,
+                          unsigned value);
+  bool (*program_change)(void *state, unsigned part, unsigned program);
+  bool (*sysex_block)(void *state, const uint8_t *address,
+                       unsigned addressBytes, const uint8_t *data,
+                       size_t count);
+  void (*render)(void *state, float *stereo, size_t frames);
+  bool (*set_max_voices)(void *state, unsigned maxVoices);
+  unsigned (*active_voices)(const void *state);
+};
+
+/* Where a record type keeps each field a voice needs, by role. A device's
+   melodic tone and its rhythm note are two record types with the same
+   parts in different places, so the voice path reads through one of these
+   rather than through a fixed set of offsets. XP_VOICE_FIELD_NONE marks a
+   role a record type does not have. */
+inline constexpr uint16_t XP_VOICE_FIELD_NONE = 0xffffu;
+
+struct XpVoiceFieldMap {
+  uint16_t enable;
+  uint16_t waveGroup;
+  uint16_t waveGroupId;
+  uint16_t waveNumber;
+  uint16_t waveGain;
+  uint16_t level;
+  uint16_t pan;
+  uint16_t coarseTune;
+  uint16_t fineTune;
+  /* The key the wave is played at, where the record names one instead of
+     transposing by the key that triggered it - which is what makes a drum
+     a drum rather than a sample pitched to whatever key struck it. */
+  uint16_t sourceKey;
+  uint16_t cutoff;
+  uint16_t resonance;
+  uint16_t filterType;
+  /* The filter envelope. Its depth is signed and its levels are not: the
+     sign of the whole sweep is the depth's. A record type may carry one
+     velocity-time sensitivity where another carries two, and may carry
+     neither a velocity curve nor a time key follow at all - hence the
+     separate indices rather than one run. */
+  uint16_t filterEnvDepth;
+  uint16_t filterEnvVelCurve;
+  uint16_t filterEnvVelSens;
+  uint16_t filterEnvVelTime1;
+  uint16_t filterEnvVelTime4;
+  uint16_t filterEnvTimeKeyFollow;
+  uint16_t filterEnvTime1;       /* four times run from here */
+  uint16_t filterEnvLevel1;      /* four levels run from here */
+  uint16_t ampTime1;             /* four times run from here */
+  uint16_t ampLevel1;            /* three levels run from here */
+  uint16_t keyRangeLow;
+  uint16_t keyRangeHigh;
+  uint16_t velocityRangeLow;
+  uint16_t velocityRangeHigh;
+  uint16_t muteGroup;
+};
+
+/* Which packed bank a bank-select pair names, as the device's own selector
+   resolves CC0 and CC32. */
+struct XpBankSelect {
+  uint8_t msb;
+  uint8_t lsb;
+  uint8_t bank;
+};
+
+/* One group of a descriptor-packed record schema: a run of field
+   descriptors that together tile one record (or one of its sub-records)
+   with no hole and no overlap. A group is addressed by role rather than by
+   number - see XpDeviceProfile::packedBanks - so generic code never needs
+   to know which index is which. */
+struct XpPackedGroup {
+  uint16_t firstDescriptor;  /* index of this group's first descriptor */
+  uint16_t fieldCount;       /* decoded bytes the group produces */
+  uint16_t packedSize;       /* bytes the group occupies in the record */
+};
+
+/* A bank of descriptor-packed records: `count` records of `recordSize`
+   packed bytes, each one a common block followed by `partCount` identical
+   sub-records. partGroup is XP_PACKED_NO_GROUP where a record has no
+   sub-records. */
+inline constexpr uint8_t XP_PACKED_NO_GROUP = 0xffu;
+
+struct XpPackedBank {
+  uint32_t base;
+  uint16_t count;
+  uint16_t recordSize;
+  uint8_t commonGroup;
+  uint8_t partGroup;
+  uint8_t partCount;
+};
+
+/* One wave-number namespace: the two parallel lookup tables that turn a
+   stored wave number into a (multisample bank, multisample row) pair, and
+   how many numbers the namespace holds. */
+struct XpWaveSource {
+  uint32_t listRowTable;    /* u16 BE per wave number */
+  uint32_t listBankTable;   /* u8 per wave number */
+  uint16_t listCount;
+  uint8_t multisampleBank;  /* unused; the row table's own bank byte wins */
+  uint8_t elementDirectory; /* which element directory this source reads */
+};
+
+/* A table of fixed-stride records, used for both the multisample tables
+   and the wave-element directories. */
+struct XpRecordTable {
+  uint32_t base;
+  uint16_t count;
+  uint16_t stride;
+};
+
+/* Where a wave-element record keeps each field. Byte offsets inside the
+   record; a u24 field is big-endian and three bytes wide. */
+struct XpElementLayout {
+  uint8_t attenuation;
+  uint8_t start;            /* u24 */
+  uint8_t loop;             /* u24 */
+  uint8_t end;              /* u24, inclusive */
+  uint8_t control;          /* loop mode in the low bits, reverse flag */
+  uint8_t rootKey;
+  uint8_t fineTune;         /* u16 */
+  uint8_t loopFineTune;     /* u16 */
+  uint8_t reverseMask;      /* control bit selecting reverse playback */
+  uint8_t loopModeMask;     /* control bits holding the loop mode */
+};
+
+/* Where a multisample record keeps its name, its key split points and its
+   element references. */
+struct XpMultisampleLayout {
+  uint8_t name;
+  uint8_t nameLength;
+  uint8_t splitPoints;
+  uint8_t splitCount;
+  uint8_t elementRefs;      /* u16 BE each, 0xffff for an unused slot */
+  uint8_t refCount;
+};
+
+/* Every other device fact: ROM table addresses, measured/fitted values and
+   record sizes. See a device's own devices/<device>.cc for the values and
+   their provenance comments. A device leaves at zero every field its own
+   ROM has no counterpart for; the reader of each field checks that before
+   using it, so a zero means "this device has no such table" rather than
+   "address zero". */
+struct XpDeviceProfile {
+  /* Identification: rom_init() reads these, never a device's own bytes -
+     the size, and two 16-byte signatures memcmp'd at offset 0 and at
+     identSecondOffset, matching this data against the incoming ROM image.
+     This is the only role these four fields play; everything else in
+     the struct is read after identification has already chosen this
+     profile. A device picks the second span for being fixed content its
+     ROM carries at a known address, which is not the same question as
+     which table that address belongs to. */
+  size_t romSize;
+  uint8_t identVectors[16];
+  uint8_t identFirstDirectory[16];
+  uint32_t identSecondOffset;
+
+  unsigned defaultMaxVoices;
+
+  uint32_t envelopeRateTable;
+  uint32_t rateScaleTable;
+  uint32_t releasePedalTable;
+
+  unsigned toneCommonSize;
+  unsigned componentSize;
+
+  uint32_t pointerTableBase;
+  uint32_t pointerBankSize;
+  uint32_t melodicMapBase;
+
+  uint32_t directoryBase;
+  uint32_t directoryEnd;
+  uint32_t descriptorBase;
+  uint32_t descriptorEnd;
+
+  uint32_t toneBase;
+  uint32_t toneEnd;
+
+  uint32_t drumMapBase;
+  uint32_t drumPointerTable;
+  uint32_t drumKitCount;
+  uint32_t drumKitStride;
+  uint32_t drumKitBase;
+
+  uint32_t levelTable;
+  uint32_t coarseGainTable;
+  uint32_t fineGainTable;
+  uint32_t ampCurve1Table;
+  uint32_t ampCurve0Table;
+
+  uint32_t portamentoRateTable;
+
+  uint32_t baseTable;
+  uint32_t limitTable;
+
+  uint32_t rateTable;
+  uint32_t delayTable;
+  uint32_t sineTable;
+  uint32_t table10;
+  uint32_t table12;
+  uint32_t table14;
+  uint32_t table16;
+  uint32_t tablePoints;
+
+  uint16_t interpolateBelow;
+
+  uint32_t panTable;
+  uint32_t sendTable;
+
+  uint32_t eqLow200;
+  uint32_t eqLow400;
+  uint32_t eqHigh3k;
+  uint32_t eqHigh6k;
+  uint8_t eqGainMin;
+  uint8_t eqGainMax;
+
+  uint32_t delayCentreTable;
+  uint32_t delayRatioTable;
+  uint32_t delayMacroTable;
+  double delayUnitsPerMs;
+  unsigned delayMaxUnits;
+  double delayMaxMs;
+
+  uint32_t reverbPointers;
+  uint32_t reverbPage;
+  uint32_t reverbMacroTable;
+  uint16_t reverbAllpassPairA;
+  uint16_t reverbAllpassPairB;
+  float reverbAllpassG;
+  uint32_t reverbImage0Cram;
+  uint8_t headWord[XP_REVERB_BUFFERS];
+  uint8_t farWord[XP_REVERB_BUFFERS];
+  uint8_t tapWord[XP_REVERB_TAPS];
+  uint8_t allpassBuffer[8];
+  uint8_t tapInstruction[XP_REVERB_TAPS];
+
+  /* WHERE EACH PART OF A CHARACTER RECORD SITS, IN WORDS FROM ITS START.
+     The two devices carry the SAME record - eight allpass coefficient
+     pairs, two damping pairs, then twelve buffer heads, twelve far-end
+     reads and eight taps as thirty-two delay-memory addresses - and they
+     differ only in where those parts begin, so the loader reads offsets
+     rather than knowing them. A device whose record has no such part sets
+     XP_REVERB_WORD_NONE and the loader leaves that field at its default.
+
+     `reverbInputWord` is the one part the two do not share: a per-character
+     input one-pole, which the SC-88 does not carry in its record at all
+     (its pre-LPF comes from a parameter instead). */
+  uint8_t reverbCharacters;
+  uint8_t reverbRecordWords;
+  uint8_t reverbAllpassWord;
+  uint8_t reverbDampWord;
+  uint8_t reverbAddressWord;
+  uint8_t reverbTrimWord;
+  uint8_t reverbInputWord;
+  /* How the per-character pointer table is written. The SC-88 stores a u16
+     offset from `reverbPage`. A device storing whole pointers sets
+     `reverbPointerBytes` to 4, and `reverbPointerBase` to the address its
+     ROM is mapped at, which is subtracted to get a file offset. */
+  uint8_t reverbPointerBytes;
+  uint32_t reverbPointerBase;
+  /* Two tables a device may drive its reverb parameters through, zero
+     where it has neither. `reverbDampTable` is 18 rows of (a, 0x1FFF-a)
+     whose `a` is the one-pole coefficient of a lowpass at the row's own
+     corner (`M-064`, exact to the unit, row 17 the bypass);
+     `reverbLevelTable` is 128 monotonic words against 8192 = unity. */
+  uint32_t reverbDampTable;
+  uint32_t reverbLevelTable;
+
+  uint32_t chorusMacroTable;
+  double chorusMaxMs;
+  /* WHICH SHAPE THE CHORUS DELAY IS SWEPT WITH, and how far.
+
+     `XP_CHORUS_MOD_SINE` sweeps symmetrically about the nominal delay,
+     which is what this engine has always done; the SC-88's own shape has
+     never been measured and that is the assumption it keeps.
+
+     `XP_CHORUS_MOD_TRIANGLE_UP` sweeps a straight line from the nominal
+     delay UPWARD and back, never below it - measured on the JV-1080, where
+     the delay traces +1.2280 and +1.2372 ms/s on the two halves of its
+     rise and -1.2112 on its fall, straight to a few hundredths of a
+     millisecond, against the factor of two a sine would put between its
+     own early and late slopes. */
+  uint8_t chorusModulator;
+  /* The tables a device drives its chorus from, zero where it has none.
+     `chorusRateAccumulator` is the modulus the rate table's entry is a
+     per-control-period increment on, so the modulation is
+     `table[rate] / accumulator / control period` hertz. `chorusDepthMaxMs`
+     is the peak-to-peak sweep at the top of the depth field, which the
+     depth table's own shape scales. */
+  uint32_t chorusPreDelayTable;
+  uint32_t chorusRateTable;
+  double chorusRateAccumulator;
+  uint32_t chorusDepthTable;
+  double chorusDepthMaxMs;
+  uint32_t chorusLevelTable;
+
+  uint32_t pitchCurveCentre;
+
+  unsigned waveDescriptorSize;
+  unsigned waveBankSize;
+  unsigned waveChipSize;
+
+  /* The wave ROM board's bit permutations, and the shape of the ROM they
+     undo (wave_descramble_chip). A board wires its scrambling to whatever
+     the chips are: waveUnitBytes is the width of one addressable storage
+     unit in the dump - 1 for a byte-wide ROM, 2 for a 16-bit word ROM
+     dumped little-endian within the word - and the two line counts are how
+     many data and (unit-)address lines that board actually permutes. The
+     arrays are sized for the widest member of the family and only the
+     first waveDataLineCount / waveAddressLineCount entries are read. */
+  unsigned waveUnitBytes;
+  unsigned waveDataLineCount;
+  unsigned waveAddressLineCount;
+  uint8_t waveDataLinePermutation[XP_WAVE_DATA_LINES_MAX];
+  uint8_t waveAddressLinePermutation[XP_WAVE_ADDRESS_LINES_MAX];
+
+  /* The plaintext header each ROM carries, which the board leaves out of
+     the scrambling: waveHeaderBytes bytes at every multiple of
+     waveHeaderStride inside a chip. A stride equal to waveChipSize means
+     one header per chip. */
+  unsigned waveHeaderBytes;
+  uint32_t waveHeaderStride;
+
+  double belowPower;
+  double partialPower;
+
+  uint8_t selectors[XP_WAVE_BANK_COUNT];
+
+  /* --- Descriptor-packed preset records --------------------------------
+     A device whose preset records are bit-packed carries one field
+     descriptor table: packedDescriptorCount records of
+     packedDescriptorStride bytes at packedDescriptorBase, each naming a
+     mask, a byte offset inside the record, a shift and a signed bias. The
+     groups partition that table into record schemas and the banks say
+     where the records themselves are. packedDescriptorBase is zero on a
+     device whose records are flat fixed-offset ones instead, and then
+     nothing in packed_rom.h applies to it. */
+  uint32_t packedDescriptorBase;
+  unsigned packedDescriptorStride;
+  unsigned packedDescriptorCount;
+  /* Byte offsets inside one descriptor. */
+  uint8_t packedMaskOffset;       /* u16 BE */
+  uint8_t packedByteOffset;
+  uint8_t packedShiftOffset;
+  uint8_t packedBiasOffset;       /* i8 */
+  uint8_t packedMinOffset;
+  uint8_t packedMaxOffset;
+
+  struct XpPackedGroup packedGroups[XP_PACKED_GROUP_MAX];
+  unsigned packedGroupCount;
+  struct XpPackedBank packedBanks[XP_PACKED_BANK_MAX];
+  unsigned packedBankCount;
+
+  /* Which bank a melodic program change selects, as an index into
+     packedBanks, one entry per selectable bank in program-change order.
+     A rhythm part reads packedRhythmBanks the same way. */
+  uint8_t packedMelodicBanks[XP_PACKED_BANK_MAX];
+  unsigned packedMelodicBankCount;
+  uint8_t packedRhythmBanks[XP_PACKED_BANK_MAX];
+  unsigned packedRhythmBankCount;
+
+  /* Which packed bank each bank-select pair reaches. A pair not listed
+     here names a card or expansion group this implementation has no
+     image for, and selects nothing. */
+  struct XpBankSelect packedBankSelect[XP_PACKED_BANK_MAX];
+  unsigned packedBankSelectCount;
+
+  /* Where the melodic tone record and the rhythm note record keep each
+     field the voice path reads. Each index is the descriptor's own index
+     within its group, which on a device whose descriptor table doubles as
+     its SysEx address map is also the parameter's SysEx offset. */
+  struct XpVoiceFieldMap toneFields;
+  struct XpVoiceFieldMap rhythmNoteFields;
+
+  /* The rhythm set: which packed groups its common and per-key records
+     are, which part index addresses it, and the first key it holds. */
+  uint8_t packedRhythmCommonGroup;
+  uint8_t packedRhythmNoteGroup;
+  uint8_t rhythmPartIndex;
+  uint8_t rhythmFirstKey;
+  uint8_t rhythmKeyCount;
+
+  /* Field indices inside the patch-common group. The octave shift is a
+     whole-patch transposition that adds to the tone's own coarse tune, and
+     is XP_VOICE_FIELD_NONE on a patch record that has no such field. */
+  uint16_t patchFieldName;
+  uint16_t patchFieldNameLength;
+  uint16_t patchFieldLevel;
+  uint16_t patchFieldPan;
+  uint16_t patchFieldOctaveShift;
+
+  /* The performance-part group, and the fields of it that decide where a
+     note goes and how loud it is. A part is addressed by its own receive
+     channel rather than by its index, so two parts may share a channel and
+     layer - which this device's factory songs rely on. */
+  uint8_t packedPerformanceCommonGroup;
+  uint8_t packedPerformancePartGroup;
+  uint16_t partFieldReceiveChannel;
+  uint16_t partFieldLevel;
+  uint16_t partFieldPan;
+  uint16_t partFieldKeyShift;
+  /* The part's own reverb send. `M-039`/`M-052`: the PART's send is the
+     live one and a melodic tone's is inert, so a voice carries its part's
+     at note-on. XP_VOICE_FIELD_NONE where a device has no such field. */
+  uint16_t partFieldReverbSend;
+  uint16_t partFieldChorusSend;
+  uint16_t partFieldFineTune;    /* cents, XP_VOICE_FIELD_NONE where absent */
+
+  /* --- Wave selection through the multisample directories -------------
+     The chain a stored wave reference walks on a device whose wave ROM is
+     described by multisample records rather than by one flat descriptor
+     table: a wave group ID selects a source, the source's two lookup
+     tables give a multisample bank and row, the row gives key splits and
+     element references, and the element record gives the ROM addresses.
+     waveGroupSourceTable is zero on a device with no such chain. */
+  uint32_t waveGroupSourceTable;
+  unsigned waveGroupSourceCount;
+  struct XpWaveSource waveSources[XP_WAVE_SOURCE_MAX];
+  unsigned waveSourceCount;
+  struct XpRecordTable multisampleBanks[XP_MULTISAMPLE_BANK_MAX];
+  unsigned multisampleBankCount;
+  struct XpMultisampleLayout multisampleLayout;
+  struct XpRecordTable elementDirectories[XP_MULTISAMPLE_BANK_MAX];
+  unsigned elementDirectoryCount;
+  struct XpElementLayout elementLayout;
+
+  /* The wave-address space element records are written in: how wide one
+     chip's slice of it is, so that an element address resolves to a chip
+     and an offset inside it, and which chip each directory's slot zero
+     is. Zero where the element record carries its own bank byte instead. */
+  uint32_t waveSourceSlotSize;
+  uint8_t elementDirectoryChipBase[XP_MULTISAMPLE_BANK_MAX];
+
+  /* This device's System Exclusive identity and address width. Roland's
+     own model id, and how many seven-bit bytes its parameter address
+     takes - three on a GS device, four on this family's JV member. */
+  uint8_t sysexModelId;
+  uint8_t sysexAddressBytes;
+
+  /* How far one voice sits below the mix's full scale. A device that sums
+     many voices into a fixed-width mixer needs headroom for their sum, and
+     on a device whose mixer is not recovered this is the one number that
+     stands for it. Zero means unity - the shared firmware-port engine
+     composes its amplitude from the ROM's own headroom instead and has no
+     use for this. */
+  double voiceMixScale;
+
+  /* Null on a device the shared firmware-port engine serves; see
+     struct XpVoiceEngineOps above. */
+  const struct XpVoiceEngineOps *voiceEngine;
+};
+
+/* Never-null: falls back to the profile of whichever device this engine
+   was first written for, since several existing tests build a bare struct
+   xp_rom by hand (bypassing rom_init(), so .profile is never set).
+   Mirrors ControlRom::device()'s own fallback (the older engine's), not
+   its nullable profile(). A device whose ROM rom_init() has identified
+   gets its own profile back instead. */
+const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

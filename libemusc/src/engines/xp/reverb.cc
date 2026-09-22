@@ -12,14 +12,28 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-constexpr unsigned kReverbCharacters = 10u;
-constexpr unsigned kReverbRecordWords = 53u;
+/* The record's own geometry is the device's, in profile.h; these are only
+   the shapes the struct fixes. */
 
 uint16_t be16(const uint8_t *p)
 {
   return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
 }
 
+/* The XP coefficient law: a sign-extended 14-bit mantissa, thirteen bits
+   fractional, scaled by the two-bit exponent bits 15:14 carry
+   (kXpCoefficientShift, common/constants.h).
+
+   CREDITED, AND SECONDARY. The formula is
+   github.com/giulioz/roland-dsps's, admissible as a lead under the
+   owner's ruling of 2026-08-30 (emusc-match TAINT-REGISTER T-008). Its
+   origin is that source's prose, not a ROM read here, so it is neither
+   firmware-exact nor confirmed. TASK-343 is the measurement that can
+   confirm or refute it independently of the source: a chorus-feedback
+   decay sweep on the live JV-1080 rig, which is that device's own
+   suggested test. The SC-88 has no confirming oracle, so for this device
+   the law is PERMANENTLY UNVERIFIED - labelled wherever it is used, and
+   never promotable past a lead whatever TASK-343 returns. */
 double xp(uint16_t raw)
 {
   int value = raw & 0x3fff;
@@ -88,21 +102,33 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
                             struct xp_reverb_character *out)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
-  if (!rom || !rom->bytes || !out || character >= kReverbCharacters ||
-      profile->reverbPointers + 2u * kReverbCharacters > rom->size)
+  if (!rom || !rom->bytes || !out || character >= profile->reverbCharacters)
     return false;
-  uint32_t block = profile->reverbPage +
-    be16(rom->bytes + profile->reverbPointers + 2u * character);
-  if (block + 2u * kReverbRecordWords > rom->size)
+  const unsigned pointerBytes = profile->reverbPointerBytes;
+  const uint32_t table = profile->reverbPointers +
+    pointerBytes * (uint32_t)character;
+  if (table + pointerBytes > rom->size)
+    return false;
+  uint32_t offset = be16(rom->bytes + table);
+  if (pointerBytes == 4u) {
+    offset = (offset << 16) | be16(rom->bytes + table + 2u);
+    if (offset < profile->reverbPointerBase)
+      return false;
+    offset -= profile->reverbPointerBase;
+  }
+  uint32_t block = profile->reverbPage + offset;
+  if (block + 2u * (uint32_t)profile->reverbRecordWords > rom->size)
     return false;
   std::memset(out, 0, sizeof *out);
+  const uint8_t *rec = rom->bytes + block;
   /* words 0..15 are the eight coefficient pairs; an enabled one is exactly
      the allpass pair and a disabled one exactly zero, with nothing else
      appearing in those slots on any character (`M-008`). A disabled section
      still has its buffer, and runs as the plain delay that buffer is. */
   for (unsigned i = 0; i < 8; ++i) {
-    uint16_t a = be16(rom->bytes + block + 4u * i);
-    uint16_t b = be16(rom->bytes + block + 4u * i + 2u);
+    const uint8_t *pair = rec + 2u * (profile->reverbAllpassWord + 2u * i);
+    uint16_t a = be16(pair);
+    uint16_t b = be16(pair + 2u);
     if (a == profile->reverbAllpassPairA && b == profile->reverbAllpassPairB) {
       out->allpass[profile->allpassBuffer[i]] = true;
       ++out->allpasses;
@@ -118,8 +144,17 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
      and the half then runs undamped rather than on coefficients chosen
      here - which is what Delay and Panning Delay leave behind. */
   for (unsigned i = 0; i < 2; ++i) {
-    double a = xp(be16(rom->bytes + block + 32u + 4u * i));
-    double b = xp(be16(rom->bytes + block + 34u + 4u * i));
+    if (profile->reverbDampWord == XP_REVERB_WORD_NONE) {
+      /* A device whose record carries no usable damping pair: the pair is
+         a neutral default there and the damping arrives as a parameter
+         instead, so the character itself passes the half through. */
+      out->damp_input[i] = 0.0f;
+      out->damp_pole[i] = 0.0f;
+      continue;
+    }
+    const uint8_t *pair = rec + 2u * (profile->reverbDampWord + 2u * i);
+    double a = xp(be16(pair));
+    double b = xp(be16(pair + 2u));
     if (a > 0.0 && a < 0.99 && b < 0.0) {
       out->damp_input[i] = (float)a;
       out->damp_pole[i] = (float)(-b);
@@ -136,7 +171,7 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
      difference from sorting them and calling every gap a line. */
   uint16_t addr[32];
   for (unsigned i = 0; i < 32; ++i)
-    addr[i] = be16(rom->bytes + block + 2u * (20u + i));
+    addr[i] = be16(rec + 2u * (profile->reverbAddressWord + i));
   unsigned lo = 0xffffu;
   unsigned hi = 0u;
   for (unsigned i = 0; i < 32; ++i) {
@@ -156,7 +191,12 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
   out->extent = (uint16_t)(hi - lo);
   /* word 52, the one value the loader writes to a control register: this
      character's own return trim. See the field's note in the header. */
-  out->return_trim = be16(rom->bytes + block + 2u * 52u);
+  /* 32 is this register's unity (its full scale is 512 and the trim is
+     scaled by 16), so a device whose record carries no trim word returns
+     its tank unattenuated and lets its level parameter do the work. */
+  out->return_trim = profile->reverbTrimWord == XP_REVERB_WORD_NONE
+    ? 32u
+    : be16(rec + 2u * profile->reverbTrimWord);
   return hi > lo;
 }
 

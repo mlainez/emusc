@@ -67,12 +67,13 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_identify_model(romFile))
     throw(std::string("Unknown control ROM file!"));
 
-  // The SC-88 is rendered by the XP engine, which reads this ROM itself.
-  // Keep the image and stop here: none of the readers below describe this
-  // device's layout, and running them would fill the instrument, partial and
-  // sample tables with another machine's offsets rather than failing loudly.
+  // An XP-family device is rendered by the XP engine, which reads this ROM
+  // itself. Keep the image and stop here: none of the readers below describe
+  // such a device's layout, and running them would fill the instrument,
+  // partial and sample tables with another machine's offsets rather than
+  // failing loudly.
   // _identify_model() already read the whole file into _deviceRom.
-  if (_synthModel == sm_SC88) {
+  if (uses_xp_engine()) {
     romFile.close();
     return;
   }

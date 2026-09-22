@@ -35,10 +35,11 @@ WaveRom::WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom)
   if (romPath.empty())
     throw (std::string("No wave ROM file specified"));
 
-  // The SC-88 keeps its own copy, unscrambled and unparsed. Its sample table is
-  // not the Sound Canvas's, so neither the address unscrambling below nor the
-  // sample-set extraction that follows it applies.
-  if (ctrlRom.generation() == ControlRom::SynthGen::SC88) {
+  // An XP-family device keeps its own copy, unscrambled and unparsed: its
+  // wave ROMs are on the sound chip's private bus and its engine descrambles
+  // them with that board's own scheme, so neither the address unscrambling
+  // below nor the sample-set extraction that follows it applies.
+  if (ctrlRom.uses_xp_engine()) {
     for (auto &rp : romPath) {
       BinFile f(rp, "rb");
       if (!f.is_open())

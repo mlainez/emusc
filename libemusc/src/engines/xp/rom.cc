@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "rom.h"
 
+#include "devices/jv1080.h"
 #include "devices/sc88.h"
 
 #include <cstring>
@@ -33,16 +34,20 @@ bool matches(const struct XpDeviceProfile &profile, const uint8_t *bytes,
              size_t size)
 {
   return size == profile.romSize &&
+    (size_t)profile.identSecondOffset + sizeof profile.identFirstDirectory
+      <= size &&
     std::memcmp(bytes, profile.identVectors,
                 sizeof profile.identVectors) == 0 &&
-    std::memcmp(bytes + profile.directoryBase, profile.identFirstDirectory,
+    std::memcmp(bytes + profile.identSecondOffset,
+                profile.identFirstDirectory,
                 sizeof profile.identFirstDirectory) == 0;
 }
 
 /* Every device this engine can identify. The only place that names one -
-   mirrors ControlRom::_profile_for() on the older engine. Adding a second
+   mirrors ControlRom::_profile_for() on the older engine. Adding another
    XP-family device means adding its profile here, not editing rom_init(). */
-constexpr const struct XpDeviceProfile *kKnownProfiles[] = { &SC88_PROFILE };
+constexpr const struct XpDeviceProfile *kKnownProfiles[] = {
+  &SC88_PROFILE, &JV1080_PROFILE };
 
 }  // namespace
 

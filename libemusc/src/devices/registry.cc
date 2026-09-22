@@ -19,9 +19,11 @@ extern const ControlRom::DeviceEntry SC55_DEVICE;
 extern const ControlRom::DeviceEntry SC55MKII_DEVICE;
 extern const ControlRom::DeviceEntry SC88_DEVICE;
 extern const ControlRom::DeviceEntry JV880_DEVICE;
+extern const ControlRom::DeviceEntry JV1080_DEVICE;
 
 const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
   SC55_DEVICE, SC55MKII_DEVICE, SC88_DEVICE, JV880_DEVICE,
+  JV1080_DEVICE,
 };
 const int ControlRom::DEVICE_COUNT =
   (int) (sizeof(DEVICES) / sizeof(DEVICES[0]));

@@ -50,6 +50,10 @@ struct xp_chorus {
   float pre_fb, pre_in;
   float pre_state;
   float fb_state_l, fb_state_r;
+  /* The shape the delay is swept with, from the device's profile. It also
+     fixes what `depth_samples` means: a sine sweeps +-depth about the
+     nominal delay, a rising triangle sweeps 0..+depth above it. */
+  uint8_t modulator;
   bool active;
 };
 
@@ -76,6 +80,14 @@ void chorus_destroy(struct xp_chorus *ch);
 void chorus_reset(struct xp_chorus *ch);
 
 /* The GS parameters as received, 0..127 each (`preLpf` 0..7). */
+/* For a device whose parameter laws are its own: the five quantities the
+ * runtime actually turns, set directly rather than through the GS-shaped
+ * setter below. Delay and depth are in output-rate samples, the phase step
+ * per output sample, and level a linear gain. */
+void chorus_set_runtime(struct xp_chorus *ch, double delaySamples,
+                         double depthSamples, double phaseStep,
+                         float feedback, float level);
+
 void chorus_set_params(const struct xp_rom *rom, struct xp_chorus *ch,
                         uint8_t level, uint8_t feedback, uint8_t delay,
                         uint8_t rate, uint8_t depth, uint8_t preLpf);

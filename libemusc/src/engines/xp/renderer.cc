@@ -54,25 +54,21 @@ int32_t relativePitch(int difference)
   return value > 32767 ? 32767 : value;
 }
 
-int bankIndex(uint8_t selector)
+/* Which of the eight logical wave banks a bank-select byte names. The
+   eight bytes are the device's, so they are read from its profile in bank
+   order rather than listed here. */
+int bankIndex(const struct XpDeviceProfile *profile, uint8_t selector)
 {
-  switch (selector) {
-  case 0x00: return 0;
-  case 0x01: return 1;
-  case 0x10: return 2;
-  case 0x11: return 3;
-  case 0x20: return 4;
-  case 0x21: return 5;
-  case 0x30: return 6;
-  case 0x31: return 7;
-  default: return -1;
-  }
+  for (unsigned i = 0; i < XP_WAVE_BANK_COUNT; ++i)
+    if (profile->selectors[i] == selector)
+      return (int)i;
+  return -1;
 }
 
 const struct xp_wave_bank *findBank(const struct xp_renderer *renderer,
                                        uint8_t selector)
 {
-  int index = bankIndex(selector);
+  int index = bankIndex(xp_profile(&renderer->rom), selector);
   return index < 0 ? nullptr : renderer->banks + index;
 }
 
@@ -554,7 +550,7 @@ bool renderer_init(struct xp_renderer *renderer, const uint8_t *controlRom,
     renderer->send_gain[c] = raw / 32768.0f;
   }
   for (size_t i = 0; i < bankCount; ++i) {
-    int index = bankIndex(banks[i].selector);
+    int index = bankIndex(xp_profile(&renderer->rom), banks[i].selector);
     if (index < 0 || occupied[index] || !banks[i].bytes ||
         banks[i].size != xp_profile(&renderer->rom)->waveBankSize)
       return false;

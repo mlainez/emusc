@@ -6,6 +6,7 @@ set(EMUSC_SOURCES
   control_rom.cc
   control_rom.h
   devices/common/rom_signature.h
+  devices/jv1080.cc
   devices/jv880.cc
   devices/registry.cc
   devices/sc55.cc
@@ -55,7 +56,12 @@ set(EMUSC_SOURCES
   engines/gp/wave_oscillator.h
   engines/xp/device.cc
   engines/xp/device.h
-  engines/xp/devices/sc88.cc
+  engines/xp/devices/jv1080.cc
+  engines/xp/devices/jv1080.h
+  engines/xp/devices/jv1080_engine.cc
+  engines/xp/devices/jv1080_voice.cc
+  engines/xp/devices/profile.h
+  ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
   engines/xp/devices/sc88.h
   engines/xp/engine.cc
   engines/xp/engine.h
@@ -65,6 +71,8 @@ set(EMUSC_SOURCES
   engines/xp/output.h
   engines/xp/lfo.cc
   engines/xp/lfo.h
+  engines/xp/packed_rom.cc
+  engines/xp/packed_rom.h
   engines/xp/pan.cc
   engines/xp/pan.h
   engines/xp/pitch.cc
@@ -137,23 +145,50 @@ if(EMUSC_BASELINE_CHECK)
     COMMENT "Checking objects against the toolchain's ISA/FP baseline")
 endif()
 
+# The JV-1080's profile names its own voice engine, so any target that
+# links the profile - which is every target that links engines/xp/rom.cc,
+# since that is where the engine identifies its devices - links the engine
+# and the descriptor-packed reader behind it too. One list, so a new file
+# is wired in once.
+set(XP_JV1080_SOURCES
+  engines/xp/devices/jv1080.cc
+  engines/xp/devices/jv1080_engine.cc
+  engines/xp/devices/jv1080_voice.cc
+  engines/xp/chorus.cc
+  engines/xp/packed_rom.cc
+  engines/xp/reverb.cc
+  engines/xp/wave.cc)
+
 # XP-engine specific debug/analysis tools. Distinct from the multi-device
 # emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
 # public API, these link the xp_* engine sources directly, because the
 # values they report are internal to the engine and no measurement of the
 # rendered audio can separate them.
 add_executable(xp_tvf_probe ../tools/xp_tvf_probe.cc
-  engines/xp/devices/sc88.cc
-  engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
+  ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
+  engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc)
 target_include_directories(xp_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(xp_tvf_probe PRIVATE emusc_dsp_tier)
 if(NOT MSVC)
   target_link_libraries(xp_tvf_probe PRIVATE m)
 endif()
 
+# Probe for the descriptor-packed ROM layout: the descramble's own output,
+# a factory patch's whole resolution chain, and a song whose SysEx programs
+# the machine itself. Links the engine sources directly for the same reason
+# the two above do - what it reports is internal to the engine.
+add_executable(xp_packed_probe ../tools/xp_packed_probe.cc ../tools/smf.cc
+  ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
+  engines/xp/rom.cc)
+target_include_directories(xp_packed_probe PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
+if(NOT MSVC)
+  target_link_libraries(xp_packed_probe PRIVATE m)
+endif()
+
 add_executable(xp_dump_samples ../tools/xp_dump_samples.cc
-  engines/xp/devices/sc88.cc
-  engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
+  ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
+  engines/xp/oscillator.cc engines/xp/rom.cc)
 target_include_directories(xp_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(xp_dump_samples PRIVATE emusc_dsp_tier)
 if(NOT MSVC)
@@ -167,12 +202,12 @@ if(BUILD_TESTING)
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
   set(XP_VOICE_SOURCES
-    engines/xp/devices/sc88.cc
+    ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
     engines/xp/engine.cc engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/renderer.cc engines/xp/reverb.cc
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
-    engines/xp/wave.cc)
+    )
 
   function(xp_test name)
     add_executable(${name} ../tests/${name}.cc ${ARGN})
@@ -189,13 +224,13 @@ if(BUILD_TESTING)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
-  xp_test(xp_wave_test engines/xp/devices/sc88.cc engines/xp/wave.cc)
-  xp_test(xp_oscillator_test engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
-  xp_test(xp_pan_test engines/xp/devices/sc88.cc engines/xp/pan.cc)
-  xp_test(xp_reverb_test engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_chorus_test engines/xp/devices/sc88.cc engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_delay_test engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_eq_test engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_wave_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc)
+  xp_test(xp_oscillator_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
+  xp_test(xp_pan_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/pan.cc)
+  xp_test(xp_reverb_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc)
+  xp_test(xp_chorus_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc)
+  xp_test(xp_delay_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc)
+  xp_test(xp_eq_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc)
   xp_test(xp_output_test engines/xp/output.cc)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
@@ -203,11 +238,21 @@ if(BUILD_TESTING)
   # test itself, at run time, so ctest's own environment carries it
   # whatever the tree was configured with.
   set_property(TEST xp_eq_test PROPERTY SKIP_RETURN_CODE 77)
-  xp_test(xp_drum_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_lfo_test engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_pitch_test engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
-  xp_test(xp_tvf_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
-  xp_test(xp_tva_test engines/xp/devices/sc88.cc engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_drum_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/rom.cc)
+  # The descriptor-packed ROM layout, checked against the held image of a
+  # device that uses it; skipped without JV1080_CONTROL_ROM, since a
+  # synthetic image would only re-check this test's own arithmetic.
+  xp_test(xp_packed_rom_test ${XP_JV1080_SOURCES}
+    engines/xp/devices/sc88.cc engines/xp/rom.cc)
+  set_property(TEST xp_packed_rom_test PROPERTY SKIP_RETURN_CODE 77)
+  # The filter envelope's measured tables and laws, checked as arithmetic:
+  # no ROM is involved, so this one never reports skipped.
+  xp_test(xp_filter_env_test ${XP_JV1080_SOURCES}
+    engines/xp/devices/sc88.cc engines/xp/rom.cc)
+  xp_test(xp_lfo_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc)
+  xp_test(xp_pitch_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc)
+  xp_test(xp_tvf_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc)
+  xp_test(xp_tva_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/tva.cc engines/xp/rom.cc)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.

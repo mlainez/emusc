@@ -13,7 +13,19 @@ namespace {
 /* The XP coefficient law: fourteen signed bits with thirteen fractional,
    scaled by the two-bit exponent the top bits carry. At the centre gain
    the low 200 Hz record is `5000 2162 1e9e`, which decodes to exactly
-   1, -0.956787 and +0.956787 - the identity eq.md describes. */
+   1, -0.956787 and +0.956787 - the identity eq.md describes.
+
+   CREDITED, AND SECONDARY. The formula is
+   github.com/giulioz/roland-dsps's, admissible as a lead under the
+   owner's ruling of 2026-08-30 (emusc-match TAINT-REGISTER T-008). Its
+   origin is that source's prose, not a ROM read here, so it is neither
+   firmware-exact nor confirmed - the decoded identity above is a
+   consistency check on this ROM's own records, not a derivation of the
+   law. TASK-343 is the measurement that can confirm or refute it
+   independently of the source: a chorus-feedback decay sweep on the live
+   JV-1080 rig. The SC-88 has no confirming oracle, so for this device the
+   law is PERMANENTLY UNVERIFIED - labelled wherever it is used, and never
+   promotable past a lead whatever TASK-343 returns. */
 float coefficient(uint16_t raw)
 {
   int value = raw & 0x3fff;

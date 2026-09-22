@@ -541,13 +541,15 @@ public:
     SC55mk2 = 1,
     JV880   = 4,
 
-    // The SC-88 is rendered by the XP engine rather than by the Note and
-    // Partial path, so this generation selects a different code path in Synth
-    // entirely, not another set of table offsets. SC55/SC55mk2/JV880 above
-    // are Class G (one shared silicon design, this file's own machinery);
-    // SC-88 is Class X, a different chip family entirely, whose engine
-    // lives in engines/xp/ - see engines/xp/README.md.
-    SC88    = 5
+    // These two are rendered by the XP engine rather than by the Note and
+    // Partial path, so they select a different code path in Synth entirely,
+    // not another set of table offsets. SC55/SC55mk2/JV880 above are Class G
+    // (one shared silicon design, this file's own machinery); these are
+    // Class X, a different chip family entirely, whose engine lives in
+    // engines/xp/ - see engines/xp/README.md. uses_xp_engine() below is the
+    // one place that asks which family a generation belongs to.
+    SC88    = 5,
+    JV1080  = 6
   };
 
   enum SynthModel {
@@ -556,6 +558,7 @@ public:
     sm_SCC1,              // ISA card version
     sm_JV880,
     sm_SC88,
+    sm_JV1080,
   };
 
   // Every device this engine knows, named nowhere but here and in the device's
@@ -584,13 +587,14 @@ public:
   enum SynthGen generation(void) { return _synthGeneration; }
 
   // Whether this device is rendered by engines/xp/'s own engine (which
-  // reads the control ROM itself) rather than the Part/Note path. Only
-  // SC-88 today; the one place this needs to change to add a second
-  // XP-family device (e.g. a JV-1080), rather than re-auditing every
-  // generation() == SC88 check scattered by hand.
-  bool uses_xp_engine(void) { return _synthGeneration == SynthGen::SC88; }
+  // reads the control ROM itself) rather than the Part/Note path. The one
+  // place that asks, so adding a third XP-family device is a line here
+  // rather than an audit of every generation() check in the tree.
+  bool uses_xp_engine(void)
+  { return _synthGeneration == SynthGen::SC88 ||
+           _synthGeneration == SynthGen::JV1080; }
 
-  // The whole control ROM image, verbatim. The SC-88 path hands this to its own
+  // The whole control ROM image, verbatim. The XP path hands this to its own
   // engine, which reads the device's tables itself; it is empty for a device
   // whose tables this class parses.
   const std::vector<uint8_t> &device_rom(void) const { return _deviceRom; }
