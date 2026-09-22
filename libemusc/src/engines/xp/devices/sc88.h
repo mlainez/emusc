@@ -8,18 +8,19 @@
  *  that file identifies devices in general, while this one is private to
  *  engines/xp/'s own engine.
  *
- *  Most facts live in struct XpDeviceProfile, injected at runtime through
- *  xp_rom::profile / xp_engine::profile - the same shape as the older
- *  Part/Note engine's DeviceProfile, selected once and read everywhere
- *  through a pointer rather than hardcoded in generic code. A handful of
- *  constants stay as compile-time values below instead: they size this
- *  engine's own fixed C arrays, which requires the value to be known at
- *  compile time wherever it is used, not just at one definition site. The
- *  older engine has the identical exception (DeviceProfile::MAX_PARTIALS) -
- *  this isn't a compromise unique to this engine.
+ *  Most facts live in struct XpDeviceProfile, which is in profile.h because
+ *  it is the engine's vocabulary type rather than this device's - see there
+ *  for the struct and the injection mechanism (xp_rom::profile,
+ *  xp_engine::profile, xp_profile()). A handful of constants stay as
+ *  compile-time values below instead: their readers are per-sample hot paths
+ *  with no rom/profile parameter in the call chain, or they size a fixed C
+ *  array. The reason is written next to each, the same way the older
+ *  engine's DeviceProfile::MAX_PARTIALS exception is.
  */
 #ifndef EMUSC_XP_DEVICES_SC88_H
 #define EMUSC_XP_DEVICES_SC88_H
+
+#include "profile.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -30,30 +31,10 @@ struct xp_rom;
 extern "C" {
 #endif
 
-/* This engine's own fixed array sizes and hard ceilings: concurrently
-   active slots, notes and parts, tone components per note, wave chips
-   and banks, reverb buffers/taps, output filter sections, TVF sections,
-   the per-tone controller matrix, and the two record sizes used to size
-   a stack buffer in the test suite. Regardless of which device's default
-   polyphony is in effect (see XpDeviceProfile::defaultMaxVoices) - these
-   are the engine's, not the device's. */
-inline constexpr unsigned XP_ENGINE_SLOT_COUNT = 64u;
-inline constexpr unsigned XP_ENGINE_NOTE_COUNT = 64u;
-inline constexpr unsigned XP_ENGINE_PART_COUNT = 32u;
-inline constexpr unsigned XP_MAX_TONE_COMPONENTS = 2u;
-inline constexpr unsigned XP_WAVE_CHIP_COUNT = 4u;
-inline constexpr unsigned XP_WAVE_BANK_COUNT = 8u;
-inline constexpr unsigned XP_MIDI_PORT_COUNT = 2u;
-inline constexpr unsigned XP_MATRIX_SOURCE_COUNT = 6u;
-inline constexpr unsigned XP_MATRIX_DEST_COUNT = 11u;
-inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
-inline constexpr unsigned XP_REVERB_TAPS = 8u;
-inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
-inline constexpr int XP_OUTPUT_HOLD_TAPS = 31;
-inline constexpr int XP_OUTPUT_ANALOG_SECTIONS = 5;
-inline constexpr int XP_OUTPUT_MAX_SECTIONS = 4;
-inline constexpr unsigned XP_TVF_SECTIONS = 1u;
-inline constexpr unsigned XP_DRUM_FIELDS = 10u;
+/* This device's control ROM image size. Also XpDeviceProfile::romSize
+   below, which is what the engine reads; the compile-time copy sizes the
+   stack/heap buffers the test suite fills with a synthetic image of this
+   device. */
 inline constexpr unsigned XP_CONTROL_ROM_SIZE = 0x80000u;
 
 /* The word at ROM `71c7`, the exponential family's entry at rate index 2,
@@ -144,127 +125,7 @@ inline constexpr double kXpTvfQUnity = 131072.0;
 inline constexpr double kXpTvfOctaveUnits = 16384.0;
 inline constexpr uint32_t XP_TVF_NYQUIST_WORD = 0x40000u;
 
-/* Every other SC-88 fact: ROM table addresses, measured/fitted values and
-   record sizes. See devices/sc88.cc for the values and their provenance
-   comments (each field below was a standalone named constant there before
-   this struct existed; the comments moved with them). */
-struct XpDeviceProfile {
-  /* Identification: rom_init() reads these, never a device's own bytes -
-     the size, and two 16-byte signatures memcmp'd at offset 0 and at
-     directoryBase, matching this data against the incoming ROM image.
-     This is the only role these three fields play; everything else in
-     the struct is read after identification has already chosen this
-     profile. */
-  size_t romSize;
-  uint8_t identVectors[16];
-  uint8_t identFirstDirectory[16];
-
-  unsigned defaultMaxVoices;
-
-  uint32_t envelopeRateTable;
-  uint32_t rateScaleTable;
-  uint32_t releasePedalTable;
-
-  unsigned toneCommonSize;
-  unsigned componentSize;
-
-  uint32_t pointerTableBase;
-  uint32_t pointerBankSize;
-  uint32_t melodicMapBase;
-
-  uint32_t directoryBase;
-  uint32_t directoryEnd;
-  uint32_t descriptorBase;
-  uint32_t descriptorEnd;
-
-  uint32_t toneBase;
-  uint32_t toneEnd;
-
-  uint32_t drumMapBase;
-  uint32_t drumPointerTable;
-  uint32_t drumKitCount;
-  uint32_t drumKitStride;
-  uint32_t drumKitBase;
-
-  uint32_t levelTable;
-  uint32_t coarseGainTable;
-  uint32_t fineGainTable;
-  uint32_t ampCurve1Table;
-  uint32_t ampCurve0Table;
-
-  uint32_t portamentoRateTable;
-
-  uint32_t baseTable;
-  uint32_t limitTable;
-
-  uint32_t rateTable;
-  uint32_t delayTable;
-  uint32_t sineTable;
-  uint32_t table10;
-  uint32_t table12;
-  uint32_t table14;
-  uint32_t table16;
-  uint32_t tablePoints;
-
-  uint16_t interpolateBelow;
-
-  uint32_t panTable;
-  uint32_t sendTable;
-
-  uint32_t eqLow200;
-  uint32_t eqLow400;
-  uint32_t eqHigh3k;
-  uint32_t eqHigh6k;
-  uint8_t eqGainMin;
-  uint8_t eqGainMax;
-
-  uint32_t delayCentreTable;
-  uint32_t delayRatioTable;
-  uint32_t delayMacroTable;
-  double delayUnitsPerMs;
-  unsigned delayMaxUnits;
-  double delayMaxMs;
-
-  uint32_t reverbPointers;
-  uint32_t reverbPage;
-  uint32_t reverbMacroTable;
-  uint16_t reverbAllpassPairA;
-  uint16_t reverbAllpassPairB;
-  float reverbAllpassG;
-  uint32_t reverbImage0Cram;
-  uint8_t headWord[XP_REVERB_BUFFERS];
-  uint8_t farWord[XP_REVERB_BUFFERS];
-  uint8_t tapWord[XP_REVERB_TAPS];
-  uint8_t allpassBuffer[8];
-  uint8_t tapInstruction[XP_REVERB_TAPS];
-
-  uint32_t chorusMacroTable;
-  double chorusMaxMs;
-
-  uint32_t pitchCurveCentre;
-
-  unsigned waveDescriptorSize;
-  unsigned waveBankSize;
-  unsigned waveChipSize;
-
-  uint8_t waveDataLinePermutation[8];
-  uint8_t waveAddressLinePermutation[21];
-
-  double belowPower;
-  double partialPower;
-
-  uint8_t selectors[XP_WAVE_BANK_COUNT];
-};
-
 extern const struct XpDeviceProfile SC88_PROFILE;
-
-/* Never-null: falls back to SC88_PROFILE, since this engine has exactly
-   one device today and several existing tests build a bare struct
-   xp_rom by hand (bypassing rom_init(), so .profile is never set).
-   Mirrors ControlRom::device()'s own fallback (the older engine's), not
-   its nullable profile(). A second XP-family device would set .profile
-   explicitly and this would return that instead. */
-const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom);
 
 #ifdef __cplusplus
 }

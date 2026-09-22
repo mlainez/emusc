@@ -56,6 +56,7 @@ set(EMUSC_SOURCES
   engines/xp/device.cc
   engines/xp/device.h
   engines/xp/devices/sc88.cc
+  engines/xp/devices/profile.h
   engines/xp/devices/sc88.h
   engines/xp/engine.cc
   engines/xp/engine.h

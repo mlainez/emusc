@@ -28,18 +28,18 @@ int16_t s16(uint16_t value)
     : (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
 }
 
-uint8_t descramble_byte(const struct XpDeviceProfile *profile, uint8_t value)
+uint32_t descramble_data(const struct XpDeviceProfile *profile, uint32_t value)
 {
-  uint8_t result = 0;
-  for (unsigned bit = 0; bit < 8; ++bit)
-    result |= (uint8_t)(((value >> profile->waveDataLinePermutation[bit]) & 1u) << bit);
+  uint32_t result = 0;
+  for (unsigned bit = 0; bit < profile->waveDataLineCount; ++bit)
+    result |= ((value >> profile->waveDataLinePermutation[bit]) & 1u) << bit;
   return result;
 }
 
 uint32_t descramble_address(const struct XpDeviceProfile *profile, uint32_t value)
 {
   uint32_t result = 0;
-  for (unsigned bit = 0; bit < 21; ++bit)
+  for (unsigned bit = 0; bit < profile->waveAddressLineCount; ++bit)
     result |= ((value >> profile->waveAddressLinePermutation[bit]) & 1u) << bit;
   return result;
 }
@@ -65,21 +65,59 @@ double bin_power(const int32_t *x, size_t count, size_t k)
 
 }  // namespace
 
+/* UNDOING THE BOARD'S SCRAMBLING IS ONE LOOP FOR BOTH ROM WIDTHS.
+ *
+ *   The wave ROMs sit on the sound chip's own bus, and every board in this
+ *   family permutes both their address and their data lines. What differs
+ *   between boards is the width of the chips: a byte-wide mask ROM permutes
+ *   eight data lines and addresses its bytes directly, while a 16-bit word
+ *   ROM permutes sixteen and addresses words, so the same 2 MiB needs one
+ *   address line fewer. Both are the same operation over a storage unit of
+ *   XpDeviceProfile::waveUnitBytes bytes, and both are described entirely by
+ *   the two line counts and the two permutation tables, so neither board
+ *   appears in this function.
+ *
+ *   A multi-byte unit is little-endian in the dump - byte 0 of the pair is
+ *   the word's low byte - and stays little-endian after decoding, because
+ *   the decoded image is read back one byte per sample by the FCE decoder
+ *   below.
+ */
 bool wave_descramble_chip(const struct XpDeviceProfile *profile,
                            const uint8_t *raw, size_t rawSize,
                            uint8_t *decoded, size_t decodedSize)
 {
   if (!profile)
     profile = &SC88_PROFILE;
+  const unsigned unit = profile->waveUnitBytes;
   if (!raw || !decoded || raw == decoded || rawSize != profile->waveChipSize ||
-      decodedSize < profile->waveChipSize)
+      decodedSize < profile->waveChipSize || unit < 1u || unit > 4u ||
+      profile->waveDataLineCount > 8u * unit ||
+      profile->waveDataLineCount > XP_WAVE_DATA_LINES_MAX ||
+      profile->waveAddressLineCount > XP_WAVE_ADDRESS_LINES_MAX ||
+      profile->waveChipSize % unit != 0u ||
+      profile->waveHeaderStride == 0u)
     return false;
-  for (uint32_t source = 0; source < profile->waveChipSize; ++source) {
-    const bool header = source < 0x20 ||
-      (source >= profile->waveBankSize &&
-       source < profile->waveBankSize + 0x20);
-    decoded[header ? source : descramble_address(profile, source)] =
-      header ? raw[source] : descramble_byte(profile, raw[source]);
+
+  const uint32_t units = (uint32_t)(profile->waveChipSize / unit);
+  if (descramble_address(profile, units - 1u) >= units)
+    return false;                /* the permutation escapes the chip */
+
+  for (uint32_t source = 0; source < units; ++source) {
+    const uint32_t byteAddress = source * unit;
+    /* The plaintext headers pass through untouched, at their own address
+       and with their own bytes. */
+    if (byteAddress % profile->waveHeaderStride < profile->waveHeaderBytes) {
+      for (unsigned b = 0; b < unit; ++b)
+        decoded[byteAddress + b] = raw[byteAddress + b];
+      continue;
+    }
+    uint32_t value = 0;
+    for (unsigned b = 0; b < unit; ++b)
+      value |= (uint32_t)raw[byteAddress + b] << (8u * b);
+    value = descramble_data(profile, value);
+    const uint32_t target = descramble_address(profile, source) * unit;
+    for (unsigned b = 0; b < unit; ++b)
+      decoded[target + b] = (uint8_t)(value >> (8u * b));
   }
   return true;
 }

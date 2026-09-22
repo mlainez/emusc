@@ -254,11 +254,22 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .waveBankSize = 0x100000u,
   .waveChipSize = 0x200000u,
 
-  /* The wave ROM board's bit-permutation tables (wave_descramble_chip). */
+  /* The wave ROM board's bit-permutation tables (wave_descramble_chip).
+     This board carries byte-wide mask ROMs, so one storage unit is one
+     byte, eight data lines are permuted, and the address permutation runs
+     over the 21 lines that address 2 MiB of bytes. */
+  .waveUnitBytes = 1u,
+  .waveDataLineCount = 8u,
+  .waveAddressLineCount = 21u,
   .waveDataLinePermutation = { 2u, 0u, 4u, 5u, 7u, 6u, 3u, 1u },
   .waveAddressLinePermutation = {
     0u, 4u, 2u, 3u, 1u, 13u, 7u, 12u, 5u, 10u, 16u,
     9u, 6u, 8u, 14u, 17u, 11u, 15u, 18u, 19u, 20u },
+
+  /* One 32-byte plaintext header per 1 MiB logical bank - two per chip -
+     and the board leaves both out of the scrambling. */
+  .waveHeaderBytes = 0x20u,
+  .waveHeaderStride = 0x100000u,
 
   /* -15 dB and -7 dB as power ratios; see wave_loop_reads_double's own
      comment for the measured gaps these sit in the middle of. */

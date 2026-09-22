@@ -139,21 +139,25 @@ bool initCommon(Device *device, const uint8_t *controlRom,
                  const size_t sizes[XP_WAVE_CHIP_COUNT], double outputRate,
                  enum xp_fractional_wrap wrap, bool raw)
 {
-  if (!device || !controlRom || !chips || !sizes ||
-      controlRomSize != XP_CONTROL_ROM_SIZE)
+  size_t romSize;
+  if (!device || !controlRom || !chips || !sizes)
     return false;
   /* Identifies the device before anything below needs its profile - the
      real identification rom_init() does; renderer_init() below repeats
-     it on the same bytes once device->control_rom exists, harmlessly. */
+     it on the same bytes once device->control_rom exists, harmlessly.
+     It is also the size check: matches() accepts an image only at the
+     profile's own romSize, so a wrong-length image has no profile and
+     never reaches the allocation below. */
   struct xp_rom identifyRom;
   if (!rom_init(&identifyRom, controlRom, controlRomSize))
     return false;
   const struct XpDeviceProfile *profile = xp_profile(&identifyRom);
+  romSize = profile->romSize;
   std::memset(device, 0, sizeof *device);
-  device->control_rom = (uint8_t *)std::malloc(XP_CONTROL_ROM_SIZE);
+  device->control_rom = (uint8_t *)std::malloc(romSize);
   if (!device->control_rom)
     goto fail;
-  std::memcpy(device->control_rom, controlRom, XP_CONTROL_ROM_SIZE);
+  std::memcpy(device->control_rom, controlRom, romSize);
   for (unsigned chip = 0; chip < XP_WAVE_CHIP_COUNT; ++chip) {
     if (!chips[chip] || sizes[chip] != profile->waveChipSize)
       goto fail;
@@ -178,7 +182,7 @@ bool initCommon(Device *device, const uint8_t *controlRom,
     device->banks[chip * 2 + 1].size = profile->waveBankSize;
   }
   if (!renderer_init(&device->renderer, device->control_rom,
-                      XP_CONTROL_ROM_SIZE, device->banks,
+                      romSize, device->banks,
                       XP_WAVE_BANK_COUNT, outputRate, wrap))
     goto fail;
   device->output_rate = outputRate;
