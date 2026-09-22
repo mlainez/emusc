@@ -283,6 +283,36 @@ What was **not** tested:
 
 Before deploying `emusc-winmidi` to actual hardware, real-hardware testing on Windows 98, XP, and a modern 64-bit release is essential.
 
+## Hardware Floor (Linux ARM, Untested)
+
+The two ARM builds have stated ISA floors, set in their toolchain files rather
+than inherited from whatever the cross-compiler defaults to, and checked
+against the objects the build produces by `cmake/check-baseline.sh`:
+
+- **32-bit ARM (`emusc-linux-arm32.tar.gz`): ARMv7-A with hard-float VFPv3-D16
+  and no NEON.** VFPv3-D16 is the 16-double-register form every ARMv7-A VFP
+  implementation has, so the binary runs on an ARMv7-A system with no NEON
+  unit at all. It carries no fused multiply-add, which means this build's
+  arithmetic never contracts a multiply and an add into a single rounding.
+- **64-bit ARM (`emusc-linux-arm64.tar.gz`): baseline ARMv8-A**, not a
+  particular Cortex implementation. Advanced SIMD is mandatory in ARMv8-A and
+  the compiler is free to use it; nothing beyond ARMv8.0 is, so no LSE
+  atomics, CRC32, crypto, dot product or SVE. Unlike ARM32 this baseline does
+  have a fused multiply-add and the compiler contracts with it, so the two ARM
+  builds do not produce bit-identical output to each other - ARM32's matches
+  the x86-64 build's, ARM64's does not.
+
+Both builds also use `-O3 -pipe` and the same value-preserving subset of
+`-ffast-math` as the Windows build (`-fno-math-errno -fno-trapping-math
+-fno-signaling-nans`), verified byte-identical against a build without them
+for SC-55, SC-55mkII, JV-880 and SC-88 at 32, 44.1 and 48 kHz under
+`qemu-arm` and `qemu-aarch64`.
+
+**What is untested:** everything about performance. No cycles-per-frame,
+callback-duration or underrun measurement has been taken on physical ARM
+hardware, so whether either build sustains realtime synthesis on any
+particular board is unknown.
+
 ---
 
 ## About This Fork

@@ -187,10 +187,19 @@ bool Partial::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
   if (finished && (_startDelay == 0 || _delayDrained))
     return 1;
 
-  std::array<std::array<float, 256>, 2> partialBuf = {};
-  std::array<float, 256> partialSend = {};
+  // Left uninitialised: on the sounding path below, the oscillator writes
+  // every element of partialBuf[0], the TVF rewrites it in place, and the TVA
+  // assigns all 256 elements of each of the three blocks from it. The drain
+  // path is the one that needs them silent, and clears them itself.
+  std::array<std::array<float, 256>, 2> partialBuf;
+  std::array<float, 256> partialSend;
 
   if (finished) {
+    // Silence, because what this period owes is the tail the start delay
+    // held over from the last one and nothing behind it.
+    partialBuf[0].fill(0.0f);
+    partialBuf[1].fill(0.0f);
+    partialSend.fill(0.0f);
     _delayDrained = true;
   } else {
     // A JV rhythm note bends by its own Pitch Bend Range, not the part's.

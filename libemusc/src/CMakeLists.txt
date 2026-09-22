@@ -121,6 +121,22 @@ target_include_directories(emusc_static PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION})
 
+# A toolchain whose output has to stay inside an ISA or floating-point
+# baseline names the check and the binutils that can read it in
+# EMUSC_BASELINE_CHECK/EMUSC_BASELINE_CHECK_ARGS; this runs it over the
+# library's own objects as part of the build, so a flag that widens the ISA
+# or relaxes the floating-point model fails the build instead of shipping.
+# Objects rather than the linked library, because a statically linked libgcc
+# carries runtime-guarded instructions of its own that say nothing about what
+# this project compiled. Nothing here knows which architecture it is.
+if(EMUSC_BASELINE_CHECK)
+  add_custom_command(TARGET emusc_static POST_BUILD
+    COMMAND "${EMUSC_BASELINE_CHECK}" ${EMUSC_BASELINE_CHECK_ARGS}
+            $<TARGET_OBJECTS:emusc_static>
+    COMMAND_EXPAND_LISTS VERBATIM
+    COMMENT "Checking objects against the toolchain's ISA/FP baseline")
+endif()
+
 # XP-engine specific debug/analysis tools. Distinct from the multi-device
 # emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
 # public API, these link the xp_* engine sources directly, because the
