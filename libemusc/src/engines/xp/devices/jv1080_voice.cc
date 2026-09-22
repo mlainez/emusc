@@ -158,22 +158,104 @@ double amp_env_fall_seconds_per_20db(unsigned value)
   return 0.675 * std::pow(2.0, ((double)value - 64.0) / 13.2);
 }
 
-/* MEASURED, AT THREE POINTS, AND THEY DO NOT FIT ONE EXPONENTIAL
-   (`M-011`). Time 1's rise, as the time to first reach 90 % of the note's
-   peak, runs 35 ms at value 8, 1210 ms at 64 and 2560 ms at 80. Fitted
-   between the first two that is a doubling every 10.96 steps; fitted between
-   the last two it is 14.8. This uses 1210 ms at 64 doubling every 11.0,
-   which reproduces value 8 to 2 % and is 30 % high at value 80.
+/* MEASURED ON THE DEVICE, fourteen points across the field, with the wave's
+   own onset taken out of the way.
+ *
+ *   The stimulus is the internal `Sine` wave - a looped sine, so it has no
+ *   attack of its own and the output IS the envelope - played at key 84
+ *   (1046.5 Hz) with the filter switched off, every LFO depth zeroed, the
+ *   two later envelope levels at the top so the segment ends on a plateau,
+ *   and the release at zero so notes cannot run into each other. The
+ *   envelope is read off by quadrature demodulation at the carrier, which
+ *   gives amplitude at about 1 ms resolution.
+ *
+ *   These are the full travels, in seconds, from silence to the level the
+ *   segment is heading for. They are NOT the 0-to-90 % rise `M-011`
+ *   reports, which is 0.74 of this; converting M-011's three points that
+ *   way, its 1210 ms at value 64 against this sweep's 1183 ms agrees to
+ *   2 %, its 2560 ms at 80 against 2290 ms to 11 %, and its 35 ms at 8
+ *   against 29 ms to 17 % - an independent corroboration on a different
+ *   wave and rig, which is why the two disagreeing at the BOTTOM of the
+ *   field matters: extrapolating one exponential through M-011's points
+ *   put value 0 at 21 ms where the machine takes about 2, and that is a
+ *   pick transient smeared into a whisper on every tone that asks for the
+ *   fastest attack. Six of the first factory song's tones do.
+ *
+ *   NOT ONE EXPONENTIAL, and now it is clear why nobody could fit one: the
+ *   doubling interval widens steadily up the field - about 10.7 value steps
+ *   between 8 and 64, 12.0 between 16 and 64, 13.4 between 32 and 64 and
+ *   14.1 between 48 and 64. So this interpolates the measured points in log
+ *   time, and above the top of the table continues at that last measured
+ *   slope, which is an extrapolation and says so.
+ *
+ *   The first entry is at the measurement's own floor: 2 ms is one
+ *   demodulator window, so all that is established at value 0 is "at or
+ *   below 2 ms", i.e. instant for any purpose. */
+const struct { uint8_t value; double seconds; } kAmpEnvAttackTable[] = {
+  {  0u, 0.00204 }, {  1u, 0.00254 }, {  2u, 0.00817 }, {  3u, 0.01001 },
+  {  4u, 0.01831 }, {  6u, 0.03137 }, {  8u, 0.03946 }, { 12u, 0.06668 },
+  { 16u, 0.09821 }, { 24u, 0.18481 }, { 32u, 0.30751 }, { 48u, 0.73174 },
+  { 64u, 1.60289 }, { 80u, 3.09262 },
+};
 
-   THE EXACT TABLE IS NOT RECOVERED, and the value here is not fitted to
-   make anything match: three measured points cannot separate a table from a
-   formula, and M-011 says so itself - a 0-to-90 % rise and a 20 dB fall
-   measure different fractions of a segment, so the fall table above cannot
-   be borrowed for this one either. What is justified is the ORDER: tens of
-   milliseconds at the bottom of the field, seconds at the top. */
 double amp_env_attack_seconds(unsigned value)
 {
-  return 1.210 * std::pow(2.0, ((double)value - 64.0) / 11.0);
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvAttackTable / sizeof kAmpEnvAttackTable[0]);
+  double v = (double)value;
+  if (v <= kAmpEnvAttackTable[0].value)
+    return kAmpEnvAttackTable[0].seconds;
+  for (unsigned i = 1; i < count; ++i) {
+    if (v <= kAmpEnvAttackTable[i].value) {
+      double x0 = kAmpEnvAttackTable[i - 1].value;
+      double x1 = kAmpEnvAttackTable[i].value;
+      double y0 = std::log(kAmpEnvAttackTable[i - 1].seconds);
+      double y1 = std::log(kAmpEnvAttackTable[i].seconds);
+      return std::exp(y0 + (v - x0) * (y1 - y0) / (x1 - x0));
+    }
+  }
+  /* Past the last measured point, continue at the slope of the last
+     measured interval. Extrapolation, not measurement. */
+  double x0 = kAmpEnvAttackTable[count - 2].value;
+  double x1 = kAmpEnvAttackTable[count - 1].value;
+  double y0 = std::log(kAmpEnvAttackTable[count - 2].seconds);
+  double y1 = std::log(kAmpEnvAttackTable[count - 1].seconds);
+  return std::exp(y1 + (v - x1) * (y1 - y0) / (x1 - x0));
+}
+
+/* MEASURED ON THE DEVICE, from the same sweep: the SHAPE the attack segment
+   traverses, as the fraction of its travel reached at each fraction of its
+   duration. It is not a straight amplitude ramp - it is front-loaded, half
+   the travel being done in the first 31 % of the time.
+ *
+ *   Averaged over the six segment durations from value 12 to value 64,
+ *   which span 24x in time, the fifteen points below have a worst standard
+ *   deviation of 0.016 and are under 0.005 over most of the range - so the
+ *   shape is scale-invariant, which is itself the finding. It is close to
+ *   sin(pi t / 2T) but not equal to it: that curve misses by up to 0.019,
+ *   consistently high past the middle, so the measured points are kept
+ *   rather than the formula they resemble.
+ *
+ *   Measured only at full travel, from silence to the first level, which is
+ *   what the stimulus set up; whether a shorter travel uses the same curve
+ *   is not established. */
+const double kAmpEnvAttackShape[15] = {
+  0.116, 0.218, 0.308, 0.394, 0.476, 0.556, 0.630, 0.697,
+  0.760, 0.816, 0.866, 0.905, 0.938, 0.966, 0.983,
+};
+
+double amp_env_attack_shape(double done)
+{
+  if (done <= 0.0)
+    return 0.0;
+  if (done >= 1.0)
+    return 1.0;
+  double u = done * 16.0;                /* the table is on sixteenths */
+  unsigned i = (unsigned)u;
+  double f = u - (double)i;
+  double a = i == 0u ? 0.0 : kAmpEnvAttackShape[i - 1u];
+  double b = i >= 15u ? 1.0 : kAmpEnvAttackShape[i];
+  return a + (b - a) * f;
 }
 
 /* MEASURED (`M-035`): wave gain is exactly the display enum,
@@ -882,11 +964,11 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     double b = (double)voice->pcm[i0 + 1u];
     double sample = (a + (b - a) * frac) / 8388608.0;   /* 24-bit full scale */
 
-    /* The envelope, one segment at a time. The attack is a straight
-       amplitude ramp, which is what a 0-to-90 % rise time describes; the
-       three falls are straight in dB, which is what a time-per-20-dB
-       describes. Neither is the chip's segment stepper - that is internal
-       (`M-011`'s own caveat). */
+    /* The envelope, one segment at a time. The attack follows the measured
+       front-loaded shape over its measured duration; the three falls are
+       straight in dB, which is what a time-per-20-dB describes. Neither is
+       the chip's segment stepper - that is internal (`M-011`'s own
+       caveat). */
     if (voice->segment < 4u) {
       double target = voice->level[voice->segment];
       if (voice->segment_remaining <= 0.0) {
@@ -915,7 +997,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         double done = voice->segment_total > 0.0
           ? 1.0 - voice->segment_remaining / voice->segment_total : 1.0;
         if (!voice->segment) {
-          voice->envelope = target * done;
+          voice->envelope = target * amp_env_attack_shape(done);
         } else {
           double from = voice->segment_start > 1e-9 ? voice->segment_start
                                                      : 1e-9;
