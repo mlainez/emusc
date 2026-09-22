@@ -5,42 +5,78 @@
 Every synthesis engine in this project (`libemusc/src/engines/gp/`,
 `libemusc/src/engines/xp/`) supports more than one physical device
 sharing the same core algorithm, with the differences between devices
-captured as *data*, not as branches or duplicated code:
+captured as *data*, not as branches or duplicated code. Both engines
+split this into two layers:
 
-- GP: `ControlRom` holds a `const DeviceProfile *`, selected once by
-  `_profile_for()` after identifying the ROM (`control_rom.h`/`.cc`,
-  `device_profile.h`). SC-55, SC-55mkII and JV-880 are three rows in
-  `ControlRom::KNOWN_DEVICES[]` plus their own `devices/*.cc` profile
-  file - nothing else changes to add a fourth.
-- XP: `struct XpDeviceProfile` (`engines/xp/devices/sc88.h`) is injected
-  through `xp_rom::profile` / `xp_engine::profile`, selected once by
-  `rom_init()`'s own identification table (`engines/xp/rom.cc`) the same
-  way. SC-88 is one row in that table plus its own `devices/sc88.cc`
-  profile file.
+- **Identification** - deciding which device a ROM is, before either
+  engine's own code runs - lives in `libemusc/src/devices/<device>.cc`.
+  Each device exports one `identify()` function and a fully-populated
+  `ControlRom::DeviceEntry` (model, generation, profile pointer, the
+  function itself). `src/devices/registry.cc` is the *only* file that
+  lists every device together; `control_rom.h`/`.cc` name no device,
+  ROM offset, byte pattern or threshold anywhere - only the generic
+  `DeviceEntry` vocabulary type and one dispatch loop that calls
+  whichever `identify()` each `DeviceEntry` supplies.
+- **Synthesis parameters** - the real per-device data an engine's own
+  generic code reads - live in `engines/<engine>/devices/<device>.cc`
+  (`engines/gp/devices/sc55.cc`, `engines/xp/devices/sc88.h`/`.cc`,
+  etc). GP's is `DeviceProfile`, injected into `ControlRom::profile()`.
+  XP's is `XpDeviceProfile`, injected through `xp_rom::profile` /
+  `xp_engine::profile` and selected by XP's *own*, separate
+  identification (`engines/xp/rom.cc`'s `kKnownProfiles[]`/`matches()`).
+
+XP's identification is deliberately independent of `src/devices/`'s:
+`ControlRom`'s own identification (via `src/devices/sc88.cc`'s
+`SC88_SIGNATURE`) exists only so `Synth` knows to hand an SC-88 ROM to
+the XP engine at all (`ControlRom::uses_xp_engine()`); once there, XP
+re-identifies the same bytes itself, entirely inside `engines/xp/`, to
+pick its own `XpDeviceProfile`. Neither calls into the other.
 
 ## The golden rule: least possible friction for a new device
 
-Adding a device should mean: write one new `devices/<device>.cc`
-profile file with that device's own facts and identification bytes, add
-one row to the engine's own identification table, and nothing else.
-Every change that makes this harder - a hardcoded device name outside
-`devices/`, a struct or function named after a device instead of the
-role it plays, a fact duplicated instead of read from the injected
-profile - works against this rule and should be treated as a defect,
-not a style preference.
+Adding a device means exactly:
+1. `src/devices/<device>.cc` - an `identify()` function plus an
+   exported `DeviceEntry`, building on a shared identification
+   mechanism if one already fits (see below) or a bespoke one if the
+   device needs it (a fixed ROM banner vs. JV-880's structural probe
+   are the two precedents).
+2. `engines/<engine>/devices/<device>.cc` (+`.h` if the engine needs its
+   own profile type) - the device's real synthesis parameters.
+3. One line in `src/devices/registry.cc`'s device list.
+4. One line in `libemusc/src/CMakeLists.txt`.
+
+Nothing outside those four touches changes. Every change that makes
+this harder - a hardcoded device name outside `devices/`, a struct or
+function named after a device instead of the role it plays, a fact
+duplicated instead of read from the injected profile, identification
+logic that only works for one device baked into shared dispatch code -
+works against this rule and should be treated as a defect, not a style
+preference.
 
 ## All common code in one place, device-specific quirks in their own
 
-- Common (device-agnostic) logic - the actual synthesis algorithm,
-  voice management, effects - lives in the engine's own generic files
-  and is named after what it does, never after a device
+- Common (device-agnostic) logic lives in the engine's own generic
+  files and is named after what it does, never after a device
   (`ControlRom`/`Part`/`TVA`/`SVF` in GP; the XP equivalents follow the
   same rule).
-- Device-specific facts and measurements - ROM addresses, tables,
-  identification signatures, per-device constants - live only in that
-  device's own file under `devices/` (GP) or `engines/xp/devices/` (XP).
-  A generic file may *read* a device's profile through the injection
-  point above; it must never *name* a device directly.
+- Device-specific facts and measurements live only in that device's own
+  file, at the layer they belong to: `src/devices/<device>.cc` for
+  identification, `engines/<engine>/devices/<device>.cc` for synthesis
+  parameters. A generic file may *read* a device's profile through the
+  injection point above; it must never *name* a device directly.
+- **"Common" is scoped to who actually shares it, not to the nearest
+  folder.** Three distinct scopes exist; put shared code in whichever
+  one matches what genuinely shares it:
+  - `engines/common/` - shared between the GP and XP engine *families*
+    (`dsp_kernels.h`'s Bessel I0 and state-variable-filter core, used
+    by both).
+  - `engines/xp/common/` - shared across the whole XP chip family, but
+    not device-specific and not shared with GP (`constants.h`'s native
+    sample rate, control-tick period, pitch-register format).
+  - `src/devices/common/` - shared only by the identification devices
+    that use the same *mechanism* (`rom_signature.h`'s signature-byte
+    matching, used by SC-55/SC-55mkII/SC-88's `identify()` but not by
+    JV-880's structural probe, which shares nothing with it).
 - The one narrow, documented exception is a value that must be known at
   compile time to size a fixed array or that only a hot per-sample path
   with no profile/rom parameter in its call chain can reach - GP's
@@ -57,6 +93,34 @@ the same family must not be named after the first device it happened to
 be written for. If a name change would make the answer to "does this
 file mention a device by name" go from yes to no with no loss of
 information, that is the rename to make.
+
+## License headers
+
+A new file's header depends on where its content actually came from,
+not on which neighboring file it was templated from:
+
+- **LGPL-2.1+, `Copyright (C) 2022-2026 Håkon Skjelten`**: content
+  derived from, or relocated from, the original upstream libEmuSC
+  codebase - the core GP engine, `control_rom.*`, `device_profile.h`,
+  SC-55/SC-55mkII's own signature data. Relocating existing logic to a
+  new file (`engines/common/dsp_kernels.h`,
+  `src/devices/common/rom_signature.h`) keeps this header: the code's
+  substance hasn't changed, only its address.
+- **`SPDX-License-Identifier: CC0-1.0` plus the AI-generated-code
+  disclosure**: content with no upstream lineage at all, produced by
+  AI-assisted reverse-engineering or fresh design as part of this
+  fork's own work. The entire XP engine uses the terse one-line form,
+  since every file in that tree qualifies; a genuinely new file living
+  alongside upstream code instead - JV-880-specific GP files,
+  `src/devices/registry.cc` - uses the fuller disclosure paragraph,
+  since the surrounding directory is otherwise Håkon's. See
+  `engines/gp/devices/jv880.cc` for the exact wording of both forms.
+- When in doubt: does any of this file's logic exist only because
+  someone reverse-engineered or designed it as part of this fork, with
+  no prior version in upstream libEmuSC? CC0. Is it moving or lightly
+  adapting something that was already there? Keep the original
+  attribution. Never copy a neighboring file's copyright line onto
+  content that person didn't write.
 
 ## Git commit policy
 
