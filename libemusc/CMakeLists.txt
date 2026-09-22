@@ -9,6 +9,38 @@ project(
 
 option(BUILD_SHARED_LIBS "Build libemusc as a shared library" ON)
 
+# The legacy-fast DSP tier: the one switch under which this engine may trade
+# bit-exact output for speed, and then only for an approximation already shown
+# inaudible on its own evidence. It defaults ON where the CPU floor makes that
+# trade worth its risk - 32-bit Windows, the Pentium III/Athlon XP baseline the
+# MinGW 32-bit toolchain file targets - and OFF everywhere else, 64-bit Windows
+# included. A builder can override either default.
+#
+# Nothing is gated on it yet: it is here ahead of its first use so the switch
+# and its wiring can be reviewed apart from the first approximation that turns
+# it on. An optimization that preserves the output belongs outside it, enabled
+# on every platform unconditionally.
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(EMUSC_LEGACY_DSP_FAST_DEFAULT ON)
+else()
+  set(EMUSC_LEGACY_DSP_FAST_DEFAULT OFF)
+endif()
+option(EMUSC_LEGACY_DSP_FAST
+  "Allow inaudible DSP approximations that do not preserve exact output"
+  ${EMUSC_LEGACY_DSP_FAST_DEFAULT})
+
+# Carried by an INTERFACE target rather than by naming the targets that need
+# it: engine sources are compiled by the library and, directly, by a dozen
+# tools and tests, and those two halves disagreeing about this macro would be
+# an ODR violation that links quietly. src/CMakeLists.txt links this into
+# every target that compiles them, so a target added later is either wired up
+# or visibly not.
+add_library(emusc_dsp_tier INTERFACE)
+if(EMUSC_LEGACY_DSP_FAST)
+  target_compile_definitions(emusc_dsp_tier INTERFACE EMUSC_LEGACY_DSP_FAST=1)
+endif()
+message(STATUS "libEmuSC legacy-fast DSP tier: ${EMUSC_LEGACY_DSP_FAST}")
+
 add_subdirectory(src)
 add_subdirectory(tools)
 

@@ -338,18 +338,30 @@ void output_process(struct xp_output *out, float *stereo, size_t frames)
       out->dc_y[ch] = y;
       stereo[k * 2 + ch] = y;
     }
+  /* Tap t reads the sample t frames back, so the ring index walks down from
+     the newest one and wraps exactly once per pass. A modulo expresses that
+     walk in one expression, but costs a hardware divide per tap per channel:
+     63 per frame at 31 taps, 2.8 million a second at 44.1 kHz, on the path
+     every rendered frame passes through. The decrement below is the same
+     sequence without them.
+
+     Tap order, channel order and accumulation order are what this filter's
+     output is; none of the three may be reordered for speed. */
+  const unsigned taps = out->hold_taps;
+  const unsigned last = taps - 1;
   for (size_t k = 0; k < frames; ++k) {
     unsigned pos = out->hold_pos;
     for (unsigned ch = 0; ch < 2; ++ch) {
       float acc = 0.0f;
+      unsigned idx = pos;
       out->hold_z[ch][pos] = stereo[k * 2 + ch];
-      for (unsigned t = 0; t < out->hold_taps; ++t) {
-        unsigned idx = (pos + out->hold_taps - t) % out->hold_taps;
+      for (unsigned t = 0; t < taps; ++t) {
         acc += out->hold[t] * out->hold_z[ch][idx];
+        idx = idx ? idx - 1 : last;
       }
       stereo[k * 2 + ch] = acc;
     }
-    out->hold_pos = (pos + 1) % out->hold_taps;
+    out->hold_pos = (pos == last) ? 0 : pos + 1;
   }
 }
 
