@@ -49,6 +49,10 @@ inline constexpr unsigned XP_MATRIX_DEST_COUNT = 11u;
 /* A record part this device does not carry (see the reverb word indices). */
 inline constexpr uint8_t XP_REVERB_WORD_NONE = 0xffu;
 
+/* How a device sweeps its chorus delay; see `chorusModulator`. */
+inline constexpr uint8_t XP_CHORUS_MOD_SINE = 0u;
+inline constexpr uint8_t XP_CHORUS_MOD_TRIANGLE_UP = 1u;
+
 inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
 inline constexpr unsigned XP_REVERB_TAPS = 8u;
 inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
@@ -374,6 +378,19 @@ struct XpDeviceProfile {
 
   uint32_t chorusMacroTable;
   double chorusMaxMs;
+  /* WHICH SHAPE THE CHORUS DELAY IS SWEPT WITH, and how far.
+
+     `XP_CHORUS_MOD_SINE` sweeps symmetrically about the nominal delay,
+     which is what this engine has always done; the SC-88's own shape has
+     never been measured and that is the assumption it keeps.
+
+     `XP_CHORUS_MOD_TRIANGLE_UP` sweeps a straight line from the nominal
+     delay UPWARD and back, never below it - measured on the JV-1080, where
+     the delay traces +1.2280 and +1.2372 ms/s on the two halves of its
+     rise and -1.2112 on its fall, straight to a few hundredths of a
+     millisecond, against the factor of two a sine would put between its
+     own early and late slopes. */
+  uint8_t chorusModulator;
 
   uint32_t pitchCurveCentre;
 

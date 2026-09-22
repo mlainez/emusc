@@ -67,6 +67,7 @@ bool chorus_init(struct xp_chorus *ch, double outputRate,
     return false;
   ch->output_rate = outputRate;
   ch->pre_in = 1.0f;
+  ch->modulator = profile->chorusModulator;
   /* GS's own defaults: level 0x40, feedback 0x08, delay 0x50, rate 0x03,
      depth 0x13, pre-LPF 0 (`04_protocol/sysex.md`). */
   chorus_set_params(nullptr, ch, 0x40, 0x08, 0x50, 0x03, 0x13, 0);
@@ -104,6 +105,25 @@ bool chorus_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[8])
   for (unsigned i = 0; i < 8; ++i)
     out[i] = rom->bytes[base + i];
   return true;
+}
+
+void chorus_set_runtime(struct xp_chorus *ch, double delaySamples,
+                         double depthSamples, double phaseStep,
+                         float feedback, float level)
+{
+  if (!ch)
+    return;
+  ch->delay_samples = delaySamples;
+  ch->depth_samples = depthSamples;
+  ch->phase_step = phaseStep;
+  ch->feedback = feedback;
+  ch->level = level;
+  /* The line has to hold the far end of the sweep. */
+  double reach = delaySamples + depthSamples + 2.0;
+  if (reach > (double)ch->len - 2.0)
+    ch->depth_samples = (double)ch->len - 2.0 - delaySamples - 2.0;
+  if (ch->depth_samples < 0.0)
+    ch->depth_samples = 0.0;
 }
 
 void chorus_set_params(const struct xp_rom *rom, struct xp_chorus *ch,
@@ -151,7 +171,18 @@ void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
   if (!ch || !ch->active || !ch->buf || !send || !stereo)
     return;
   for (size_t k = 0; k < frames; ++k) {
-    double sweep = std::sin(2.0 * 3.14159265358979323846 * ch->phase);
+    /* The sweep, in the shape this device was measured to use. A sine runs
+       -1..+1 about the nominal delay; a rising triangle runs 0..+1 above
+       it, and its second tap takes the complement so the two stay in
+       antiphase without either going below the nominal delay. */
+    double sweep, other;
+    if (ch->modulator == XP_CHORUS_MOD_TRIANGLE_UP) {
+      sweep = ch->phase < 0.5 ? 2.0 * ch->phase : 2.0 * (1.0 - ch->phase);
+      other = 1.0 - sweep;
+    } else {
+      sweep = std::sin(2.0 * 3.14159265358979323846 * ch->phase);
+      other = -sweep;
+    }
     float x = send[k];
     /* the pre-LPF one-pole, on the way in, as the reverb's is */
     ch->pre_state = ch->pre_in * x + ch->pre_fb * ch->pre_state;
@@ -160,7 +191,7 @@ void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
        two sides are opposite ends of one sweep is the labelled part: the
        DSP's stereo phase is not decoded. */
     float left = tap(ch, ch->delay_samples + sweep * ch->depth_samples);
-    float right = tap(ch, ch->delay_samples - sweep * ch->depth_samples);
+    float right = tap(ch, ch->delay_samples + other * ch->depth_samples);
     ch->buf[ch->pos] = x + ch->feedback * 0.5f * (left + right);
     if (++ch->pos >= ch->len)
       ch->pos = 0;
