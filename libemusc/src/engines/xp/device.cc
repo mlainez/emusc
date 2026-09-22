@@ -1191,9 +1191,12 @@ void device_render(Device *device, float *stereo, size_t frames)
     device->delay_bus = grownDelay;
     device->send_capacity = frames;
   }
-  std::memset(device->send_bus, 0, frames * sizeof *device->send_bus);
-  std::memset(device->chorus_bus, 0, frames * sizeof *device->chorus_bus);
-  std::memset(device->delay_bus, 0, frames * sizeof *device->delay_bus);
+  /* The three buses are handed over uncleared: engine_render_with_send()
+     assigns every one of the `frames` reverb, chorus and delay frames it is
+     given, and the effects below read only what it wrote. Its own early
+     return cannot leave them untouched from here, either - `initialized` is
+     set only once engine_init() has succeeded, and that is what gives the
+     engine the renderer the early return tests for. */
   engine_render_with_send(&device->engine, stereo, device->send_bus,
                            device->chorus_bus, device->delay_bus, frames);
   /* The delay runs before the reverb reads its bus, because it has its own
