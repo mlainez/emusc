@@ -181,7 +181,14 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      0x061EA0, which is what stands in for it here since this
      implementation has no battery RAM to hold an edit. The CARD, PCM and
      XP groups are left out: no image exists for them, so they select
-     nothing rather than selecting something else. */
+     nothing rather than selecting something else.
+
+     UNEXERCISED so far. This device's own factory demo songs configure
+     every part through temporary-patch parameter writes and send no bank
+     select or program change at all, so nothing measured has been through
+     this path; it is read off the firmware's own selector and no further.
+     The same caveat belongs on .selectors above, whose bytes stand in for
+     a register encoding this project has not recovered. */
   .packedBankSelect = {
     { 0x51u, 0x00u, 3u },        /* PR-A */
     { 0x51u, 0x01u, 4u },        /* PR-B */
