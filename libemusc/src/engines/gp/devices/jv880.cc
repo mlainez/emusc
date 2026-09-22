@@ -10,7 +10,7 @@
  *  provenance is a guess, and a guess that happens to be in range is the most
  *  expensive kind. See device_profile.h for what each field means.
  */
-#include "../device_profile.h"
+#include "../../../device_profile.h"
 
 namespace EmuSC
 {

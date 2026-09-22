@@ -18,7 +18,7 @@
  *  The fallback profile for a Sound Canvas ROM that is recognised but whose
  *  layout is not mapped.
  */
-#include "../device_profile.h"
+#include "../../../device_profile.h"
 
 namespace EmuSC
 {

@@ -402,7 +402,7 @@ public:
     bool                      hasJVPanLaw = false;
 
     // The JV's time-variant filter tables (P-0390). Read from its own control
-    // ROM, each reproducing a closed form exactly - see devices/jv880.cc.
+    // ROM, each reproducing a closed form exactly - see engines/gp/devices/jv880.cc.
     // JVTvfExpCoarse is indexed by a SIGNED byte: entry 128 is -128.
     std::array<int, 256> JVTvfExpCoarse;
     std::array<int, 256> JVTvfExpFine;

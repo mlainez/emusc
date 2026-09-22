@@ -126,7 +126,7 @@ int Part::get_sample_set(std::array<std::array<float, 256>, 2> &dryBus,
     // The send scale is the DEVICE's, not a constant (ReverbLaw::sendDivisor).
     // The JV-880 ran 64 here for a day (D-39) to close a 6 dB reverb deficit
     // that belonged to its reverb network of the time, not to the send; it is
-    // back at 128 with the chip's own program (devices/jv880.cc).
+    // back at 128 with the chip's own program (engines/gp/devices/jv880.cc).
     const float sendDiv = _settings->device()->reverb.sendDivisor;
     // The chorus send has its own divisor where a device needs one (scdb D-60).
     const float choDiv = _settings->device()->reverb.chorusSendDivisor > 0.0f

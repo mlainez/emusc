@@ -3,7 +3,7 @@
  *
  *  Roland SC-88 identification.
  *
- *  The SC-88's synthesis is implemented by the sc88_* engine, which reads the
+ *  The SC-88's synthesis is implemented by the XP engine, which reads the
  *  control ROM itself and owns every table it needs. This file therefore
  *  carries the signature and nothing else: a DeviceProfile here would restate
  *  what that engine already reads, and could contradict it.

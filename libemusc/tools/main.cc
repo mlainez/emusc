@@ -224,7 +224,7 @@ Options parse_args(int argc, char **argv) {
     // always the control/program ROM, <device>_cpu.bin is the internal CPU
     // ROM that only SC-55 and SC-55mkII have. SC-88 has no separate CPU ROM,
     // and JV-880's second physical ROM chip (DeviceProfile::romSize in
-    // devices/jv880.cc) is what "control" means for it; JV-880 has no
+    // engines/gp/devices/jv880.cc) is what "control" means for it; JV-880 has no
     // <device>_cpu.bin because its other chip is never read at all.
     std::string dir = o.rom_dir;
     if (dir.empty()) {
@@ -242,7 +242,7 @@ Options parse_args(int argc, char **argv) {
     if (o.wave_roms.empty()) {
       // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
       // (XP_WAVE_CHIP_COUNT in engines/xp/devices/sc88.h), JV-880 2
-      // (DeviceProfile waveRomBanks in devices/jv880.cc).
+      // (DeviceProfile waveRomBanks in engines/gp/devices/jv880.cc).
       int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 :
               (o.device == "sc88") ? 4 : 2;
       for (int k = 1; k <= n; k++)

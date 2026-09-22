@@ -5,11 +5,9 @@ configure_file(config.h.in config.h)
 set(EMUSC_SOURCES
   control_rom.cc
   control_rom.h
-  devices/jv880.cc
   devices/sc55.cc
   devices/sc55mkii.cc
   devices/sc88.cc
-  devices/sound_canvas_default.cc
   params.h
   settings.cc
   settings.h
@@ -22,6 +20,10 @@ set(EMUSC_SOURCES
   engines/gp/analog_stage.h
   engines/gp/chorus.cc
   engines/gp/chorus.h
+  engines/gp/devices/jv880.cc
+  engines/gp/devices/sc55.cc
+  engines/gp/devices/sc55mkii.cc
+  engines/gp/devices/sound_canvas_default.cc
   engines/gp/envelope.cc
   engines/gp/envelope.h
   engines/gp/note.cc

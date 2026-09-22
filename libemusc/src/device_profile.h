@@ -882,7 +882,7 @@ struct ReverbLaw
   // unity. The JV-880 briefly ran 64 here (D-39, 2026-09-04) to close a 6 dB
   // reverb deficit that turned out to belong to the reverb network of the
   // time, not to the send; with the chip's own program every JV type lands
-  // within about a dB of the reference at 128 (devices/jv880.cc).
+  // within about a dB of the reference at 128 (engines/gp/devices/jv880.cc).
   float sendDivisor = 128.0f;
 
   // What a CHORUS send of 127 means, when that is not the same as a reverb
@@ -944,7 +944,7 @@ enum class ChorusLawKind
 // depends only on Rate; the excursion IS the window and depends only on Depth.
 // That exact decoupling is what identifies the mechanism - no coincidence
 // produces it - and it is why Rate must reach g() and Depth f(): see the
-// performance field map in devices/jv880.cc.
+// performance field map in engines/gp/devices/jv880.cc.
 struct ChorusJvLaw
 {
   int   types;              // type records in the table, five words each

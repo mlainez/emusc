@@ -69,7 +69,7 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
 
   _profile = _profile_for(_synthModel);
 
-  // The SC-88 is rendered by the sc88_* engine, which reads this ROM itself.
+  // The SC-88 is rendered by the XP engine, which reads this ROM itself.
   // Keep the image and stop here: none of the readers below describe this
   // device's layout, and running them would fill the instrument, partial and
   // sample tables with another machine's offsets rather than failing loudly.
@@ -2298,7 +2298,7 @@ int ControlRom::_load_performance(uint32_t base, int index)
 // firmware unpacks it through an 8-byte descriptor per SysEx address. Eight
 // were read here and the other forty-four were not, which left every drum on
 // one hardcoded envelope with no filter and no velocity response at all (D-01).
-// The positions are profile data (devices/jv880.cc) because they are this
+// The positions are profile data (engines/gp/devices/jv880.cc) because they are this
 // device's, and they are the firmware's own rather than the manual's address
 // column.
 //
