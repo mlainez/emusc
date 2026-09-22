@@ -283,8 +283,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     { 0x0bd3c9u,   1u,  245u, 4u, 5u, 16u },   /* 8 INIT PERFORM */
     { 0x0bd4beu,   1u,  401u, 6u, 7u,  4u },   /* 9 INIT PATCH */
     { 0x0bd64fu,   1u, 2699u, 8u, 9u, 64u },   /* 10 INIT SET (rhythm) */
+    /* The rhythm sets each group carries, two to a bank, 2699 bytes to a
+       set (`02_rom/rhythm_data.md`, all HIGH, bases and stride supplied by
+       the rhythm loader `0x0A019D34` itself). Index 15 is the user
+       memory's factory contents, which stand in for battery RAM this
+       implementation does not have, exactly as bank 7 does for patches. */
+    { 0x0b7de0u,   2u, 2699u, 8u, 9u, 64u },   /* 11 rhythm PR-A */
+    { 0x0b92f6u,   2u, 2699u, 8u, 9u, 64u },   /* 12 rhythm PR-B */
+    { 0x0ba80cu,   2u, 2699u, 8u, 9u, 64u },   /* 13 rhythm PR-C */
+    { 0x0bbd22u,   2u, 2699u, 8u, 9u, 64u },   /* 14 rhythm GM */
+    { 0x06e720u,   2u, 2699u, 8u, 9u, 64u },   /* 15 rhythm USER default */
   },
-  .packedBankCount = 11u,
+  .packedBankCount = 16u,
 
   /* The four banks a melodic program change reaches, in the firmware's own
      selector order (2, 3, 4, 5 at 0x0A019AE4), and the rhythm set the
@@ -293,8 +303,8 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      only the INIT set is listed rather than guessed at. */
   .packedMelodicBanks = { 3u, 4u, 5u, 6u },
   .packedMelodicBankCount = 4u,
-  .packedRhythmBanks = { 10u },
-  .packedRhythmBankCount = 1u,
+  .packedRhythmBanks = { 11u, 12u, 13u, 14u, 15u, 10u },
+  .packedRhythmBankCount = 6u,
 
   /* Bank select to bank, as `0x0A014EF6` resolves CC0 and CC32
      (`04_protocol/program_bank.md`): MSB 81 with LSB 0..3 reaches the
@@ -312,11 +322,13 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      The same caveat belongs on .selectors above, whose bytes stand in for
      a register encoding this project has not recovered. */
   .packedBankSelect = {
-    { 0x51u, 0x00u, 3u },        /* PR-A */
-    { 0x51u, 0x01u, 4u },        /* PR-B */
-    { 0x51u, 0x02u, 5u },        /* PR-C */
-    { 0x51u, 0x03u, 6u },        /* GM */
-    { 0x50u, 0x00u, 7u },        /* USER, factory contents */
+    /* msb, lsb, patch source, RHYTHM source - one group, two sources, and
+       the part's own rhythm flag picks between them. */
+    { 0x51u, 0x00u, 3u, 11u },   /* PR-A */
+    { 0x51u, 0x01u, 4u, 12u },   /* PR-B */
+    { 0x51u, 0x02u, 5u, 13u },   /* PR-C */
+    { 0x51u, 0x03u, 6u, 14u },   /* GM */
+    { 0x50u, 0x00u, 7u, 15u },   /* USER, factory contents */
   },
   .packedBankSelectCount = 5u,
 

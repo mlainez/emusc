@@ -689,21 +689,67 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
   }) != 0u;
 }
 
+/* Load a rhythm SET, which is what a program change does on the rhythm
+   part. A set is one packed record of a common block and sixty-four key
+   records, the same two groups the temporary-area SysEx writes reach, so
+   the voice path needs nothing new to play it.
+
+   A rhythm part does not read the patch source its bank select names. The
+   firmware keeps a per-part rhythm flag - `u8[0x09001D0C + part]`, 1 for a
+   rhythm part - and dispatches the SAME resolved group through the rhythm
+   loader table `0x058DB8` rather than the patch table `0x058D88`
+   (`04_protocol/program_bank.md`, FW-EXACT). Without this a bank select
+   and program change on the rhythm part loaded a MELODIC patch into a part
+   whose note-on path never reads one, which is silence. */
+bool load_rhythm_set(struct Engine *engine, unsigned bank, unsigned program)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  struct xp_packed_record record;
+  if (!packed_open(&engine->rom, bank, program, &record))
+    return false;
+  for (unsigned f = 0; f < kRhythmCommonFields; ++f) {
+    int value = 0;
+    if (!packed_common_field(&engine->rom, &record, f, &value))
+      return false;
+    engine->rhythm.common[f] = (uint8_t)value;
+  }
+  unsigned keys = record.part_count < kRhythmKeys
+    ? record.part_count : kRhythmKeys;
+  for (unsigned k = 0; k < keys; ++k)
+    for (unsigned f = 0; f < kRhythmNoteFields; ++f) {
+      int value = 0;
+      if (!packed_part_field(&engine->rom, &record, k, f, &value))
+        return false;
+      engine->rhythm.note[k][f] = (uint8_t)value;
+    }
+  for (unsigned k = keys; k < kRhythmKeys; ++k)
+    std::memset(engine->rhythm.note[k], 0, kRhythmNoteFields);
+  (void)profile;
+  return true;
+}
+
 bool engine_program_change_one(struct Engine *engine, unsigned part,
                                 unsigned program)
 {
   const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
   uint8_t msb = engine->parts[part].bank_msb;
   uint8_t lsb = engine->parts[part].bank_lsb;
+  bool rhythm = part == profile->rhythmPartIndex;
   /* Absent a bank select, the device's own reset state applies; here the
-     first listed pair stands in for it, which is this device's PR-A. */
+     first listed pair stands in for it, which is this device's PR-A. The
+     machine's own answer for an arbitrary external file is GM mode, which
+     latches CC0 81 / CC32 3 itself; that is TASK-344's to build. */
   for (unsigned i = 0; i < profile->packedBankSelectCount; ++i) {
     const struct XpBankSelect &select = profile->packedBankSelect[i];
     bool wildcard = msb == 0xffu;
     if ((wildcard && i) || (!wildcard && (select.msb != msb ||
                                           select.lsb != lsb)))
       continue;
-    return load_patch(engine, part, select.bank, program);
+    if (!rhythm)
+      return load_patch(engine, part, select.bank, program);
+    if (select.rhythmBank == XP_PACKED_BANK_NONE)
+      return false;              /* the group has no rhythm image here */
+    return load_rhythm_set(engine, select.rhythmBank, program);
   }
   return false;                  /* a card or expansion group, unheld */
 }

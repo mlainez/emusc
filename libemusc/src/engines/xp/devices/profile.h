@@ -71,6 +71,7 @@ inline constexpr unsigned XP_WAVE_DATA_LINES_MAX = 16u;
 inline constexpr unsigned XP_WAVE_ADDRESS_LINES_MAX = 21u;
 inline constexpr unsigned XP_PACKED_GROUP_MAX = 12u;
 inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
+inline constexpr uint8_t XP_PACKED_BANK_NONE = 0xffu;
 inline constexpr unsigned XP_WAVE_SOURCE_MAX = 2u;
 inline constexpr unsigned XP_MULTISAMPLE_BANK_MAX = 2u;
 
@@ -172,6 +173,13 @@ struct XpBankSelect {
   uint8_t msb;
   uint8_t lsb;
   uint8_t bank;
+  /* The SAME pair reaches a different source on a rhythm part. The
+     JV-1080's bank select resolves CC0/CC32 to a GROUP, and a group holds
+     both a patch source and a rhythm source; which one is read is decided
+     by the part's own rhythm flag, not by the bank select
+     (`04_protocol/program_bank.md`, FW-EXACT). XP_PACKED_BANK_NONE where a
+     group has no rhythm source this implementation holds an image for. */
+  uint8_t rhythmBank;
 };
 
 /* One group of a descriptor-packed record schema: a run of field
