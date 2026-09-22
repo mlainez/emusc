@@ -31,6 +31,8 @@
 #ifndef __SVF_H__
 #define __SVF_H__
 
+#include "../common/dsp_kernels.h"
+
 
 namespace EmuSC { namespace Gp {
 
@@ -49,12 +51,7 @@ public:
 
   inline float process_sample(float input)
   {
-    float lp_new = _lp + _f * _bp;
-    float hp     = input - lp_new - _q * _bp;
-    float bp_new = _bp + _f * hp;
-
-    _lp = lp_new;
-    _bp = bp_new;
+    float hp = svf_step(input, _f, _q, _lp, _bp);
 
     return (_mode == Mode::LowPass) ? _lp : hp;
   }

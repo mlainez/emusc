@@ -19,6 +19,8 @@
 
 #include "resampler.h"
 
+#include "../common/dsp_kernels.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -169,19 +171,9 @@ void Resampler::_buildTable(float cutoff)
 }
 
 
-// Modified Bessel function I0 via polynomial series
 double Resampler::_i0(double x)
 {
-  double sum = 1.0;
-  double term = 1.0;
-  double xh = x * 0.5;
-
-  for (int k = 1; k <= 25; ++k) {
-    term *= xh / k;
-    sum  += term * term;
-  }
-
-  return sum;
+  return bessel_i0(x);
 }
 
 }}  // namespace EmuSC::Gp

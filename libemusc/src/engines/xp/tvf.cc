@@ -4,6 +4,7 @@
 #include "common/constants.h"
 #include "devices/sc88.h"
 #include "tva.h"
+#include "../common/dsp_kernels.h"
 
 #include <cmath>
 #include <cstring>
@@ -652,10 +653,11 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
     damping = 0.05;
   else if (damping > 4.0)
     damping = 4.0;
-  /* The two poles are realised with forward-Euler integrators, the
-     topology the chip's limit table names (see XpDeviceProfile::limitTable)
-     and the one libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal form
-     this replaced is a bilinear transform: it leaves a double zero at
+  /* The two poles are realised with forward-Euler integrators (svf_step,
+     engines/common/dsp_kernels.h), the topology the chip's limit table
+     names (see XpDeviceProfile::limitTable) and the one libEmuSC's SC-55
+     path already runs. The trapezoidal form this replaced is a bilinear
+     transform: it leaves a double zero at
      Nyquist, so the two poles the ROM asks for rolled off like three near
      the top of the band - 0.5 dB darker than its own analog prototype at
      twice the corner for a tone cut off at 1.6 kHz, 3.0 dB at 3.7 kHz and
@@ -663,16 +665,13 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
      delay, and its error runs the other way. */
   unsigned section;
   float signal = input;
-  float high = 0.0f;
-  float band = 0.0f;
-  float low = 0.0f;
   for (section = 0; section < XP_TVF_SECTIONS; ++section) {
     float d = section == 0 ? (float)damping : 2.0f;
     float f = (float)g;
-    float sb = section == 0 ? state->integrator_band
-                            : state->section_band[section];
-    float sl = section == 0 ? state->integrator_low
-                            : state->section_low[section];
+    float &lp = section == 0 ? state->integrator_low
+                             : state->section_low[section];
+    float &bp = section == 0 ? state->integrator_band
+                             : state->section_band[section];
     /* The chip's own limit table keeps f*f + f*d at or below 2, which is
        well inside this bound; the bound is here because the damping floor
        above and a host sample rate other than the chip's are not the ROM's
@@ -685,16 +684,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
     float bound = 0.99f * (std::sqrt(d * d + 4.0f) - d);
     if (f > bound)
       f = bound;
-    low = sl + f * sb;
-    high = signal - low - d * sb;
-    band = sb + f * high;
-    if (section == 0) {
-      state->integrator_band = band;
-      state->integrator_low = low;
-    } else {
-      state->section_band[section] = band;
-      state->section_low[section] = low;
-    }
+    float high = svf_step(signal, f, d, lp, bp);
     /* XP bits 10..11 carry a type code - 0 on 1193 components, 1 on 12,
        2 on 38 - and the name binding proposed from JV-1080
        documentation is LPF/BPF/HPF for 0/1/2. Code 2 takes the
@@ -732,7 +722,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
        2, which is not in the single-note set - so band-pass is
        unverified here and is not adopted on the strength of the
        binding alone. */
-    signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : low;
+    signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : lp;
   }
   return signal;
 }

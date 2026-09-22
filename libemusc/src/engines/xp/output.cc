@@ -4,6 +4,7 @@
 #include "output.h"
 
 #include "common/constants.h"
+#include "../common/dsp_kernels.h"
 
 #include <cmath>
 #include <cstring>
@@ -180,12 +181,7 @@ double analogMag(double f)
 
 double besselI0(double x)
 {
-  double sum = 1.0, term = 1.0, xh = 0.5 * x;
-  for (int k = 1; k <= 25; ++k) {
-    term *= xh / k;
-    sum += term * term;
-  }
-  return sum;
+  return bessel_i0(x);
 }
 
 /* The zero-phase filter whose magnitude is |sin(pi f / 32000) /
