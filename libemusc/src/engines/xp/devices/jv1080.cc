@@ -198,30 +198,91 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   },
   .packedBankSelectCount = 5u,
 
-  /* Field indices inside the tone group - equivalently, the manual's own
-     SysEx offsets inside a tone block. */
-  .toneFieldWaveGroup = 0x01u,
-  .toneFieldWaveGroupId = 0x02u,
-  .toneFieldWaveNumber = 0x03u,
-  .toneFieldToneSwitch = 0x00u,
-  .toneFieldLevel = 0x65u,
-  .toneFieldPan = 0x77u,
-  .toneFieldCoarseTune = 0x3du,
-  .toneFieldFineTune = 0x3eu,
-  .toneFieldCutoff = 0x51u,
-  .toneFieldResonance = 0x53u,
-  .toneFieldFilterType = 0x50u,
-  .toneFieldAEnvTime1 = 0x6eu,     /* times 1..4 at 0x6e..0x71 */
-  .toneFieldAEnvLevel1 = 0x72u,    /* levels 1..3 at 0x72..0x74 */
-  .toneFieldVelocityCurve = 0x69u,
-  .toneFieldKeyRangeLow = 0x0eu,
-  .toneFieldKeyRangeHigh = 0x0fu,
+  /* The two record types a voice can come from. Both index sets are the
+     manual's own SysEx offsets, which is the same thing as the descriptor's
+     index within its group on this device.
+
+     The rhythm note is not a tone with different numbers: it has no coarse
+     tune and no key range, and it carries a SOURCE KEY instead - the key
+     its wave is played at, whatever key struck it. That is what keeps a
+     kick a kick rather than a sample transposed up the keyboard. It has a
+     mute group too, which a tone has no counterpart for. */
+  .toneFields = {
+    .enable = 0x00u,
+    .waveGroup = 0x01u,
+    .waveGroupId = 0x02u,
+    .waveNumber = 0x03u,
+    .waveGain = 0x05u,
+    .level = 0x65u,
+    .pan = 0x77u,
+    .coarseTune = 0x3du,
+    .fineTune = 0x3eu,
+    .sourceKey = XP_VOICE_FIELD_NONE,
+    .cutoff = 0x51u,
+    .resonance = 0x53u,
+    .filterType = 0x50u,
+    .ampTime1 = 0x6eu,
+    .ampLevel1 = 0x72u,
+    .keyRangeLow = 0x0eu,
+    .keyRangeHigh = 0x0fu,
+    .velocityRangeLow = 0x0cu,
+    .velocityRangeHigh = 0x0du,
+    .muteGroup = XP_VOICE_FIELD_NONE,
+  },
+  .rhythmNoteFields = {
+    .enable = 0x00u,
+    .waveGroup = 0x01u,
+    .waveGroupId = 0x02u,
+    .waveNumber = 0x03u,
+    .waveGain = 0x05u,
+    .level = 0x29u,
+    .pan = 0x33u,
+    .coarseTune = XP_VOICE_FIELD_NONE,
+    .fineTune = 0x0du,
+    .sourceKey = 0x0cu,
+    .cutoff = 0x1bu,
+    .resonance = 0x1cu,
+    .filterType = 0x1au,
+    .ampTime1 = 0x2cu,
+    .ampLevel1 = 0x30u,
+    .keyRangeLow = XP_VOICE_FIELD_NONE,
+    .keyRangeHigh = XP_VOICE_FIELD_NONE,
+    .velocityRangeLow = XP_VOICE_FIELD_NONE,
+    .velocityRangeHigh = XP_VOICE_FIELD_NONE,
+    .muteGroup = 0x07u,
+  },
+
+  /* The rhythm set is groups 8 and 9, addressed as part index 9 - which is
+     MIDI part 10 - and holds the 64 keys 35 to 98. */
+  .packedRhythmCommonGroup = 8u,
+  .packedRhythmNoteGroup = 9u,
+  .rhythmPartIndex = 9u,
+  .rhythmFirstKey = 35u,
+  .rhythmKeyCount = 64u,
 
   /* Field indices inside the patch-common group. */
   .patchFieldName = 0x00u,
   .patchFieldNameLength = 12u,
   .patchFieldLevel = 0x2eu,
   .patchFieldPan = 0x2fu,
+
+  /* The performance-part group is index 5, and these four fields are the
+     ones the voice path needs. Level and pan are measured: both index the
+     same square-law table the tone and patch levels do, to 0.15 dB
+     (`M-009`), and part pan sums with the tone's as an offset from centre
+     into one table (`M-002`, `M-015`).
+
+     The receive channel matters as much as either. A part is not its
+     channel: in this device's own first factory song part 12 listens on
+     channel 16 and so does part 16, which is how two patches layer, and
+     nothing listens on channel 12 at all. Keying notes by part index
+     instead silently plays the wrong patch for three of that song's
+     fourteen channels. */
+  .packedPerformancePartGroup = 5u,
+  .partFieldReceiveChannel = 0x01u,
+  .partFieldLevel = 0x06u,
+  .partFieldPan = 0x07u,
+  .partFieldKeyShift = 0x08u,
 
   /* --- Wave selection through the multisample directories -------------
 
@@ -318,6 +379,28 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      time. */
   .sysexModelId = 0x6au,
   .sysexAddressBytes = 4u,
+
+  /* NOT RECOVERED. ITS ORDER IS, AND THAT IS ALL THIS CLAIMS.
+     The mixer is inside the sound chip and the undumped internal ROM:
+     "summing precision and clipping" are open, and only the eight 9-bit
+     level registers in front of them are read. So how far one voice sits
+     below the mix's full scale is not a measured number, and this is not
+     fitted to make a render match anything.
+
+     What IS measured bounds it from one side. One to four tones sum
+     COHERENTLY, to within 0.02 dB of `20*log10(N)` (`M-037`), so a
+     four-tone patch at maximum presents +12 dB over one tone - and the
+     machine cannot be driven into distortion through any exposed parameter
+     (`M-083`), so the mix accommodates that without clipping. The scale
+     must therefore be 1/4 or smaller. One eighth is that bound with a
+     further 6 dB and is a power of two; the exact value is unknown, and a
+     recovered mixer would replace it rather than refine it.
+
+     Without it a single voice overflows on its own: the level fields at
+     maximum give unity, wave gain adds up to +12 dB (`M-035`), and the
+     wave data itself peaks near half full scale, so one voice reaches 1.7
+     before anything is summed. */
+  .voiceMixScale = 0.125,
 
   /* This device's voice path is its own, because it has to be - see
      jv1080_engine.cc and jv1080.h. */

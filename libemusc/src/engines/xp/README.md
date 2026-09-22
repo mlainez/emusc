@@ -79,20 +79,28 @@ listed here rather than left to be discovered as silence:
   types are characterised behaviourally in the research, but their DSP
   topology needs the chip's instruction set and is open; a bypass is
   honest where a guessed topology would not be.
-- **There is no master level and no part level**, so a dense song sums
-  toward full scale and can reach it. `renderer.h`'s own stance applies:
-  output trim belongs to the caller. The machine itself cannot be driven
-  into distortion through any exposed parameter, so this is a divergence
-  and not a modelled behaviour.
 - **The two LFOs, the pitch and filter envelopes, FXM, the booster, the
   ten structures, tone delay, the TVA bias and every key-follow field**
   are not modelled. Nor are TVA velocity curves 1 to 6, which are
   measured but not yet transcribed here, so a tone selecting one is
-  rendered on curve 0.
-- **The rhythm part** is decoded but not played, and neither are
-  performances: a part is filled in by a program change or by the
-  device's own temporary-patch parameter writes, which is what its
-  factory demo songs use.
+  rendered on curve 0. The filter envelope is the one with a measured
+  spectral cost: against a hardware take of the first factory song, this
+  renders 1.8 % of its energy between 2 and 8 kHz where the machine puts
+  35.5 % there, and a static cutoff where the machine sweeps one is the
+  obvious candidate.
+- **A ping-pong loop is read forward.** The sibling device's own measured
+  answer is in `wave.cc`: the turn in a differential format is a
+  reflection, not a time reversal, and reading such a loop forward jumps
+  the phase once per traversal. Whether this device's loop-type 1 means
+  the same thing is an open question in the research, so the carry-over
+  is not made. It falls on this device's cymbals - Crash, Ride, Ride
+  Bell, China Cym and the open hi-hat are all loop type 1.
+- **Performances are read only for their part blocks** - receive channel,
+  level, pan and key shift. A part's patch comes from a program change or
+  from the device's own temporary-patch parameter writes, which is what
+  its factory demo songs use.
 - **Voice stealing has no reserve.** The order is the measured one,
   oldest first; the measured exemption for a part still inside its voice
   reserve needs a performance loaded and has nothing to act on yet.
+- **The voice-to-mix scale is not recovered**, only its order; see
+  `XpDeviceProfile::voiceMixScale` for what bounds it and why.

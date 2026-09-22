@@ -95,38 +95,6 @@ void descramble_all(const struct xp_rom *rom, char **paths, unsigned count,
   }
 }
 
-/* The eight bit fields arrive over SysEx as two nibbles, most significant
-   first, and the descriptor says which fields those are: a mask eight bits
-   wide is one, and the descriptor after it is its alias. */
-bool eight_bit_field(const struct xp_rom *rom, unsigned group, unsigned field)
-{
-  const struct XpDeviceProfile *profile = xp_profile(rom);
-  const struct XpPackedGroup &g = profile->packedGroups[group];
-  struct xp_field_descriptor d;
-  if (field >= g.fieldCount ||
-      !packed_descriptor(rom, g.firstDescriptor + field, &d))
-    return false;
-  return (unsigned)(d.mask >> d.shift) == 0xffu;
-}
-
-/* Apply one DT1 payload to a decoded-byte image: payload byte k is field k,
-   which is what "the descriptor index within a group is the SysEx address
-   offset" means from the wire's side. */
-void apply_dt1(const struct xp_rom *rom, unsigned group, const uint8_t *payload,
-                size_t count, uint8_t *fields, size_t fieldCount)
-{
-  for (size_t k = 0; k < count && k < fieldCount; ++k) {
-    if (eight_bit_field(rom, group, (unsigned)k) && k + 1 < count) {
-      uint8_t value = (uint8_t)((payload[k] << 4) | (payload[k + 1] & 0x0f));
-      fields[k] = value;
-      fields[k + 1] = value;
-      ++k;
-    } else {
-      fields[k] = payload[k];
-    }
-  }
-}
-
 void usage(void)
 {
   std::fprintf(stderr,
@@ -359,30 +327,30 @@ int main(int argc, char **argv)
       struct xp_wave_zone zone;
       struct xp_wave_element element;
       bool resolved =
-        wave_source_select(&rom, tone[profile->toneFieldWaveGroup],
-                            tone[profile->toneFieldWaveGroupId], &source) &&
-        wave_number_resolve(&rom, source, tone[profile->toneFieldWaveNumber],
+        wave_source_select(&rom, tone[profile->toneFields.waveGroup],
+                            tone[profile->toneFields.waveGroupId], &source) &&
+        wave_number_resolve(&rom, source, tone[profile->toneFields.waveNumber],
                              &msBank, &msRow) &&
         multisample_name(&rom, msBank, msRow, wave, sizeof wave) &&
         multisample_select(&rom, msBank, msRow, key, &zone) &&
         wave_element_open(&rom, zone.directory, zone.element, &element);
       std::printf("  tone %u: switch %u level %3u pan %3u cutoff %3u res %3u "
                   "type %u coarse %+d fine %+d\n",
-                  t + 1, tone[profile->toneFieldToneSwitch],
-                  tone[profile->toneFieldLevel], tone[profile->toneFieldPan],
-                  tone[profile->toneFieldCutoff],
-                  tone[profile->toneFieldResonance],
-                  tone[profile->toneFieldFilterType],
-                  (int)(int8_t)tone[profile->toneFieldCoarseTune],
-                  (int)(int8_t)tone[profile->toneFieldFineTune]);
+                  t + 1, tone[profile->toneFields.enable],
+                  tone[profile->toneFields.level], tone[profile->toneFields.pan],
+                  tone[profile->toneFields.cutoff],
+                  tone[profile->toneFields.resonance],
+                  tone[profile->toneFields.filterType],
+                  (int)(int8_t)tone[profile->toneFields.coarseTune],
+                  (int)(int8_t)tone[profile->toneFields.fineTune]);
       if (resolved)
         std::printf("          wave group %u id %u number %3u -> "
                     "bank %u row %3u \"%s\" zone %u (<= key %3u) element %4u "
                     "-> chip W%u bank %u %06x..%06x loop %06x root %3u "
                     "mode %u%s\n",
-                    tone[profile->toneFieldWaveGroup],
-                    tone[profile->toneFieldWaveGroupId],
-                    tone[profile->toneFieldWaveNumber], msBank, msRow, wave,
+                    tone[profile->toneFields.waveGroup],
+                    tone[profile->toneFields.waveGroupId],
+                    tone[profile->toneFields.waveNumber], msBank, msRow, wave,
                     zone.zone, zone.boundary, zone.element, element.chip + 1,
                     element.bank, element.start, element.end, element.loop,
                     element.root_key, (unsigned)element.mode,
@@ -390,8 +358,15 @@ int main(int argc, char **argv)
       else
         std::printf("          wave does not resolve for this key\n");
 
+      struct XpJv1080PartControls controls = {};
+      controls.patch_level = patchLevel;
+      controls.patch_pan = patchPan;
+      controls.part_level = 127u;
+      controls.part_pan = 64u;
+      controls.volume = 127u;
+      controls.key_shift = 0;
       voices[t].pcm.assign(1u << 21, 0);
-      voices[t].used = jv1080_voice_start(&rom, tone, patchLevel, patchPan,
+      voices[t].used = jv1080_voice_start(&rom, &profile->toneFields, tone, &controls,
                                            key, velocity, chips.banks,
                                            chips.bankSizes,
                                            voices[t].pcm.data(),
@@ -518,15 +493,16 @@ int main(int argc, char **argv)
         if (a1 != 0x02u || part >= kParts)
           continue;                      /* not a temporary patch write */
         if (!block) {
-          apply_dt1(&rom, patchCommonGroup, payload, count,
-                     common[part].data(), common[part].size());
+          packed_apply_wire_block(&rom, patchCommonGroup, payload, count,
+                                  common[part].data(), common[part].size());
           ++applied;
         } else if ((block & 0x10u) && !(block & 0x01u) && block <= 0x16u) {
           unsigned index = (block - 0x10u) / 2u;
           if (index < XP_JV1080_TONES_PER_PATCH) {
-            apply_dt1(&rom, toneGroup, payload, count,
-                       tone[part * XP_JV1080_TONES_PER_PATCH + index].data(),
-                       XP_JV1080_TONE_FIELDS);
+            packed_apply_wire_block(
+              &rom, toneGroup, payload, count,
+              tone[part * XP_JV1080_TONES_PER_PATCH + index].data(),
+              XP_JV1080_TONE_FIELDS);
             ++applied;
           }
         }
@@ -546,10 +522,17 @@ int main(int argc, char **argv)
           p.part = (int)channel;
           p.key = (int)key;
           p.pcm.assign(1u << 19, 0);
+          struct XpJv1080PartControls controls = {};
+          controls.patch_level = common[channel][profile->patchFieldLevel];
+          controls.patch_pan = common[channel][profile->patchFieldPan];
+          controls.part_level = 127u;
+          controls.part_pan = 64u;
+          controls.volume = 127u;
+          controls.key_shift = 0;
           p.used = jv1080_voice_start(
-            &rom, tone[channel * XP_JV1080_TONES_PER_PATCH + t].data(),
-            common[channel][profile->patchFieldLevel],
-            common[channel][profile->patchFieldPan], key, velocity,
+            &rom, &profile->toneFields,
+            tone[channel * XP_JV1080_TONES_PER_PATCH + t].data(),
+            &controls, key, velocity,
             chips.banks, chips.bankSizes, p.pcm.data(), p.pcm.size(), kRate,
             &p.voice);
           if (p.used) {

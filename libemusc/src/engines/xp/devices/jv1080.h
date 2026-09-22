@@ -75,6 +75,20 @@ extern const struct XpVoiceEngineOps JV1080_VOICE_ENGINE;
  *   U-R3-03), and the insert, chorus and reverb effects, which are
  *   bypassed rather than approximated.
  */
+/* Everything outside the tone that scales or places one of its voices.
+   Each term is a measured one: the patch and part levels index the same
+   square law the tone level does (`M-009`), CC7 indexes it with a floor
+   (`M-081`), the two pans sum as offsets from centre into one table
+   (`M-002`, `M-015`), and the part's key shift moves the pitch. */
+struct XpJv1080PartControls {
+  unsigned patch_level;
+  unsigned patch_pan;
+  unsigned part_level;
+  unsigned part_pan;
+  unsigned volume;
+  int key_shift;
+};
+
 struct XpJv1080Voice {
   bool active;
   bool releasing;
@@ -127,8 +141,10 @@ namespace EmuSC { namespace Xp {
  * into `pcm`, which must outlive the voice; false means this tone does not
  * sound for this key and velocity, which is not an error.
  */
-bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
-                         unsigned patchLevel, unsigned patchPan,
+bool jv1080_voice_start(const struct xp_rom *rom,
+                         const struct XpVoiceFieldMap *fields,
+                         const uint8_t *tone,
+                         const struct XpJv1080PartControls *controls,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
@@ -145,8 +161,10 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
 /* How many decoded samples this tone needs at this key, so a caller can
  * size the buffer jv1080_voice_start decodes into. False where the tone
  * does not sound, the same cases jv1080_voice_start refuses. */
-bool jv1080_voice_span(const struct xp_rom *rom, const uint8_t *tone,
-                        unsigned key, unsigned velocity, size_t *samples);
+bool jv1080_voice_span(const struct xp_rom *rom,
+                        const struct XpVoiceFieldMap *fields,
+                        const uint8_t *tone, unsigned key, unsigned velocity,
+                        size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
 

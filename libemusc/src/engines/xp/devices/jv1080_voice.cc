@@ -112,6 +112,18 @@ double square_law_gain(unsigned value)
   return v * v;
 }
 
+/* MEASURED (`M-081`): CC7 indexes the same square law, with a floor - the
+   values 0, 1 and 2 all read -81.7 dB, which is what the law gives for
+   1.15. Worst deviation 0.41 dB. */
+double cc7_gain(unsigned value)
+{
+  double v = (double)(value > 127u ? 127u : value);
+  if (v < 1.15)
+    v = 1.15;
+  v /= 127.0;
+  return v * v;
+}
+
 /* MEASURED (`M-011`): the A-ENV's times 2, 3 and 4 index one exponential
    table - the same table to within 5 % - and a 20 dB fall takes 50 ms at
    value 16, 675 ms at 64 and 4.3 s at 104, doubling every 13.2 value steps.
@@ -237,51 +249,71 @@ int tone_field(const struct xp_rom *rom, const uint8_t *tone, unsigned index)
   return tone[index];
 }
 
-/* The five links from a tone's three wave fields to a wave-element record,
-   shared by the span query and the note-on below so the two cannot drift.
-   False where the tone does not sound for this key at all. */
-bool resolve_element(const struct xp_rom *rom, const uint8_t *tone,
-                      unsigned key, struct xp_wave_element *element)
+/* A field this record type has, or `absent` where it does not have one. */
+unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
+                   const uint8_t *record, unsigned absent)
 {
-  const struct XpDeviceProfile *profile = xp_profile(rom);
+  return which == XP_VOICE_FIELD_NONE ? absent : record[which];
+}
+
+/* Which key selects the zone, and which key the wave is played at. They are
+   the same on a record that transposes and differ on one that names its own
+   source key. */
+unsigned playback_key(const struct XpVoiceFieldMap *fields,
+                       const uint8_t *record, unsigned key)
+{
+  return field_or(fields, fields->sourceKey, record, key);
+}
+
+/* The five links from a record's three wave fields to a wave-element
+   record, shared by the span query and the note-on below so the two cannot
+   drift. */
+bool resolve_element(const struct xp_rom *rom,
+                      const struct XpVoiceFieldMap *fields,
+                      const uint8_t *record, unsigned key,
+                      struct xp_wave_element *element)
+{
   unsigned source = 0;
   uint8_t msBank = 0;
   uint16_t msRow = 0;
   struct xp_wave_zone zone;
-  return wave_source_select(rom, (unsigned)tone[profile->toneFieldWaveGroup],
-                             (unsigned)tone[profile->toneFieldWaveGroupId],
+  return wave_source_select(rom, (unsigned)record[fields->waveGroup],
+                             (unsigned)record[fields->waveGroupId],
                              &source) &&
-    wave_number_resolve(rom, source,
-                         (unsigned)tone[profile->toneFieldWaveNumber],
+    wave_number_resolve(rom, source, (unsigned)record[fields->waveNumber],
                          &msBank, &msRow) &&
-    multisample_select(rom, msBank, msRow, key, &zone) &&
+    multisample_select(rom, msBank, msRow,
+                        playback_key(fields, record, key), &zone) &&
     wave_element_open(rom, zone.directory, zone.element, element);
 }
 
-/* The tone's own gates. A tone that is off, or whose key or velocity range
+/* The record's own gates. One that is off, or whose key or velocity range
    excludes this note, does not sound - which is not an error: a patch's
-   four tones routinely split the keyboard between them. */
-bool tone_sounds(const struct xp_rom *rom, const uint8_t *tone, unsigned key,
-                  unsigned velocity)
+   four tones routinely split the keyboard between them. A record type with
+   no range fields gates on its switch alone. */
+bool record_sounds(const struct XpVoiceFieldMap *fields,
+                    const uint8_t *record, unsigned key, unsigned velocity)
 {
-  const struct XpDeviceProfile *profile = xp_profile(rom);
-  if (!tone[profile->toneFieldToneSwitch])
+  if (!record[fields->enable])
     return false;
-  if (key < tone[profile->toneFieldKeyRangeLow] ||
-      key > tone[profile->toneFieldKeyRangeHigh])
+  if (key < field_or(fields, fields->keyRangeLow, record, 0) ||
+      key > field_or(fields, fields->keyRangeHigh, record, 127))
     return false;
-  return velocity >= tone[0x0cu] && velocity <= tone[0x0du];
+  return velocity >= field_or(fields, fields->velocityRangeLow, record, 1) &&
+    velocity <= field_or(fields, fields->velocityRangeHigh, record, 127);
 }
 
 }  // namespace
 
-bool jv1080_voice_span(const struct xp_rom *rom, const uint8_t *tone,
-                        unsigned key, unsigned velocity, size_t *samples)
+bool jv1080_voice_span(const struct xp_rom *rom,
+                        const struct XpVoiceFieldMap *fields,
+                        const uint8_t *tone, unsigned key, unsigned velocity,
+                        size_t *samples)
 {
   struct xp_wave_element element;
-  if (!rom || !tone || !samples || key > 127u || velocity == 0u ||
-      velocity > 127u || !tone_sounds(rom, tone, key, velocity) ||
-      !resolve_element(rom, tone, key, &element))
+  if (!rom || !fields || !tone || !samples || key > 127u || velocity == 0u ||
+      velocity > 127u || !record_sounds(fields, tone, key, velocity) ||
+      !resolve_element(rom, fields, tone, key, &element))
     return false;
   *samples = (size_t)(element.bank_end - (element.bank_start & ~0x0fu)) + 1u;
   return true;
@@ -315,8 +347,10 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
   return true;
 }
 
-bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
-                         unsigned patchLevel, unsigned patchPan,
+bool jv1080_voice_start(const struct xp_rom *rom,
+                         const struct XpVoiceFieldMap *fields,
+                         const uint8_t *tone,
+                         const struct XpJv1080PartControls *controls,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
@@ -324,14 +358,15 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
                          double outputRate, struct XpJv1080Voice *voice)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
-  if (!rom || !tone || !banks || !bankSizes || !pcm || !voice ||
+  if (!rom || !fields || !tone || !controls || !banks || !bankSizes ||
+      !pcm || !voice ||
       key > 127u || velocity > 127u || velocity == 0u || outputRate <= 0.0)
     return false;
   std::memset(voice, 0, sizeof *voice);
 
   struct xp_wave_element element;
-  if (!tone_sounds(rom, tone, key, velocity) ||
-      !resolve_element(rom, tone, key, &element))
+  if (!record_sounds(fields, tone, key, velocity) ||
+      !resolve_element(rom, fields, tone, key, &element))
     return false;
   if (element.bank >= XP_WAVE_BANK_COUNT || !banks[element.bank])
     return false;
@@ -377,10 +412,14 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
      The element record's own fine-tune field (+0x0E) is NOT applied: its
      units are open (`U-R3-03`), and a guess at them would be a tuning error
      on every note rather than on none. */
-  int coarse = (int8_t)tone[profile->toneFieldCoarseTune];
-  int fine = (int8_t)tone[profile->toneFieldFineTune];
-  double keyHz = 440.0 * std::pow(2.0, ((double)key - 69.0) / 12.0) *
+  int coarse = (int8_t)(uint8_t)field_or(fields, fields->coarseTune, tone, 0);
+  int fine = (int8_t)(uint8_t)field_or(fields, fields->fineTune, tone, 0);
+  /* The part's key shift moves the pitch rather than the note number, so
+     the zone the key chose is left alone. */
+  const unsigned soundedKey = playback_key(fields, tone, key);
+  double keyHz = 440.0 * std::pow(2.0, ((double)soundedKey - 69.0) / 12.0) *
     std::pow(2.0, (double)coarse / 12.0) *
+    std::pow(2.0, (double)controls->key_shift / 12.0) *
     std::pow(2.0, (double)fine / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);
@@ -398,15 +437,18 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
      against curve 0's -11.8). */
   double velocityGain = square_law_gain(velocity);
   voice->static_gain =
-    square_law_gain(tone[profile->toneFieldLevel]) *
-    square_law_gain(patchLevel) *
+    square_law_gain(tone[fields->level]) *
+    square_law_gain(controls->patch_level) *
+    square_law_gain(controls->part_level) *
+    cc7_gain(controls->volume) *
     velocityGain *
-    wave_gain(tone[0x05u]);
+    wave_gain(field_or(fields, fields->waveGain, tone, 1u)) *
+    (profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0);
 
   /* Pan: the tone's and the patch's index one table and sum as offsets from
      centre (`M-002`, `M-048`). */
-  int panOffset = (int)tone[profile->toneFieldPan] - 64 +
-    ((int)patchPan - 64);
+  int panOffset = (int)tone[fields->pan] - 64 +
+    ((int)controls->patch_pan - 64) + ((int)controls->part_pan - 64);
   if (panOffset < -64)
     panOffset = -64;
   if (panOffset > 63)
@@ -421,12 +463,12 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
   for (unsigned i = 0; i < 3u; ++i)
     voice->level[i] =
       std::pow(10.0,
-                amp_env_level_db(tone[profile->toneFieldAEnvLevel1 + i]) / 20.0);
+                amp_env_level_db(tone[fields->ampLevel1 + i]) / 20.0);
   voice->level[3] = 0.0;
-  voice->time[0] = amp_env_attack_seconds(tone[profile->toneFieldAEnvTime1]);
+  voice->time[0] = amp_env_attack_seconds(tone[fields->ampTime1]);
   for (unsigned i = 1; i < 4u; ++i)
     voice->time[i] =
-      amp_env_fall_seconds_per_20db(tone[profile->toneFieldAEnvTime1 + i]);
+      amp_env_fall_seconds_per_20db(tone[fields->ampTime1 + i]);
   voice->segment = 0u;
   voice->envelope = 0.0;
   voice->segment_start = 0.0;
@@ -434,11 +476,11 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
   voice->sample_period = 1.0 / outputRate;
   voice->segment_total = voice->segment_remaining;
 
-  voice->filter_type = tone[profile->toneFieldFilterType];
+  voice->filter_type = (int)tone[fields->filterType];
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
-                tvf_cutoff_hz(tone[profile->toneFieldCutoff]),
-                tvf_q(tone[profile->toneFieldResonance]), outputRate);
+                tvf_cutoff_hz(tone[fields->cutoff]),
+                tvf_q(tone[fields->resonance]), outputRate);
 
   voice->active = true;
   return true;

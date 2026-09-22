@@ -142,13 +142,13 @@ int main(void)
         int groupId = 0;
         int number = 0;
         assert(packed_part_field(&rom, &record, t,
-                                  profile->toneFieldToneSwitch, &on));
+                                  profile->toneFields.enable, &on));
         assert(packed_part_field(&rom, &record, t,
-                                  profile->toneFieldWaveGroup, &group));
+                                  profile->toneFields.waveGroup, &group));
         assert(packed_part_field(&rom, &record, t,
-                                  profile->toneFieldWaveGroupId, &groupId));
+                                  profile->toneFields.waveGroupId, &groupId));
         assert(packed_part_field(&rom, &record, t,
-                                  profile->toneFieldWaveNumber, &number));
+                                  profile->toneFields.waveNumber, &number));
         if (!on)
           continue;
         ++enabled;
@@ -173,6 +173,58 @@ int main(void)
      tone in that image whose wave group ID names no internal wave list has
      its own switch off, so it never reaches this loop. */
   assert(resolved == enabled);
+
+  /* A PARAMETER WRITE IS NOT A MEMCPY, AND THIS IS THE CHECK THAT SAYS SO.
+     A write carries the raw value and the decoded array holds the biased
+     one, so for every field of the tone and patch-common groups, applying
+     a payload of that field's own raw minimum and maximum must land on the
+     decoded range the descriptor declares. A reader that copies the
+     payload instead passes nothing below. */
+  {
+    const struct XpPackedBank &melodic =
+      profile->packedBanks[profile->packedMelodicBanks[0]];
+    const unsigned groups[2] = { melodic.commonGroup, melodic.partGroup };
+    for (unsigned g = 0; g < 2u; ++g) {
+      const struct XpPackedGroup &group = profile->packedGroups[groups[g]];
+      std::vector<uint8_t> low(group.fieldCount, 0);
+      std::vector<uint8_t> high(group.fieldCount, 0);
+      std::vector<uint8_t> decodedLow(group.fieldCount, 0);
+      std::vector<uint8_t> decodedHigh(group.fieldCount, 0);
+      for (unsigned f = 0; f < group.fieldCount; ++f) {
+        struct xp_field_descriptor d;
+        assert(packed_group_descriptor(&rom, groups[g], f, &d));
+        low[f] = d.minimum;
+        high[f] = d.maximum;
+      }
+      assert(packed_apply_wire_block(&rom, groups[g], low.data(), low.size(),
+                                      decodedLow.data(), decodedLow.size()));
+      assert(packed_apply_wire_block(&rom, groups[g], high.data(),
+                                      high.size(), decodedHigh.data(),
+                                      decodedHigh.size()));
+      for (unsigned f = 0; f < group.fieldCount; ++f) {
+        struct xp_field_descriptor d;
+        assert(packed_group_descriptor(&rom, groups[g], f, &d));
+        if ((unsigned)(d.mask >> d.shift) == 0xffu)
+          continue;              /* an eight-bit field spans two payload
+                                    bytes and is checked by its own pair */
+        assert((int8_t)decodedLow[f] == (int)d.minimum + (int)d.bias);
+        assert((int8_t)decodedHigh[f] == (int)d.maximum + (int)d.bias);
+      }
+    }
+    /* The field the bug was found on, named so a regression is obvious: a
+       tone's coarse tune is biased -48 over a raw 0..96, so the wire value
+       48 means no transposition and must decode to zero. */
+    const struct XpPackedBank &melodicBank =
+      profile->packedBanks[profile->packedMelodicBanks[0]];
+    std::vector<uint8_t> payload(
+      profile->packedGroups[melodicBank.partGroup].fieldCount, 0);
+    std::vector<uint8_t> decoded(payload.size(), 0);
+    payload[profile->toneFields.coarseTune] = 48u;
+    assert(packed_apply_wire_block(&rom, melodicBank.partGroup,
+                                    payload.data(), payload.size(),
+                                    decoded.data(), decoded.size()));
+    assert((int8_t)decoded[profile->toneFields.coarseTune] == 0);
+  }
 
   /* The wave ROMs, if they were given: the descramble must reveal each
      chip's own plaintext-free header, which is what says the address and

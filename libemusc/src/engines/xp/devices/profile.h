@@ -102,8 +102,8 @@ struct XpVoiceEngineOps {
   bool (*note_on)(void *state, unsigned part, unsigned key,
                    unsigned velocity);
   bool (*note_off)(void *state, unsigned part, unsigned key);
-  bool (*bank_select)(void *state, unsigned part, unsigned msb,
-                       unsigned lsb);
+  bool (*control_change)(void *state, unsigned channel, unsigned controller,
+                          unsigned value);
   bool (*program_change)(void *state, unsigned part, unsigned program);
   bool (*sysex_block)(void *state, const uint8_t *address,
                        unsigned addressBytes, const uint8_t *data,
@@ -111,6 +111,39 @@ struct XpVoiceEngineOps {
   void (*render)(void *state, float *stereo, size_t frames);
   bool (*set_max_voices)(void *state, unsigned maxVoices);
   unsigned (*active_voices)(const void *state);
+};
+
+/* Where a record type keeps each field a voice needs, by role. A device's
+   melodic tone and its rhythm note are two record types with the same
+   parts in different places, so the voice path reads through one of these
+   rather than through a fixed set of offsets. XP_VOICE_FIELD_NONE marks a
+   role a record type does not have. */
+inline constexpr uint16_t XP_VOICE_FIELD_NONE = 0xffffu;
+
+struct XpVoiceFieldMap {
+  uint16_t enable;
+  uint16_t waveGroup;
+  uint16_t waveGroupId;
+  uint16_t waveNumber;
+  uint16_t waveGain;
+  uint16_t level;
+  uint16_t pan;
+  uint16_t coarseTune;
+  uint16_t fineTune;
+  /* The key the wave is played at, where the record names one instead of
+     transposing by the key that triggered it - which is what makes a drum
+     a drum rather than a sample pitched to whatever key struck it. */
+  uint16_t sourceKey;
+  uint16_t cutoff;
+  uint16_t resonance;
+  uint16_t filterType;
+  uint16_t ampTime1;             /* four times run from here */
+  uint16_t ampLevel1;            /* three levels run from here */
+  uint16_t keyRangeLow;
+  uint16_t keyRangeHigh;
+  uint16_t velocityRangeLow;
+  uint16_t velocityRangeHigh;
+  uint16_t muteGroup;
 };
 
 /* Which packed bank a bank-select pair names, as the device's own selector
@@ -365,32 +398,36 @@ struct XpDeviceProfile {
   struct XpBankSelect packedBankSelect[XP_PACKED_BANK_MAX];
   unsigned packedBankSelectCount;
 
-  /* Field indices inside the tone group, for the fields the voice path has
-     to read by role rather than by number. Each is the descriptor's index
-     within its own group, which on a device whose descriptor table doubles
-     as its SysEx address map is also the parameter's SysEx offset. */
-  uint16_t toneFieldWaveGroup;
-  uint16_t toneFieldWaveGroupId;
-  uint16_t toneFieldWaveNumber;
-  uint16_t toneFieldToneSwitch;
-  uint16_t toneFieldLevel;
-  uint16_t toneFieldPan;
-  uint16_t toneFieldCoarseTune;
-  uint16_t toneFieldFineTune;
-  uint16_t toneFieldCutoff;
-  uint16_t toneFieldResonance;
-  uint16_t toneFieldFilterType;
-  uint16_t toneFieldAEnvTime1;   /* the four times and four levels follow */
-  uint16_t toneFieldAEnvLevel1;
-  uint16_t toneFieldVelocityCurve;
-  uint16_t toneFieldKeyRangeLow;
-  uint16_t toneFieldKeyRangeHigh;
+  /* Where the melodic tone record and the rhythm note record keep each
+     field the voice path reads. Each index is the descriptor's own index
+     within its group, which on a device whose descriptor table doubles as
+     its SysEx address map is also the parameter's SysEx offset. */
+  struct XpVoiceFieldMap toneFields;
+  struct XpVoiceFieldMap rhythmNoteFields;
+
+  /* The rhythm set: which packed groups its common and per-key records
+     are, which part index addresses it, and the first key it holds. */
+  uint8_t packedRhythmCommonGroup;
+  uint8_t packedRhythmNoteGroup;
+  uint8_t rhythmPartIndex;
+  uint8_t rhythmFirstKey;
+  uint8_t rhythmKeyCount;
 
   /* Field indices inside the patch-common group. */
   uint16_t patchFieldName;
   uint16_t patchFieldNameLength;
   uint16_t patchFieldLevel;
   uint16_t patchFieldPan;
+
+  /* The performance-part group, and the fields of it that decide where a
+     note goes and how loud it is. A part is addressed by its own receive
+     channel rather than by its index, so two parts may share a channel and
+     layer - which this device's factory songs rely on. */
+  uint8_t packedPerformancePartGroup;
+  uint16_t partFieldReceiveChannel;
+  uint16_t partFieldLevel;
+  uint16_t partFieldPan;
+  uint16_t partFieldKeyShift;
 
   /* --- Wave selection through the multisample directories -------------
      The chain a stored wave reference walks on a device whose wave ROM is
@@ -422,6 +459,14 @@ struct XpDeviceProfile {
      takes - three on a GS device, four on this family's JV member. */
   uint8_t sysexModelId;
   uint8_t sysexAddressBytes;
+
+  /* How far one voice sits below the mix's full scale. A device that sums
+     many voices into a fixed-width mixer needs headroom for their sum, and
+     on a device whose mixer is not recovered this is the one number that
+     stands for it. Zero means unity - the shared firmware-port engine
+     composes its amplitude from the ROM's own headroom instead and has no
+     use for this. */
+  double voiceMixScale;
 
   /* Null on a device the shared firmware-port engine serves; see
      struct XpVoiceEngineOps above. */

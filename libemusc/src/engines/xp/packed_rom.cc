@@ -80,17 +80,69 @@ bool packed_descriptor(const struct xp_rom *rom, unsigned index,
   return true;
 }
 
+bool packed_group_descriptor(const struct xp_rom *rom, unsigned group,
+                              unsigned field,
+                              struct xp_field_descriptor *out)
+{
+  if (!rom || !rom->bytes || !out)
+    return false;
+  const struct XpPackedGroup *g = group_of(xp_profile(rom), group);
+  return g && field < g->fieldCount &&
+    packed_descriptor(rom, (unsigned)g->firstDescriptor + field, out);
+}
+
 bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
                                 unsigned field)
 {
-  if (!rom || !rom->bytes)
-    return false;
-  const struct XpPackedGroup *g = group_of(xp_profile(rom), group);
   struct xp_field_descriptor d;
-  if (!g || field >= g->fieldCount ||
-      !packed_descriptor(rom, (unsigned)g->firstDescriptor + field, &d))
+  if (!packed_group_descriptor(rom, group, field, &d))
     return false;
   return (unsigned)(d.mask >> d.shift) == 0xffu;
+}
+
+/* A PARAMETER WRITE CARRIES THE RAW VALUE, AND THE DECODED ARRAY HOLDS THE
+ * BIASED ONE. THE TWO ARE NOT THE SAME BYTE.
+ *
+ *   A record's field decoder produces `((word & mask) >> shift) + bias`, and
+ *   what the voice path reads is that array. The wire carries the value
+ *   before the bias - which is also the range the parameter map documents,
+ *   since a descriptor's declared raw min..max is that map's own range - so
+ *   a write has to add the bias that a record read would have added. Copying
+ *   the payload instead leaves every biased field wrong by its bias, and the
+ *   damage is not subtle: coarse tune is biased -48 over a raw 0..96, so a
+ *   wire value of 48 meaning "no transposition" reads as +48 semitones and
+ *   plays the wave sixteen times too fast.
+ *
+ *   An eight-bit field arrives as two nibbles, most significant first, since
+ *   seven bits per byte cannot carry it, and is followed by an alias
+ *   descriptor over the same bits. Both get the value.
+ */
+size_t packed_apply_wire_block(const struct xp_rom *rom, unsigned group,
+                                const uint8_t *payload, size_t count,
+                                uint8_t *fields, size_t fieldCount)
+{
+  if (!rom || !payload || !fields)
+    return 0;
+  size_t written = 0;
+  for (size_t k = 0; k < count && k < fieldCount; ++k) {
+    struct xp_field_descriptor d;
+    if (!packed_group_descriptor(rom, group, (unsigned)k, &d))
+      break;                     /* past this group's own fields */
+    unsigned raw = payload[k];
+    bool wide = (unsigned)(d.mask >> d.shift) == 0xffu;
+    if (wide && k + 1u < count)
+      raw = (unsigned)((payload[k] << 4) | (payload[k + 1u] & 0x0fu));
+    fields[k] = (uint8_t)((int)raw + (int)d.bias);
+    ++written;
+    if (wide && k + 1u < count) {
+      if (k + 1u < fieldCount) {
+        fields[k + 1u] = fields[k];
+        ++written;
+      }
+      ++k;
+    }
+  }
+  return written;
 }
 
 bool packed_group_field(const struct xp_rom *rom, unsigned group,

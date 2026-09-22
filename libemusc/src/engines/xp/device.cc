@@ -971,14 +971,8 @@ bool midiToVoiceEngine(Device *device, uint8_t part, uint8_t status,
   case 0xc0:
     return ops->program_change(voices, part, data1);
   case 0xb0:
-    switch (data1) {
-    case 0:
-      return ops->bank_select(voices, part, data2, 0x80u);
-    case 32:
-      return ops->bank_select(voices, part, 0x80u, data2);
-    default:
-      return true;
-    }
+    ops->control_change(voices, part, data1, data2);
+    return true;
   default:
     return true;
   }

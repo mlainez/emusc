@@ -105,6 +105,11 @@ namespace EmuSC { namespace Xp {
 bool packed_descriptor(const struct xp_rom *rom, unsigned index,
                         struct xp_field_descriptor *out);
 
+/* The descriptor of field `field` of group `group`. */
+bool packed_group_descriptor(const struct xp_rom *rom, unsigned group,
+                              unsigned field,
+                              struct xp_field_descriptor *out);
+
 /* Whether a group's field is an eight-bit one. It matters on the wire:
  * such a field's value arrives as two nibbles, most significant first,
  * because seven bits per byte cannot carry it, and its descriptor is
@@ -112,6 +117,15 @@ bool packed_descriptor(const struct xp_rom *rom, unsigned index,
  * itself - a mask eight bits wide - so no field list is needed. */
 bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
                                 unsigned field);
+
+/* Apply one parameter-write payload, as it arrives on the wire, to a
+ * group's decoded byte array - the form the voice path reads. Payload byte
+ * k is field k, and each field is turned from its wire value into its
+ * decoded one; see the comment on the definition for why that is not a
+ * copy. Returns how many fields were written. */
+size_t packed_apply_wire_block(const struct xp_rom *rom, unsigned group,
+                                const uint8_t *payload, size_t count,
+                                uint8_t *fields, size_t fieldCount);
 
 /* Field `field` of a group, read out of `packed` - which must point at
  * that group's own first byte, not at the record's. */
