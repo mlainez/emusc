@@ -147,13 +147,16 @@ struct XpMultisampleLayout {
 struct XpDeviceProfile {
   /* Identification: rom_init() reads these, never a device's own bytes -
      the size, and two 16-byte signatures memcmp'd at offset 0 and at
-     directoryBase, matching this data against the incoming ROM image.
-     This is the only role these three fields play; everything else in
+     identSecondOffset, matching this data against the incoming ROM image.
+     This is the only role these four fields play; everything else in
      the struct is read after identification has already chosen this
-     profile. */
+     profile. A device picks the second span for being fixed content its
+     ROM carries at a known address, which is not the same question as
+     which table that address belongs to. */
   size_t romSize;
   uint8_t identVectors[16];
   uint8_t identFirstDirectory[16];
+  uint32_t identSecondOffset;
 
   unsigned defaultMaxVoices;
 
@@ -349,9 +352,10 @@ struct XpDeviceProfile {
 
   /* The wave-address space element records are written in: how wide one
      chip's slice of it is, so that an element address resolves to a chip
-     and an offset inside it. Zero where the element record carries its own
-     bank byte instead. */
+     and an offset inside it, and which chip each directory's slot zero
+     is. Zero where the element record carries its own bank byte instead. */
   uint32_t waveSourceSlotSize;
+  uint8_t elementDirectoryChipBase[XP_MULTISAMPLE_BANK_MAX];
 };
 
 /* Never-null: falls back to the profile of whichever device this engine

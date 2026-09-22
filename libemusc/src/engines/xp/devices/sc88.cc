@@ -21,6 +21,8 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .identFirstDirectory = {
     0x00, 0x00, 'P', 'i', 'a', 'n', 'o', ' ',
     '1', 'A', ' ', ' ', ' ', ' ', 0x03, 0xff },
+  /* The first tone directory record, which is also .directoryBase below. */
+  .identSecondOffset = 0x30000u,
 
   .defaultMaxVoices = 64u,          /* the real hardware's polyphony */
 
