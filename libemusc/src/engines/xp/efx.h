@@ -86,6 +86,35 @@ unsigned efx_output_level(const struct xp_rom *rom, unsigned value);
  * sends through. */
 #define XP_EFX_ASSIGN_MIX 0u
 
+/* THE PARAMETER CONVERSION TABLES. A device keeps one run of words per
+ * family of parameter, and an effect's updater indexes the run with the
+ * parameter value. Reading them is what makes a per-effect parameter map
+ * small: the law is nearly always "this table, at this value".
+ *
+ * Only the tables whose meaning is established get a name. The rest are
+ * reachable by index and this header makes no claim about what they
+ * convert - a name would be a guess wearing a constant's clothes. */
+#define XP_EFX_TABLE_LEVEL 0u      /* master level / gain, 0..0x1FFF */
+#define XP_EFX_TABLE_LFO_RATE 5u
+#define XP_EFX_TABLE_PRE_DELAY 9u  /* samples at the wave rate */
+#define XP_EFX_TABLE_DELAY 10u
+#define XP_EFX_TABLE_PAN 13u       /* (L, R) */
+#define XP_EFX_TABLE_BALANCE 14u   /* (wet, dry) */
+#define XP_EFX_TABLE_HF_DAMP 15u   /* (a, 0x1FFF - a), and a bypass row */
+
+unsigned efx_table_count(const struct xp_rom *rom);
+
+/* How long a table is and how many words one of its entries takes. */
+bool efx_table_shape(const struct xp_rom *rom, unsigned table,
+                      unsigned *count, unsigned *columns);
+
+/* One word: entry `index`, column 0 or 1. False where the device has no
+ * such table, the index is past its end, or the column is past its
+ * width - a caller reading off the end is told so rather than handed a
+ * neighbouring table's bytes. */
+bool efx_table_value(const struct xp_rom *rom, unsigned table,
+                      unsigned index, unsigned column, uint16_t *out);
+
 }}  // namespace EmuSC::Xp
 #endif
 

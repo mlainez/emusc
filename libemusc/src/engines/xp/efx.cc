@@ -114,6 +114,46 @@ unsigned efx_output_level(const struct xp_rom *rom, unsigned value)
   return efx_level_word(rom, value);
 }
 
+unsigned efx_table_count(const struct xp_rom *rom)
+{
+  if (!rom || !rom->bytes)
+    return 0u;
+  return xp_profile(rom)->efxTableCount;
+}
+
+bool efx_table_shape(const struct xp_rom *rom, unsigned table,
+                      unsigned *count, unsigned *columns)
+{
+  if (!rom || !rom->bytes)
+    return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (table >= profile->efxTableCount)
+    return false;
+  if (count)
+    *count = profile->efxTables[table].count;
+  if (columns)
+    *columns = profile->efxTables[table].columns;
+  return true;
+}
+
+bool efx_table_value(const struct xp_rom *rom, unsigned table,
+                      unsigned index, unsigned column, uint16_t *out)
+{
+  if (!rom || !rom->bytes || !out)
+    return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (table >= profile->efxTableCount)
+    return false;
+  const struct XpEfxTable &t = profile->efxTables[table];
+  if (index >= t.count || column >= t.columns)
+    return false;
+  uint32_t a = t.base + 2u * (t.columns * index + column);
+  if (a + 2u > rom->size)
+    return false;
+  *out = be16(rom->bytes + a);
+  return true;
+}
+
 unsigned efx_program_sites(const struct xp_efx_program *program,
                             struct xp_efx_site *out, unsigned max)
 {

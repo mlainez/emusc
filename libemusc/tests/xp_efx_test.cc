@@ -137,8 +137,74 @@ int main(void)
     assert(efx_output_level(&rom, 128u) == 0u);
   }
 
+  /* THE CONVERSION TABLES. Every one lies inside the ROM, and the ones
+     whose meaning is established carry their law. */
+  {
+    assert(efx_table_count(&rom) == profile->efxTableCount);
+    for (unsigned t = 0; t < profile->efxTableCount; ++t) {
+      unsigned n = 0, cols = 0;
+      assert(efx_table_shape(&rom, t, &n, &cols));
+      assert(n && (cols == 1u || cols == 2u));
+      uint16_t v = 0;
+      assert(efx_table_value(&rom, t, n - 1u, cols - 1u, &v));
+      assert(!efx_table_value(&rom, t, n, 0, &v));
+      assert(!efx_table_value(&rom, t, 0, cols, &v));
+    }
+    assert(!efx_table_shape(&rom, profile->efxTableCount, NULL, NULL));
+
+    uint16_t a = 0, b = 0;
+    /* The level table runs from nothing to unity and never falls. */
+    assert(efx_table_value(&rom, XP_EFX_TABLE_LEVEL, 0, 0, &a) && a == 0u);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_LEVEL, 127u, 0, &a) &&
+           a == 0x1fffu);
+    for (unsigned i = 0; i < 127u; ++i) {
+      assert(efx_table_value(&rom, XP_EFX_TABLE_LEVEL, i, 0, &a));
+      assert(efx_table_value(&rom, XP_EFX_TABLE_LEVEL, i + 1u, 0, &b));
+      assert(a <= b);
+    }
+    /* The two delay tables are lengths in samples at the wave rate, and
+       their tops are the figures the hardware recordings landed on: 3296
+       samples is 103 ms and 16000 is 500 ms at 32 kHz. */
+    assert(efx_table_value(&rom, XP_EFX_TABLE_PRE_DELAY, 127u, 0, &a) &&
+           a == 3296u);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_DELAY, 126u, 0, &a) &&
+           a == 16000u);
+    for (unsigned i = 0; i < 126u; ++i) {
+      assert(efx_table_value(&rom, XP_EFX_TABLE_DELAY, i, 0, &a));
+      assert(efx_table_value(&rom, XP_EFX_TABLE_DELAY, i + 1u, 0, &b));
+      assert(a <= b);
+    }
+    /* HF damp is a one-pole's two coefficients summing to unity, on every
+       row but the last - which is the bypass, and is a unity coefficient
+       under the shift field rather than a pair. */
+    for (unsigned i = 0; i < 17u; ++i) {
+      assert(efx_table_value(&rom, XP_EFX_TABLE_HF_DAMP, i, 0, &a));
+      assert(efx_table_value(&rom, XP_EFX_TABLE_HF_DAMP, i, 1, &b));
+      assert((unsigned)a + b == 0x1fffu);
+    }
+    assert(efx_table_value(&rom, XP_EFX_TABLE_HF_DAMP, 17u, 0, &a) &&
+           a == 0x5000u);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_HF_DAMP, 17u, 1, &b) &&
+           b == 0u);
+    /* Pan is quadrature-like: hard over at both ends, and the two sides'
+       squares sum to about unity everywhere. */
+    assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, 0, 0, &a) &&
+           a == 0x1fffu);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, 0, 1, &b) && b == 0u);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, 127u, 0, &a) && a == 0u);
+    assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, 127u, 1, &b) &&
+           b == 0x1fffu);
+    for (unsigned i = 0; i < 128u; ++i) {
+      assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, i, 0, &a));
+      assert(efx_table_value(&rom, XP_EFX_TABLE_PAN, i, 1, &b));
+      double q = ((double)a * a + (double)b * b) / (8191.0 * 8191.0);
+      assert(q > 0.95 && q < 1.15);
+    }
+  }
+
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "
-         "sends masked to zero off MIX at all 128 levels\n",
-         profile->efxTypeCount, distinct, withSites);
+         "sends masked to zero off MIX at all 128 levels; "
+         "%u conversion tables\n",
+         profile->efxTypeCount, distinct, withSites, profile->efxTableCount);
   return 0;
 }

@@ -72,6 +72,16 @@ inline constexpr unsigned XP_WAVE_ADDRESS_LINES_MAX = 21u;
 inline constexpr unsigned XP_PACKED_GROUP_MAX = 12u;
 inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
 inline constexpr uint8_t XP_PACKED_BANK_NONE = 0xffu;
+inline constexpr unsigned XP_EFX_TABLE_MAX = 24u;
+
+/* One parameter-conversion table: a run of big-endian words a parameter
+   value indexes. `columns` is 2 where an entry is a pair - a pan table's
+   two sides, a one-pole's two coefficients - and 1 otherwise. */
+struct XpEfxTable {
+  uint32_t base;
+  uint16_t count;
+  uint8_t columns;
+};
 inline constexpr unsigned XP_WAVE_SOURCE_MAX = 2u;
 inline constexpr unsigned XP_MULTISAMPLE_BANK_MAX = 2u;
 
@@ -584,6 +594,12 @@ struct XpDeviceProfile {
      with the chorus's and the reverb's but named here per block because it
      is that block's own reference. */
   uint32_t efxLevelTable;
+  /* The conversion tables the effect parameters read, in the order a
+     device's own extraction lists them. Named indices for the ones whose
+     meaning is established are in efx.h; the rest are reachable by index
+     and carry no claim about what they convert. */
+  struct XpEfxTable efxTables[XP_EFX_TABLE_MAX];
+  unsigned efxTableCount;
 
   /* Null on a device the shared firmware-port engine serves; see
      struct XpVoiceEngineOps above. */

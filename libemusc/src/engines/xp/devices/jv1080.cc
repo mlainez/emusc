@@ -599,6 +599,39 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .efxPointerBase = 0x0A000000u,
   .efxLevelTable = 0x03856Cu,
 
+  /* THE PARAMETER CONVERSION TABLES, as this device's own extraction lists
+     them (`02_rom/extracted/dsp/conversion_tables.json`). Reading them back
+     out of the ROM with the geometry below reproduces that extraction
+     byte for byte on all nineteen.
+
+     TWO OF THE COUNTS OVERRUN THE TABLE THAT FOLLOWS: 0x038A32's 128
+     entries reach two words into 0x038B2E, and 0x038E12's reach 37 words
+     into 0x038EC8. The counts are kept as the extraction has them, because
+     a parameter running 0..127 does index that far and the firmware packs
+     these tight; it is recorded here rather than trimmed away. */
+  .efxTables = {
+    { 0x03856Cu, 178u, 1u },     /* 0  master level / gain, 0..0x1FFF */
+    { 0x038732u, 128u, 1u },     /* 1  level family */
+    { 0x038832u, 128u, 1u },     /* 2  level family */
+    { 0x038932u, 128u, 1u },     /* 3  level family */
+    { 0x038A32u, 128u, 1u },     /* 4  non-monotonic coefficient list */
+    { 0x038B2Eu, 128u, 1u },     /* 5  LFO rate / short time */
+    { 0x038C2Eu, 126u, 1u },     /* 6  rotary speed family */
+    { 0x038D2Au, 116u, 1u },     /* 7  */
+    { 0x038E12u, 128u, 1u },     /* 8  bit-15 tagged delay/offset */
+    { 0x038EC8u, 128u, 1u },     /* 9  pre-delay, 1..3296 = 103 ms */
+    { 0x038FC8u, 127u, 1u },     /* 10 delay, 1..16000 = 500 ms */
+    { 0x0390C6u, 116u, 1u },     /* 11 long delay, 200..1000 ms */
+    { 0x0391AEu, 121u, 1u },     /* 12 long delay, 200..1000 ms */
+    { 0x0392A0u, 128u, 2u },     /* 13 pan, (L, R) */
+    { 0x0394A0u, 128u, 2u },     /* 14 balance, (wet, dry) */
+    { 0x039700u,  18u, 2u },     /* 15 HF damp one-pole pairs */
+    { 0x03D014u, 129u, 1u },     /* 16 auto-wah family */
+    { 0x03EBB8u, 128u, 1u },     /* 17 compressor family */
+    { 0x03ECD8u, 113u, 1u },     /* 18 compressor family */
+  },
+  .efxTableCount = 19u,
+
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };
 
