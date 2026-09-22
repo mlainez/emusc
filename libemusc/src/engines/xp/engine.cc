@@ -1306,6 +1306,12 @@ void engine_render_with_send(struct xp_engine *engine, float *stereo,
 {
   if (!engine || !engine->renderer || !stereo)
     return;
+  /* How far one output sample moves the control period's fraction: the
+     clock step runScheduler adds, in periods. The TVA envelope's
+     per-sample recurrence is built for exactly this step. */
+  const double fractionStep =
+    (kXpControlTimerHz / engine->renderer->output_rate) /
+    kXpControlPeriodClocks;
   for (size_t frame = 0; frame < frames; ++frame) {
     float left = 0.0f;
     float right = 0.0f;
@@ -1348,9 +1354,9 @@ void engine_render_with_send(struct xp_engine *engine, float *stereo,
             engine->renderer->tvf_audio_user, &slot->component.tvf_audio,
             &slot->component.tvf, periodFraction, sample);
         tapTvf += sample;
-        uint32_t envelopeGain = tva_envelope_linear_q17(
+        uint32_t envelopeGain = tva_envelope_render_q17(
           &engine->renderer->rom, &slot->component.envelope,
-          periodFraction);
+          periodFraction, fractionStep);
         /* The chip's amplitude register, not the CPU's composed target:
            the target is a step once per control period and the register
            is the ramp between two of them. */

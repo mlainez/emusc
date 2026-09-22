@@ -435,6 +435,54 @@ float outer_tap(const struct xp_oscillator *oscillator, size_t index,
   return value_at(oscillator, at, &value) ? value : inner;
 }
 
+/* The four-point read is always centred on the span the phase is in, so
+   unlike a three-tap read it needs no folding to a nearer position:
+   `fraction` and its complement carry the whole symmetry.  The uniform
+   cubic B-spline basis, with `rest` = 1 - fraction:
+
+     index - 1   rest^3 / 6
+     index       2/3 - fraction^2 + fraction^3 / 2
+     index + 1   2/3 - rest^2     + rest^3 / 2
+     index + 2   fraction^3 / 6
+
+   which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
+   identity - and sums to one at every fraction.  8388608 is pcm24's own
+   full scale.
+
+   The legacy-fast tier multiplies by the sixth rather than dividing by
+   six. SSE1 carries no double at all, so on the 32-bit Windows target
+   both of those divisions land on x87 as unpipelined `fdiv`; the
+   reciprocal makes them multiplies. It is the same kernel, and its
+   error does not accumulate - it moves the two sixths by one unit in
+   the last place of a double, nine orders of magnitude under a 16-bit
+   step, and leaves the phase alone. Which is why it measures
+   byte-identical on the whole reference corpus and still belongs in the
+   approximate tier: nothing proves it output-preserving, only
+   measurement does. */
+float bspline4(double fraction, float left, float value0, float value1,
+                float right)
+{
+  const double rest = 1.0 - fraction;
+#ifdef EMUSC_LEGACY_DSP_FAST
+  const double sixth = 1.0 / 6.0;
+  const double scale = 1.0 / 8388608.0;
+  return (float)((rest * rest * rest * sixth * left +
+                  (2.0 / 3.0 - fraction * fraction *
+                   (1.0 - fraction * 0.5)) * value0 +
+                  (2.0 / 3.0 - rest * rest *
+                   (1.0 - rest * 0.5)) * value1 +
+                  fraction * fraction * fraction * sixth * right) * scale);
+#else
+  return (float)((rest * rest * rest / 6.0 * left +
+                  (2.0 / 3.0 - fraction * fraction *
+                   (1.0 - fraction * 0.5)) * value0 +
+                  (2.0 / 3.0 - rest * rest *
+                   (1.0 - rest * 0.5)) * value1 +
+                  fraction * fraction * fraction / 6.0 * right) /
+                 8388608.0);
+#endif
+}
+
 }  // namespace
 
 bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
@@ -456,28 +504,9 @@ bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
   if (!value_at(oscillator, index, &value0) ||
       !value_at(oscillator, index + 1, &value1))
     return false;
-  /* The four-point read is always centred on the span the phase is in, so
-     unlike a three-tap read it needs no folding to a nearer position:
-     `fraction` and its complement carry the whole symmetry.  The uniform
-     cubic B-spline basis, with `rest` = 1 - fraction:
-
-       index - 1   rest^3 / 6
-       index       2/3 - fraction^2 + fraction^3 / 2
-       index + 1   2/3 - rest^2     + rest^3 / 2
-       index + 2   fraction^3 / 6
-
-     which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
-     identity - and sums to one at every fraction. */
   float left = outer_tap(oscillator, index, true, value0);
   float right = outer_tap(oscillator, index + 1, false, value1);
-  double rest = 1.0 - fraction;
-  *sample = (float)((rest * rest * rest / 6.0 * left +
-                     (2.0 / 3.0 - fraction * fraction *
-                      (1.0 - fraction * 0.5)) * value0 +
-                     (2.0 / 3.0 - rest * rest *
-                      (1.0 - rest * 0.5)) * value1 +
-                     fraction * fraction * fraction / 6.0 * right) /
-                    8388608.0);
+  *sample = bspline4(fraction, left, value0, value1, right);
 
   oscillator->phase += oscillator->step;
   if (oscillator->initial &&

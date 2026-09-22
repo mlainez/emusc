@@ -77,6 +77,32 @@ struct xp_tva_curve {
   bool linear;
 };
 
+/* Where the legacy-fast tier's per-sample recurrence stands inside the
+ * exponential stage it was last synchronized to. `residual` is the signed
+ * gap the stage has left to close - the envelope is `target + residual` -
+ * and it shrinks by `ratio` for every output sample, which is what lets an
+ * exponential stage be rendered without an `exp()` per sample. It is
+ * recomputed exactly at every control tick, so the drift a recurrence can
+ * accumulate never spans more than one control interval.
+ *
+ * Declared unconditionally, so an envelope's layout does not depend on
+ * EMUSC_LEGACY_DSP_FAST and the two tiers cannot disagree about the size of
+ * a struct that crosses the library boundary. The lossless tier keeps the
+ * bookkeeping below current and never reads the cache. */
+struct xp_tva_recurrence {
+  double residual;
+  /* The `periodFraction` `residual` stands at. */
+  double fraction;
+  /* The fraction step, and the curve rate, `ratio` was built for. */
+  double step;
+  double ratio;
+  double ratio_rate;
+  /* The stage, and its elapsed control periods, the cache belongs to. */
+  double periods;
+  uint8_t stage;
+  bool valid;
+};
+
 struct xp_tva_envelope {
   uint32_t targets_q17[4];
   /* The stage words as the component stores them, attenuations at about
@@ -99,6 +125,7 @@ struct xp_tva_envelope {
   uint32_t start_q17;
   uint32_t current_q17;
   bool active;
+  struct xp_tva_recurrence recurrence;
 };
 
 #ifdef __cplusplus
@@ -153,6 +180,19 @@ bool tva_envelope_advance(const struct xp_rom *rom,
                            unsigned elapsedPeriods);
 uint32_t tva_envelope_linear_q17(const struct xp_rom *rom,
   const struct xp_tva_envelope *envelope, double periodFraction);
+
+/* The same value, for the per-sample render loop rather than for an event.
+ * `fractionStep` is how far `periodFraction` moves between two consecutive
+ * calls - one output sample - and the envelope is taken mutably, because
+ * under EMUSC_LEGACY_DSP_FAST an exponential stage is carried between
+ * control ticks by the recurrence above instead of being evaluated from
+ * scratch. Without that tier this is tva_envelope_linear_q17 exactly.
+ *
+ * A caller that is not stepping one sample at a time - a note-off, a voice
+ * stop, a trace - wants tva_envelope_linear_q17 instead. */
+uint32_t tva_envelope_render_q17(const struct xp_rom *rom,
+  struct xp_tva_envelope *envelope, double periodFraction,
+  double fractionStep);
 void tva_envelope_freeze(const struct xp_rom *rom,
                           struct xp_tva_envelope *envelope,
                           double periodFraction);

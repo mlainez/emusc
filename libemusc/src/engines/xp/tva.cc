@@ -506,6 +506,9 @@ bool tva_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
   }
   envelope->current_q17 = envelope->start_q17;
   envelope->active = true;
+  /* A slot's envelope outlives the note that filled it, and this one's
+     stage and elapsed periods can match what the cache holds. */
+  envelope->recurrence = {};
   return true;
 }
 
@@ -525,6 +528,70 @@ uint32_t tva_envelope_linear_q17(const struct xp_rom *rom,
                       envelope->stage_periods + periodFraction);
 }
 
+uint32_t tva_envelope_render_q17(const struct xp_rom *rom,
+                                  struct xp_tva_envelope *envelope,
+                                  double periodFraction, double fractionStep)
+{
+#ifndef EMUSC_LEGACY_DSP_FAST
+  (void)fractionStep;
+  return tva_envelope_linear_q17(rom, envelope, periodFraction);
+#else
+  if (!envelope)
+    return 0;
+  if (!envelope->active || envelope->stage >= 4)
+    return envelope->current_q17;
+  const struct xp_tva_curve *curve = envelope->curves + envelope->stage;
+  /* A linear stage is a multiply and a clamp: there is no transcendental
+     to remove, so it is evaluated exactly and the recurrence stays out of
+     it. So does a caller that is not stepping by samples at all. */
+  if (curve->linear || curve->rate <= 0.0 || !(fractionStep > 0.0))
+    return tva_envelope_linear_q17(rom, envelope, periodFraction);
+  if (periodFraction < 0.0)
+    periodFraction = 0.0;
+  else if (periodFraction > 1.0)
+    periodFraction = 1.0;
+  struct xp_tva_recurrence *r = &envelope->recurrence;
+  const double target = (double)envelope->targets_q17[envelope->stage];
+  /* The cache carries only inside the stage and the control period it was
+     built in. `stage` and `stage_periods` say which those are;
+     tva_envelope_advance clears the flag as it moves them, and the
+     fraction test holds the recurrence to the forward step `ratio` is for.
+     The three are deliberately redundant: any one of them failing sends
+     this sample down the exact path below, which is also where the first
+     sample of every control period goes. */
+  if (r->valid && r->stage == envelope->stage &&
+      r->periods == envelope->stage_periods && r->step == fractionStep &&
+      periodFraction > r->fraction) {
+    r->residual *= r->ratio;
+    r->fraction = periodFraction;
+  } else {
+    /* Resynchronization. `1 - exp(-q)` of the way from start to target is
+       `target + (start - target) * exp(-q)`, and the gap is what a
+       constant ratio per sample acts on. Both `exp()` calls are here, so
+       there are two per control period per voice at worst and none inside
+       one; the ratio survives the whole stage, since neither the curve's
+       rate nor the output rate moves inside it. */
+    const double q = curve->rate * (envelope->stage_periods + periodFraction);
+    r->residual = q >= 40.0
+      ? 0.0
+      : ((double)envelope->start_q17 - target) * std::exp(-q);
+    if (r->ratio_rate != curve->rate || r->step != fractionStep) {
+      r->ratio = std::exp(-curve->rate * fractionStep);
+      r->ratio_rate = curve->rate;
+      r->step = fractionStep;
+    }
+    r->fraction = periodFraction;
+    r->periods = envelope->stage_periods;
+    r->stage = envelope->stage;
+    r->valid = true;
+  }
+  const double value = target + r->residual;
+  if (value <= 0.0)
+    return 0;
+  return (uint32_t)(value + 0.5);
+#endif
+}
+
 bool tva_envelope_advance(const struct xp_rom *rom,
                            struct xp_tva_envelope *envelope,
                            unsigned elapsedPeriods)
@@ -533,6 +600,10 @@ bool tva_envelope_advance(const struct xp_rom *rom,
       elapsedPeriods == 0)
     return false;
   (void)rom;
+  /* Whatever this call does to the stage or its elapsed periods, the
+     render recurrence is now standing in the period that has just ended.
+     The ratio it advances by is kept: a stage keeps its rate. */
+  envelope->recurrence.valid = false;
   uint8_t catchup = (uint8_t)(elapsedPeriods - 1);
   uint16_t remaining = (uint16_t)(envelope->saved_count +
     (catchup <= 127 ? (int)catchup : (int)catchup - 256));
