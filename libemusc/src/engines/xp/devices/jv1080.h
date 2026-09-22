@@ -50,6 +50,11 @@ inline constexpr unsigned XP_JV1080_TONES_PER_PATCH = 4u;
 
 extern const struct XpDeviceProfile JV1080_PROFILE;
 
+/* This device's own voice engine, for XpDeviceProfile::voiceEngine. Its
+   state is opaque: the shared device layer holds it as a void * and only
+   ever calls through this table. */
+extern const struct XpVoiceEngineOps JV1080_VOICE_ENGINE;
+
 /* ONE TONE, SOUNDING. A BEHAVIOURAL MODEL, NOT THE CHIP.
  *
  *   Everything below responds the way the hardware measures - the wave it
@@ -136,6 +141,12 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
                         const struct xp_packed_record *patch, unsigned index,
                         uint8_t *tone, unsigned *patchLevel,
                         unsigned *patchPan);
+
+/* How many decoded samples this tone needs at this key, so a caller can
+ * size the buffer jv1080_voice_start decodes into. False where the tone
+ * does not sound, the same cases jv1080_voice_start refuses. */
+bool jv1080_voice_span(const struct xp_rom *rom, const uint8_t *tone,
+                        unsigned key, unsigned velocity, size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
 

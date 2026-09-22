@@ -49,25 +49,50 @@ records, `packed_rom.h` for descriptor-packed ones - and both are
 generic, taking every address, stride and record layout from the
 profile. Neither engine file names a device.
 
+## Two voice paths, one device layer
+
+What the two cannot share is the voice. One device's voice state IS its
+chip's register and RAM layout, read out of its own firmware, and its
+scheduler is that firmware's control period (`engine.h`, `renderer.h`).
+The other's is a behavioural model with no control period, no amplitude
+register and no ROM table to read (`devices/jv1080_engine.cc`). A shared
+per-voice struct would be a lie about both.
+
+So a device injects its own voice engine through
+`XpDeviceProfile::voiceEngine`, and `device.cc` - the top-level MIDI
+device, its channel state and the output mixing, all genuinely shared -
+calls through that table. It asks whether a profile *has* one, never
+which device it is. A profile leaving it null gets the firmware port,
+which is where this family started. `sysexModelId` and
+`sysexAddressBytes` are injected the same way, because the two devices
+differ there too: model `42` with a three-byte parameter address against
+model `6a` with a four-byte one.
+
 ## What JV-1080 does not do yet
 
-The gaps are listed here rather than left to be discovered as silence:
+It plays end to end through `emusc-render` and `emuscd`. The gaps are
+listed here rather than left to be discovered as silence:
 
-- **`Synth` cannot play it.** `ControlRom` identifies it, `WaveRom`
-  keeps its chips and `Xp::Device` opens on it without complaint, but
-  the MIDI and note-on path in `device.cc`/`engine.cc`/`renderer.cc` is
-  the SC-88's - it resolves a tone through `rom_select_melodic` and
-  `rom_open_tone`, which this device has no counterpart for. The result
-  is digital silence, not a crash and not noise. Its voice path is
-  reached through `engines/xp/devices/jv1080.h` instead.
 - **The insert, chorus and reverb effects are bypassed**, not
-  approximated. All forty insert types are characterised behaviourally
-  in the research, but their DSP topology needs the chip's instruction
-  set and is open; a bypass is honest where a guessed topology would
-  not be.
+  approximated, and so is the output stage - `output.cc` is the other
+  device's measured analogue front end, not this one's. All forty insert
+  types are characterised behaviourally in the research, but their DSP
+  topology needs the chip's instruction set and is open; a bypass is
+  honest where a guessed topology would not be.
+- **There is no master level and no part level**, so a dense song sums
+  toward full scale and can reach it. `renderer.h`'s own stance applies:
+  output trim belongs to the caller. The machine itself cannot be driven
+  into distortion through any exposed parameter, so this is a divergence
+  and not a modelled behaviour.
 - **The two LFOs, the pitch and filter envelopes, FXM, the booster, the
   ten structures, tone delay, the TVA bias and every key-follow field**
   are not modelled. Nor are TVA velocity curves 1 to 6, which are
   measured but not yet transcribed here, so a tone selecting one is
   rendered on curve 0.
-- **The rhythm part** is decoded but not played.
+- **The rhythm part** is decoded but not played, and neither are
+  performances: a part is filled in by a program change or by the
+  device's own temporary-patch parameter writes, which is what its
+  factory demo songs use.
+- **Voice stealing has no reserve.** The order is the measured one,
+  oldest first; the measured exemption for a part still inside its voice
+  reserve needs a performance loaded and has nothing to act on yet.

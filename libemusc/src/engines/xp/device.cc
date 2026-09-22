@@ -181,6 +181,29 @@ bool initCommon(Device *device, const uint8_t *controlRom,
       device->decoded_chips[chip] + profile->waveBankSize;
     device->banks[chip * 2 + 1].size = profile->waveBankSize;
   }
+  /* A device whose voice path is its own takes the banks and stops here:
+     the renderer, engine and effects below are the shared firmware port's,
+     and this device has no firmware to port. The ROM view is still built,
+     because that is what the injected engine reads its own tables
+     through. */
+  device->voice_ops = profile->voiceEngine;
+  if (device->voice_ops) {
+    const uint8_t *bankBytes[XP_WAVE_BANK_COUNT];
+    size_t bankSizes[XP_WAVE_BANK_COUNT];
+    for (unsigned b = 0; b < XP_WAVE_BANK_COUNT; ++b) {
+      bankBytes[b] = device->banks[b].bytes;
+      bankSizes[b] = device->banks[b].size;
+    }
+    if (!rom_init(&device->renderer.rom, device->control_rom, romSize) ||
+        !device->voice_ops->create(&device->voice_state,
+                                    &device->renderer.rom, bankBytes,
+                                    bankSizes, XP_WAVE_BANK_COUNT,
+                                    outputRate))
+      goto fail;
+    device->output_rate = outputRate;
+    device->initialized = true;
+    return true;
+  }
   if (!renderer_init(&device->renderer, device->control_rom,
                       romSize, device->banks,
                       XP_WAVE_BANK_COUNT, outputRate, wrap))
@@ -669,8 +692,12 @@ void device_destroy(Device *device)
 {
   if (!device)
     return;
-  if (device->initialized)
+  if (device->voice_ops) {
+    device->voice_ops->destroy(device->voice_state);
+    device->voice_state = nullptr;
+  } else if (device->initialized) {
     engine_destroy(&device->engine);
+  }
   reverb_destroy(&device->reverb);
   std::free(device->send_bus);
   std::free(device->chorus_bus);
@@ -687,6 +714,14 @@ void device_reset_controllers(Device *device)
 {
   if (!device || !device->initialized)
     return;
+  if (device->voice_ops) {
+    /* No effect macros to reload: this device's effects are bypassed
+       rather than approximated, and its own reset lives in its engine. */
+    device->voice_ops->reset(device->voice_state);
+    for (unsigned part = 0; part < XP_ENGINE_PART_COUNT; ++part)
+      device->channels[part] = ChannelState();
+    return;
+  }
   device->master_volume = 127;
   device->secondary_level = 127;
   device->master_pan = 64;
@@ -818,6 +853,15 @@ void device_reset_controllers(Device *device)
   }
 }
 
+bool device_set_max_voices(Device *device, unsigned maxVoices)
+{
+  if (!device || !device->initialized)
+    return false;
+  if (device->voice_ops)
+    return device->voice_ops->set_max_voices(device->voice_state, maxVoices);
+  return engine_set_max_voices(&device->engine, maxVoices);
+}
+
 void device_set_master_volume(Device *device, uint8_t value)
 {
   if (!device || !device->initialized || value > 127)
@@ -849,8 +893,16 @@ bool device_sysex(Device *device, uint8_t port,
   }
   if (size && data[size - 1] == 0xf7)
     --size;
-  /* 41 dev 42 12, three address bytes, at least one data byte, checksum */
-  if (size < 9 || data[0] != 0x41 || data[2] != 0x42 || data[3] != 0x12)
+  /* 41 dev <model> 12, the device's own address bytes, at least one data
+     byte, checksum. The model id and the address width are the device's,
+     so they come from its profile: three bytes on a GS device, four on
+     this family's JV member. */
+  const struct XpDeviceProfile *profile = xp_profile(&device->renderer.rom);
+  const size_t addressBytes = profile->sysexAddressBytes;
+  if (addressBytes < 1u || addressBytes > 4u)
+    return false;
+  if (size < 6u + addressBytes || data[0] != 0x41 ||
+      data[2] != profile->sysexModelId || data[3] != 0x12)
     return false;
   /* the unit's own device ID, or the broadcast ID every unit answers */
   if (data[1] != 0x10 && data[1] != 0x7f)
@@ -862,6 +914,22 @@ bool device_sysex(Device *device, uint8_t port,
   for (size_t i = 4; i + 1 < size; ++i)
     sum += data[i];
   if (((unsigned)(-(int)sum) & 0x7fu) != data[size - 1])
+    return false;
+  const size_t payloadAt = 4u + addressBytes;
+
+  /* A device with its own voice path is handed the address bytes as they
+     arrived and the payload whole. Its own frames may run past an
+     address-byte boundary - the machine relies on it - and there is
+     nowhere for a per-address loop to carry. */
+  if (device->voice_ops) {
+    if (!device->voice_ops->sysex_block(device->voice_state, data + 4,
+                                        (unsigned)addressBytes,
+                                        data + payloadAt,
+                                        size - payloadAt - 1u))
+      ++device->unhandled_sysex;
+    return true;
+  }
+  if (addressBytes != 3u)
     return false;
   uint32_t address =
     ((uint32_t)data[4] << 16) | ((uint32_t)data[5] << 8) | data[6];
@@ -875,10 +943,45 @@ bool device_sysex(Device *device, uint8_t port,
   /* A packet may carry several consecutive addresses. Each is applied in
      turn, so a packet naming one address this implementation does not know
      does not discard the rest of it. */
-  for (size_t i = 7; i + 1 < size; ++i)
-    if (!sysexWrite(device, group, address + (uint32_t)(i - 7), data[i]))
+  for (size_t i = payloadAt; i + 1 < size; ++i)
+    if (!sysexWrite(device, group, address + (uint32_t)(i - payloadAt),
+                    data[i]))
       ++device->unhandled_sysex;
   return true;
+}
+
+/* The channel messages a device with its own voice path receives. Bank
+   select and program change are held apart because either may arrive
+   first and the device resolves the pair only when the program change
+   does. Anything else is accepted and dropped: accepted, because a song
+   sending a controller this device does not act on is not a malformed
+   song, and counted nowhere because a dropped controller is not a
+   dropped parameter write. */
+bool midiToVoiceEngine(Device *device, uint8_t part, uint8_t status,
+                        uint8_t data1, uint8_t data2)
+{
+  const struct XpVoiceEngineOps *ops = device->voice_ops;
+  void *voices = device->voice_state;
+  switch (status & 0xf0) {
+  case 0x80:
+    return ops->note_off(voices, part, data1);
+  case 0x90:
+    return data2 == 0 ? ops->note_off(voices, part, data1)
+                      : ops->note_on(voices, part, data1, data2);
+  case 0xc0:
+    return ops->program_change(voices, part, data1);
+  case 0xb0:
+    switch (data1) {
+    case 0:
+      return ops->bank_select(voices, part, data2, 0x80u);
+    case 32:
+      return ops->bank_select(voices, part, 0x80u, data2);
+    default:
+      return true;
+    }
+  default:
+    return true;
+  }
 }
 
 bool device_midi(Device *device, uint8_t port, uint8_t status,
@@ -890,6 +993,13 @@ bool device_midi(Device *device, uint8_t port, uint8_t status,
   uint8_t channel = status & 0x0f;
   uint8_t part = (uint8_t)(port * 16 + channel);
   ChannelState *state = device->channels + part;
+  /* A device with its own voice path answers the messages that reach it
+     and nothing else. Every case below this line writes the shared
+     firmware port's own part registers, which such a device does not
+     have; falling through would write state nothing reads and, worse,
+     call into an engine that was never initialised. */
+  if (device->voice_ops)
+    return midiToVoiceEngine(device, part, status, data1, data2);
   switch (status & 0xf0) {
   case 0x80:
     return engine_note_off(&device->engine, part, data1);
@@ -1169,6 +1279,18 @@ void device_render(Device *device, float *stereo, size_t frames)
 {
   if (!device || !device->initialized || !stereo)
     return;
+  /* A device with its own voice path renders dry. Its insert, chorus and
+     reverb effects are BYPASSED, not approximated: all forty insert types
+     are characterised behaviourally in the research but their DSP
+     topology needs the chip's instruction set and is open, and the output
+     stage below is the other device's measured analogue front end, which
+     is not this one's. Both are gaps, and a gap is honest where a guess
+     would not be. */
+  if (device->voice_ops) {
+    std::memset(stereo, 0, frames * 2u * sizeof *stereo);
+    device->voice_ops->render(device->voice_state, stereo, frames);
+    return;
+  }
   /* The send bus grows to whatever block the caller asks for and is kept,
      so a render loop does not allocate per block. */
   if (frames > device->send_capacity) {

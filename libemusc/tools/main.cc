@@ -72,12 +72,12 @@ scripts that drive emusc-render and another renderer with the same options):
                          slow hardware (default: 200)
   --max-voices N         caps simultaneous voices below the loaded device's
                          real polyphony (24 SC-55, 28 SC-55mkII/JV-880, 64
-                         SC-88), trading polyphony for headroom on hardware
+                         SC-88/JV-1080), trading polyphony for headroom on
                          too slow to sustain the worst case (default: the
                          device's own ceiling - this can only lower it)
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
-  --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
+  --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880, jv1080)
   --rom-dir DIR          Directory holding device ROM files, named
                          <device>_control.bin, <device>_cpu.bin (SC-55 and
                          SC-55mkII only) and <device>_waverom1.bin upward.
@@ -88,6 +88,8 @@ ROM selection (either --device with --rom-dir, or the three explicit options):
                            sc55mkii: sc55mkii_control.bin sc55mkii_cpu.bin
                                      sc55mkii_waverom{1,2}.bin
                            sc88:     sc88_control.bin sc88_waverom{1,2,3,4}.bin
+                           jv1080:   jv1080_control.bin
+                                     jv1080_waverom{1,2,3,4}.bin
                            jv880:    jv880_control.bin jv880_waverom{1,2}.bin
                          See README.md for exact ROM file hashes.
   --control-rom FILE     External program EPROM
@@ -218,8 +220,9 @@ Options parse_args(int argc, char **argv) {
     die(1, "--max-voices must be >= 1");
 
   if (!o.device.empty()) {
-    if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
-      die(1, "--device must be sc55, sc55mkii, sc88, or jv880");
+    if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" &&
+        o.device != "jv880" && o.device != "jv1080")
+      die(1, "--device must be sc55, sc55mkii, sc88, jv880, or jv1080");
     // One naming convention for all four devices: <device>_control.bin is
     // always the control/program ROM, <device>_cpu.bin is the internal CPU
     // ROM that only SC-55 and SC-55mkII have. SC-88 has no separate CPU ROM,
@@ -240,11 +243,12 @@ Options parse_args(int argc, char **argv) {
     if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii"))
       o.cpu_rom = dir + "/" + o.device + "_cpu.bin";
     if (o.wave_roms.empty()) {
-      // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
-      // (XP_WAVE_CHIP_COUNT in engines/xp/devices/sc88.h), JV-880 2
-      // (DeviceProfile waveRomBanks in engines/gp/devices/jv880.cc).
+      // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), the two
+      // XP-family devices 4 (XP_WAVE_CHIP_COUNT in
+      // engines/xp/devices/profile.h), JV-880 2 (DeviceProfile
+      // waveRomBanks in engines/gp/devices/jv880.cc).
       int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 :
-              (o.device == "sc88") ? 4 : 2;
+              (o.device == "sc88" || o.device == "jv1080") ? 4 : 2;
       for (int k = 1; k <= n; k++)
         o.wave_roms.push_back(dir + "/" + o.device + "_waverom" + std::to_string(k) + ".bin");
     }
@@ -320,7 +324,8 @@ int main(int argc, char **argv) {
     bool ok = (o.device == "sc55" && gen == EmuSC::ControlRom::SynthGen::SC55) ||
               (o.device == "sc55mkii" && gen == EmuSC::ControlRom::SynthGen::SC55mk2) ||
               (o.device == "sc88" && gen == EmuSC::ControlRom::SynthGen::SC88) ||
-              (o.device == "jv880" && gen == EmuSC::ControlRom::SynthGen::JV880);
+              (o.device == "jv880" && gen == EmuSC::ControlRom::SynthGen::JV880) ||
+              (o.device == "jv1080" && gen == EmuSC::ControlRom::SynthGen::JV1080);
     if (!ok) {
       restore_cout();
       die(2, "control ROM identifies as " + ctrl->model() + " v" + ctrl->version() +

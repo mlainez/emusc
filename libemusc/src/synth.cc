@@ -123,7 +123,7 @@ bool Synth::_xp_configure(uint32_t sampleRate)
     return false;
   }
   if (_maxVoicesSet)
-    Xp::engine_set_max_voices(&_xpDevice->engine, _maxVoices);
+    Xp::device_set_max_voices(_xpDevice, _maxVoices);
 
   return true;
 }
@@ -134,7 +134,7 @@ void Synth::set_max_voices(unsigned maxVoices)
   _maxVoicesSet = true;
   _maxVoices = maxVoices;
   if (_xpDevice)
-    Xp::engine_set_max_voices(&_xpDevice->engine, maxVoices);
+    Xp::device_set_max_voices(_xpDevice, maxVoices);
 }
 
 

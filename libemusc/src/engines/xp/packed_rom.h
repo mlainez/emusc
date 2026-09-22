@@ -105,6 +105,14 @@ namespace EmuSC { namespace Xp {
 bool packed_descriptor(const struct xp_rom *rom, unsigned index,
                         struct xp_field_descriptor *out);
 
+/* Whether a group's field is an eight-bit one. It matters on the wire:
+ * such a field's value arrives as two nibbles, most significant first,
+ * because seven bits per byte cannot carry it, and its descriptor is
+ * followed by an alias describing the same bits. The descriptor says so
+ * itself - a mask eight bits wide - so no field list is needed. */
+bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
+                                unsigned field);
+
 /* Field `field` of a group, read out of `packed` - which must point at
  * that group's own first byte, not at the record's. */
 bool packed_group_field(const struct xp_rom *rom, unsigned group,

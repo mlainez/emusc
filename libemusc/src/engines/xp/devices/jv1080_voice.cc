@@ -237,7 +237,55 @@ int tone_field(const struct xp_rom *rom, const uint8_t *tone, unsigned index)
   return tone[index];
 }
 
+/* The five links from a tone's three wave fields to a wave-element record,
+   shared by the span query and the note-on below so the two cannot drift.
+   False where the tone does not sound for this key at all. */
+bool resolve_element(const struct xp_rom *rom, const uint8_t *tone,
+                      unsigned key, struct xp_wave_element *element)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  unsigned source = 0;
+  uint8_t msBank = 0;
+  uint16_t msRow = 0;
+  struct xp_wave_zone zone;
+  return wave_source_select(rom, (unsigned)tone[profile->toneFieldWaveGroup],
+                             (unsigned)tone[profile->toneFieldWaveGroupId],
+                             &source) &&
+    wave_number_resolve(rom, source,
+                         (unsigned)tone[profile->toneFieldWaveNumber],
+                         &msBank, &msRow) &&
+    multisample_select(rom, msBank, msRow, key, &zone) &&
+    wave_element_open(rom, zone.directory, zone.element, element);
+}
+
+/* The tone's own gates. A tone that is off, or whose key or velocity range
+   excludes this note, does not sound - which is not an error: a patch's
+   four tones routinely split the keyboard between them. */
+bool tone_sounds(const struct xp_rom *rom, const uint8_t *tone, unsigned key,
+                  unsigned velocity)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (!tone[profile->toneFieldToneSwitch])
+    return false;
+  if (key < tone[profile->toneFieldKeyRangeLow] ||
+      key > tone[profile->toneFieldKeyRangeHigh])
+    return false;
+  return velocity >= tone[0x0cu] && velocity <= tone[0x0du];
+}
+
 }  // namespace
+
+bool jv1080_voice_span(const struct xp_rom *rom, const uint8_t *tone,
+                        unsigned key, unsigned velocity, size_t *samples)
+{
+  struct xp_wave_element element;
+  if (!rom || !tone || !samples || key > 127u || velocity == 0u ||
+      velocity > 127u || !tone_sounds(rom, tone, key, velocity) ||
+      !resolve_element(rom, tone, key, &element))
+    return false;
+  *samples = (size_t)(element.bank_end - (element.bank_start & ~0x0fu)) + 1u;
+  return true;
+}
 
 bool jv1080_patch_tone(const struct xp_rom *rom,
                         const struct xp_packed_record *patch, unsigned index,
@@ -281,35 +329,9 @@ bool jv1080_voice_start(const struct xp_rom *rom, const uint8_t *tone,
     return false;
   std::memset(voice, 0, sizeof *voice);
 
-  /* The tone switch and the two zone gates: a tone that is off, or whose
-     key or velocity range excludes this note, does not sound. Not an
-     error - a patch's four tones routinely split the keyboard. */
-  if (!tone_field(rom, tone, profile->toneFieldToneSwitch))
-    return false;
-  unsigned keyLow = tone[profile->toneFieldKeyRangeLow];
-  unsigned keyHigh = tone[profile->toneFieldKeyRangeHigh];
-  if (key < keyLow || key > keyHigh)
-    return false;
-  unsigned velLow = tone[0x0cu];
-  unsigned velHigh = tone[0x0du];
-  if (velocity < velLow || velocity > velHigh)
-    return false;
-
-  /* The wave chain: three tone fields to a multisample row, the row's
-     splits to a zone, the zone's reference to an element record. */
-  unsigned source = 0;
-  uint8_t msBank = 0;
-  uint16_t msRow = 0;
-  struct xp_wave_zone zone;
   struct xp_wave_element element;
-  if (!wave_source_select(rom, (unsigned)tone[profile->toneFieldWaveGroup],
-                           (unsigned)tone[profile->toneFieldWaveGroupId],
-                           &source) ||
-      !wave_number_resolve(rom, source,
-                            (unsigned)tone[profile->toneFieldWaveNumber],
-                            &msBank, &msRow) ||
-      !multisample_select(rom, msBank, msRow, key, &zone) ||
-      !wave_element_open(rom, zone.directory, zone.element, &element))
+  if (!tone_sounds(rom, tone, key, velocity) ||
+      !resolve_element(rom, tone, key, &element))
     return false;
   if (element.bank >= XP_WAVE_BANK_COUNT || !banks[element.bank])
     return false;

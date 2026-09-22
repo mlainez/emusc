@@ -174,6 +174,23 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .packedRhythmBanks = { 10u },
   .packedRhythmBankCount = 1u,
 
+  /* Bank select to bank, as `0x0A014EF6` resolves CC0 and CC32
+     (`04_protocol/program_bank.md`): MSB 81 with LSB 0..3 reaches the
+     three preset patch banks and the GM bank, and MSB 80 reaches the
+     battery-backed user memory - whose factory contents are the bank at
+     0x061EA0, which is what stands in for it here since this
+     implementation has no battery RAM to hold an edit. The CARD, PCM and
+     XP groups are left out: no image exists for them, so they select
+     nothing rather than selecting something else. */
+  .packedBankSelect = {
+    { 0x51u, 0x00u, 3u },        /* PR-A */
+    { 0x51u, 0x01u, 4u },        /* PR-B */
+    { 0x51u, 0x02u, 5u },        /* PR-C */
+    { 0x51u, 0x03u, 6u },        /* GM */
+    { 0x50u, 0x00u, 7u },        /* USER, factory contents */
+  },
+  .packedBankSelectCount = 5u,
+
   /* Field indices inside the tone group - equivalently, the manual's own
      SysEx offsets inside a tone block. */
   .toneFieldWaveGroup = 0x01u,
@@ -286,6 +303,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      directory 1 give -0.080 / -0.030 / -0.019 against W4's 0.963. */
   .waveSourceSlotSize = 0x200000u,
   .elementDirectoryChipBase = { 0u, 3u },
+
+  /* This device's SysEx identity: Roland model id 6A, and a FOUR-byte
+     parameter address where a GS device has three. Its own 129-byte tone
+     frames run past an address-byte boundary and the machine relies on
+     that, so a write is applied as a block rather than an address at a
+     time. */
+  .sysexModelId = 0x6au,
+  .sysexAddressBytes = 4u,
+
+  /* This device's voice path is its own, because it has to be - see
+     jv1080_engine.cc and jv1080.h. */
+  .voiceEngine = &JV1080_VOICE_ENGINE,
 };
 
 }  // extern "C"

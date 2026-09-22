@@ -67,6 +67,60 @@ inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
 inline constexpr unsigned XP_WAVE_SOURCE_MAX = 2u;
 inline constexpr unsigned XP_MULTISAMPLE_BANK_MAX = 2u;
 
+/* A DEVICE'S OWN VOICE PATH, INJECTED.
+ *
+ *   Two members of this family need two of these and share nothing
+ *   per-voice. One is a firmware port: its firmware is dumped, its voice
+ *   state is the chip's own register and RAM layout, and its scheduler
+ *   recomposes every voice from ROM tables once per control period
+ *   (engine.h, renderer.h). The other's synthesis engine is in an undumped
+ *   internal mask ROM, so its voice path is a behavioural model fitted to
+ *   measured hardware and has no control period, no amplitude register and
+ *   no ROM table to read. A shared per-voice struct would be a lie about
+ *   both.
+ *
+ *   What IS shared is everything above the voice: the top-level MIDI
+ *   device, its channel state, the wave ROM descramble, the record readers
+ *   and the output mixing. So a device supplies this table and the shared
+ *   device layer calls through it, naming no device.
+ *
+ *   A device that leaves XpDeviceProfile::voiceEngine null is served by
+ *   engine.h/renderer.h instead, which is where this family started.
+ *
+ *   `rom` and `banks` stay owned by the caller and outlive the state.
+ *   `sysex_block` receives one DT1 payload whole, with its address as the
+ *   bytes that arrived. Whole, because a device's own frames may run past
+ *   an address-byte boundary and a per-address call has nowhere to carry;
+ *   as bytes, because how those bytes pack into a number is the device's
+ *   own convention and not something shared code should decide. */
+struct XpVoiceEngineOps {
+  bool (*create)(void **state, const struct xp_rom *rom,
+                  const uint8_t *const banks[], const size_t bankSizes[],
+                  unsigned bankCount, double outputRate);
+  void (*destroy)(void *state);
+  void (*reset)(void *state);
+  bool (*note_on)(void *state, unsigned part, unsigned key,
+                   unsigned velocity);
+  bool (*note_off)(void *state, unsigned part, unsigned key);
+  bool (*bank_select)(void *state, unsigned part, unsigned msb,
+                       unsigned lsb);
+  bool (*program_change)(void *state, unsigned part, unsigned program);
+  bool (*sysex_block)(void *state, const uint8_t *address,
+                       unsigned addressBytes, const uint8_t *data,
+                       size_t count);
+  void (*render)(void *state, float *stereo, size_t frames);
+  bool (*set_max_voices)(void *state, unsigned maxVoices);
+  unsigned (*active_voices)(const void *state);
+};
+
+/* Which packed bank a bank-select pair names, as the device's own selector
+   resolves CC0 and CC32. */
+struct XpBankSelect {
+  uint8_t msb;
+  uint8_t lsb;
+  uint8_t bank;
+};
+
 /* One group of a descriptor-packed record schema: a run of field
    descriptors that together tile one record (or one of its sub-records)
    with no hole and no overlap. A group is addressed by role rather than by
@@ -305,6 +359,12 @@ struct XpDeviceProfile {
   uint8_t packedRhythmBanks[XP_PACKED_BANK_MAX];
   unsigned packedRhythmBankCount;
 
+  /* Which packed bank each bank-select pair reaches. A pair not listed
+     here names a card or expansion group this implementation has no
+     image for, and selects nothing. */
+  struct XpBankSelect packedBankSelect[XP_PACKED_BANK_MAX];
+  unsigned packedBankSelectCount;
+
   /* Field indices inside the tone group, for the fields the voice path has
      to read by role rather than by number. Each is the descriptor's index
      within its own group, which on a device whose descriptor table doubles
@@ -356,6 +416,16 @@ struct XpDeviceProfile {
      is. Zero where the element record carries its own bank byte instead. */
   uint32_t waveSourceSlotSize;
   uint8_t elementDirectoryChipBase[XP_MULTISAMPLE_BANK_MAX];
+
+  /* This device's System Exclusive identity and address width. Roland's
+     own model id, and how many seven-bit bytes its parameter address
+     takes - three on a GS device, four on this family's JV member. */
+  uint8_t sysexModelId;
+  uint8_t sysexAddressBytes;
+
+  /* Null on a device the shared firmware-port engine serves; see
+     struct XpVoiceEngineOps above. */
+  const struct XpVoiceEngineOps *voiceEngine;
 };
 
 /* Never-null: falls back to the profile of whichever device this engine

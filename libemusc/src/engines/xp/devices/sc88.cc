@@ -281,6 +281,14 @@ const struct XpDeviceProfile SC88_PROFILE = {
   /* The wave-bank selector byte for each of the eight banks across the
      four wave ROM chips. */
   .selectors = { 0x00u, 0x01u, 0x10u, 0x11u, 0x20u, 0x21u, 0x30u, 0x31u },
+
+  /* GS: model id 42, three address bytes. */
+  .sysexModelId = 0x42u,
+  .sysexAddressBytes = 3u,
+
+  /* This device's voice path is the shared firmware port in engine.h and
+     renderer.h, which is what a null here selects. */
+  .voiceEngine = nullptr,
 };
 
 const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom)

@@ -80,6 +80,19 @@ bool packed_descriptor(const struct xp_rom *rom, unsigned index,
   return true;
 }
 
+bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
+                                unsigned field)
+{
+  if (!rom || !rom->bytes)
+    return false;
+  const struct XpPackedGroup *g = group_of(xp_profile(rom), group);
+  struct xp_field_descriptor d;
+  if (!g || field >= g->fieldCount ||
+      !packed_descriptor(rom, (unsigned)g->firstDescriptor + field, &d))
+    return false;
+  return (unsigned)(d.mask >> d.shift) == 0xffu;
+}
+
 bool packed_group_field(const struct xp_rom *rom, unsigned group,
                          const uint8_t *packed, size_t available,
                          unsigned field, int *value)
