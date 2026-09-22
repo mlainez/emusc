@@ -21,7 +21,9 @@
  *  profile is engines/gp/devices/sc55.cc. This file carries only what is
  *  needed to recognise the ROM before any engine is selected.
  */
+#include "../control_rom.h"
 #include "../device_profile.h"
+#include "common/rom_signature.h"
 
 namespace EmuSC
 {
@@ -34,6 +36,29 @@ const RomSignature SC55_SIGNATURE = {
 // The SCC-1 is an SC-55 on an ISA card: same banks, same tables, same limits.
 const RomSignature SCC1_SIGNATURE = {
   "SCC-1", 0x3d155, 29, "VER", 3, RomVersionStyle::Inline, 0
+};
+
+static bool sc55_identify(const std::vector<uint8_t> &rom,
+                           const DeviceProfile *profile,
+                           std::string &model, std::string &version,
+                           std::string &date)
+{
+  (void) profile;
+  if (try_rom_signature(rom, SC55_SIGNATURE, version, date)) {
+    model = SC55_SIGNATURE.modelName;
+    return true;
+  }
+  if (try_rom_signature(rom, SCC1_SIGNATURE, version, date)) {
+    model = SCC1_SIGNATURE.modelName;
+    return true;
+  }
+  return false;
+}
+
+extern const DeviceProfile SC55_PROFILE;
+
+extern const ControlRom::DeviceEntry SC55_DEVICE = {
+  ControlRom::sm_SC55, ControlRom::SynthGen::SC55, &SC55_PROFILE, sc55_identify
 };
 
 }

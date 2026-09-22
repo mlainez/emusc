@@ -67,19 +67,12 @@ ControlRom::ControlRom(std::string romPath, std::string cpuRomPath)
   if (_identify_model(romFile))
     throw(std::string("Unknown control ROM file!"));
 
-  _profile = _profile_for(_synthModel);
-
   // The SC-88 is rendered by the XP engine, which reads this ROM itself.
   // Keep the image and stop here: none of the readers below describe this
   // device's layout, and running them would fill the instrument, partial and
   // sample tables with another machine's offsets rather than failing loudly.
+  // _identify_model() already read the whole file into _deviceRom.
   if (_synthModel == sm_SC88) {
-    romFile.clear();
-    romFile.seekg(0, BinFile::kEnd);
-    const size_t size = (size_t) romFile.tellg();
-    romFile.seekg(0);
-    _deviceRom.resize(size);
-    romFile.read((char *) &_deviceRom[0], size);
     romFile.close();
     return;
   }
@@ -196,72 +189,32 @@ uint32_t ControlRom::_native_endian_4bytes_uint32(uint8_t *ptr)
 }
 
 
-// The engine's one list of devices: a signature to recognise the ROM by, and the
-// model it names. Adding a device is a device file plus a row here.
-const ControlRom::KnownDevice ControlRom::KNOWN_DEVICES[] = {
-  { &SC55_SIGNATURE,     sm_SC55,     SynthGen::SC55    },
-  { &SC55MKII_SIGNATURE, sm_SC55mkII, SynthGen::SC55mk2 },
-  { &SCB55_SIGNATURE,    sm_SC55mkII, SynthGen::SC55mk2 },
-  { &SCC1_SIGNATURE,     sm_SCC1,     SynthGen::SC55    },
-  { &SC88_SIGNATURE,     sm_SC88,     SynthGen::SC88    }
-};
-const int ControlRom::KNOWN_DEVICE_COUNT =
-  (int) (sizeof(KNOWN_DEVICES) / sizeof(KNOWN_DEVICES[0]));
-
-
+// Every device this engine knows is in DEVICES[] (src/devices/registry.cc),
+// each with its own identify function (src/devices/<device>.cc). This loop
+// is fully generic: no device name, ROM offset or byte pattern lives here.
 int ControlRom::_identify_model(BinFile &romFile)
 {
-  char data[64];
+  romFile.clear();
+  romFile.seekg(0, BinFile::kEnd);
+  size_t size = (size_t) romFile.tellg();
+  romFile.seekg(0);
+  _deviceRom.resize(size);
+  romFile.read((char *) &_deviceRom[0], size);
 
-  for (int i = 0; i < KNOWN_DEVICE_COUNT; i++) {
-    const RomSignature &sig = *KNOWN_DEVICES[i].signature;
-    if (sig.readLength > (int) sizeof(data))
+  for (int i = 0; i < DEVICE_COUNT; i++) {
+    const DeviceEntry &d = DEVICES[i];
+    std::string model, version, date;
+    if (!d.identify(_deviceRom, d.profile, model, version, date))
       continue;
 
-    // A short ROM leaves the stream in a fail state, which would silently
-    // sink every signature tested after it.
-    romFile.clear();
-    romFile.seekg(sig.offset);
-    romFile.read(data, sig.readLength);
-    if (romFile.gcount() < sig.readLength ||
-        strncmp(data, sig.match, sig.matchLength))
-      continue;
-
-    _model.assign(sig.modelName);
-    _synthModel      = KNOWN_DEVICES[i].model;
-    _synthGeneration = KNOWN_DEVICES[i].generation;
-
-    switch (sig.versionStyle) {
-    case RomVersionStyle::Inline:
-      _version.assign(&data[3], 4);
-      _date.assign(&data[24], 5);
-      break;
-
-    case RomVersionStyle::SeparateBcd: {
-      romFile.seekg(sig.versionOffset);
-      romFile.read(data, 10);
-      _version.assign(data, 4);
-      char dateBuf[16];
-      std::snprintf(dateBuf, sizeof(dateBuf), "19%x-%x-%x",
-                    (unsigned) (uint8_t) data[7], (unsigned) (uint8_t) data[8],
-                    (unsigned) (uint8_t) data[9]);
-      _date.assign(dateBuf);
-      break;
-    }
-
-    case RomVersionStyle::Unknown:
-      _version.assign("?");
-      _date.assign("?");
-      break;
-    }
-
+    _profile         = d.profile;
+    _synthModel      = d.model;
+    _synthGeneration = d.generation;
+    _model           = model;
+    _version         = version;
+    _date            = date;
     return 0;
   }
-
-  // No GS banner: the JV family identifies itself by its table structure.
-  romFile.clear();
-  if (_identify_device(romFile))
-    return 0;
 
   return -1;
 }
@@ -1057,75 +1010,6 @@ std::vector<uint8_t> ControlRom::get_intro_anim(int animIndex)
 }
 
 
-// The JV-880 was mapped by measuring its own ROM (P-0356, P-0361).
-// The only place in the engine that names a device. Everything else asks the
-// profile.
-const DeviceProfile *ControlRom::_profile_for(enum SynthModel model)
-{
-  switch (model) {
-  case sm_SC55:
-  case sm_SCC1:      return &SC55_PROFILE;
-  case sm_SC55mkII:  return &SC55MKII_PROFILE;
-  case sm_JV880:     return &JV880_PROFILE;
-  default:           return nullptr;
-  }
-}
-
-
-const ControlRom::DeviceEntry ControlRom::DEVICES[] = {
-  { sm_JV880,  SynthGen::JV880,  &JV880_PROFILE  },
-};
-const int ControlRom::DEVICE_COUNT =
-  (int) (sizeof(DEVICES) / sizeof(DEVICES[0]));
-
-
-// The JV control ROMs carry no GS banner, so the machine is identified by its
-// tables: a run of 60-byte records whose first field is a printable name. Size
-// narrows the candidates; the table must then actually parse.
-bool ControlRom::_identify_device(BinFile &romFile)
-{
-  romFile.seekg(0, BinFile::kEnd);
-  size_t size = (size_t) romFile.tellg();
-  romFile.seekg(0);
-  _deviceRom.resize(size);
-  romFile.read((char *) &_deviceRom[0], size);
-
-  auto namelike = [this](uint32_t o) -> bool {
-    if ((size_t) o + 12 > _deviceRom.size()) return false;
-    int alnum = 0;
-    for (int i = 0; i < 12; i++) {
-      uint8_t ch = _deviceRom[o + i];
-      if (ch < 0x20 || ch > 0x7e) return false;
-      if (isalnum(ch)) alnum++;
-    }
-    return alnum >= 3;
-  };
-
-  for (int pass = 0; pass < 2; pass++) {
-    for (int i = 0; i < DEVICE_COUNT; i++) {
-      const DeviceEntry &L = DEVICES[i];
-      if ((size == L.profile->romSize) != (pass == 0))
-        continue;
-      // require a run, not a single record: isolated printable triples occur
-      int run = 0;
-      for (int k = 0; k < 8; k++)
-        run += namelike(L.profile->records->waveform.offset +
-                        k * L.profile->records->waveform.stride) ? 1 : 0;
-      if (run < 8)
-        continue;
-      _profile         = L.profile;
-      _synthModel      = L.model;
-      _synthGeneration = L.generation;
-      _model.assign(L.profile->name);
-      _version.assign("?");
-      _date.assign("?");
-      return true;
-    }
-  }
-
-  _deviceRom.clear();
-  return false;
-}
 
 
 // A 60-byte waveform record is a Partial: a name, note breakpoints (0x7f

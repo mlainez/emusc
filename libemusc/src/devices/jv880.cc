@@ -1,0 +1,83 @@
+/*
+ *  This file is part of libEmuSC, a Sound Canvas emulator library
+ *  Copyright (C) 2022-2026  Håkon Skjelten
+ *
+ *  libEmuSC is free software: you can redistribute it and/or modify it
+ *  under the terms of the GNU Lesser General Public License as published
+ *  by the Free Software Foundation, either version 2.1 of the License, or
+ *  (at your option) any later version.
+ *
+ *  libEmuSC is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with libEmuSC. If not, see <http://www.gnu.org/licenses/>.
+ *
+ *  Roland JV-880 identification.
+ *
+ *  The JV-880's synthesis is implemented by the GP engine, whose own device
+ *  profile is engines/gp/devices/jv880.cc. This file carries only what is
+ *  needed to recognise the ROM before any engine is selected.
+ *
+ *  Unlike the Sound Canvas family, the JV control ROM carries no GS banner:
+ *  there is no fixed byte string to match anywhere in it. It is identified
+ *  by its own table structure instead - this device's identify is the one
+ *  in this file that does not build on devices/common/rom_signature.h.
+ */
+#include <cctype>
+
+#include "../control_rom.h"
+#include "../device_profile.h"
+
+namespace EmuSC
+{
+
+extern const DeviceProfile JV880_PROFILE;
+
+static bool jv880_identify(const std::vector<uint8_t> &rom,
+                            const DeviceProfile *profile,
+                            std::string &model, std::string &version,
+                            std::string &date)
+{
+  const WaveformTableLayout &wave = profile->records->waveform;
+
+  auto namelike = [&rom, &wave](uint32_t offset) -> bool {
+    if ((size_t) offset + wave.nameLength > rom.size())
+      return false;
+    int alnum = 0;
+    for (int i = 0; i < wave.nameLength; i++) {
+      uint8_t ch = rom[offset + i];
+      if (ch < 0x20 || ch > 0x7e)
+        return false;
+      if (isalnum(ch))
+        alnum++;
+    }
+    return alnum >= 3;
+  };
+
+  // A run, not a single record: isolated printable triples occur by chance.
+  // No separate ROM-size gate is needed: namelike()'s own bounds check
+  // already rejects a ROM too small to hold this table, and checking size
+  // here would only ever reorder which of several *different* devices gets
+  // tried first - moot with one device on this path.
+  int run = 0;
+  for (int k = 0; k < 8; k++)
+    run += namelike(wave.offset + k * wave.stride) ? 1 : 0;
+
+  if (run < 8)
+    return false;
+
+  model = profile->name;
+  version = "?";
+  date = "?";
+  return true;
+}
+
+extern const ControlRom::DeviceEntry JV880_DEVICE = {
+  ControlRom::sm_JV880, ControlRom::SynthGen::JV880, &JV880_PROFILE,
+  jv880_identify
+};
+
+}

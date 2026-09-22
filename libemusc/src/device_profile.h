@@ -634,26 +634,6 @@ struct SoundCanvasLayout
 };
 
 
-// How a ROM announces itself, and where its version string lives.
-enum class RomVersionStyle
-{
-  Unknown,        // the ROM does not carry one we can read
-  Inline,         // version and date sit inside the signature block itself
-  SeparateBcd     // version elsewhere, followed by a BCD year/month/day
-};
-
-struct RomSignature
-{
-  const char     *modelName;
-  uint32_t        offset;
-  int             readLength;
-  const char     *match;
-  int             matchLength;
-  RomVersionStyle versionStyle;
-  uint32_t        versionOffset;        // SeparateBcd only
-};
-
-
 // The arithmetic of a device's level law. The engine does the algebra; these say
 // what the device's firmware shifts and scales by, so no device constant sits in
 // engine code. The JV's values come from its disassembly (P-0381).
@@ -1149,12 +1129,6 @@ struct DeviceProfile
   // the correct, no-fallback behaviour for every other profile.
   bool variationFallback;
 };
-
-extern const RomSignature SC55_SIGNATURE;
-extern const RomSignature SCC1_SIGNATURE;
-extern const RomSignature SC55MKII_SIGNATURE;
-extern const RomSignature SCB55_SIGNATURE;
-extern const RomSignature SC88_SIGNATURE;
 
 // The Sound Canvas family's shared behaviour, for a generation whose ROM layout
 // has not been mapped yet and so has no profile of its own. It carries only what

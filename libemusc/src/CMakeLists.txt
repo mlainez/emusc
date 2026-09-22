@@ -5,6 +5,9 @@ configure_file(config.h.in config.h)
 set(EMUSC_SOURCES
   control_rom.cc
   control_rom.h
+  devices/common/rom_signature.h
+  devices/jv880.cc
+  devices/registry.cc
   devices/sc55.cc
   devices/sc55mkii.cc
   devices/sc88.cc

@@ -541,7 +541,7 @@ public:
     SC55mk2 = 1,
     JV880   = 4,
 
-    // The SC-88 is rendered by the sc88_* engine rather than by the Note and
+    // The SC-88 is rendered by the XP engine rather than by the Note and
     // Partial path, so this generation selects a different code path in Synth
     // entirely, not another set of table offsets. SC55/SC55mk2/JV880 above
     // are Class G (one shared silicon design, this file's own machinery);
@@ -549,6 +549,30 @@ public:
     // lives in engines/xp/ - see engines/xp/README.md.
     SC88    = 5
   };
+
+  enum SynthModel {
+    sm_SC55,              // Original Sound Canvas
+    sm_SC55mkII,          // Upgraded model
+    sm_SCC1,              // ISA card version
+    sm_JV880,
+    sm_SC88,
+  };
+
+  // Every device this engine knows, named nowhere but here and in the device's
+  // own src/devices/<device>.cc: identify reads the raw ROM and the device's
+  // own profile and decides whether this is that device, filling model/
+  // version/date on a match. Adding a device means a new
+  // src/devices/<device>.cc exporting one of these, plus one row in
+  // src/devices/registry.cc - nothing in this file ever names a device.
+  struct DeviceEntry {
+    enum SynthModel      model;
+    enum SynthGen        generation;
+    const DeviceProfile *profile;   // null for a device with no GP profile (SC-88)
+    bool (*identify)(const std::vector<uint8_t> &rom, const DeviceProfile *profile,
+                      std::string &model, std::string &version, std::string &date);
+  };
+  static const DeviceEntry DEVICES[];
+  static const int      DEVICE_COUNT;
 
   int dump_demo_songs(std::string path);
   bool intro_anim_available(void);
@@ -673,27 +697,10 @@ private:
   std::string _version;
   std::string _date;
 
-  enum SynthModel {
-    sm_SC55,              // Original Sound Canvas
-    sm_SC55mkII,          // Upgraded model
-    sm_SCC1,              // ISA card version
-    sm_JV880,
-    sm_SC88,
-  };
   enum SynthModel _synthModel;
 
   enum SynthGen _synthGeneration;
 
-  // The only engine-side mapping from a device to its data.
-  struct KnownDevice {
-    const RomSignature *signature;
-    enum SynthModel     model;
-    enum SynthGen       generation;
-  };
-  static const KnownDevice KNOWN_DEVICES[];
-  static const int         KNOWN_DEVICE_COUNT;
-
-  static const DeviceProfile *_profile_for(enum SynthModel model);
   const RomLookupTable *_find_lookup(RomLookup id);
 
   int _read_lookup_tables_progrom(BinFile &romFile);
@@ -721,18 +728,7 @@ private:
     // The JV family has no drum-set or variation table in ROM, but it does keep
     // two banks of 64 preset patches there. They are read into the same
     // _partials, _samples and _instruments the SC-55 path fills.
-  // Which device a ROM is, and where to find its records. The layout identifies
-  // the device; the profile carries every offset and stride the readers need, so
-  // adding a device is a data change and not a code change.
-  struct DeviceEntry {
-    enum SynthModel      model;
-    enum SynthGen        generation;
-    const DeviceProfile *profile;
-  };
-  static const DeviceEntry DEVICES[];
-  static const int      DEVICE_COUNT;
 
-  bool _identify_device(BinFile &romFile);
   void _init_neutral_partial(struct InstPartial &ip);
   int  _read_device_waveforms(void);
   int  _read_device_samples(void);
