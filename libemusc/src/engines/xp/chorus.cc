@@ -13,7 +13,21 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* The XP coefficient law (`08_effects/xp_coefficients.md`). */
+/* The XP coefficient law: a sign-extended 14-bit mantissa, thirteen bits
+   fractional, scaled by the two-bit exponent bits 15:14 carry
+   (kXpCoefficientShift, common/constants.h;
+   `08_effects/xp_coefficients.md`).
+
+   CREDITED, AND SECONDARY. The formula is
+   github.com/giulioz/roland-dsps's, admissible as a lead under the
+   owner's ruling of 2026-08-30 (emusc-match TAINT-REGISTER T-008). Its
+   origin is that source's prose, not a ROM read here, so it is neither
+   firmware-exact nor confirmed. TASK-343 is the measurement that can
+   confirm or refute it independently of the source: a chorus-feedback
+   decay sweep on the live JV-1080 rig, which is that device's own
+   suggested test. The SC-88 has no confirming oracle, so for this device
+   the law is PERMANENTLY UNVERIFIED - labelled wherever it is used, and
+   never promotable past a lead whatever TASK-343 returns. */
 double xp(uint16_t raw)
 {
   int value = raw & 0x3fff;

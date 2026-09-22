@@ -42,7 +42,16 @@ inline constexpr uint32_t kXpPitchRemainderStep = 0x555u;
 /* The fixed-point coefficient decode's exponent table, independently
    redeclared identically in the EQ, delay, reverb and chorus DSP blocks:
    value * 2^kXpCoefficientShift[raw >> 14], the shared 2-bit-exponent /
-   14-bit-mantissa encoding those four ROM tables all use. */
+   14-bit-mantissa encoding those four ROM tables all use.
+
+   CREDITED, AND SECONDARY. This encoding is
+   github.com/giulioz/roland-dsps's, admissible as a lead under the
+   owner's ruling of 2026-08-30 (emusc-match TAINT-REGISTER T-008). The
+   repository has returned 404 since 2026-09-07, so its origin cannot be
+   re-checked at source; what stands is the ruling and this label. Each of
+   the four decoders carries the same note at its own point of use, with
+   the SC-88's permanently-unverified standing and the TASK-343
+   measurement that can settle the JV-1080's. */
 inline constexpr unsigned kXpCoefficientShift[4] = {0u, 1u, 2u, 4u};
 
 #endif
