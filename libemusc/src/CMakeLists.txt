@@ -109,6 +109,12 @@ target_compile_features(emusc PRIVATE c_std_99)
 target_compile_features(emusc_static PUBLIC cxx_std_17)
 target_compile_features(emusc_static PRIVATE c_std_99)
 
+# The DSP-tier macro (emusc_dsp_tier, ../CMakeLists.txt) goes on every target
+# that compiles engine sources, not just the libraries: the tools and tests
+# below build the same .cc files directly.
+target_link_libraries(emusc PRIVATE emusc_dsp_tier)
+target_link_libraries(emusc_static PRIVATE emusc_dsp_tier)
+
 target_include_directories(emusc PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(emusc_static PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 
@@ -124,6 +130,7 @@ add_executable(xp_tvf_probe ../tools/xp_tvf_probe.cc
   engines/xp/devices/sc88.cc
   engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
 target_include_directories(xp_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(xp_tvf_probe PRIVATE emusc_dsp_tier)
 if(NOT MSVC)
   target_link_libraries(xp_tvf_probe PRIVATE m)
 endif()
@@ -132,6 +139,7 @@ add_executable(xp_dump_samples ../tools/xp_dump_samples.cc
   engines/xp/devices/sc88.cc
   engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
 target_include_directories(xp_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(xp_dump_samples PRIVATE emusc_dsp_tier)
 if(NOT MSVC)
   target_link_libraries(xp_dump_samples PRIVATE m)
 endif()
@@ -153,6 +161,7 @@ if(BUILD_TESTING)
   function(xp_test name)
     add_executable(${name} ../tests/${name}.cc ${ARGN})
     target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${name} PRIVATE emusc_dsp_tier)
     if(NOT MSVC)
       target_link_libraries(${name} PRIVATE m)
     endif()
@@ -210,6 +219,7 @@ if(BUILD_TESTING)
     engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc
     engines/xp/output.cc ${XP_VOICE_SOURCES})
   target_include_directories(device_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(device_test PRIVATE emusc_dsp_tier)
   if(NOT MSVC)
     target_link_libraries(device_test PRIVATE m)
   endif()
