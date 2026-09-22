@@ -452,8 +452,10 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
        error. */
     size_t i0 = (size_t)voice->position;
     if (i0 + 1u >= voice->pcm_count) {
-      if (!voice->looping)
+      if (!voice->looping) {
+        voice->active = false;   /* the element is played out */
         break;
+      }
       i0 = voice->loop_first;
       voice->position = (double)i0;
     }
