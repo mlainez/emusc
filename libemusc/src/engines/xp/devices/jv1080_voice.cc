@@ -336,40 +336,55 @@ const double kFilterEnvCurve[7][10] = {
   { 0.0, 0.183, 0.277, 0.366, 0.410, 0.441, 0.471, 0.511, 0.605, 1.0 },
 };
 
-/* NOT RECOVERED - the one quantity in this envelope that no measurement
-   pins, labelled here rather than hidden in a literal.
+/* MEASURED ON THE DEVICE - a depth sweep with the filter's corner read
+   directly, which is what the three indirect anchors below could never
+   agree on.
 
-   `M-082` gives one calibration point: depth +30 with the velocity
-   sensitivity at 74 sweeps 6.80 octaves, which at the measured 10.0 value
-   steps per octave (`M-012`) is 68 cutoff units. A depth field read one
-   unit for one cutoff unit would give 30, so the machine's scale is about
-   2.3x that - and ONE POINT CANNOT SEPARATE the depth's own scale from the
-   velocity sensitivity's, since only their product is observed.
+   The stimulus isolates the scale from everything it used to be tangled
+   with: the internal `White Noise` wave at its own root key, so the source
+   spectrum is flat and known; LPF with resonance 100, so the corner shows
+   as a peak; base cutoff 40; the F-ENV holding at its top with level 1 at
+   127 and time 1 at 0; and - the point of it - THE VELOCITY SENSITIVITY AT
+   ZERO, so the depth's own scale is observed rather than its product with
+   the sensitivity's. The corner is read as the peak of the note's spectrum
+   divided by the same wave's spectrum with the filter switched off, and
+   converted through `M-012`'s `fc = 341 * 2^((cutoff-64)/10)`.
 
-   What bounds it - three anchors on two takes, under the sensitivity law
-   below, and they do not agree:
+   Depths +6, +12, +18 and +24 put the corner at 181.6, 521.5, 1502.9 and
+   4347.7 Hz, i.e. cutoff 54.91, 70.13, 85.40 and 100.72. The consecutive
+   differences are 2.537, 2.545 and 2.553 cutoff units per depth unit and a
+   least-squares line through the four fits with residuals of +-0.025
+   cutoff units, so the relation is linear and the slope is
 
-     `M-082`, its whole travel                                       2.27
-     `M-082`, its velocity-127 peak alone (4563 Hz from cutoff 24)   2.58
-     `M-078` (depth +63, cutoff 40, sensitivity +50), its two
-       unclipped points at velocities 32 and 48, absolute        2.17, 2.16
+       2.545 cutoff units per unit of depth.
 
-   The travel and the endpoint of the SAME take disagree because that
-   take's velocity-1 note reads 41 Hz where cutoff 24 predicts 21 Hz, and
-   `M-012` says this rig cannot place a corner below about 33 Hz - so the
-   bottom of the travel is the interface's roll-off, not the machine, and
-   the normalised curve rests on it.
+   The line's intercept comes out at 39.62 against the 40 the cutoff was
+   set to, and the depth-0 note reads 39.29 - so the method carries about
+   half a cutoff unit of its own bias, which the SLOPE does not care about.
+   A fifth point at depth +30 is deliberately excluded: its corner lands at
+   12 kHz where the machine's own 32 kHz output and its reconstruction
+   filter flatten the peak, and it reads 2.32 for that reason alone.
 
-   2.27 is kept: it is the value from the take built for this reading, it
-   lies between the two takes' absolute anchors rather than at either end,
-   and it is NOT the brightest of the three - a scale chosen to open the
-   filter further would be the one to distrust. What is justified is the
-   ORDER, a couple of cutoff units per unit of depth, which is also why
-   `M-078` found the field clipping against the top of the range at depth
-   +63: the +-63 field spans more than the whole 0..127 cutoff parameter.
-   THE EXACT SCALE IS NOT RECOVERED and the 2.16-2.58 spread is the honest
-   width of it - about two thirds of an octave at the top of a sweep. */
-inline constexpr double kFilterEnvDepthScale = 2.27;
+   THE THREE OLD ANCHORS AND WHY THEY DISAGREED, kept because the
+   disagreement is the lesson: `M-082`'s whole travel gave 2.27, its
+   velocity-127 endpoint alone 2.58, and `M-078`'s two unclipped points
+   2.16 and 2.17. All three are products of this scale with the velocity
+   sensitivity's, read off takes whose sensitivity was at 74 or +50, and
+   `M-082`'s own velocity-1 note sits on the interface's roll-off (41 Hz
+   where cutoff 24 predicts 21, against a rig `M-012` says cannot place a
+   corner below about 33 Hz), which tilts the travel it normalises on. The
+   measured 2.545 sits at the top of that spread, nearest the endpoint
+   anchor - the one of the three that does not depend on the bad bottom
+   point. The code used 2.27, so this opens the filter about a third of an
+   octave further at a depth of 30 than it did.
+
+   Measured with the SENSITIVITY AT ZERO, and that case is now confirmed
+   rather than assumed: at depth +30 with sensitivity 0 the corner sits at
+   8003.9, 8001.0 and 8003.9 Hz for velocities 1, 64 and 127. Sensitivity
+   zero means full depth at every velocity, which is what the exponent form
+   below was built to satisfy. What is still NOT measured is the
+   sensitivity's own shape between 0 and its limits. */
+inline constexpr double kFilterEnvDepthScale = 2.545;
 
 /* The record's velocity curve, interpolated between `M-082`'s ten points.
    A record type with no curve field is rendered on curve 0; which curve

@@ -80,19 +80,27 @@ int main()
     assert(close_to(slope, 0.00872, 0.0006));
   }
 
-  /* THE ONE CALIBRATION POINT (`M-082`): cutoff 24, F-ENV depth +30,
-     velocity sensitivity 74, curve 0, at velocity 127 the envelope's whole
-     travel is 6.80 octaves - 68 cutoff units at `M-012`'s 10.0 steps per
-     octave. The depth-to-cutoff-unit scale is NOT recovered (jv1080_voice.cc
-     bounds it 2.1 to 2.5); what this pins is that the model reproduces the
-     take it was calibrated on. */
+  /* THE DEPTH SCALE, now measured directly on the device at 2.545 cutoff
+     units per depth unit: depth +30 at a velocity that reaches the top of
+     the curve must travel 30 * 2.545 = 76.35 cutoff units.
+
+     `M-082`'s own take - cutoff 24, depth +30, velocity sensitivity 74,
+     curve 0 - reads 6.80 octaves, i.e. 68 units, and that is a LOWER BOUND
+     rather than a disagreement: its velocity-1 note sits at 41 Hz where
+     cutoff 24 predicts 21.3, and `M-012` says that rig cannot place a
+     corner below about 33 Hz, so the bottom of the travel is the
+     interface's roll-off. 41 Hz is cutoff 33.4, which is 9.4 units above
+     the true bottom; adding them back puts M-082's travel at 77.4 units
+     and its scale at 2.58, against the 2.545 measured with the sensitivity
+     held at zero. The two agree to 1.4 %, and they are the two anchors
+     that do not rest on that floor-limited bottom point. */
   uint8_t record[XP_JV1080_TONE_FIELDS];
   std::memset(record, 0, sizeof record);
   record[tone.filterEnvDepth] = (uint8_t)(int8_t)30;
   record[tone.filterEnvVelSens] = (uint8_t)(int8_t)74;
   record[tone.filterEnvVelCurve] = 0u;
   double travel = jv1080_filter_env_offset(&tone, record, 127u);
-  assert(close_to(travel, 68.0, 0.5));
+  assert(close_to(travel, 76.35, 0.5));
   /* And the same take's velocity-1 note sits at the record's own cutoff:
      with the sensitivity near the top of its range, velocity 1 leaves the
      envelope closed. */
@@ -116,7 +124,7 @@ int main()
      which is the case that must keep a voice on the unswept path. */
   record[tone.filterEnvVelSens] = (uint8_t)(int8_t)74;
   record[tone.filterEnvDepth] = (uint8_t)(int8_t)-30;
-  assert(close_to(jv1080_filter_env_offset(&tone, record, 127u), -68.0, 0.5));
+  assert(close_to(jv1080_filter_env_offset(&tone, record, 127u), -76.35, 0.5));
   record[tone.filterEnvDepth] = 0u;
   assert(jv1080_filter_env_offset(&tone, record, 127u) == 0.0);
 
@@ -126,7 +134,7 @@ int main()
   std::memset(note, 0, sizeof note);
   note[rhythm.filterEnvDepth] = (uint8_t)(int8_t)30;
   note[rhythm.filterEnvVelSens] = (uint8_t)(int8_t)74;
-  assert(close_to(jv1080_filter_env_offset(&rhythm, note, 127u), 68.0, 0.5));
+  assert(close_to(jv1080_filter_env_offset(&rhythm, note, 127u), 76.35, 0.5));
   assert(close_to(jv1080_filter_env_offset(&rhythm, note, 1u), 0.0, 1e-9));
 
   std::printf("xp_filter_env_test: ok\n");
