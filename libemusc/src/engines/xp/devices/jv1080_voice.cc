@@ -56,12 +56,27 @@ const struct { uint8_t value; double db; } kAmpEnvLevelTable[] = {
 
    It is a TABLE and not a trigonometric or linear law: the calibrated curve
    misses cos/sin by 2.05 dB and a linear pan by 2.07. So this interpolates
-   between the measured distances rather than evaluating a formula, and the
-   table itself is five points wide - its shape between them is not
-   recovered. */
+   between the measured distances rather than evaluating a formula.
+
+   The two points past 48 are this lane's own measurement on the device, a
+   tone-pan sweep of one dry part with the part's pan centred, and they
+   exist because a straight line from 48 to 64 was 17 dB too wide at 56.
+   The sweep also re-measures the four points above, independently and in
+   the other direction: 2.21, 4.50, 9.23 and 15.50 dB against `M-015`'s
+   2.20, 4.50, 9.20 and 15.60, after the 0.46 dB the interface contributes
+   at centre was removed. The 60 point is the same rig reading a PART pan
+   of 60 rather than a tone pan, which is a table point only under
+   `M-002`/`M-048`'s finding that the two fields index one table.
+
+   The last entry is NOT a measured difference. At a distance of 63 the
+   quiet channel sits on the recorder's own noise floor (-95.9 dBFS, the
+   same figure as the silence between notes), so all that is established is
+   that the separation is at least 45 dB and the corner is effectively
+   hard; 65 dB is a stand-in for "hard" and the curve's true shape over the
+   last few steps is not recovered. */
 const struct { uint8_t distance; double difference_db; } kPanTable[] = {
   {  0u,  0.00 }, {  8u,  2.20 }, { 16u,  4.50 }, { 32u,  9.20 },
-  { 48u, 15.60 }, { 64u, 65.00 },
+  { 48u, 15.60 }, { 56u, 23.22 }, { 60u, 30.57 }, { 64u, 65.00 },
 };
 
 double interpolate_points(const double *xs, const double *ys, unsigned count,
@@ -90,14 +105,18 @@ double amp_env_level_db(unsigned value)
   return interpolate_points(xs, ys, 10u, (double)value);
 }
 
+/* The RIGHT channel's level minus the LEFT channel's, in dB, for an offset
+   that is positive to the right. */
 double pan_difference_db(int offset)
 {
-  double xs[6], ys[6];
-  for (unsigned i = 0; i < 6; ++i) {
+  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
+  double xs[sizeof kPanTable / sizeof kPanTable[0]];
+  double ys[sizeof kPanTable / sizeof kPanTable[0]];
+  for (unsigned i = 0; i < count; ++i) {
     xs[i] = kPanTable[i].distance;
     ys[i] = kPanTable[i].difference_db;
   }
-  double magnitude = interpolate_points(xs, ys, 6u,
+  double magnitude = interpolate_points(xs, ys, count,
                                          (double)(offset < 0 ? -offset
                                                              : offset));
   return offset < 0 ? -magnitude : magnitude;
@@ -722,11 +741,17 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     panOffset = -64;
   if (panOffset > 63)
     panOffset = 63;
+  /* The difference is the right channel's level minus the left's, so the
+     ratio multiplies the RIGHT gain. Applying it to the left instead put
+     every pan on the wrong side, which is audible on any part the song
+     places off centre and was confirmed on the device: a tone pan of 127
+     with the part centred measures the right channel 56 dB above the left
+     on hardware, where this rendered it 62 dB BELOW. */
   double difference = pan_difference_db(panOffset);
   double ratio = std::pow(10.0, difference / 20.0);
-  double right = std::sqrt(1.0 / (1.0 + ratio * ratio));
-  voice->gain_right = right;
-  voice->gain_left = ratio * right;
+  double left = std::sqrt(1.0 / (1.0 + ratio * ratio));
+  voice->gain_left = left;
+  voice->gain_right = ratio * left;
 
   /* The envelope's three level fields plus its implicit final zero. */
   for (unsigned i = 0; i < 3u; ++i)
