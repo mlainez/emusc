@@ -89,6 +89,7 @@ struct XpJv1080PartControls {
   unsigned part_pan;
   unsigned volume;
   int key_shift;
+  int patch_octave;              /* whole-patch transposition, in octaves */
 };
 
 struct XpJv1080Voice {

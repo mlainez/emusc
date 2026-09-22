@@ -655,9 +655,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* The part's key shift moves the pitch rather than the note number, so
      the zone the key chose is left alone. */
   const unsigned soundedKey = playback_key(fields, tone, key);
+  /* MEASURED on the device: the patch's octave shift is a third, independent
+     transposition term, exactly twelve semitones per unit, and it adds to
+     both coarse tunes rather than replacing either. Leaving it out is an
+     octave error on every patch that uses it - nine of the fourteen
+     sounding parts of the first factory song do. */
   double keyHz = 440.0 * std::pow(2.0, ((double)soundedKey - 69.0) / 12.0) *
     std::pow(2.0, (double)coarse / 12.0) *
     std::pow(2.0, (double)controls->key_shift / 12.0) *
+    std::pow(2.0, (double)controls->patch_octave) *
     std::pow(2.0, (double)fine / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);

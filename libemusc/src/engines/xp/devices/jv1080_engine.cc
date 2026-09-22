@@ -206,6 +206,9 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->part_pan = p.part[profile->partFieldPan];
   out->volume = p.volume;
   out->key_shift = (int)(int8_t)p.part[profile->partFieldKeyShift];
+  out->patch_octave = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE
+    ? 0
+    : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
 }
 
 bool start_record(struct Engine *engine, unsigned part,

@@ -280,11 +280,25 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .rhythmFirstKey = 35u,
   .rhythmKeyCount = 64u,
 
-  /* Field indices inside the patch-common group. */
+  /* Field indices inside the patch-common group.
+
+     MEASURED on the device: the octave shift at 0x41 transposes the whole
+     patch by exactly twelve semitones per unit, over its whole field and
+     on top of the tone's own coarse tune. On part 10 of the first factory
+     song, with the tone's coarse tune left at its -12, stepping this field
+     over 2, 3, 4, 5, 6 moves a key-60 note to 65.6, 131.1, 261.5, 523.3
+     and 1046.3 Hz - -24, -12, 0, +12 and +24 semitones, with the zero at
+     wire 3, which is the descriptor's own bias. The same sweep on part 1
+     reads -36, -24, -12, 0 for wire 3..6, and stepping that part's own
+     coarse tune and its tone's coarse tune each moved the result by their
+     own twelve, so the three terms add. Key sweeps on both parts (keys
+     36..64 and 48..66) hold to 0.04 semitones, so the term is a constant
+     and not a key follow. */
   .patchFieldName = 0x00u,
   .patchFieldNameLength = 12u,
   .patchFieldLevel = 0x2eu,
   .patchFieldPan = 0x2fu,
+  .patchFieldOctaveShift = 0x41u,
 
   /* The performance-part group is index 5, and these four fields are the
      ones the voice path needs. Level and pan are measured: both index the

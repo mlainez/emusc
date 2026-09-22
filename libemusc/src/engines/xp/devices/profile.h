@@ -426,11 +426,14 @@ struct XpDeviceProfile {
   uint8_t rhythmFirstKey;
   uint8_t rhythmKeyCount;
 
-  /* Field indices inside the patch-common group. */
+  /* Field indices inside the patch-common group. The octave shift is a
+     whole-patch transposition that adds to the tone's own coarse tune, and
+     is XP_VOICE_FIELD_NONE on a patch record that has no such field. */
   uint16_t patchFieldName;
   uint16_t patchFieldNameLength;
   uint16_t patchFieldLevel;
   uint16_t patchFieldPan;
+  uint16_t patchFieldOctaveShift;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive
