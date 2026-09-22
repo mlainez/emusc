@@ -91,7 +91,16 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .reverbAllpassPairA = 0x3000u,
   .reverbAllpassPairB = 0x1000u,
   .reverbAllpassG = 0.5f,
-  .reverbImage0Cram = 0x03F77Cu,
+  /* Boot image 2's CRAM, where the permanent chorus/reverb/output program's
+     coefficients are loaded from at power-on (`08_effects/dsp_program.md`,
+     the boot-image table). The value that was here, 0x03F77C, is inside the
+     PRAM-shaped band that same document lists as NOT YET ATTRIBUTED
+     (`U-R5-04`), so the eight tap gains were being read out of a smooth
+     monotonic ramp - 0.053, 0.046, 0.054, 0.018, ... - instead of off the
+     reverb's own coefficients, and every tap ran about 19 times too quiet.
+     Nothing caught it because those values pass the range check a gain has
+     to pass; only comparing the tail against the machine does. */
+  .reverbImage0Cram = 0x03FEBCu,
   .headWord = { 0u, 2u, 4u, 6u, 8u, 10u, 14u, 16u, 20u, 22u, 26u, 28u },
   .farWord = { 1u, 3u, 5u, 7u, 9u, 13u, 15u, 19u, 21u, 25u, 27u, 31u },
   .tapWord = { 11u, 17u, 23u, 29u, 12u, 18u, 24u, 30u },
