@@ -38,6 +38,15 @@ struct xp_reverb_character {
      is `y = -damp_pole*x + damp_input*y'`: the POSITIVE word is the pole
      and the negative one multiplies the input (`P-0360`). */
   float damp_input[2], damp_pole[2];
+  /* The record's own input one-pole, where the record carries one:
+     `y = input_in*x + input_pole*y'`. The two words sum to unity, so the
+     filter passes DC untouched and only shapes the top - 0.38196 + 0.61792
+     and 0.45093 + 0.54895 on the JV-1080's two filtered characters, and
+     0.99988 + 0, an exact bypass, on its other five. A record that carries
+     no such pair leaves both at zero and the device's pre-LPF PARAMETER
+     drives the input filter instead, which is how the SC-88 reaches the
+     same quantity. */
+  float input_in, input_pole;
   /* The record's 53rd word, word 52, which the loader writes to an XP
      control register rather than to coefficient or program memory: the
      character's own return trim. `load_effect_character` (0x1216b) ends
