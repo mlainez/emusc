@@ -108,7 +108,9 @@ void usage(void)
     "  xp_packed_probe patch <control.bin> <w1> <w2> <w3> <w4> "
     "<bank> <program> <key> <velocity> <seconds> <out.wav>\n"
     "  xp_packed_probe song <control.bin> <w1> <w2> <w3> <w4> "
-    "<song.mid> <seconds> <out.wav>\n");
+    "<song.mid> <seconds> <out.wav>\n"
+    "  xp_packed_probe perfparts <control.bin> <w1> <w2> <w3> <w4> "
+    "<song.mid>\n");
   std::exit(1);
 }
 
@@ -413,6 +415,88 @@ int main(int argc, char **argv)
     }
     WavWriter wav(outPath, (uint32_t)kRate, 2, true);
     wav.write(interleaved.data(), frames);
+    return 0;
+  }
+
+  /* What a song's own SysEx leaves in each performance PART record, decoded
+     by the engine's own applier rather than by a reading of the wire bytes:
+     the `01 00 1n xx` frames are the only place a part's sends can come
+     from, and a field read by eye off the payload is exactly the mistake
+     that made the coarse tunes look inert. */
+  if (mode == "perfparts") {
+    if (argc < 8)
+      usage();
+    std::vector<uint8_t> songBytes = read_file(argv[7]);
+    smf::File song = smf::parse(songBytes);
+    const unsigned kParts = 16u;
+    const unsigned kPartFields = 20u;
+    std::vector<std::vector<uint8_t>> part(
+      kParts, std::vector<uint8_t>(kPartFields, 0));
+    unsigned applied = 0;
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x01u || x[6] != 0x00u || (x[7] & 0xf0u) != 0x10u)
+        continue;
+      unsigned index = x[7] & 0x0fu;
+      unsigned within = x[8];
+      if (index >= kParts || within >= kPartFields)
+        continue;
+      packed_apply_wire_block(&rom, profile->packedPerformancePartGroup,
+                              within, x.data() + 9, x.size() - 11u,
+                              part[index].data(), kPartFields);
+      ++applied;
+    }
+    /* And the performance COMMON, where this device keeps the reverb and
+       chorus parameters themselves: a send means nothing if the return it
+       feeds is closed. */
+    const unsigned kCommonFields = 66u;
+    std::vector<uint8_t> common(kCommonFields, 0);
+    unsigned commonFrames = 0;
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x01u || x[6] != 0x00u || x[7] != 0x00u)
+        continue;
+      if (x[8] >= kCommonFields)
+        continue;
+      packed_apply_wire_block(&rom, profile->packedPerformanceCommonGroup,
+                              x[8], x.data() + 9, x.size() - 11u,
+                              common.data(), kCommonFields);
+      ++commonFrames;
+    }
+    std::printf("%u performance-common frames applied\n", commonFrames);
+    std::printf("  chorus  level %u rate %u depth %u predelay %u out %u\n",
+                common[0x22], common[0x23], common[0x24], common[0x25],
+                common[0x27]);
+    std::printf("  reverb  type %u level %u time %u hfdamp %u\n",
+                common[0x28], common[0x29], common[0x2a], common[0x2b]);
+    std::printf("  common fields 0x20..0x2f:");
+    for (unsigned f = 0x20; f < 0x30; ++f)
+      std::printf(" %u", common[f]);
+    std::printf("\n");
+    std::printf("%u performance-part frames applied\n", applied);
+    std::printf("part  chorusSend(%u)  reverbSend(%u)  all %u fields\n",
+                profile->partFieldChorusSend, profile->partFieldReverbSend,
+                kPartFields);
+    for (unsigned i = 0; i < kParts; ++i) {
+      std::printf("  %2u   %11u  %11u   ", i + 1u,
+                  profile->partFieldChorusSend < kPartFields
+                    ? part[i][profile->partFieldChorusSend] : 0u,
+                  profile->partFieldReverbSend < kPartFields
+                    ? part[i][profile->partFieldReverbSend] : 0u);
+      for (unsigned f = 0; f < kPartFields; ++f)
+        std::printf("%3u ", part[i][f]);
+      std::printf("\n");
+    }
     return 0;
   }
 
