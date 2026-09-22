@@ -177,13 +177,18 @@ public:
     // set_audio_format(), which is where the 16 parts are instantiated: called
     // before that, the resetParts loop has nothing to walk.
     //
-    // On this engine the reset is redundant at startup - Settings::reset()
+    // On a Sound Canvas the reset is redundant at startup - Settings::reset()
     // runs exactly the four _initialize_*/_apply_device_performance calls the
     // Settings constructor runs, so a freshly built Synth already holds the
     // same defaults, bank 0 program 0 on every part and Drum1 on part 10. It
     // is here because a real device resets at power-on regardless, and because
     // the same call has to be correct when Synth::_apply_midi_sysex reaches it
     // from a GS reset mid-song, where the parts are no longer fresh.
+    //
+    // On a device whose profile names a reset Performance (DeviceProfile's
+    // PerformanceLayout::resetSelector) it is not redundant: it is what takes
+    // the machine out of its layered boot Performance and onto the channels a
+    // multitimbral stream expects.
     new_synth->reset(SOUND_MAP, true);
 
     // Destroy the old Synth before its ControlRom/WaveRom, which it holds by
