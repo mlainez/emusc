@@ -563,6 +563,24 @@ struct XpDeviceProfile {
      use for this. */
   double voiceMixScale;
 
+  /* --- The insert effect's program bank -------------------------------
+     A device whose insert effect is a loadable DSP program keeps a bank of
+     fixed-stride slots - one program image then one coefficient image to a
+     slot - and a table mapping the effect TYPE onto a slot. Several types
+     share a slot, being the same program under different coefficients,
+     which is why the bank is smaller than the type list.
+
+     `efxBankBase` is zero on a device with no such bank, and then nothing
+     in `efx.cc` will read anything. `efxPointerBase` is the address the ROM
+     is mapped at, which the table's entries are written in and which is
+     subtracted to reach a file offset. */
+  uint32_t efxBankBase;
+  uint32_t efxSlotStride;
+  uint16_t efxSlotCount;
+  uint32_t efxTypeTable;
+  uint16_t efxTypeCount;
+  uint32_t efxPointerBase;
+
   /* Null on a device the shared firmware-port engine serves; see
      struct XpVoiceEngineOps above. */
   const struct XpVoiceEngineOps *voiceEngine;

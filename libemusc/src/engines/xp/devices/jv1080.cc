@@ -581,6 +581,23 @@ const struct XpDeviceProfile JV1080_PROFILE = {
 
   /* This device's voice path is its own, because it has to be - see
      jv1080_engine.cc and jv1080.h. */
+  /* THE INSERT EFFECT'S PROGRAM BANK. 32 slots at 0x0400BC on a 0x270
+     stride, each 104 u32 BE program words then 104 u16 BE coefficients -
+     0x1A0 + 0xD0 = 0x270, tiling the stride exactly - and the bank ends at
+     0x044EBC, which IS where the type table starts, to the byte. The table
+     is 46 rows of two pointers, indexed by the 0-based type; row 46 reads
+     0x7F7F7F7D, which is not an address, and ends it. All 46 rows resolve
+     to a slot base with the coefficient pointer exactly 0x1A0 above the
+     program one, they reach 31 distinct slots, and all 3328 program words
+     have top nibble zero - the 28 bits the RAM test implies
+     (`08_effects/dsp_program.md`, FW-EXACT). */
+  .efxBankBase = 0x0400BCu,
+  .efxSlotStride = 0x270u,
+  .efxSlotCount = 32u,
+  .efxTypeTable = 0x044EBCu,
+  .efxTypeCount = 46u,
+  .efxPointerBase = 0x0A000000u,
+
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };
 
