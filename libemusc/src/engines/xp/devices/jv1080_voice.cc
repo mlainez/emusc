@@ -661,6 +661,31 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     std::pow(2.0, (double)fine / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);
+  /* MEASURED, from the ROM against itself: the wave-element record's
+     `+0x0E` field is a SIGNED PITCH OFFSET of the recorded sample from its
+     own root key - neutral at 1024, one semitone per 1024 units - and
+     without it every instrument is detuned by its own amount.
+
+     `wave_metadata.md` carries this field as "fine tune, typical
+     0x03xx-0x06xx" with its units open (`U-R3-03`). They are recovered
+     here by measuring the ROM's own sample data: for each element, the
+     pitch of its loop region read at the wave ROM's 32 kHz against the
+     frequency its root key names. Over the 26 elements the first factory
+     song plays, 23 fit
+
+         cents = -(fine - 1024) * 100 / 1024
+
+     with a residual rms of 3.2 cents across a measured spread of 81 cents
+     peak to peak. The three that do not are the three whose pitch the
+     measurement cannot pin - `Orch. Hit`, which is a stab with no pitch,
+     `Rot.Org Fst`, whose second harmonic is louder than its fundamental,
+     and `EG Harm`, a guitar harmonic.
+
+     This is what "the instruments are out of tune" was: not a transpose,
+     which is why the whole mix still aligned with the hardware take to
+     0 cents, but every element sitting at its own offset - from -23 to
+     +48 cents in this song alone - so the parts disagree with each other. */
+  rootHz *= std::pow(2.0, -((double)element.fine_tune - 1024.0) / 1024.0 / 12.0);
   if (rootHz <= 0.0)
     return false;
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
