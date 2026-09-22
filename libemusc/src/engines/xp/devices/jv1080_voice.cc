@@ -765,6 +765,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     std::pow(2.0, (double)coarse / 12.0) *
     std::pow(2.0, (double)controls->key_shift / 12.0) *
     std::pow(2.0, (double)controls->patch_octave) *
+    std::pow(2.0, (double)controls->fine_tune / 1200.0) *
     std::pow(2.0, (double)fine / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);

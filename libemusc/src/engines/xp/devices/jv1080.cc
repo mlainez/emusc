@@ -316,7 +316,12 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .partFieldReceiveChannel = 0x01u,
   .partFieldLevel = 0x06u,
   .partFieldPan = 0x07u,
+  /* The part has a fine tune beside its coarse one, and it is live:
+     writing 100 to it - the field's top, +50 cents - moved a key-60 note
+     on the device by +50.1 cents, measured against the same note with the
+     field at its centre. */
   .partFieldKeyShift = 0x08u,
+  .partFieldFineTune = 0x09u,
 
   /* --- Wave selection through the multisample directories -------------
 

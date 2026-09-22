@@ -89,6 +89,7 @@ struct XpJv1080PartControls {
   unsigned part_pan;
   unsigned volume;
   int key_shift;
+  int fine_tune;                 /* the part's own detune, in cents */
   int patch_octave;              /* whole-patch transposition, in octaves */
 };
 

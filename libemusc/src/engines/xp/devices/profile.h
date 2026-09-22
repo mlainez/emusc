@@ -444,6 +444,7 @@ struct XpDeviceProfile {
   uint16_t partFieldLevel;
   uint16_t partFieldPan;
   uint16_t partFieldKeyShift;
+  uint16_t partFieldFineTune;    /* cents, XP_VOICE_FIELD_NONE where absent */
 
   /* --- Wave selection through the multisample directories -------------
      The chain a stored wave reference walks on a device whose wave ROM is
