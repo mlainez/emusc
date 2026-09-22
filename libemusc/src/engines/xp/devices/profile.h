@@ -46,6 +46,9 @@ inline constexpr unsigned XP_WAVE_BANK_COUNT = 8u;
 inline constexpr unsigned XP_MIDI_PORT_COUNT = 2u;
 inline constexpr unsigned XP_MATRIX_SOURCE_COUNT = 6u;
 inline constexpr unsigned XP_MATRIX_DEST_COUNT = 11u;
+/* A record part this device does not carry (see the reverb word indices). */
+inline constexpr uint8_t XP_REVERB_WORD_NONE = 0xffu;
+
 inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
 inline constexpr unsigned XP_REVERB_TAPS = 8u;
 inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
@@ -336,6 +339,30 @@ struct XpDeviceProfile {
   uint8_t tapWord[XP_REVERB_TAPS];
   uint8_t allpassBuffer[8];
   uint8_t tapInstruction[XP_REVERB_TAPS];
+
+  /* WHERE EACH PART OF A CHARACTER RECORD SITS, IN WORDS FROM ITS START.
+     The two devices carry the SAME record - eight allpass coefficient
+     pairs, two damping pairs, then twelve buffer heads, twelve far-end
+     reads and eight taps as thirty-two delay-memory addresses - and they
+     differ only in where those parts begin, so the loader reads offsets
+     rather than knowing them. A device whose record has no such part sets
+     XP_REVERB_WORD_NONE and the loader leaves that field at its default.
+
+     `reverbInputWord` is the one part the two do not share: a per-character
+     input one-pole, which the SC-88 does not carry in its record at all
+     (its pre-LPF comes from a parameter instead). */
+  uint8_t reverbCharacters;
+  uint8_t reverbRecordWords;
+  uint8_t reverbAllpassWord;
+  uint8_t reverbDampWord;
+  uint8_t reverbAddressWord;
+  uint8_t reverbTrimWord;
+  uint8_t reverbInputWord;
+  /* How the per-character pointer table is written. The SC-88 stores a u16
+     offset from `reverbPage`; a device storing whole pointers sets
+     `reverbPointerBytes` to 4 and `reverbPage` to the value its pointers
+     are relative to (0 where they are absolute ROM offsets). */
+  uint8_t reverbPointerBytes;
 
   uint32_t chorusMacroTable;
   double chorusMaxMs;

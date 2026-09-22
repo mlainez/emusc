@@ -233,6 +233,21 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .allpassBuffer = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u },
   /* PRAM indices of the eight taps in the single-module image. */
   .tapInstruction = { 131u, 133u, 135u, 137u, 139u, 141u, 143u, 145u },
+  /* This device's own record map, in words from the record's start: the
+     eight allpass coefficient pairs at 0, the two damping pairs at 16, the
+     thirty-two delay-memory addresses at 20, and the return trim at 52.
+     Ten characters of 53 words each, reached through a u16 offset from
+     `reverbPage`. There is no per-character input filter in the record -
+     the pre-LPF is a parameter on this device (`M-010`) - so that index is
+     absent. */
+  .reverbCharacters = 10u,
+  .reverbRecordWords = 53u,
+  .reverbAllpassWord = 0u,
+  .reverbDampWord = 16u,
+  .reverbAddressWord = 20u,
+  .reverbTrimWord = 52u,
+  .reverbInputWord = XP_REVERB_WORD_NONE,
+  .reverbPointerBytes = 2u,
 
   /* The eight macro presets, 8 bytes each, read by SC88-CTL handler
      0x3400 and by the power-on loader at 0x44a8. The reset image at ROM
