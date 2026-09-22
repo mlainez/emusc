@@ -46,9 +46,10 @@ private:
   };
   std::vector<struct Samples> _sampleSets;
 
-  // The SC-88's wave chips, verbatim and in the order given. Its engine
-  // descrambles them itself with its own scheme, so applying the Sound Canvas
-  // one here would corrupt them. Empty for every other device.
+  // An XP-family device's wave chips, verbatim and in the order given. Its
+  // engine descrambles them itself with that board's own scheme, so applying
+  // the Sound Canvas one here would corrupt them. Empty for every other
+  // device.
   std::vector<std::vector<uint8_t>> _rawChips;
 
   uint32_t _unscramble_address(uint32_t address,
