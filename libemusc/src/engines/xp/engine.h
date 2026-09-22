@@ -242,6 +242,15 @@ struct sc88_engine {
   uint8_t free_slot_head;
   uint8_t free_slot_tail;
   unsigned free_slot_count;
+  /* Indices of the currently allocated slots, always kept in ascending
+     order by engine_note_on (sorted insert) and freeSlot (shift-remove) -
+     the only two places that ever change slot::allocated. Ascending order
+     matters: the per-sample voice-mix loop walks this instead of every
+     slot in [0, max_voices), and it must visit slots in the same order
+     the old full scan did, since the frame's float accumulators are not
+     associative - a different summation order is a different result. */
+  uint8_t active_slots[XP_ENGINE_SLOT_COUNT];
+  unsigned active_slot_count;
   /* The real SC-88 is XP_ENGINE_SLOT_COUNT (64-voice polyphony); this
      can only lower that, never raise it, for hardware too slow to keep
      up with the real ceiling - see engine_set_max_voices. */

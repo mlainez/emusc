@@ -227,6 +227,14 @@ void freeSlot(struct sc88_engine *engine, uint8_t slotIndex, bool prepend)
   struct sc88_engine_slot *slot = engine->slots + slotIndex;
   if (!slot->allocated)
     return;
+  for (unsigned k = 0; k < engine->active_slot_count; ++k) {
+    if (engine->active_slots[k] == slotIndex) {
+      --engine->active_slot_count;
+      for (unsigned m = k; m < engine->active_slot_count; ++m)
+        engine->active_slots[m] = engine->active_slots[m + 1];
+      break;
+    }
+  }
   uint8_t noteIndex = slot->note;
   if (noteIndex < XP_ENGINE_NOTE_COUNT) {
     struct sc88_engine_note *note = engine->notes + noteIndex;
@@ -1136,6 +1144,15 @@ bool engine_note_on(struct sc88_engine *engine, uint8_t part,
     uint8_t slotIndex = popSlot(engine);
     struct sc88_engine_slot *slot = engine->slots + slotIndex;
     slot->allocated = true;
+    {
+      unsigned pos = engine->active_slot_count;
+      while (pos > 0 && engine->active_slots[pos - 1] > slotIndex) {
+        engine->active_slots[pos] = engine->active_slots[pos - 1];
+        --pos;
+      }
+      engine->active_slots[pos] = slotIndex;
+      ++engine->active_slot_count;
+    }
     slot->note = noteIndex;
     slot->serial = engine->next_serial++;
     slot->tvf_lfo_term = 0;
@@ -1306,16 +1323,23 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
       engine->scheduler_clocks / kXpControlPeriodClocks;
     const double staticGainProgress =
       sc88_static_gain_progress(periodFraction);
-    /* Slots at or past max_voices are never allocated (see
-       engine_set_max_voices), so this - the per-voice per-sample mix,
-       the most expensive loop in the engine - does strictly less work
-       when capped below the real hardware's 64, not just fewer voices
-       sounding. */
-    for (unsigned i = 0; i < engine->max_voices; ++i) {
-      struct sc88_engine_slot *slot = engine->slots + i;
+    /* Walks only the currently allocated slots (engine->active_slots,
+       kept in ascending order - see its declaration), instead of every
+       slot in [0, max_voices) as this - the per-voice per-sample mix,
+       the most expensive loop in the engine - once did: an idle slot no
+       longer costs a cache-line touch just to read its allocated flag,
+       regardless of how many of the max_voices ceiling are unused. A
+       freed slot's removal shifts the array down under activeIndex, so
+       the index is only advanced when this iteration's slot survives -
+       otherwise the slot that shift brought into this position is
+       examined next, exactly the one ascending-order scan would have
+       reached anyway. */
+    unsigned activeIndex = 0;
+    while (activeIndex < engine->active_slot_count) {
+      uint8_t slotIndex = engine->active_slots[activeIndex];
+      struct sc88_engine_slot *slot = engine->slots + slotIndex;
       float sample;
-      if (!slot->allocated)
-        continue;
+      bool freed = false;
       if (slot->component.active &&
           oscillator_next(&slot->component.oscillator, &sample)) {
         tapOsc += sample;
@@ -1376,8 +1400,11 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
         if (slot->component.oscillator.ended)
           slot->component.active = false;
       } else {
-        freeSlot(engine, (uint8_t)i, false);
+        freeSlot(engine, slotIndex, false);
+        freed = true;
       }
+      if (!freed)
+        ++activeIndex;
     }
     /* The voices the CPU has already handed their slots back. Nothing
        composes for them any more: the amplitude register runs down to the
