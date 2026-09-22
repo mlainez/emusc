@@ -645,6 +645,7 @@ void runScheduler(struct sc88_engine *engine)
     }
     (void)lfo_ramp_advance(&slot->component.lfo1.ramp, (uint8_t)(elapsed - 1u));
     (void)lfo_ramp_advance(&slot->component.lfo2.ramp, (uint8_t)(elapsed - 1u));
+    slot->lfo_amplitude_gain = lfoAmplitude(slot);
     if (slot->component.envelope.active)
       (void)tva_envelope_advance(&engine->renderer->rom,
                                   &slot->component.envelope, elapsed);
@@ -1148,6 +1149,7 @@ bool engine_note_on(struct sc88_engine *engine, uint8_t part,
       sharedLfoJoin(engine, voice.tone_offset,
                     slot->component.rom_component_offset, 2,
                     &slot->component.lfo2);
+    slot->lfo_amplitude_gain = lfoAmplitude(slot);
     /* `0x5f89`: the target is stored whether or not a glide starts, which
        is what makes the slot's own key the source for the next note. The
        glide runs only when the source differs from it (`0x5f8f`), the
@@ -1334,7 +1336,7 @@ void engine_render_with_send(struct sc88_engine *engine, float *stereo,
         tapTva += sample * staticGain * (envelopeGain / 131072.0f);
         float gained = sample * staticGain *
           (envelopeGain / 131072.0f) *
-          lfoAmplitude(slot) *
+          slot->lfo_amplitude_gain *
           engine->notes[slot->note].provisional_gain;
         tapLfo += gained;
         left += gained * (slot->component.left_gain_q15 / 32768.0f);

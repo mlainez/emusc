@@ -56,6 +56,11 @@ struct sc88_engine_slot {
      one that did not; a note opens at zero because the oscillators open
      with a cleared waveform word (`0x250d`, `0x257a`). */
   int16_t tvf_lfo_term;
+  /* lfoAmplitude(this)'s value, cached: its only inputs (lfo1/lfo2's
+     output and ramp fade, and the tva depths fixed at note-on) change at
+     most once per control period, in runScheduler - not once per sample,
+     where the per-voice mix loop reads this. */
+  float lfo_amplitude_gain;
 };
 
 /* A voice the CPU has taken the slot back from while it was still
