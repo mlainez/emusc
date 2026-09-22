@@ -132,6 +132,7 @@ set(XP_JV1080_SOURCES
   engines/xp/devices/jv1080.cc
   engines/xp/devices/jv1080_engine.cc
   engines/xp/devices/jv1080_voice.cc
+  engines/xp/chorus.cc
   engines/xp/packed_rom.cc
   engines/xp/reverb.cc
   engines/xp/wave.cc)

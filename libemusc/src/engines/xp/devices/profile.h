@@ -391,6 +391,18 @@ struct XpDeviceProfile {
      millisecond, against the factor of two a sine would put between its
      own early and late slopes. */
   uint8_t chorusModulator;
+  /* The tables a device drives its chorus from, zero where it has none.
+     `chorusRateAccumulator` is the modulus the rate table's entry is a
+     per-control-period increment on, so the modulation is
+     `table[rate] / accumulator / control period` hertz. `chorusDepthMaxMs`
+     is the peak-to-peak sweep at the top of the depth field, which the
+     depth table's own shape scales. */
+  uint32_t chorusPreDelayTable;
+  uint32_t chorusRateTable;
+  double chorusRateAccumulator;
+  uint32_t chorusDepthTable;
+  double chorusDepthMaxMs;
+  uint32_t chorusLevelTable;
 
   uint32_t pitchCurveCentre;
 
@@ -501,6 +513,7 @@ struct XpDeviceProfile {
      live one and a melodic tone's is inert, so a voice carries its part's
      at note-on. XP_VOICE_FIELD_NONE where a device has no such field. */
   uint16_t partFieldReverbSend;
+  uint16_t partFieldChorusSend;
   uint16_t partFieldFineTune;    /* cents, XP_VOICE_FIELD_NONE where absent */
 
   /* --- Wave selection through the multisample directories -------------

@@ -113,6 +113,54 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .reverbDampTable = 0x039700u,
   .reverbLevelTable = 0x03856Cu,
 
+  /* --- The chorus, as this device's own tables describe it -----------
+     MODULATOR: a rising triangle, measured (see profile.h). One-sided, so
+     the delay runs upward from the pre-delay and never below it - which is
+     what the pre-delay measurement itself shows, since a take with depth 0
+     sits exactly on the table's own value.
+
+     PRE-DELAY IS THE WHOLE NOMINAL DELAY. `0x038EC8`'s parameter-127 entry
+     is 3296 samples and `effects/chorus_pre_delay_127` measures the dry-to-
+     wet gap at 103.00 ms against the 103.000 that is at 32 kHz, so there is
+     no further fixed delay to add.
+
+     RATE: the table entry is a per-control-period increment on a 15-bit
+     accumulator, so the modulation is `table[rate] / 32768` cycles per
+     control period. Measured at four rates: 8, 24, 48 and 96 give 0.916,
+     2.563, 4.944 and 9.705 Hz against the law's 0.896, 2.499, 4.898 and
+     9.697 - within 2.6 % over a tenfold range, and within 0.9 % at the two
+     fastest, where the measurement has the most cycles to work with.
+
+     DEPTH: the peak-to-peak sweep, 12.1 ms at the top of the field from a
+     direct cepstral reading of the delay, scaled by the table's own shape.
+     Measured at four depths against four rates, the sweep is a function of
+     DEPTH ALONE - 1.69, 3.33, 6.65 and 9.38 ms at depths 32, 64, 96 and
+     127, varying by 2.4 to 4.8 % across a twelvefold range of rate.
+     THE TABLE'S IDENTITY IS NOT PINNED: three of the five unidentified
+     128-entry monotonic tables in the chorus handler's literal pool share
+     one shape and this is one of them, so what is used here is that shape
+     and not a claim about which table the firmware reads. Normalised, the
+     measured points are 0.180, 0.355, 0.709, 1.000 against the shape's
+     0.191, 0.418, 0.689, 1.000 - the top two within 3 %, the bottom two
+     low in the direction a measurement floor pushes, the depth-32 sweep
+     being only 5.3 cents of excursion where `M-043` found its own depth-0
+     reading of 1.5 cents to be that floor.
+
+     FEEDBACK IS NOT PLUMBED, for the same reason the reverb's is not: the
+     parameter's CRAM slot is not in the extracted tables and identifying
+     it needs the disassembly `U-R5-01`'s remaining half needs. The
+     recordings show it matters - feedback 127 sustains past 200 ms where 0
+     falls to the noise floor in 50 - so this is a known gap and not a
+     judgement that it does nothing. */
+  .chorusMaxMs = 128.0,
+  .chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP,
+  .chorusPreDelayTable = 0x038EC8u,
+  .chorusRateTable = 0x038B2Eu,
+  .chorusRateAccumulator = 32768.0,
+  .chorusDepthTable = 0x03856Cu,
+  .chorusDepthMaxMs = 12.1,
+  .chorusLevelTable = 0x03856Cu,
+
   .waveDescriptorSize = 0u,       /* waves are reached through the
                                      multisample chain below, not through
                                      one flat descriptor table */
@@ -389,6 +437,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      field at its centre. */
   .partFieldKeyShift = 0x08u,
   .partFieldReverbSend = 0x0du,
+  .partFieldChorusSend = 0x0cu,
   .partFieldFineTune = 0x09u,
 
   /* --- Wave selection through the multisample directories -------------
