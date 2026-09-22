@@ -52,6 +52,36 @@ const unsigned kReverbTypeField = 0x28u;
 const unsigned kReverbLevelField = 0x29u;
 const unsigned kReverbTimeField = 0x2au;
 const unsigned kReverbDampField = 0x2bu;
+/* REVERB TYPES 6 AND 7 ARE NOT TANKS. For them Reverb:Time is the DELAY
+   LENGTH rather than the decay, and it is patched straight into nine PRAM
+   ERAM address fields as `112*v + 0x2016` - the eight output taps plus
+   instruction 176 (`08_effects/reverb.md`, `FW-EXACT`). PAN-DLY splits the
+   nine into a five-tap left list and a four-tap right list and patches each
+   with its own value. The character record's own network is nearly empty on
+   these two, which is why reading it as a tank finds nothing to play.
+
+   The two values are MEASURED off `effects/reverb_type_pandly`: at Time 96
+   the repeat lags 10769 samples on the left and 5393 on the right, against
+   112*96 and 56*96, both long by exactly +17 - the same constant on both
+   sides, the block's own input-path latency. `0x2016` is the line's base,
+   so the delay is the patched address less that base.
+
+   The tap gains are the program's own: the five left taps carry +0.7505,
+   +1, +1, +1 and +0.0006 and the four right ones +1 each, so the right
+   return sits 0.56 dB above the left.
+
+   TYPE 6 IS DELIBERATELY NOT BUILT. On the machine it produces NO repeat at
+   all under the settings that make PAN-DLY loud - six seconds of flat noise
+   floor after the click against repeats at 168 and 336 ms - so building it
+   from this same law would invent audio the device does not make. Why the
+   two differ is not established. */
+const unsigned kReverbTypeDelay = 6u;
+const unsigned kReverbTypePanningDelay = 7u;
+const double kReverbDelaySlopeLeft = 112.0;
+const double kReverbDelaySlopeRight = 56.0;
+const double kReverbDelayLatency = 17.0;
+const double kReverbDelayTapSumLeft = 3.7511;
+const double kReverbDelayTapSumRight = 4.0;
 const unsigned kChorusLevelField = 0x22u;
 const unsigned kChorusRateField = 0x23u;
 const unsigned kChorusDepthField = 0x24u;
@@ -178,6 +208,15 @@ struct Engine {
   uint8_t reverb_character;
   struct xp_chorus chorus;
   bool chorus_ready;
+  /* The panning delay, which replaces the tank on reverb type 7. */
+  float *delay_buf;
+  size_t delay_len;
+  size_t delay_pos;
+  double delay_left;
+  double delay_right;
+  float delay_gain_left;
+  float delay_gain_right;
+  bool delay_ready;
 };
 
 /* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
@@ -381,6 +420,75 @@ void chorus_refresh(struct Engine *engine)
                       hz / engine->output_rate, 0.0f, level);
 }
 
+/* One tap of the delay line, read back a fractional number of samples. */
+float delay_tap(const struct Engine *engine, double back)
+{
+  if (back < 1.0)
+    back = 1.0;
+  if (back > (double)(engine->delay_len - 2u))
+    back = (double)(engine->delay_len - 2u);
+  double read = (double)engine->delay_pos - back;
+  while (read < 0.0)
+    read += (double)engine->delay_len;
+  size_t i0 = (size_t)read;
+  double frac = read - (double)i0;
+  size_t i1 = i0 + 1u >= engine->delay_len ? 0u : i0 + 1u;
+  return (float)((1.0 - frac) * engine->delay_buf[i0] +
+                  frac * engine->delay_buf[i1]);
+}
+
+void delay_process(struct Engine *engine, const float *send, float *stereo,
+                    size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    engine->delay_buf[engine->delay_pos] = send[k];
+    if (++engine->delay_pos >= engine->delay_len)
+      engine->delay_pos = 0;
+    stereo[k * 2u] += engine->delay_gain_left *
+      delay_tap(engine, engine->delay_left);
+    stereo[k * 2u + 1u] += engine->delay_gain_right *
+      delay_tap(engine, engine->delay_right);
+  }
+}
+
+/* The panning delay's own refresh: two taps on one line, from the same
+   Time parameter the tank reads as a decay. */
+void delay_refresh(struct Engine *engine)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  double scale = engine->output_rate / kXpNativeRate;
+  unsigned v = engine->common[kReverbTimeField];
+  if (v > 127u)
+    v = 127u;
+  if (!engine->delay_buf) {
+    double longest = (kReverbDelaySlopeLeft * 127.0 + kReverbDelayLatency) *
+      scale + 4.0;
+    engine->delay_len = (size_t)longest + 4u;
+    engine->delay_buf = (float *)std::calloc(engine->delay_len,
+                                              sizeof *engine->delay_buf);
+    if (!engine->delay_buf) {
+      engine->delay_len = 0;
+      return;
+    }
+    engine->delay_pos = 0;
+  }
+  engine->delay_left =
+    (kReverbDelaySlopeLeft * (double)v + kReverbDelayLatency) * scale;
+  engine->delay_right =
+    (kReverbDelaySlopeRight * (double)v + kReverbDelayLatency) * scale;
+  /* The same return the tank uses - this device's level table against a
+     512 full scale - carrying each side's own tap sum, and normalised the
+     way the tank's eight taps are. */
+  double level = table_unit(engine, profile->reverbLevelTable,
+                             engine->common[kReverbLevelField]);
+  double norm = std::sqrt((double)XP_REVERB_TAPS);
+  engine->delay_gain_left =
+    (float)(level * kReverbDelayTapSumLeft / norm);
+  engine->delay_gain_right =
+    (float)(level * kReverbDelayTapSumRight / norm);
+  engine->delay_ready = true;
+}
+
 void reverb_refresh(struct Engine *engine)
 {
   const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
@@ -389,6 +497,22 @@ void reverb_refresh(struct Engine *engine)
   unsigned type = engine->common[kReverbTypeField];
   if (type >= profile->reverbCharacters)
     type = 0u;
+  if (type == kReverbTypePanningDelay) {
+    if (engine->reverb_ready) {
+      reverb_destroy(&engine->reverb);
+      engine->reverb_ready = false;
+    }
+    delay_refresh(engine);
+    return;
+  }
+  engine->delay_ready = false;
+  if (type == kReverbTypeDelay) {
+    if (engine->reverb_ready) {
+      reverb_destroy(&engine->reverb);
+      engine->reverb_ready = false;
+    }
+    return;                      /* measured silent; see the note above */
+  }
   if (!engine->reverb_ready || type != engine->reverb_character) {
     if (engine->reverb_ready)
       reverb_destroy(&engine->reverb);
@@ -581,6 +705,7 @@ void engine_free(void *state)
     reverb_destroy(&engine->reverb);
   if (engine->chorus_ready)
     chorus_destroy(&engine->chorus);
+  std::free(engine->delay_buf);
   std::free(engine);
 }
 
@@ -601,6 +726,9 @@ void engine_reset(void *state)
     reverb_reset(&engine->reverb);
   if (engine->chorus_ready)
     chorus_reset(&engine->chorus);
+  if (engine->delay_buf)
+    std::memset(engine->delay_buf, 0,
+                engine->delay_len * sizeof *engine->delay_buf);
   dc_blocker_init(&engine->dc_left, engine->output_rate);
   dc_blocker_init(&engine->dc_right, engine->output_rate);
   engine->serial = 0;
@@ -915,7 +1043,10 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
       struct Voice *voice = engine->voices + i;
       if (!voice->allocated)
         continue;
-      if ((engine->reverb_ready && voice->reverb_send > 0.0f) ||
+      /* The reverb bus is live whichever shape the module has taken: the
+         tank on types 0..5, the panning delay on type 7. */
+      bool reverbLive = engine->reverb_ready || engine->delay_ready;
+      if ((reverbLive && voice->reverb_send > 0.0f) ||
           (engine->chorus_ready && voice->chorus_send > 0.0f)) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
@@ -966,6 +1097,8 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        sending, or a note's reverb would stop with the note. */
     if (engine->reverb_ready && (sending || engine->reverb.active))
       reverb_process(&engine->reverb, send, stereo + done * 2u, n);
+    else if (engine->delay_ready && engine->delay_buf)
+      delay_process(engine, send, stereo + done * 2u, n);
     done += n;
   }
 }
