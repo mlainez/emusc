@@ -79,8 +79,10 @@ void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
 
 float WaveOscillator::_fetch_sample(int index)
 {
+  // The clamp above is the real bounds guard; operator[] skips the redundant
+  // check .at() would otherwise repeat on every one of the 4 taps below.
   index = std::clamp(index, 0, (int) _pcmSamples->size() - 1);
-  return _pcmSamples->at(index);
+  return (*_pcmSamples)[index];
 }
 
 
