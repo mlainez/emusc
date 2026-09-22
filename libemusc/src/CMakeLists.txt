@@ -110,25 +110,25 @@ target_include_directories(emusc_static PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(emusc PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION} SOVERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 set_target_properties(emusc_static PROPERTIES CXX_EXTENSIONS OFF VERSION ${CMAKE_PROJECT_VERSION})
 
-# SC-88 specific debug/analysis tools. Distinct from the multi-device
+# XP-engine specific debug/analysis tools. Distinct from the multi-device
 # emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
-# public API, these link the sc88_* sources directly, because the values they
-# report are internal to the engine and no measurement of the rendered audio
-# can separate them.
-add_executable(sc88_tvf_probe ../tools/sc88_tvf_probe.cc
+# public API, these link the xp_* engine sources directly, because the
+# values they report are internal to the engine and no measurement of the
+# rendered audio can separate them.
+add_executable(xp_tvf_probe ../tools/xp_tvf_probe.cc
   engines/xp/devices/sc88.cc
   engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
-target_include_directories(sc88_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(xp_tvf_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
-  target_link_libraries(sc88_tvf_probe PRIVATE m)
+  target_link_libraries(xp_tvf_probe PRIVATE m)
 endif()
 
-add_executable(sc88_dump_samples ../tools/sc88_dump_samples.cc
+add_executable(xp_dump_samples ../tools/xp_dump_samples.cc
   engines/xp/devices/sc88.cc
   engines/xp/oscillator.cc engines/xp/rom.cc engines/xp/wave.cc)
-target_include_directories(sc88_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(xp_dump_samples PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT MSVC)
-  target_link_libraries(sc88_dump_samples PRIVATE m)
+  target_link_libraries(xp_dump_samples PRIVATE m)
 endif()
 
 if(BUILD_TESTING)
@@ -137,7 +137,7 @@ if(BUILD_TESTING)
   # suite that passes while testing nothing - and two of the eight went
   # further, freeing an engine that the stripped assertions never initialised.
   # -UNDEBUG is applied last, so it survives whatever the build type asks for.
-  set(SC88_VOICE_SOURCES
+  set(XP_VOICE_SOURCES
     engines/xp/devices/sc88.cc
     engines/xp/engine.cc engines/xp/lfo.cc engines/xp/oscillator.cc
     engines/xp/pan.cc engines/xp/pitch.cc
@@ -145,7 +145,7 @@ if(BUILD_TESTING)
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
     engines/xp/wave.cc)
 
-  function(sc88_test name)
+  function(xp_test name)
     add_executable(${name} ../tests/${name}.cc ${ARGN})
     target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(NOT MSVC)
@@ -159,51 +159,51 @@ if(BUILD_TESTING)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
 
-  sc88_test(sc88_wave_test engines/xp/devices/sc88.cc engines/xp/wave.cc)
-  sc88_test(sc88_oscillator_test engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
-  sc88_test(sc88_pan_test engines/xp/devices/sc88.cc engines/xp/pan.cc)
-  sc88_test(sc88_reverb_test engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_chorus_test engines/xp/devices/sc88.cc engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_delay_test engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_eq_test engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_output_test engines/xp/output.cc)
+  xp_test(xp_wave_test engines/xp/devices/sc88.cc engines/xp/wave.cc)
+  xp_test(xp_oscillator_test engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
+  xp_test(xp_pan_test engines/xp/devices/sc88.cc engines/xp/pan.cc)
+  xp_test(xp_reverb_test engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_chorus_test engines/xp/devices/sc88.cc engines/xp/chorus.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_delay_test engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_eq_test engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_output_test engines/xp/output.cc)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
   # while checking nothing. The path is read from SC88_CONTROL_ROM by the
   # test itself, at run time, so ctest's own environment carries it
   # whatever the tree was configured with.
-  set_property(TEST sc88_eq_test PROPERTY SKIP_RETURN_CODE 77)
-  sc88_test(sc88_drum_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_lfo_test engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_pitch_test engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
-  sc88_test(sc88_tvf_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
-  sc88_test(sc88_tva_test engines/xp/devices/sc88.cc engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
+  set_property(TEST xp_eq_test PROPERTY SKIP_RETURN_CODE 77)
+  xp_test(xp_drum_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_lfo_test engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_pitch_test engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc engines/xp/wave.cc)
+  xp_test(xp_tvf_test engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc engines/xp/wave.cc)
+  xp_test(xp_tva_test engines/xp/devices/sc88.cc engines/xp/tva.cc engines/xp/rom.cc engines/xp/wave.cc)
   # The interpolation word's identity is a property of the SC-88's own
   # curve and rate tables, so the sweep needs the ROM; without it the test
   # reports skipped rather than passing while checking only the layout.
   # The path is read from SC88_CONTROL_ROM by the test itself, at run time.
-  set_property(TEST sc88_tva_test PROPERTY SKIP_RETURN_CODE 77)
+  set_property(TEST xp_tva_test PROPERTY SKIP_RETURN_CODE 77)
   # The four that build a voice share one source list, so a new module is
   # wired in once instead of four times.
-  sc88_test(sc88_rom_test ${SC88_VOICE_SOURCES})
+  xp_test(xp_rom_test ${XP_VOICE_SOURCES})
   # Each also sweeps the held ROM(s) end to end (every melodic tone for
-  # sc88_rom_test; a real note-on and render for sc88_renderer_test and
+  # xp_rom_test; a real note-on and render for xp_renderer_test and
   # device_test), gated on the same environment variables as
-  # sc88_tva_test above; without them the sweep is skipped and only the
+  # xp_tva_test above; without them the sweep is skipped and only the
   # synthetic fixtures run.
-  set_property(TEST sc88_rom_test PROPERTY SKIP_RETURN_CODE 77)
-  sc88_test(sc88_renderer_test ${SC88_VOICE_SOURCES})
-  set_property(TEST sc88_renderer_test PROPERTY SKIP_RETURN_CODE 77)
-  sc88_test(sc88_engine_test ${SC88_VOICE_SOURCES})
+  set_property(TEST xp_rom_test PROPERTY SKIP_RETURN_CODE 77)
+  xp_test(xp_renderer_test ${XP_VOICE_SOURCES})
+  set_property(TEST xp_renderer_test PROPERTY SKIP_RETURN_CODE 77)
+  xp_test(xp_engine_test ${XP_VOICE_SOURCES})
 
   # EmuSC::Xp::Device and EmuSC::Xp::ChannelState (engines/xp/device.h) never
   # had a plain C compat struct or extern "C" shim layer - synth.cc was their
   # only caller outside this test, and it has always held them as an opaque
   # pointer - so device_test needs its own source list rather than
-  # SC88_VOICE_SOURCES plus sc88_test()'s single shared-name convention.
+  # XP_VOICE_SOURCES plus xp_test()'s single shared-name convention.
   add_executable(device_test ../tests/device_test.cc engines/xp/device.cc
     engines/xp/chorus.cc engines/xp/delay.cc engines/xp/eq.cc
-    engines/xp/output.cc ${SC88_VOICE_SOURCES})
+    engines/xp/output.cc ${XP_VOICE_SOURCES})
   target_include_directories(device_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   if(NOT MSVC)
     target_link_libraries(device_test PRIVATE m)
