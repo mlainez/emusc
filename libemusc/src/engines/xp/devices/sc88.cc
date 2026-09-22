@@ -249,6 +249,8 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .reverbInputWord = XP_REVERB_WORD_NONE,
   .reverbPointerBytes = 2u,
   .reverbPointerBase = 0u,
+  .reverbDampTable = 0u,
+  .reverbLevelTable = 0u,
 
   /* The eight macro presets, 8 bytes each, read by SC88-CTL handler
      0x3400 and by the power-on loader at 0x44a8. The reset image at ROM

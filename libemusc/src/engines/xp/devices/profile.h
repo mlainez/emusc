@@ -364,6 +364,13 @@ struct XpDeviceProfile {
      ROM is mapped at, which is subtracted to get a file offset. */
   uint8_t reverbPointerBytes;
   uint32_t reverbPointerBase;
+  /* Two tables a device may drive its reverb parameters through, zero
+     where it has neither. `reverbDampTable` is 18 rows of (a, 0x1FFF-a)
+     whose `a` is the one-pole coefficient of a lowpass at the row's own
+     corner (`M-064`, exact to the unit, row 17 the bypass);
+     `reverbLevelTable` is 128 monotonic words against 8192 = unity. */
+  uint32_t reverbDampTable;
+  uint32_t reverbLevelTable;
 
   uint32_t chorusMacroTable;
   double chorusMaxMs;
@@ -467,11 +474,16 @@ struct XpDeviceProfile {
      note goes and how loud it is. A part is addressed by its own receive
      channel rather than by its index, so two parts may share a channel and
      layer - which this device's factory songs rely on. */
+  uint8_t packedPerformanceCommonGroup;
   uint8_t packedPerformancePartGroup;
   uint16_t partFieldReceiveChannel;
   uint16_t partFieldLevel;
   uint16_t partFieldPan;
   uint16_t partFieldKeyShift;
+  /* The part's own reverb send. `M-039`/`M-052`: the PART's send is the
+     live one and a melodic tone's is inert, so a voice carries its part's
+     at note-on. XP_VOICE_FIELD_NONE where a device has no such field. */
+  uint16_t partFieldReverbSend;
   uint16_t partFieldFineTune;    /* cents, XP_VOICE_FIELD_NONE where absent */
 
   /* --- Wave selection through the multisample directories -------------

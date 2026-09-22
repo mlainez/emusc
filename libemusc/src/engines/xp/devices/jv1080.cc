@@ -110,6 +110,8 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .reverbInputWord = 0u,
   .reverbPointerBytes = 4u,
   .reverbPointerBase = 0x0A000000u,
+  .reverbDampTable = 0x039700u,
+  .reverbLevelTable = 0x03856Cu,
 
   .waveDescriptorSize = 0u,       /* waves are reached through the
                                      multisample chain below, not through
@@ -376,6 +378,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      nothing listens on channel 12 at all. Keying notes by part index
      instead silently plays the wrong patch for three of that song's
      fourteen channels. */
+  .packedPerformanceCommonGroup = 4u,
   .packedPerformancePartGroup = 5u,
   .partFieldReceiveChannel = 0x01u,
   .partFieldLevel = 0x06u,
@@ -385,6 +388,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      on the device by +50.1 cents, measured against the same note with the
      field at its centre. */
   .partFieldKeyShift = 0x08u,
+  .partFieldReverbSend = 0x0du,
   .partFieldFineTune = 0x09u,
 
   /* --- Wave selection through the multisample directories -------------

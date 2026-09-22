@@ -25,6 +25,8 @@
  *  wrongly.
  */
 #include "jv1080.h"
+#include "../reverb.h"
+#include "../common/constants.h"
 
 #include "../packed_rom.h"
 #include "../rom.h"
@@ -41,6 +43,15 @@ namespace {
    allows. Sixteen parts is this machine's, measured alongside its
    polyphony (`M-031`, `M-072`); the pool is capped by the engine's own
    slot ceiling so the two cannot disagree. */
+/* The performance common block, and the fields of it this engine reads:
+   the reverb block at 0x28..0x2C - type, level, time, HF damp, and a
+   feedback this engine does not plumb. */
+const unsigned kPerfCommonFields = 66u;
+const unsigned kReverbTypeField = 0x28u;
+const unsigned kReverbLevelField = 0x29u;
+const unsigned kReverbTimeField = 0x2au;
+const unsigned kReverbDampField = 0x2bu;
+
 const unsigned kParts = 16u;
 const unsigned kMaxVoices = XP_ENGINE_SLOT_COUNT;
 
@@ -90,6 +101,8 @@ struct Voice {
      another key of the same group stops this one, which is what a hi-hat
      pair does. */
   uint8_t mute_group;
+  /* This voice's share of the reverb send bus, from its part at note-on. */
+  float reverb_send;
   bool allocated;
   bool key_down;
 };
@@ -146,8 +159,16 @@ struct Engine {
   struct Voice voices[kMaxVoices];
   struct DcBlocker dc_left;
   struct DcBlocker dc_right;
+  /* The performance common block, which carries this device's reverb
+     parameters, and the reverb itself. */
+  uint8_t common[kPerfCommonFields];
+  struct xp_reverb reverb;
+  bool reverb_ready;
+  uint8_t reverb_character;
 };
 
+/* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
+   `M-052`), so a voice carries its part's send from note-on. */
 void free_voice(struct Voice *voice)
 {
   std::free(voice->pcm);
@@ -193,6 +214,113 @@ struct Voice *take_voice(struct Engine *engine)
   if (oldest)
     free_voice(oldest);
   return oldest;
+}
+
+/* THE JV-1080'S OWN REVERB PARAMETERS, against the shared reverb's fields.
+   Each one is this device's, read from its own tables:
+
+   TYPE picks the character record; this device has eight.
+
+   LEVEL indexes the CRAM-destined level table, 128 monotonic words against
+   8192 = unity. That is not the SC-88's linear 4*p: `M-045` measures tails
+   of -99.8, -65.0 and -57.0 dBFS at levels 0, 64 and 127, and the table's
+   own 0, 3424 and 8191 give 7.6 dB between the last two where a linear law
+   gives 6.0.
+
+   TIME reaches the tank's per-pass loop gain through a coefficient rather
+   than the SC-88's register - `48 * v / 8192`, capped at 0.7441 - which
+   `reverb.cc`'s own note on the decay register already records as this
+   device's form of the same quantity, applied once per tank half.
+
+   HF DAMP is `M-064`, exact to the unit: 18 rows of (a, 0x1FFF - a) where
+   the one-pole is `y = a*x + (1-a)*y'` with its -3 dB corner at the row's
+   own frequency, so the runtime's pole is 1 - a. Row 17 is BYPASS, and it
+   only reads as one under the shift-field law - `0x5000` decodes to unity
+   there and to 2.5 without it, which is a third witness for that half of
+   `U-R5-01` on top of the 33 coefficient images.
+
+   FEEDBACK is not plumbed: `M-045` measures only 3 dB across its whole
+   range (-46.8, -46.2, -43.8 dBFS at 0, 64, 127) and what it does to the
+   network is not recovered. */
+void reverb_apply_params(struct Engine *engine)
+{
+  if (!engine->reverb_ready)
+    return;
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  struct xp_reverb *rv = &engine->reverb;
+  const uint8_t *common = engine->common;
+  unsigned level = common[kReverbLevelField];
+  unsigned time = common[kReverbTimeField];
+  unsigned damp = common[kReverbDampField];
+
+  if (profile->reverbLevelTable && level < 128u) {
+    uint32_t a = profile->reverbLevelTable + 2u * level;
+    if (a + 2u <= engine->rom.size)
+      rv->level = (float)(((unsigned)engine->rom.bytes[a] << 8 |
+                            engine->rom.bytes[a + 1u]) / 8192.0);
+  }
+  double g = 48.0 * (double)(time > 127u ? 127u : time) / 8192.0;
+  if (g > 0.7441)
+    g = 0.7441;
+  if (g < 0.001)
+    g = 0.001;
+  unsigned samples[2] = { 0u, 0u };
+  for (unsigned h = 0; h < 2; ++h)
+    for (unsigned i = 0; i < XP_REVERB_HALF_BUFFERS; ++i) {
+      unsigned b = XP_REVERB_HALF_BUFFERS * (h + 1u) + i;
+      samples[h] += rv->far[b] - rv->head[b];
+    }
+  for (unsigned h = 0; h < 2; ++h)
+    rv->decay[h] = (float)g;
+  double seconds = rv->output_rate > 0.0
+    ? (double)(samples[0] + samples[1]) / rv->output_rate : 0.0;
+  rv->target_t60 = 3.0 * seconds / (2.0 * std::log10(1.0 / g));
+
+  float pole = 0.0f;
+  if (profile->reverbDampTable && damp < 18u) {
+    uint32_t a = profile->reverbDampTable + 4u * damp;
+    if (a + 2u <= engine->rom.size) {
+      uint16_t raw = (uint16_t)((unsigned)engine->rom.bytes[a] << 8 |
+                                 engine->rom.bytes[a + 1u]);
+      /* The same coefficient law the rest of this engine reads CRAM with,
+         credited where it is declared: a sign-extended 14-bit mantissa
+         scaled by the two-bit field above it, against 8192 = unity. */
+      int mantissa = raw & 0x3fff;
+      if (mantissa & 0x2000)
+        mantissa -= 0x4000;
+      double coeff = (double)mantissa *
+        (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
+      if (coeff > 0.0 && coeff < 1.0)
+        pole = (float)(1.0 - coeff);
+    }
+  }
+  rv->damp[0] = pole;
+  rv->damp[1] = pole;
+  /* The return path. This device has no per-character trim word - its
+     return is the 9-bit level register the level table feeds - so the
+     character returns unattenuated and `level` carries it. */
+  rv->trim = (float)rv->character.return_trim * 16.0f / 512.0f;
+  rv->wet_gain_left =
+    rv->level * rv->trim / std::sqrt((float)XP_REVERB_TAPS);
+  rv->wet_gain_right = rv->wet_gain_left;
+}
+
+void reverb_refresh(struct Engine *engine)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  if (!profile->reverbCharacters)
+    return;
+  unsigned type = engine->common[kReverbTypeField];
+  if (type >= profile->reverbCharacters)
+    type = 0u;
+  if (!engine->reverb_ready || type != engine->reverb_character) {
+    if (engine->reverb_ready)
+      reverb_destroy(&engine->reverb);
+    engine->reverb_ready = reverb_init(&engine->reverb, &engine->rom,
+                                        (uint8_t)type, engine->output_rate);
+    engine->reverb_character = (uint8_t)type;
+  }
+  reverb_apply_params(engine);
 }
 
 void part_controls(const struct Engine *engine, unsigned part,
@@ -245,6 +373,13 @@ bool start_record(struct Engine *engine, unsigned part,
   voice->capacity = samples;
   voice->serial = ++engine->serial;
   voice->part = (uint8_t)part;
+  voice->reverb_send = 0.0f;
+  {
+    const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
+    if (prof->partFieldReverbSend != XP_VOICE_FIELD_NONE)
+      voice->reverb_send =
+        (float)engine->parts[part].part[prof->partFieldReverbSend] / 127.0f;
+  }
   voice->key = (uint8_t)key;
   voice->mute_group = fields->muteGroup == XP_VOICE_FIELD_NONE
     ? 0u : bytes[fields->muteGroup];
@@ -362,6 +497,8 @@ void engine_free(void *state)
     return;
   for (unsigned i = 0; i < kMaxVoices; ++i)
     free_voice(engine->voices + i);
+  if (engine->reverb_ready)
+    reverb_destroy(&engine->reverb);
   std::free(engine);
 }
 
@@ -536,6 +673,18 @@ bool engine_sysex_block(void *state, const uint8_t *address,
                              kPartFields);
     return true;
   }
+  /* The temporary performance's common block, `01 00 00 xx`: this device
+     puts its reverb parameters there rather than in the patch. */
+  if (a1 == 0x01u && part == 0x00u && block == 0x00u) {
+    if (within >= kPerfCommonFields)
+      return false;
+    packed_apply_wire_block(&engine->rom,
+                             profile->packedPerformanceCommonGroup,
+                             within, data, count, engine->common,
+                             kPerfCommonFields);
+    reverb_refresh(engine);
+    return true;
+  }
   if (a1 == 0x03u)
     part = 0u;
   else if (a1 != 0x02u)
@@ -601,10 +750,19 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
     return;
   /* The caller's buffer is interleaved; the voice model writes into two
      planar spans, so the sum is built planar and interleaved once. A
-     block-sized scratch pair rather than a per-sample transpose. */
+     block-sized scratch pair rather than a per-sample transpose.
+
+     A voice that sends to the reverb is rendered into its own scratch pair
+     first, because the send bus needs that voice on its own: its share of
+     the bus is its PART's send, which is the live one on this device and
+     the tone's is inert (`M-039`, `M-052`). A voice with no send is summed
+     straight into the mix as before. */
   static const size_t kChunk = 512u;
   float left[kChunk];
   float right[kChunk];
+  float vl[kChunk];
+  float vr[kChunk];
+  float send[kChunk];
   size_t done = 0;
   while (done < frames) {
     size_t n = frames - done;
@@ -612,10 +770,26 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
       n = kChunk;
     std::memset(left, 0, n * sizeof *left);
     std::memset(right, 0, n * sizeof *right);
+    std::memset(send, 0, n * sizeof *send);
+    bool sending = false;
     for (unsigned i = 0; i < kMaxVoices; ++i) {
       struct Voice *voice = engine->voices + i;
       if (!voice->allocated)
         continue;
+      if (engine->reverb_ready && voice->reverb_send > 0.0f) {
+        std::memset(vl, 0, n * sizeof *vl);
+        std::memset(vr, 0, n * sizeof *vr);
+        if (!jv1080_voice_render(&voice->voice, vl, vr, n)) {
+          free_voice(voice);
+        }
+        for (size_t k = 0; k < n; ++k) {
+          left[k] += vl[k];
+          right[k] += vr[k];
+          send[k] += voice->reverb_send * 0.5f * (vl[k] + vr[k]);
+        }
+        sending = true;
+        continue;
+      }
       if (!jv1080_voice_render(&voice->voice, left, right, n))
         free_voice(voice);
     }
@@ -625,6 +799,11 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
       stereo[(done + k) * 2u + 1u] +=
         dc_blocker_step(&engine->dc_right, right[k]);
     }
+    /* The reverb adds its stereo return to the dry mix already in place.
+       It is stepped whenever it holds a tail, not only while something is
+       sending, or a note's reverb would stop with the note. */
+    if (engine->reverb_ready && (sending || engine->reverb.active))
+      reverb_process(&engine->reverb, send, stereo + done * 2u, n);
     done += n;
   }
 }

@@ -148,7 +148,7 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
       /* A device whose record carries no usable damping pair: the pair is
          a neutral default there and the damping arrives as a parameter
          instead, so the character itself passes the half through. */
-      out->damp_input[i] = 1.0f;
+      out->damp_input[i] = 0.0f;
       out->damp_pole[i] = 0.0f;
       continue;
     }
@@ -191,8 +191,11 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
   out->extent = (uint16_t)(hi - lo);
   /* word 52, the one value the loader writes to a control register: this
      character's own return trim. See the field's note in the header. */
+  /* 32 is this register's unity (its full scale is 512 and the trim is
+     scaled by 16), so a device whose record carries no trim word returns
+     its tank unattenuated and lets its level parameter do the work. */
   out->return_trim = profile->reverbTrimWord == XP_REVERB_WORD_NONE
-    ? 0u
+    ? 32u
     : be16(rec + 2u * profile->reverbTrimWord);
   return hi > lo;
 }

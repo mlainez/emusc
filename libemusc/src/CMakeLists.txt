@@ -133,6 +133,7 @@ set(XP_JV1080_SOURCES
   engines/xp/devices/jv1080_engine.cc
   engines/xp/devices/jv1080_voice.cc
   engines/xp/packed_rom.cc
+  engines/xp/reverb.cc
   engines/xp/wave.cc)
 
 # XP-engine specific debug/analysis tools. Distinct from the multi-device
