@@ -951,17 +951,31 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
        only happen if the recording carries linear interpolation's own
        error. */
     size_t i0 = (size_t)voice->position;
-    if (i0 + 1u >= voice->pcm_count) {
+    /* The loop's last sample is a valid read head position - its partner
+       for the interpolation is the loop's first sample, below - so only a
+       head genuinely past it has run off the end. */
+    bool atLoopEnd = voice->looping && i0 == voice->loop_last;
+    if (!atLoopEnd && i0 + 1u >= voice->pcm_count) {
       if (!voice->looping) {
         voice->active = false;   /* the element is played out */
         break;
       }
       i0 = voice->loop_first;
       voice->position = (double)i0;
+      atLoopEnd = false;
     }
     double frac = voice->position - (double)i0;
     double a = (double)voice->pcm[i0];
-    double b = (double)voice->pcm[i0 + 1u];
+    /* THE LOOP INCLUDES ITS LAST SAMPLE, so the point after it is the loop's
+       own first and not the one that happens to follow in memory. Reading
+       straight on there instead costs the loop a sample, which is a pitch
+       error of one part in the loop's length - inaudible on a long loop and
+       very audible on a short one. MEASURED: the internal `Sine` wave's
+       top zone loops 24 samples, and playing it 23 long put key 84 at
+       1092.32 Hz where the machine plays 1046.54, the nominal frequency -
+       73.6 cents sharp, against the 73.7 that 24/23 predicts. */
+    double b = atLoopEnd ? (double)voice->pcm[voice->loop_first]
+                         : (double)voice->pcm[i0 + 1u];
     double sample = (a + (b - a) * frac) / 8388608.0;   /* 24-bit full scale */
 
     /* The envelope, one segment at a time. The attack follows the measured
@@ -1031,9 +1045,10 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       }
     } else {
       voice->position += voice->increment;
-      if (voice->position >= (double)voice->loop_last) {
+      if (voice->position >= (double)voice->loop_last + 1.0) {
         if (voice->looping)
-          voice->position -= (double)(voice->loop_last - voice->loop_first);
+          voice->position -=
+            (double)(voice->loop_last - voice->loop_first + 1u);
         else if (voice->position + 1.0 >= (double)voice->pcm_count) {
           voice->active = false;
           break;
