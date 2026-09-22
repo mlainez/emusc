@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-struct sc88_pitch_envelope {
+struct xp_pitch_envelope {
   int16_t targets[4];
   uint16_t initial_phases[4];
   uint16_t increments[4];
@@ -43,7 +43,7 @@ struct sc88_pitch_envelope {
  * the static pitch word has to be recomposed from while the key moves, since
  * `0x6077` recomposes it from `0x19fc`/`0x197c` every control period rather
  * than offsetting a value latched at note-on. */
-struct sc88_portamento {
+struct xp_portamento {
   uint32_t current;             /* 16.16 MIDI key; 0x245a / 0x24da */
   uint32_t target;              /* 16.16 MIDI key; 0x255a */
   uint32_t rate;                /* the table entry, same unit per period */
@@ -56,7 +56,7 @@ struct sc88_portamento {
   bool ascending;               /* 0x177c bit 6 */
 };
 
-struct sc88_pitch_release {
+struct xp_pitch_release {
   int16_t destination;
   int16_t delta;
   int16_t current;
@@ -66,37 +66,6 @@ struct sc88_pitch_release {
   bool scale_enabled;
   bool active;
 };
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules and sc88_pitch_test.c, which read
- * these structs' fields directly). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time);
-void sc88_portamento_advance(struct sc88_portamento *portamento,
-                             unsigned elapsed_periods);
-bool sc88_pitch_envelope_prepare(const struct sc88_rom *rom,
-                                 const struct sc88_tone *tone,
-                                 const struct sc88_component *component,
-                                 uint8_t selector_key, uint8_t velocity,
-                                 struct sc88_pitch_envelope *envelope);
-bool sc88_pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
-                                 unsigned elapsed_periods);
-bool sc88_pitch_release_prepare(const struct sc88_rom *rom,
-                                const struct sc88_tone *tone,
-                                const struct sc88_component *component,
-                                uint8_t selector_key, uint16_t envelope_depth,
-                                struct sc88_pitch_release *release);
-bool sc88_pitch_release_activate(const struct sc88_rom *rom,
-                                 uint8_t hold1, bool continuous_hold,
-                                 bool keep_scale_at_zero,
-                                 bool sostenuto_retained,
-                                 struct sc88_pitch_release *release);
-bool sc88_pitch_release_advance(struct sc88_pitch_release *release,
-                                unsigned elapsed_periods);
-int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                                const struct sc88_pitch_release *release);
-uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
-                                 int16_t envelope_sum);
 
 #ifdef __cplusplus
 }
@@ -116,35 +85,35 @@ namespace EmuSC { namespace Xp {
  * `0x5fdf` test the time byte for zero first and take the no-glide exit, so
  * CC5 = 0 does not glide at all. This returns 0 there, which
  * `portamento_advance` treats as that same exit. */
-uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time);
+uint32_t portamento_rate(const struct xp_rom *rom, uint8_t time);
 
 /* One service of the glide, `0x5fd1..0x602d`, over `elapsedPeriods` control
  * periods. The device compares only the high words, which is the same test as
  * comparing the pair while the target's own fraction is zero - it always is,
  * a target being a whole key. */
-void portamento_advance(struct sc88_portamento *portamento,
+void portamento_advance(struct xp_portamento *portamento,
                          unsigned elapsedPeriods);
 
 /* The unresolved XP random readback is neutral (zero) in this entry point. */
-bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                             const struct sc88_component *component,
+bool pitch_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                             const struct xp_component *component,
                              uint8_t selectorKey, uint8_t velocity,
-                             struct sc88_pitch_envelope *envelope);
-bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
+                             struct xp_pitch_envelope *envelope);
+bool pitch_envelope_advance(struct xp_pitch_envelope *envelope,
                              unsigned elapsedPeriods);
-bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                            const struct sc88_component *component,
+bool pitch_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                            const struct xp_component *component,
                             uint8_t selectorKey, uint16_t envelopeDepth,
-                            struct sc88_pitch_release *release);
-bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
+                            struct xp_pitch_release *release);
+bool pitch_release_activate(const struct xp_rom *rom, uint8_t hold1,
                              bool continuousHold, bool keepScaleAtZero,
                              bool sostenutoRetained,
-                             struct sc88_pitch_release *release);
-bool pitch_release_advance(struct sc88_pitch_release *release,
+                             struct xp_pitch_release *release);
+bool pitch_release_advance(struct xp_pitch_release *release,
                             unsigned elapsedPeriods);
 
-int16_t pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                            const struct sc88_pitch_release *release);
+int16_t pitch_envelope_sum(const struct xp_pitch_envelope *envelope,
+                            const struct xp_pitch_release *release);
 
 /* The pitch word uploaded as the XP's current value: the static word plus
  * every signed contribution, with the envelope's own doubled, saturated to

@@ -2,6 +2,7 @@
 #ifndef EMUSC_XP_ROM_H
 #define EMUSC_XP_ROM_H
 
+#include "devices/sc88.h"
 #include "wave.h"
 
 #include <stdbool.h>
@@ -12,32 +13,33 @@
 extern "C" {
 #endif
 
-#define SC88_CONTROL_ROM_SIZE 0x80000u
-#define SC88_TONE_COMMON_SIZE 34u
-#define SC88_COMPONENT_SIZE 148u
-
-struct sc88_rom {
+struct xp_rom {
   const uint8_t *bytes;
   size_t size;
+  /* Set by rom_init() on success. Never read directly - use xp_profile()
+     (devices/sc88.h), which falls back to SC88_PROFILE when this is
+     null, including for the several tests that build a xp_rom by hand
+     without calling rom_init(). */
+  const struct XpDeviceProfile *profile;
 };
 
-struct sc88_tone {
+struct xp_tone {
   const uint8_t *common;
   uint32_t offset;
   uint8_t component_count;
 };
 
-struct sc88_component {
+struct xp_component {
   const uint8_t *bytes;
   uint32_t offset;
   uint32_t directory_offset;
 };
 
-struct sc88_zone_selection {
+struct xp_zone_selection {
   uint8_t boundary;
   uint16_t static_attenuation;
   uint32_t descriptor_offset;
-  struct sc88_wave_descriptor descriptor;
+  struct xp_wave_descriptor descriptor;
 };
 
 /* The tone map, which selects the kit set a rhythm part's program indexes
@@ -46,7 +48,7 @@ struct sc88_zone_selection {
  * SC-88 - the part image the firmware copies at reset begins `00 02`
  * (`131f4`), and SC88-OM printed 7-31 gives `40 4x 01` the same default.
  * It is NOT the Use For Rhythm Part setting, which selects a drum setup
- * and is a different axis; see `sc88_engine_part`.
+ * and is a different axis; see `xp_engine_part`.
  *
  * Both lookups take it, and the firmware resolves it once for both: the
  * melodic selector `2d3e` and the drum selector `2e7a` share the five
@@ -54,14 +56,14 @@ struct sc88_zone_selection {
  * take the low byte if that goes negative and the high byte otherwise,
  * refuse anything at 2 or above - so map 1 is as reachable melodically as
  * it is rhythmically, over CC32 or `40 4x 00`/`40 4x 01`. */
-#define SC88_TONE_MAP_SC55 1u
-#define SC88_TONE_MAP_SC88 2u
+#define XP_TONE_MAP_SC55 1u
+#define XP_TONE_MAP_SC88 2u
 
 /* A rhythm part's note. Every field is a per-note byte from the kit record,
  * whose structure is verified against the ROM: twenty-four BE24 pointers at
  * 0x2b550 all equal 0x23c30 + index * 0x50c, and all twenty-four names at
  * +0x500 match the documented kit list. */
-struct sc88_drum_note {
+struct xp_drum_note {
   uint32_t tone_offset;          /* kit + note * 3; zero means an empty slot */
   uint8_t play_note;             /* +0x180, the key the tone is played at */
   uint8_t level;                 /* +0x200 */
@@ -72,40 +74,10 @@ struct sc88_drum_note {
   uint8_t flags;                 /* +0x480, receive and exclusivity bits */
 };
 
-#define SC88_DRUM_FIELDS 10u
-struct sc88_drum_overlay {
-  uint8_t value[2][SC88_DRUM_FIELDS][128];
-  uint8_t present[2][SC88_DRUM_FIELDS][128];
+struct xp_drum_overlay {
+  uint8_t value[2][XP_DRUM_FIELDS][128];
+  uint8_t present[2][XP_DRUM_FIELDS][128];
 };
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (sibling engines/xp/*.c modules, and the sc88_*_test.c fixtures
- * that exercise this exact ABI). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size);
-bool sc88_rom_select_drum(const struct sc88_rom *rom, uint8_t map,
-                          uint8_t program, uint32_t *kit_offset);
-bool sc88_rom_open_drum_note_overlaid(
-  const struct sc88_rom *rom, uint32_t kit_offset, uint8_t note,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *out);
-bool sc88_rom_open_drum_note(const struct sc88_rom *rom, uint32_t kit_offset,
-                             uint8_t note, struct sc88_drum_note *out);
-bool sc88_rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
-                             uint8_t variation, uint8_t program,
-                             uint32_t *tone_offset);
-bool sc88_rom_open_tone(const struct sc88_rom *rom, uint32_t tone_offset,
-                        struct sc88_tone *tone);
-bool sc88_rom_open_component(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone, unsigned index,
-                             struct sc88_component *component);
-bool sc88_rom_component_sounds(const struct sc88_component *component,
-                               uint8_t velocity);
-bool sc88_rom_select_zone(const struct sc88_rom *rom,
-                          const struct sc88_component *component,
-                          uint8_t selector_key,
-                          struct sc88_zone_selection *selection);
-void sc88_rom_tone_name(const struct sc88_tone *tone, char name[13]);
 
 #ifdef __cplusplus
 }
@@ -116,16 +88,16 @@ namespace EmuSC { namespace Xp {
 // is SC-88-shaped rather than generically XP-shaped: it is the only
 // Class-X member whose ROM layout is currently mapped here). The plain C
 // types above are shared, unrenamed, with device_test.cc and
-// sc88_rom_test.c, which read them directly.
+// xp_rom_test.c, which read them directly.
 
 /* The offsets in this view are for the held SC-88 control ROM v1.01. The
  * ROM memory remains owned by the caller and must outlive the view. */
-bool rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size);
+bool rom_init(struct xp_rom *rom, const uint8_t *bytes, size_t size);
 
 /* SC-88 native map (the firmware's map 2), GS variation/CC0 and zero-based
  * program. Null lookup entries return false; fallback policy is stateful
  * and deliberately belongs above this immutable ROM layer. */
-bool rom_select_drum(const struct sc88_rom *rom, uint8_t map,
+bool rom_select_drum(const struct xp_rom *rom, uint8_t map,
                       uint8_t program, uint32_t *kitOffset);
 
 /* A song may override any kit note's own parameters over SysEx, at
@@ -135,25 +107,25 @@ bool rom_select_drum(const struct sc88_rom *rom, uint8_t map,
  * clears them, as the firmware does. `setup` is the drum setup the part
  * is using, 1 or 2; `overlay`/`setup` may be null/zero to read only ROM. */
 bool rom_open_drum_note_overlaid(
-  const struct sc88_rom *rom, uint32_t kitOffset, uint8_t note,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *out);
-bool rom_open_drum_note(const struct sc88_rom *rom, uint32_t kitOffset,
-                         uint8_t note, struct sc88_drum_note *out);
+  const struct xp_rom *rom, uint32_t kitOffset, uint8_t note,
+  const struct xp_drum_overlay *overlay, uint8_t setup,
+  struct xp_drum_note *out);
+bool rom_open_drum_note(const struct xp_rom *rom, uint32_t kitOffset,
+                         uint8_t note, struct xp_drum_note *out);
 
-/* `map` is `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`, the row of the
+/* `map` is `XP_TONE_MAP_SC55` or `XP_TONE_MAP_SC88`, the row of the
  * lookup at `0x2fc00` the variation indexes. The two rows hold different
  * banks: the SC-55 row's fifteen physical banks are 0..14 and the SC-88
  * row's twenty-two are 15..36, so 259 of the 677 melodic tones - the
  * CM-64/CM-32L banks at variations 126 and 127 among them - exist on the
  * SC-55 row alone. */
-bool rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
+bool rom_select_melodic(const struct xp_rom *rom, uint8_t map,
                          uint8_t variation, uint8_t program,
                          uint32_t *toneOffset);
-bool rom_open_tone(const struct sc88_rom *rom, uint32_t toneOffset,
-                    struct sc88_tone *tone);
-bool rom_open_component(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                         unsigned index, struct sc88_component *component);
+bool rom_open_tone(const struct xp_rom *rom, uint32_t toneOffset,
+                    struct xp_tone *tone);
+bool rom_open_component(const struct xp_rom *rom, const struct xp_tone *tone,
+                         unsigned index, struct xp_component *component);
 
 /* A component sounds only inside its own velocity range, bytes +6c and
  * +6d, both bounds inclusive. The two are a matched pair: +70, the factor
@@ -168,17 +140,17 @@ bool rom_open_component(const struct sc88_rom *rom, const struct sc88_tone *tone
  * same bytes, and the measurement behind it is this same tone at this
  * same boundary (`Funk Gt.2` switches partials between velocity 115 and
  * 116). */
-bool rom_component_sounds(const struct sc88_component *component,
+bool rom_component_sounds(const struct xp_component *component,
                            uint8_t velocity);
 
 /* `selectorKey` is the firmware's already transformed 0..127 directory
  * key, not necessarily the raw MIDI key. The first boundary >= it wins. */
-bool rom_select_zone(const struct sc88_rom *rom,
-                      const struct sc88_component *component,
+bool rom_select_zone(const struct xp_rom *rom,
+                      const struct xp_component *component,
                       uint8_t selectorKey,
-                      struct sc88_zone_selection *selection);
+                      struct xp_zone_selection *selection);
 
-void rom_tone_name(const struct sc88_tone *tone, char name[13]);
+void rom_tone_name(const struct xp_tone *tone, char name[13]);
 
 }}  // namespace EmuSC::Xp
 #endif

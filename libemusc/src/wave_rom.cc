@@ -18,12 +18,11 @@
 
 
 #include "wave_rom.h"
+#include "bin_file.h"
 
 #include <algorithm>
 
 #include <cmath>
-#include <fstream>
-#include <iostream>
 
 
 namespace EmuSC {
@@ -41,23 +40,22 @@ WaveRom::WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom)
   // sample-set extraction that follows it applies.
   if (ctrlRom.generation() == ControlRom::SynthGen::SC88) {
     for (auto &rp : romPath) {
-      std::ifstream f(rp, std::ios::binary | std::ios::in);
+      BinFile f(rp, "rb");
       if (!f.is_open())
         throw(std::string("Unable to open wave ROM file: ") + rp);
-      _rawChips.emplace_back((std::istreambuf_iterator<char>(f)),
-                             std::istreambuf_iterator<char>());
+      std::vector<char> raw = f.read_all();
+      _rawChips.emplace_back(raw.begin(), raw.end());
     }
     return;
   }
 
   for (auto rp : romPath) {
-    std::ifstream romFile(rp, std::ios::binary | std::ios::in);
+    BinFile romFile(rp, "rb");
     if (!romFile.is_open()) {
       throw(std::string("Unable to open wave ROM file: ") + rp);
     }
 
-    std::vector<char> encBuf((std::istreambuf_iterator<char>(romFile)),
-			     std::istreambuf_iterator<char>());
+    std::vector<char> encBuf(romFile.read_all());
 
     if (encBuf.size() % 0x100000)
       throw (std::string("Incorrect file size of Wave ROM file ") + rp +
@@ -78,12 +76,6 @@ WaveRom::WaveRom(std::vector<std::string> romPath, ControlRom &ctrlRom)
     romFile.close();
   }
 
-  // Debug: Dump complete decrypted ROM to file
-  if (0) {
-    std::ofstream dump("/tmp/wave_rom.bin", std::ios::binary);
-    dump.write(&romData[0], romData.size());
-    dump.close();
-  }
 
   // Read through the entire memory and extract sample sets
   _sampleSets.reserve(ctrlRom.numSampleSets());

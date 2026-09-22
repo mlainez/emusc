@@ -2,6 +2,9 @@
 #include "chorus.h"
 #include "reverb.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -10,34 +13,16 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* The delay memory counts in samples at 32 kHz, the rate the sound chip
-   runs its lines at, so every recovered length is converted from that. */
-/* The eight macro presets, 8 bytes each, read by SC88-CTL handler 0x3400 and
- * by the power-on loader at 0x44a8. The reset image at ROM 0x13104 carries
- * macro 2 and that macro's own eight bytes, which are the manual's printed
- * chorus defaults byte for byte. */
-constexpr uint32_t kChorusMacroTable = 0x1587eu;
-constexpr double kChorusNativeRate = 32000.0;
-/* The voice-control task wakes every 8.0008 ms (`M-006`), which is the
-   period the rate register is added over. */
-constexpr double kChorusPeriod = 0.0080008;
-/* `3*p` reaches 381 samples and the sweep is added on top, so the line is
-   sized for the longest delay the register can ask for plus the deepest
-   sweep, with a margin for interpolation. */
-constexpr double kChorusMaxMs = 64.0;
-
-constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
-
 /* The XP coefficient law (`08_effects/xp_coefficients.md`). */
 double xp(uint16_t raw)
 {
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (double)value * (double)(1u << kShift[raw >> 14]) / 8192.0;
+  return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
-float tap(const struct sc88_chorus *ch, double back)
+float tap(const struct xp_chorus *ch, double back)
 {
   if (back < 1.0)
     back = 1.0;
@@ -54,12 +39,15 @@ float tap(const struct sc88_chorus *ch, double back)
 
 }  // namespace
 
-bool chorus_init(struct sc88_chorus *ch, double outputRate)
+bool chorus_init(struct xp_chorus *ch, double outputRate,
+                  const struct XpDeviceProfile *profile)
 {
   if (!ch || outputRate < 8000.0 || outputRate > 192000.0)
     return false;
+  if (!profile)
+    profile = &SC88_PROFILE;
   std::memset(ch, 0, sizeof *ch);
-  ch->len = (size_t)(kChorusMaxMs * outputRate / 1000.0) + 4u;
+  ch->len = (size_t)(profile->chorusMaxMs * outputRate / 1000.0) + 4u;
   ch->buf = (float *)std::calloc(ch->len, sizeof *ch->buf);
   if (!ch->buf)
     return false;
@@ -72,7 +60,7 @@ bool chorus_init(struct sc88_chorus *ch, double outputRate)
   return true;
 }
 
-void chorus_destroy(struct sc88_chorus *ch)
+void chorus_destroy(struct xp_chorus *ch)
 {
   if (!ch)
     return;
@@ -80,7 +68,7 @@ void chorus_destroy(struct sc88_chorus *ch)
   std::memset(ch, 0, sizeof *ch);
 }
 
-void chorus_reset(struct sc88_chorus *ch)
+void chorus_reset(struct xp_chorus *ch)
 {
   if (!ch || !ch->buf)
     return;
@@ -92,11 +80,11 @@ void chorus_reset(struct sc88_chorus *ch)
   ch->fb_state_r = 0.0f;
 }
 
-bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8])
+bool chorus_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[8])
 {
   if (!rom || !rom->bytes || !out || macro > 7)
     return false;
-  uint32_t base = kChorusMacroTable + (uint32_t)macro * 8u;
+  uint32_t base = xp_profile(rom)->chorusMacroTable + (uint32_t)macro * 8u;
   if (base + 8u > rom->size)
     return false;
   for (unsigned i = 0; i < 8; ++i)
@@ -104,14 +92,14 @@ bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8])
   return true;
 }
 
-void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
+void chorus_set_params(const struct xp_rom *rom, struct xp_chorus *ch,
                         uint8_t level, uint8_t feedback, uint8_t delay,
                         uint8_t rate, uint8_t depth, uint8_t preLpf)
 {
   (void)rom;
   if (!ch)
     return;
-  double scale = ch->output_rate / kChorusNativeRate;
+  double scale = ch->output_rate / kXpNativeRate;
 
   float fb, in;
   if (reverb_pre_lpf(preLpf > 7 ? 7 : preLpf, &fb, &in)) {
@@ -129,7 +117,7 @@ void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
      which puts GS's default rate of 3 at 0.37 Hz and the top of the range
      at 15.5 Hz. */
   ch->phase_step = 64.0 * (double)(rate > 127 ? 127 : rate) / 65536.0 /
-    kChorusPeriod / ch->output_rate;
+    kXpControlPeriodSeconds / ch->output_rate;
 
   /* The register the firmware forms is exact; its unit is not. Read as
      delay-memory samples it would sweep 25 ms at GS's default depth of
@@ -143,7 +131,7 @@ void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
     ch->depth_samples = ch->delay_samples;
 }
 
-void chorus_process(struct sc88_chorus *ch, const float *send, float *stereo,
+void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
                      size_t frames)
 {
   if (!ch || !ch->active || !ch->buf || !send || !stereo)
@@ -171,44 +159,3 @@ void chorus_process(struct sc88_chorus *ch, const float *send, float *stereo,
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_chorus_macro(const struct sc88_rom *rom, uint8_t macro,
-                       uint8_t out[8])
-{
-  return EmuSC::Xp::chorus_macro(rom, macro, out);
-}
-
-bool sc88_chorus_init(struct sc88_chorus *ch, double output_rate)
-{
-  return EmuSC::Xp::chorus_init(ch, output_rate);
-}
-
-void sc88_chorus_destroy(struct sc88_chorus *ch)
-{
-  EmuSC::Xp::chorus_destroy(ch);
-}
-
-void sc88_chorus_reset(struct sc88_chorus *ch)
-{
-  EmuSC::Xp::chorus_reset(ch);
-}
-
-void sc88_chorus_set_params(const struct sc88_rom *rom,
-                            struct sc88_chorus *ch, uint8_t level,
-                            uint8_t feedback, uint8_t delay, uint8_t rate,
-                            uint8_t depth, uint8_t pre_lpf)
-{
-  EmuSC::Xp::chorus_set_params(rom, ch, level, feedback, delay, rate, depth,
-                                pre_lpf);
-}
-
-void sc88_chorus_process(struct sc88_chorus *ch, const float *send,
-                         float *stereo, size_t frames)
-{
-  EmuSC::Xp::chorus_process(ch, send, stereo, frames);
-}
-
-}  // extern "C"

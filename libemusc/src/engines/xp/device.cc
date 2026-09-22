@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "device.h"
 
+#include "devices/sc88.h"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -8,15 +10,11 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-constexpr uint8_t kSelectors[SC88_WAVE_BANK_COUNT] = {
-  0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
-};
-
 void syncPart(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tva_levels levels;
-  struct sc88_pan_controls pan;
+  struct xp_tva_levels levels;
+  struct xp_pan_controls pan;
   levels.master = device->master_volume;
   levels.secondary = device->secondary_level;
   levels.part = channel->volume;
@@ -64,7 +62,7 @@ bool loadChorusMacro(Device *device, uint8_t macro)
 void syncLfo(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_lfo_controls controls;
+  struct xp_lfo_controls controls;
   controls.rate = channel->vibrato_rate;
   controls.delay = channel->vibrato_delay;
   controls.depth = channel->vibrato_depth;
@@ -137,53 +135,60 @@ bool blockPart(uint8_t block, uint8_t port, uint8_t *part);
 
 bool initCommon(Device *device, const uint8_t *controlRom,
                  size_t controlRomSize,
-                 const uint8_t *const chips[SC88_WAVE_CHIP_COUNT],
-                 const size_t sizes[SC88_WAVE_CHIP_COUNT], double outputRate,
-                 enum sc88_fractional_wrap wrap, bool raw)
+                 const uint8_t *const chips[XP_WAVE_CHIP_COUNT],
+                 const size_t sizes[XP_WAVE_CHIP_COUNT], double outputRate,
+                 enum xp_fractional_wrap wrap, bool raw)
 {
   if (!device || !controlRom || !chips || !sizes ||
-      controlRomSize != SC88_CONTROL_ROM_SIZE)
+      controlRomSize != XP_CONTROL_ROM_SIZE)
     return false;
+  /* Identifies the device before anything below needs its profile - the
+     real identification rom_init() does; renderer_init() below repeats
+     it on the same bytes once device->control_rom exists, harmlessly. */
+  struct xp_rom identifyRom;
+  if (!rom_init(&identifyRom, controlRom, controlRomSize))
+    return false;
+  const struct XpDeviceProfile *profile = xp_profile(&identifyRom);
   std::memset(device, 0, sizeof *device);
-  device->control_rom = (uint8_t *)std::malloc(SC88_CONTROL_ROM_SIZE);
+  device->control_rom = (uint8_t *)std::malloc(XP_CONTROL_ROM_SIZE);
   if (!device->control_rom)
     goto fail;
-  std::memcpy(device->control_rom, controlRom, SC88_CONTROL_ROM_SIZE);
-  for (unsigned chip = 0; chip < SC88_WAVE_CHIP_COUNT; ++chip) {
-    if (!chips[chip] || sizes[chip] != SC88_WAVE_CHIP_SIZE)
+  std::memcpy(device->control_rom, controlRom, XP_CONTROL_ROM_SIZE);
+  for (unsigned chip = 0; chip < XP_WAVE_CHIP_COUNT; ++chip) {
+    if (!chips[chip] || sizes[chip] != profile->waveChipSize)
       goto fail;
-    device->decoded_chips[chip] = (uint8_t *)std::malloc(SC88_WAVE_CHIP_SIZE);
+    device->decoded_chips[chip] = (uint8_t *)std::malloc(profile->waveChipSize);
     if (!device->decoded_chips[chip])
       goto fail;
     if (raw) {
-      if (!wave_descramble_chip(chips[chip], sizes[chip],
+      if (!wave_descramble_chip(profile, chips[chip], sizes[chip],
                                 device->decoded_chips[chip],
-                                SC88_WAVE_CHIP_SIZE))
+                                profile->waveChipSize))
         goto fail;
     } else {
       std::memcpy(device->decoded_chips[chip], chips[chip],
-                  SC88_WAVE_CHIP_SIZE);
+                  profile->waveChipSize);
     }
-    device->banks[chip * 2].selector = kSelectors[chip * 2];
+    device->banks[chip * 2].selector = profile->selectors[chip * 2];
     device->banks[chip * 2].bytes = device->decoded_chips[chip];
-    device->banks[chip * 2].size = SC88_WAVE_BANK_SIZE;
-    device->banks[chip * 2 + 1].selector = kSelectors[chip * 2 + 1];
+    device->banks[chip * 2].size = profile->waveBankSize;
+    device->banks[chip * 2 + 1].selector = profile->selectors[chip * 2 + 1];
     device->banks[chip * 2 + 1].bytes =
-      device->decoded_chips[chip] + SC88_WAVE_BANK_SIZE;
-    device->banks[chip * 2 + 1].size = SC88_WAVE_BANK_SIZE;
+      device->decoded_chips[chip] + profile->waveBankSize;
+    device->banks[chip * 2 + 1].size = profile->waveBankSize;
   }
   if (!renderer_init(&device->renderer, device->control_rom,
-                      SC88_CONTROL_ROM_SIZE, device->banks,
-                      SC88_WAVE_BANK_COUNT, outputRate, wrap))
+                      XP_CONTROL_ROM_SIZE, device->banks,
+                      XP_WAVE_BANK_COUNT, outputRate, wrap))
     goto fail;
   device->output_rate = outputRate;
   output_init(&device->output, outputRate);
   renderer_set_tvf_audio_transfer(&device->renderer,
                                    tvf_audio_process_provisional,
                                    &device->output_rate);
-  if (!chorus_init(&device->chorus, outputRate))
+  if (!chorus_init(&device->chorus, outputRate, profile))
     goto fail;
-  if (!delay_init(&device->delay, outputRate))
+  if (!delay_init(&device->delay, outputRate, profile))
     goto fail;
   eq_init(&device->eq);
   if (!engine_init(&device->engine, &device->renderer))
@@ -197,8 +202,8 @@ bool initCommon(Device *device, const uint8_t *controlRom,
   device->initialized = true;
   /* The selected tone map is set here and not in the reset, because it is
      the one part parameter a GS Reset leaves alone. */
-  for (unsigned part = 0; part < SC88_ENGINE_PART_COUNT; ++part)
-    device->channels[part].tone_map_selected = SC88_TONE_MAP_SC88;
+  for (unsigned part = 0; part < XP_ENGINE_PART_COUNT; ++part)
+    device->channels[part].tone_map_selected = XP_TONE_MAP_SC88;
   device_reset_controllers(device);
   return true;
 
@@ -219,7 +224,7 @@ fail:
 void syncTvf(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tvf_controls controls;
+  struct xp_tvf_controls controls;
   controls.part_cutoff = channel->cutoff;
   controls.secondary_cutoff = 64;
   controls.part_resonance = channel->resonance;
@@ -236,7 +241,7 @@ void syncLfo1PitchDepth(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
   unsigned depth =
-    channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_LFO1_PITCH_DEPTH];
+    channel->matrix_depth[XP_MATRIX_MODULATION][XP_MATRIX_LFO1_PITCH_DEPTH];
   engine_set_part_lfo1_pitch_depth(
     &device->engine, part, (uint16_t)((depth * channel->modulation) >> 2));
 }
@@ -244,7 +249,7 @@ void syncLfo1PitchDepth(Device *device, uint8_t part)
 void syncTva(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tva_controls controls;
+  struct xp_tva_controls controls;
   controls.part_attack = channel->attack;
   controls.secondary_attack = 64;
   controls.part_decay = channel->decay;
@@ -284,7 +289,7 @@ bool blockPart(uint8_t block, uint8_t port, uint8_t *part)
 
 bool setReverbCharacter(Device *device, uint8_t character)
 {
-  struct sc88_reverb replacement;
+  struct xp_reverb replacement;
   if (character == device->reverb_character)
     return true;
   /* A character is a different set of delay lines read out of the ROM, so
@@ -502,7 +507,7 @@ bool sysexWrite(Device *device, uint8_t port, uint32_t address,
         /* The part's own map, which the forcing byte defers to. `46e9`
            carries the range 01..02 in its parameter-table entry at
            `13e94` and refuses anything else. */
-        if (value < SC88_TONE_MAP_SC55 || value > SC88_TONE_MAP_SC88)
+        if (value < XP_TONE_MAP_SC55 || value > XP_TONE_MAP_SC88)
           return false;
         device->channels[part].tone_map_selected = value;
         syncToneMap(device, part);
@@ -524,13 +529,13 @@ bool sysexWrite(Device *device, uint8_t port, uint32_t address,
     ChannelState *state = device->channels + part;
     uint8_t group = (uint8_t)((address & 0xffu) >> 4);
     uint8_t destination = (uint8_t)(address & 0x0fu);
-    if (group >= SC88_MATRIX_SOURCE_COUNT ||
-        destination >= SC88_MATRIX_DEST_COUNT || value > 127)
+    if (group >= XP_MATRIX_SOURCE_COUNT ||
+        destination >= XP_MATRIX_DEST_COUNT || value > 127)
       return false;
     state->matrix_depth[group][destination] = value;
     syncTvf(device, part);
-    if (group == SC88_MATRIX_MODULATION &&
-        destination == SC88_MATRIX_LFO1_PITCH_DEPTH)
+    if (group == XP_MATRIX_MODULATION &&
+        destination == XP_MATRIX_LFO1_PITCH_DEPTH)
       syncLfo1PitchDepth(device, part);
     return true;
   }
@@ -544,9 +549,9 @@ bool sysexWrite(Device *device, uint8_t port, uint32_t address,
     case 0x14:
       if (value > 2)
         return false;
-      state->same_note_mode = value == 0 ? SC88_SAME_NOTE_SINGLE
-        : value == 1 ? SC88_SAME_NOTE_LIMITED_MULTI
-        : SC88_SAME_NOTE_FULL_MULTI;
+      state->same_note_mode = value == 0 ? XP_SAME_NOTE_SINGLE
+        : value == 1 ? XP_SAME_NOTE_LIMITED_MULTI
+        : XP_SAME_NOTE_FULL_MULTI;
       return true;
     case 0x15:
       /* Off, drum setup MAP1 or MAP2 - the only way a song can put drums
@@ -637,9 +642,9 @@ bool sysexWrite(Device *device, uint8_t port, uint32_t address,
 
 bool device_init_raw(Device *device, const uint8_t *controlRom,
                       size_t controlRomSize,
-                      const uint8_t *const rawChips[SC88_WAVE_CHIP_COUNT],
-                      const size_t rawSizes[SC88_WAVE_CHIP_COUNT],
-                      double outputRate, enum sc88_fractional_wrap wrap)
+                      const uint8_t *const rawChips[XP_WAVE_CHIP_COUNT],
+                      const size_t rawSizes[XP_WAVE_CHIP_COUNT],
+                      double outputRate, enum xp_fractional_wrap wrap)
 {
   return initCommon(device, controlRom, controlRomSize, rawChips, rawSizes,
                      outputRate, wrap, true);
@@ -648,9 +653,9 @@ bool device_init_raw(Device *device, const uint8_t *controlRom,
 bool device_init_decoded(
   Device *device, const uint8_t *controlRom,
   size_t controlRomSize,
-  const uint8_t *const decodedChips[SC88_WAVE_CHIP_COUNT],
-  const size_t decodedSizes[SC88_WAVE_CHIP_COUNT], double outputRate,
-  enum sc88_fractional_wrap wrap)
+  const uint8_t *const decodedChips[XP_WAVE_CHIP_COUNT],
+  const size_t decodedSizes[XP_WAVE_CHIP_COUNT], double outputRate,
+  enum xp_fractional_wrap wrap)
 {
   return initCommon(device, controlRom, controlRomSize, decodedChips,
                      decodedSizes, outputRate, wrap, false);
@@ -668,7 +673,7 @@ void device_destroy(Device *device)
   std::free(device->delay_bus);
   chorus_destroy(&device->chorus);
   delay_destroy(&device->delay);
-  for (unsigned chip = 0; chip < SC88_WAVE_CHIP_COUNT; ++chip)
+  for (unsigned chip = 0; chip < XP_WAVE_CHIP_COUNT; ++chip)
     std::free(device->decoded_chips[chip]);
   std::free(device->control_rom);
   std::memset(device, 0, sizeof *device);
@@ -709,7 +714,7 @@ void device_reset_controllers(Device *device)
     (void)delay_set_params(&device->renderer.rom, &device->delay,
                             device->delay_params);
   delay_reset(&device->delay);
-  for (unsigned part = 0; part < SC88_ENGINE_PART_COUNT; ++part) {
+  for (unsigned part = 0; part < XP_ENGINE_PART_COUNT; ++part) {
     ChannelState *channel = device->channels + part;
     channel->variation = 0;
     channel->tone_map_forced = 0;
@@ -765,16 +770,16 @@ void device_reset_controllers(Device *device)
        which is why wiring the cutoff destination leaves every render of
        this corpus untouched. */
     std::memset(channel->matrix_depth, 0, sizeof channel->matrix_depth);
-    for (unsigned source = 0; source < SC88_MATRIX_SOURCE_COUNT; ++source) {
-      channel->matrix_depth[source][SC88_MATRIX_PITCH] = 0x40;
-      channel->matrix_depth[source][SC88_MATRIX_CUTOFF] = 0x40;
-      channel->matrix_depth[source][SC88_MATRIX_AMPLITUDE] = 0x40;
-      channel->matrix_depth[source][SC88_MATRIX_LFO1_RATE] = 0x40;
-      channel->matrix_depth[source][SC88_MATRIX_LFO2_RATE] = 0x40;
+    for (unsigned source = 0; source < XP_MATRIX_SOURCE_COUNT; ++source) {
+      channel->matrix_depth[source][XP_MATRIX_PITCH] = 0x40;
+      channel->matrix_depth[source][XP_MATRIX_CUTOFF] = 0x40;
+      channel->matrix_depth[source][XP_MATRIX_AMPLITUDE] = 0x40;
+      channel->matrix_depth[source][XP_MATRIX_LFO1_RATE] = 0x40;
+      channel->matrix_depth[source][XP_MATRIX_LFO2_RATE] = 0x40;
     }
-    channel->matrix_depth[SC88_MATRIX_MODULATION]
-                         [SC88_MATRIX_LFO1_PITCH_DEPTH] = 0x0a;
-    channel->matrix_depth[SC88_MATRIX_PITCH_BEND][SC88_MATRIX_PITCH] = 0x42;
+    channel->matrix_depth[XP_MATRIX_MODULATION]
+                         [XP_MATRIX_LFO1_PITCH_DEPTH] = 0x0a;
+    channel->matrix_depth[XP_MATRIX_PITCH_BEND][XP_MATRIX_PITCH] = 0x42;
     channel->channel_pressure = 0;
     syncLfo1PitchDepth(device, (uint8_t)part);
     channel->pitch_bend = 8192;
@@ -783,7 +788,7 @@ void device_reset_controllers(Device *device)
     channel->rpn_lsb = 127;
     channel->nrpn_msb = 127;
     channel->nrpn_lsb = 127;
-    channel->same_note_mode = SC88_SAME_NOTE_LIMITED_MULTI;
+    channel->same_note_mode = XP_SAME_NOTE_LIMITED_MULTI;
     /* GS puts the rhythm part on MIDI channel 10, i.e. part 9 of each port,
        and a GS reset restores exactly that. It plays from drum setup MAP1:
        `04_protocol/sysex.md` records the manual's "part 10 initially map
@@ -814,7 +819,7 @@ void device_set_master_volume(Device *device, uint8_t value)
   if (!device || !device->initialized || value > 127)
     return;
   device->master_volume = value;
-  for (unsigned part = 0; part < SC88_ENGINE_PART_COUNT; ++part)
+  for (unsigned part = 0; part < XP_ENGINE_PART_COUNT; ++part)
     syncPart(device, (uint8_t)part);
 }
 
@@ -823,7 +828,7 @@ void device_set_master_pan(Device *device, uint8_t value)
   if (!device || !device->initialized || value < 1 || value > 127)
     return;
   device->master_pan = value;
-  for (unsigned part = 0; part < SC88_ENGINE_PART_COUNT; ++part)
+  for (unsigned part = 0; part < XP_ENGINE_PART_COUNT; ++part)
     syncPart(device, (uint8_t)part);
 }
 
@@ -831,7 +836,7 @@ bool device_sysex(Device *device, uint8_t port,
                    const uint8_t *data, size_t size)
 {
   if (!device || !device->initialized || !data ||
-      port >= SC88_MIDI_PORT_COUNT)
+      port >= XP_MIDI_PORT_COUNT)
     return false;
   /* accept the message with or without its framing bytes */
   if (size && data[0] == 0xf0) {
@@ -861,7 +866,7 @@ bool device_sysex(Device *device, uint8_t port,
   uint8_t group = port;
   if ((address & 0xf00000u) == 0x500000u) {
     address = (address & 0x0fffffu) | 0x400000u;
-    group = (uint8_t)(SC88_MIDI_PORT_COUNT - 1u - port);
+    group = (uint8_t)(XP_MIDI_PORT_COUNT - 1u - port);
   }
   /* A packet may carry several consecutive addresses. Each is applied in
      turn, so a packet naming one address this implementation does not know
@@ -875,7 +880,7 @@ bool device_sysex(Device *device, uint8_t port,
 bool device_midi(Device *device, uint8_t port, uint8_t status,
                   uint8_t data1, uint8_t data2)
 {
-  if (!device || !device->initialized || port >= SC88_MIDI_PORT_COUNT ||
+  if (!device || !device->initialized || port >= XP_MIDI_PORT_COUNT ||
       (status & 0x80) == 0 || data1 > 127 || data2 > 127)
     return false;
   uint8_t channel = status & 0x0f;
@@ -1133,22 +1138,22 @@ bool device_midi(Device *device, uint8_t port, uint8_t status,
 int16_t device_matrix_cutoff_word(const ChannelState *channel)
 {
   uint16_t sum = matrixTerm(
-    channel->matrix_depth[SC88_MATRIX_MODULATION][SC88_MATRIX_CUTOFF],
+    channel->matrix_depth[XP_MATRIX_MODULATION][XP_MATRIX_CUTOFF],
     channel->modulation);
   sum = (uint16_t)(sum + matrixTerm(
-    channel->matrix_depth[SC88_MATRIX_CHANNEL_PRESSURE][SC88_MATRIX_CUTOFF],
+    channel->matrix_depth[XP_MATRIX_CHANNEL_PRESSURE][XP_MATRIX_CUTOFF],
     channel->channel_pressure));
   sum = (uint16_t)(sum + matrixTerm(
-    channel->matrix_depth[SC88_MATRIX_CC1][SC88_MATRIX_CUTOFF],
+    channel->matrix_depth[XP_MATRIX_CC1][XP_MATRIX_CUTOFF],
     channel->cc1_value));
   sum = (uint16_t)(sum + matrixTerm(
-    channel->matrix_depth[SC88_MATRIX_CC2][SC88_MATRIX_CUTOFF],
+    channel->matrix_depth[XP_MATRIX_CC2][XP_MATRIX_CUTOFF],
     channel->cc2_value));
   sum = (uint16_t)shiftRight(s16(sum), 1);
 
   int32_t bend = ((int32_t)channel->pitch_bend - INT32_C(0x2000)) * 4;
   int32_t product = (int32_t)centredDepth(
-    channel->matrix_depth[SC88_MATRIX_PITCH_BEND][SC88_MATRIX_CUTOFF]) * bend;
+    channel->matrix_depth[XP_MATRIX_PITCH_BEND][XP_MATRIX_CUTOFF]) * bend;
   /* Bits 23..8, assembled at `0x11958` from the product's high byte and
      the high byte of its low word, then read as a signed word. */
   product = s16((uint16_t)(shiftRight(product, 8) & 0xffff));

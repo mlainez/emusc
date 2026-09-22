@@ -9,27 +9,23 @@
 #include <windows.h>
 #include <mmsystem.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <vector>
-
-namespace {
-// 4 buffers of 2048 frames each is ~170 ms of queue depth at 48 kHz - enough
-// that Sleep(1)'s ~1-15 ms scheduler granularity on Windows 9x/ME can't
-// starve the device between polls.
-constexpr unsigned kBlockFrames = 2048;
-constexpr unsigned kNumBuffers = 4;
-}  // namespace
 
 struct AudioOut::Impl {
   HWAVEOUT hwo = nullptr;
   struct Buf { WAVEHDR hdr; std::vector<int16_t> data; };
   std::vector<Buf> buffers;
   unsigned next = 0;
+  unsigned blockFrames = 0;
 };
 
-AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
+AudioOut::AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs)
+    : _impl(new Impl) {
+  _impl->blockFrames = blockFrames;
+
   WAVEFORMATEX wfx{};
   wfx.wFormatTag = WAVE_FORMAT_PCM;
   wfx.nChannels = 2;
@@ -40,22 +36,27 @@ AudioOut::AudioOut(unsigned rate) : _impl(new Impl) {
 
   MMRESULT r = waveOutOpen(&_impl->hwo, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL);
   if (r != MMSYSERR_NOERROR) {
-    std::cerr << "emusc-render: --play: waveOutOpen failed (error " << r
-              << ")" << std::endl;
+    std::fprintf(stderr, "emusc-render: --play: waveOutOpen failed (error %u)\n",
+                 (unsigned) r);
     std::exit(4);
   }
 
-  _impl->buffers.resize(kNumBuffers);
+  // Same derivation as emusc-winmidi's own open_wave_out(): enough buffers of
+  // blockFrames each to cover the requested latency, at least 2 so one can
+  // always be filling while the other plays.
+  unsigned numBuffers = (latencyMs * rate) / 1000 / blockFrames;
+  if (numBuffers < 2) numBuffers = 2;
+  _impl->buffers.resize(numBuffers);
   for (auto &b : _impl->buffers) {
-    b.data.assign(static_cast<size_t>(kBlockFrames) * 2, 0);
+    b.data.assign(static_cast<size_t>(blockFrames) * 2, 0);
     std::memset(&b.hdr, 0, sizeof(WAVEHDR));
     b.hdr.lpData = reinterpret_cast<LPSTR>(b.data.data());
     b.hdr.dwBufferLength = static_cast<DWORD>(b.data.size() * sizeof(int16_t));
     waveOutPrepareHeader(_impl->hwo, &b.hdr, sizeof(WAVEHDR));
     b.hdr.dwFlags |= WHDR_DONE;   // free at startup, nothing queued yet
   }
-  std::cerr << "emusc-render: --play: WinMM output at " << rate << " Hz"
-            << std::endl;
+  std::fprintf(stderr, "emusc-render: --play: WinMM output at %u Hz, "
+               "%u x %u-frame buffers\n", rate, numBuffers, blockFrames);
 }
 
 AudioOut::~AudioOut() {
@@ -77,14 +78,14 @@ void AudioOut::write(const int16_t *interleaved, size_t frames) {
     while (!(b.hdr.dwFlags & WHDR_DONE)) Sleep(1);
 
     size_t n = frames - done;
-    if (n > kBlockFrames) n = kBlockFrames;
+    if (n > _impl->blockFrames) n = _impl->blockFrames;
     std::memcpy(b.data.data(), interleaved + done * 2,
                 n * 2 * sizeof(int16_t));
     b.hdr.dwBufferLength = static_cast<DWORD>(n * 2 * sizeof(int16_t));
     b.hdr.dwFlags &= ~WHDR_DONE;
     waveOutWrite(_impl->hwo, &b.hdr, sizeof(WAVEHDR));
 
-    _impl->next = (_impl->next + 1) % kNumBuffers;
+    _impl->next = (_impl->next + 1) % _impl->buffers.size();
     done += n;
   }
 }

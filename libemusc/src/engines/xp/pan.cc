@@ -1,22 +1,11 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "pan.h"
 
+#include "devices/sc88.h"
+
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kPanTable = 0x15db6u;
-/* The effect sends do NOT read the pan table. They have their own, and it is
- * a different shape: 128 words at 0x15eb6, indexed by the control value
- * WHOLE rather than by `value - 1`, and exactly
- * `64 * floor((value * 512 + 63) / 127)` on every one of the 128 - a linear
- * Q15 gain with 0x8000 for unity (`P-xxxx`). The firmware reaches it from a
- * different routine than the pan pair does. The two tables agree at only
- * three points, so reading one for the other is audible: it opens the send
- * 1.4 dB too far around the middle of the range, and at control 1 the pan
- * table's first word is 0, which closes a send the chip would have left
- * open. */
-constexpr uint32_t kSendTable = 0x15eb6u;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -32,8 +21,8 @@ int8_t s8(uint8_t value)
 
 }  // namespace
 
-bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool pan_component_offset(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, int16_t *offset)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -48,16 +37,17 @@ bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *to
   return true;
 }
 
-bool control_gain_q15(const struct sc88_rom *rom, uint8_t control,
+bool control_gain_q15(const struct xp_rom *rom, uint8_t control,
                        uint16_t *gainQ15)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !gainQ15 || control > 127 ||
-      kSendTable + 128u * 2 > rom->size)
+      profile->sendTable + 128u * 2 > rom->size)
     return false;
   /* The word carries the gain in its top ten bits and the XP destination
      selector in its low six; the table's own low six are zero, and the
      selector this engine does not plumb. */
-  uint16_t word = be16(rom->bytes + kSendTable + (unsigned)control * 2);
+  uint16_t word = be16(rom->bytes + profile->sendTable + (unsigned)control * 2);
   *gainQ15 = (uint16_t)(word & 0xffc0u);
   return (word & 0x3fu) == 0;
 }
@@ -69,22 +59,23 @@ uint8_t send_combine(uint8_t part, uint8_t note)
   return (uint8_t)(((p * n) + 127u) >> 7);
 }
 
-bool pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
+bool pan_pair_q15(const struct xp_rom *rom, uint8_t position,
                    uint16_t *leftQ15, uint16_t *rightQ15)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !leftQ15 || !rightQ15 || position < 1 ||
-      position > 127 || kPanTable + 127u * 2 > rom->size)
+      position > 127 || profile->panTable + 127u * 2 > rom->size)
     return false;
   uint8_t leftIndex = (uint8_t)(127 - position);
   uint8_t rightIndex = (uint8_t)(position - 1);
-  *leftQ15 = be16(rom->bytes + kPanTable + leftIndex * 2);
-  *rightQ15 = be16(rom->bytes + kPanTable + rightIndex * 2);
+  *leftQ15 = be16(rom->bytes + profile->panTable + leftIndex * 2);
+  *rightQ15 = be16(rom->bytes + profile->panTable + rightIndex * 2);
   return (*leftQ15 & 0x3f) == 0 && (*rightQ15 & 0x3f) == 0;
 }
 
-bool pan_static_q15(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                     const struct sc88_component *component,
-                     uint8_t selectorKey, const struct sc88_pan_controls *controls,
+bool pan_static_q15(const struct xp_rom *rom, const struct xp_tone *tone,
+                     const struct xp_component *component,
+                     uint8_t selectorKey, const struct xp_pan_controls *controls,
                      uint8_t *position, uint16_t *leftQ15, uint16_t *rightQ15)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -114,46 +105,3 @@ bool pan_static_q15(const struct sc88_rom *rom, const struct sc88_tone *tone,
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_pan_component_offset(const struct sc88_rom *rom,
-                               const struct sc88_tone *tone,
-                               const struct sc88_component *component,
-                               uint8_t selector_key, int16_t *offset)
-{
-  return EmuSC::Xp::pan_component_offset(rom, tone, component, selector_key,
-                                          offset);
-}
-
-bool sc88_control_gain_q15(const struct sc88_rom *rom, uint8_t control,
-                           uint16_t *gain_q15)
-{
-  return EmuSC::Xp::control_gain_q15(rom, control, gain_q15);
-}
-
-uint8_t sc88_send_combine(uint8_t part, uint8_t note)
-{
-  return EmuSC::Xp::send_combine(part, note);
-}
-
-bool sc88_pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
-                       uint16_t *left_q15, uint16_t *right_q15)
-{
-  return EmuSC::Xp::pan_pair_q15(rom, position, left_q15, right_q15);
-}
-
-bool sc88_pan_static_q15(const struct sc88_rom *rom,
-                         const struct sc88_tone *tone,
-                         const struct sc88_component *component,
-                         uint8_t selector_key,
-                         const struct sc88_pan_controls *controls,
-                         uint8_t *position, uint16_t *left_q15,
-                         uint16_t *right_q15)
-{
-  return EmuSC::Xp::pan_static_q15(rom, tone, component, selector_key,
-                                    controls, position, left_q15, right_q15);
-}
-
-}  // extern "C"

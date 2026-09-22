@@ -3,6 +3,7 @@
 #define EMUSC_XP_ENGINE_H
 
 #include "renderer.h"
+#include "devices/sc88.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,19 +13,22 @@
 extern "C" {
 #endif
 
-#define SC88_ENGINE_SLOT_COUNT 64u
-#define SC88_ENGINE_NOTE_COUNT 64u
-#define SC88_ENGINE_PART_COUNT 32u
-#define SC88_ENGINE_NONE 0xffu
+#define XP_ENGINE_NONE 0xffu
 
-enum sc88_same_note_mode {
-  SC88_SAME_NOTE_SINGLE = 0,
-  SC88_SAME_NOTE_LIMITED_MULTI = 1,
-  SC88_SAME_NOTE_FULL_MULTI = 2
+/* engine_init()'s default max_voices, absent a --max-voices override - what
+   the real hardware did. XpDeviceProfile::defaultMaxVoices (devices/sc88.h)
+   is a device fact and can differ per device; XP_ENGINE_SLOT_COUNT (also
+   devices/sc88.h) stays this engine's own fixed array size and hard
+   ceiling regardless of which device's default is in effect. */
+
+enum xp_same_note_mode {
+  XP_SAME_NOTE_SINGLE = 0,
+  XP_SAME_NOTE_LIMITED_MULTI = 1,
+  XP_SAME_NOTE_FULL_MULTI = 2
 };
 
-struct sc88_engine_note {
-  uint8_t slots[SC88_MAX_TONE_COMPONENTS];
+struct xp_engine_note {
+  uint8_t slots[XP_MAX_TONE_COMPONENTS];
   uint8_t slot_count;
   uint8_t part;
   uint8_t key;
@@ -33,7 +37,7 @@ struct sc88_engine_note {
   uint32_t tone_offset;
   uint64_t serial;
   float provisional_gain;
-  struct sc88_tva_levels levels;
+  struct xp_tva_levels levels;
   bool allocated;
   bool key_down;
   bool ignore_note_off;
@@ -41,8 +45,8 @@ struct sc88_engine_note {
   bool sostenuto_retained;
 };
 
-struct sc88_engine_slot {
-  struct sc88_render_component component;
+struct xp_engine_slot {
+  struct xp_render_component component;
   uint8_t note;
   uint8_t next_free;
   uint64_t serial;
@@ -52,6 +56,11 @@ struct sc88_engine_slot {
      one that did not; a note opens at zero because the oscillators open
      with a cleared waveform word (`0x250d`, `0x257a`). */
   int16_t tvf_lfo_term;
+  /* lfoAmplitude(this)'s value, cached: its only inputs (lfo1/lfo2's
+     output and ramp fade, and the tva depths fixed at note-on) change at
+     most once per control period, in runScheduler - not once per sample,
+     where the per-voice mix loop reads this. */
+  float lfo_amplitude_gain;
 };
 
 /* A voice the CPU has taken the slot back from while it was still
@@ -80,7 +89,7 @@ struct sc88_engine_slot {
    register arrives - which is what the note-end path at `7228..7232` does
    already, with the same interpolation word.
 
-   Nothing here is a new shape: the ramp is `sc88_render_static_gain_q17`,
+   Nothing here is a new shape: the ramp is `xp_render_static_gain_q17`,
    the register model already in `renderer.h`, evaluated on this
    voice's own clock instead of the control period's. Its time constant is
    therefore not fitted - it is `0x2a7`, about 0.75 ms, the word the
@@ -104,13 +113,13 @@ struct sc88_engine_slot {
    transaction at `0x4c60` (`P-0358`).
 
    The pool is separate from the slots on purpose: a stopping voice is NOT
-   a slot, is not counted by `sc88_engine_active_slots`, and cannot delay or
+   a slot, is not counted by `engine_active_slots`, and cannot delay or
    reorder an allocation. A full pool ends the voice where it stands: the
    stop is what the song can spare, never the allocation. */
-#define SC88_ENGINE_STOPPING_COUNT 32u
+#define XP_ENGINE_STOPPING_COUNT 32u
 
-struct sc88_engine_stopping {
-  struct sc88_render_component component;
+struct xp_engine_stopping {
+  struct xp_render_component component;
   /* Everything the CPU had composed for this voice except the amplitude
      register - the TVA envelope, the amplitude oscillators and the note's
      own gain - frozen at the instant of the stop, because after it nothing
@@ -126,12 +135,12 @@ struct sc88_engine_stopping {
   bool active;
 };
 
-struct sc88_engine_part {
-  struct sc88_tva_levels levels;
-  struct sc88_pan_controls pan;
-  struct sc88_tvf_controls tvf_controls;
-  struct sc88_tva_controls tva_controls;
-  struct sc88_lfo_controls lfo_controls;
+struct xp_engine_part {
+  struct xp_tva_levels levels;
+  struct xp_pan_controls pan;
+  struct xp_tvf_controls tvf_controls;
+  struct xp_tva_controls tva_controls;
+  struct xp_lfo_controls lfo_controls;
   int32_t pitch_offset;
   bool tvf_dirty;
   bool hold;
@@ -149,7 +158,7 @@ struct sc88_engine_part {
      of two kit working areas. */
   uint8_t rhythm_setup;
   /* Which kit set a rhythm part's program indexes, and which bank a
-     melodic one's does: `SC88_TONE_MAP_SC55` or `SC88_TONE_MAP_SC88`.
+     melodic one's does: `XP_TONE_MAP_SC55` or `XP_TONE_MAP_SC88`.
      The firmware derives it from the part's bank word at `d820` - the
      forcing byte CC32 writes if that is nonzero, otherwise the part's
      selected map - and the drum lookup at `2e7a` indexes
@@ -176,7 +185,7 @@ struct sc88_engine_part {
   uint8_t portamento_control;
 };
 
-typedef void (*sc88_control_service_fn)(void *user,
+typedef void (*xp_control_service_fn)(void *user,
                                         unsigned elapsed_periods);
 
 /* `07_synthesis/lfo.md`: an oscillator whose share byte is nonzero is not
@@ -187,15 +196,15 @@ typedef void (*sc88_control_service_fn)(void *user,
    unconditionally". These entries are that shared state: one oscillator per
    tone (and per component, for the local one), advanced once per control
    period, read by every voice that shares it. */
-#define SC88_ENGINE_SHARED_LFO_COUNT 48u
+#define XP_ENGINE_SHARED_LFO_COUNT 48u
 
-struct sc88_engine_shared_lfo {
+struct xp_engine_shared_lfo {
   uint32_t tone_offset;
   uint32_t component_offset;    /* zero for the tone-common oscillator */
   uint8_t which;                /* 1 tone-common, 2 local */
   bool active;
   bool used;
-  struct sc88_lfo lfo;
+  struct xp_lfo lfo;
 };
 
 /* Per-stage taps for one render, each a mono sum over all sounding
@@ -205,7 +214,7 @@ struct sc88_engine_shared_lfo {
  *
  * A NULL pointer skips that tap; the struct itself may be NULL.
  */
-struct sc88_engine_stage_taps {
+struct xp_engine_stage_taps {
   float *oscillator;   /* sample as the oscillator produced it */
   float *after_tvf;    /* ... through the filter */
   float *after_static; /* ... times the component's static gain */
@@ -213,102 +222,49 @@ struct sc88_engine_stage_taps {
   float *after_lfo;    /* ... times the amplitude LFO and note gain */
 };
 
-struct sc88_engine {
-  const struct sc88_renderer *renderer;
-  struct sc88_engine_shared_lfo shared_lfo[SC88_ENGINE_SHARED_LFO_COUNT];
-  struct sc88_engine_note notes[SC88_ENGINE_NOTE_COUNT];
-  struct sc88_engine_slot slots[SC88_ENGINE_SLOT_COUNT];
-  struct sc88_engine_part parts[SC88_ENGINE_PART_COUNT];
-  struct sc88_engine_stopping stopping[SC88_ENGINE_STOPPING_COUNT];
+struct xp_engine {
+  const struct xp_renderer *renderer;
+  struct xp_engine_shared_lfo shared_lfo[XP_ENGINE_SHARED_LFO_COUNT];
+  struct xp_engine_note notes[XP_ENGINE_NOTE_COUNT];
+  struct xp_engine_slot slots[XP_ENGINE_SLOT_COUNT];
+  struct xp_engine_part parts[XP_ENGINE_PART_COUNT];
+  struct xp_engine_stopping stopping[XP_ENGINE_STOPPING_COUNT];
   /* one random word shared by every oscillator, as the firmware has */
   uint16_t lfo_seed;
   /* Draws the position a part-pan of zero asks for. Separate from
      lfo_seed so a random pan cannot perturb a random LFO. */
   uint16_t pan_seed;
   /* Per-note kit overrides a song has written over SysEx. */
-  struct sc88_drum_overlay drum_overlay;
+  struct xp_drum_overlay drum_overlay;
   uint8_t free_note_head;
   uint8_t free_note_tail;
-  uint8_t note_next_free[SC88_ENGINE_NOTE_COUNT];
+  uint8_t note_next_free[XP_ENGINE_NOTE_COUNT];
   uint8_t free_slot_head;
   uint8_t free_slot_tail;
   unsigned free_slot_count;
+  /* Indices of the currently allocated slots, always kept in ascending
+     order by engine_note_on (sorted insert) and freeSlot (shift-remove) -
+     the only two places that ever change slot::allocated. Ascending order
+     matters: the per-sample voice-mix loop walks this instead of every
+     slot in [0, max_voices), and it must visit slots in the same order
+     the old full scan did, since the frame's float accumulators are not
+     associative - a different summation order is a different result. */
+  uint8_t active_slots[XP_ENGINE_SLOT_COUNT];
+  unsigned active_slot_count;
+  /* The real SC-88 is XP_ENGINE_SLOT_COUNT (64-voice polyphony); this
+     can only lower that, never raise it, for hardware too slow to keep
+     up with the real ceiling - see engine_set_max_voices. */
+  unsigned max_voices;
   uint64_t next_serial;
   double scheduler_clocks;
-  sc88_control_service_fn control_service;
-  struct sc88_engine_stage_taps stage_taps;
+  xp_control_service_fn control_service;
+  struct xp_engine_stage_taps stage_taps;
   void *control_user;
+  /* Set by engine_init() from the already-identified renderer->rom's own
+     profile (xp_profile()), so every field on this struct always reads
+     one device's facts consistently. */
+  const struct XpDeviceProfile *profile;
 };
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_engine
- * by value, and sc88_engine_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_engine_init(struct sc88_engine *engine,
-                      const struct sc88_renderer *renderer);
-void sc88_engine_destroy(struct sc88_engine *engine);
-void sc88_engine_set_control_service(struct sc88_engine *engine,
-                                     sc88_control_service_fn service,
-                                     void *user);
-void sc88_engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
-                                 const struct sc88_tva_levels *levels);
-void sc88_engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
-                              const struct sc88_pan_controls *pan);
-void sc88_engine_set_part_pitch_offset(struct sc88_engine *engine,
-                                       uint8_t part, int32_t pitch_offset);
-void sc88_engine_set_part_lfo_controls(
-  struct sc88_engine *engine, uint8_t part,
-  const struct sc88_lfo_controls *controls);
-void sc88_engine_set_part_tva_controls(
-  struct sc88_engine *engine, uint8_t part,
-  const struct sc88_tva_controls *controls);
-void sc88_engine_set_part_tvf_controls(
-  struct sc88_engine *engine, uint8_t part,
-  const struct sc88_tvf_controls *controls);
-void sc88_engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
-                                 uint8_t setup);
-void sc88_engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
-                                   uint8_t map);
-bool sc88_engine_set_drum_parameter(struct sc88_engine *engine,
-                                    uint8_t setup, uint8_t field,
-                                    uint8_t note, uint8_t value);
-void sc88_engine_clear_drum_overlay(struct sc88_engine *engine,
-                                    uint8_t setup);
-void sc88_engine_set_part_delay_send(struct sc88_engine *engine,
-                                     uint8_t part, uint8_t send);
-void sc88_engine_set_part_chorus_send(struct sc88_engine *engine,
-                                     uint8_t part, uint8_t send);
-void sc88_engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
-                                           uint8_t part, uint16_t depth);
-void sc88_engine_set_part_reverb_send(struct sc88_engine *engine,
-                                      uint8_t part, uint8_t send);
-void sc88_engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
-                                     bool enabled);
-void sc88_engine_set_part_portamento_time(struct sc88_engine *engine,
-                                          uint8_t part, uint8_t time);
-void sc88_engine_set_part_portamento_control(struct sc88_engine *engine,
-                                             uint8_t part, uint8_t key);
-bool sc88_engine_note_on(struct sc88_engine *engine, uint8_t part,
-                         uint8_t variation, uint8_t program,
-                         uint8_t key, uint8_t velocity, uint8_t context,
-                         enum sc88_same_note_mode mode,
-                         float provisional_gain);
-bool sc88_engine_note_off(struct sc88_engine *engine, uint8_t part,
-                          uint8_t key);
-void sc88_engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled);
-void sc88_engine_hold_value(struct sc88_engine *engine, uint8_t part,
-                            uint8_t value);
-void sc88_engine_sostenuto(struct sc88_engine *engine, uint8_t part,
-                           bool enabled);
-unsigned sc88_engine_active_slots(const struct sc88_engine *engine);
-unsigned sc88_engine_released_slots(const struct sc88_engine *engine);
-void sc88_engine_render(struct sc88_engine *engine, float *stereo,
-                        size_t frames);
-void sc88_engine_set_stage_taps(struct sc88_engine *engine,
-                                const struct sc88_engine_stage_taps *taps);
-void sc88_engine_render_with_send(struct sc88_engine *engine, float *stereo,
-                                  float *send, float *chorus_send,
-                                  float *delay_send, size_t frames);
 
 #ifdef __cplusplus
 }
@@ -318,13 +274,13 @@ namespace EmuSC { namespace Xp {
 // Voice engine (allocation, scheduling, mixing) for the XP-generation-1
 // engine (see engines/xp/README.md). The plain C types above are shared,
 // unrenamed, with EmuSC::Xp::Device (device.h), which embeds struct
-// sc88_engine by value, and with sc88_engine_test.c, which reads it
+// xp_engine by value, and with xp_engine_test.cc, which reads it
 // directly.
 //
 // Three concerns share this file rather than splitting into PartState,
 // VoiceAllocator and VoiceScheduler, as originally hypothesised: all three
-// read and write the same sc88_engine_note/sc88_engine_slot/
-// sc88_engine_part arrays, which are shaped by the ABI constraint above,
+// read and write the same xp_engine_note/xp_engine_slot/
+// xp_engine_part arrays, which are shaped by the ABI constraint above,
 // not by a design choice this file is free to make. The boundary is
 // visible in this file's own section comments instead - allocation
 // (init, note_on/note_off, free/pop list bookkeeping), part state
@@ -334,71 +290,79 @@ namespace EmuSC { namespace Xp {
 // direct field access is retired and this struct can become real member
 // state (see device.h's own note on the same tradeoff).
 
-bool engine_init(struct sc88_engine *engine,
-                  const struct sc88_renderer *renderer);
-void engine_destroy(struct sc88_engine *engine);
-void engine_set_control_service(struct sc88_engine *engine,
-                                 sc88_control_service_fn service, void *user);
-void engine_set_part_levels(struct sc88_engine *engine, uint8_t part,
-                             const struct sc88_tva_levels *levels);
-void engine_set_part_pan(struct sc88_engine *engine, uint8_t part,
-                          const struct sc88_pan_controls *pan);
-void engine_set_part_pitch_offset(struct sc88_engine *engine, uint8_t part,
+bool engine_init(struct xp_engine *engine,
+                  const struct xp_renderer *renderer);
+void engine_destroy(struct xp_engine *engine);
+/* Lowers the engine's own voice ceiling below XP_ENGINE_SLOT_COUNT, for
+   hardware too slow to sustain the real 64-voice worst case - clamped to
+   [1, XP_ENGINE_SLOT_COUNT], and only meaningful called right after
+   engine_init, before any note has taken a slot (it rebuilds the free
+   list from scratch, which would strand a sounding voice's slot outside
+   it if called later). Returns false, changing nothing, if engine is
+   null or any slot is already allocated. */
+bool engine_set_max_voices(struct xp_engine *engine, unsigned max_voices);
+void engine_set_control_service(struct xp_engine *engine,
+                                 xp_control_service_fn service, void *user);
+void engine_set_part_levels(struct xp_engine *engine, uint8_t part,
+                             const struct xp_tva_levels *levels);
+void engine_set_part_pan(struct xp_engine *engine, uint8_t part,
+                          const struct xp_pan_controls *pan);
+void engine_set_part_pitch_offset(struct xp_engine *engine, uint8_t part,
                                    int32_t pitchOffset);
-void engine_set_part_lfo_controls(struct sc88_engine *engine, uint8_t part,
-                                   const struct sc88_lfo_controls *controls);
-void engine_set_part_tva_controls(struct sc88_engine *engine, uint8_t part,
-                                   const struct sc88_tva_controls *controls);
-void engine_set_part_tvf_controls(struct sc88_engine *engine, uint8_t part,
-                                   const struct sc88_tvf_controls *controls);
+void engine_set_part_lfo_controls(struct xp_engine *engine, uint8_t part,
+                                   const struct xp_lfo_controls *controls);
+void engine_set_part_tva_controls(struct xp_engine *engine, uint8_t part,
+                                   const struct xp_tva_controls *controls);
+void engine_set_part_tvf_controls(struct xp_engine *engine, uint8_t part,
+                                   const struct xp_tvf_controls *controls);
 /* `setup` is Use For Rhythm Part: 0 off, 1 MAP1, 2 MAP2. */
-void engine_set_part_rhythm(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_rhythm(struct xp_engine *engine, uint8_t part,
                              uint8_t setup);
-void engine_set_part_tone_map(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_tone_map(struct xp_engine *engine, uint8_t part,
                                uint8_t map);
 /* One `41 mf rr` write: `setup` 1 or 2, `field` 1..9, `note` 0..127. */
-bool engine_set_drum_parameter(struct sc88_engine *engine, uint8_t setup,
+bool engine_set_drum_parameter(struct xp_engine *engine, uint8_t setup,
                                 uint8_t field, uint8_t note, uint8_t value);
 /* Changing a rhythm part's kit clears them, as the firmware does. */
-void engine_clear_drum_overlay(struct sc88_engine *engine, uint8_t setup);
-void engine_set_part_delay_send(struct sc88_engine *engine, uint8_t part,
+void engine_clear_drum_overlay(struct xp_engine *engine, uint8_t setup);
+void engine_set_part_delay_send(struct xp_engine *engine, uint8_t part,
                                  uint8_t send);
-void engine_set_part_chorus_send(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_chorus_send(struct xp_engine *engine, uint8_t part,
                                   uint8_t send);
-void engine_set_part_lfo1_pitch_depth(struct sc88_engine *engine,
+void engine_set_part_lfo1_pitch_depth(struct xp_engine *engine,
                                        uint8_t part, uint16_t depth);
-void engine_set_part_reverb_send(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_reverb_send(struct xp_engine *engine, uint8_t part,
                                   uint8_t send);
 /* CC65 past its 64 threshold, CC5 raw, and CC84's source key (0xff none). */
-void engine_set_part_portamento(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_portamento(struct xp_engine *engine, uint8_t part,
                                  bool enabled);
-void engine_set_part_portamento_time(struct sc88_engine *engine, uint8_t part,
+void engine_set_part_portamento_time(struct xp_engine *engine, uint8_t part,
                                       uint8_t time);
-void engine_set_part_portamento_control(struct sc88_engine *engine,
+void engine_set_part_portamento_control(struct xp_engine *engine,
                                          uint8_t part, uint8_t key);
-bool engine_note_on(struct sc88_engine *engine, uint8_t part,
+bool engine_note_on(struct xp_engine *engine, uint8_t part,
                      uint8_t variation, uint8_t program, uint8_t key,
                      uint8_t velocity, uint8_t context,
-                     enum sc88_same_note_mode mode, float provisionalGain);
-bool engine_note_off(struct sc88_engine *engine, uint8_t part, uint8_t key);
-void engine_hold(struct sc88_engine *engine, uint8_t part, bool enabled);
-void engine_hold_value(struct sc88_engine *engine, uint8_t part,
+                     enum xp_same_note_mode mode, float provisionalGain);
+bool engine_note_off(struct xp_engine *engine, uint8_t part, uint8_t key);
+void engine_hold(struct xp_engine *engine, uint8_t part, bool enabled);
+void engine_hold_value(struct xp_engine *engine, uint8_t part,
                         uint8_t value);
-void engine_sostenuto(struct sc88_engine *engine, uint8_t part, bool enabled);
+void engine_sostenuto(struct xp_engine *engine, uint8_t part, bool enabled);
 
-unsigned engine_active_slots(const struct sc88_engine *engine);
-unsigned engine_released_slots(const struct sc88_engine *engine);
+unsigned engine_active_slots(const struct xp_engine *engine);
+unsigned engine_released_slots(const struct xp_engine *engine);
 
 /* Interleaved stereo dry output. The callback receives firmware-equivalent
  * catch-up counts whenever the 10,001-clock (8.0008 ms) service is due. */
-void engine_render(struct sc88_engine *engine, float *stereo, size_t frames);
+void engine_render(struct xp_engine *engine, float *stereo, size_t frames);
 
-void engine_set_stage_taps(struct sc88_engine *engine,
-                            const struct sc88_engine_stage_taps *taps);
+void engine_set_stage_taps(struct xp_engine *engine,
+                            const struct xp_engine_stage_taps *taps);
 
 /* As above, and also accumulates the two mono effect send buses, each of
  * which must hold `frames` samples when given. Either may be NULL. */
-void engine_render_with_send(struct sc88_engine *engine, float *stereo,
+void engine_render_with_send(struct xp_engine *engine, float *stereo,
                               float *send, float *chorusSend,
                               float *delaySend, size_t frames);
 

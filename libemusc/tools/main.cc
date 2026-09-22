@@ -18,13 +18,34 @@
 #include "control_rom.h"
 #include "wave_rom.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#define EMUSC_DUP _dup
+#define EMUSC_DUP2 _dup2
+#define EMUSC_CLOSE _close
+#define EMUSC_OPEN _open
+static const int kNullFlags = _O_WRONLY;
+static const char *const kNullDevice = "NUL";
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#define EMUSC_DUP dup
+#define EMUSC_DUP2 dup2
+#define EMUSC_CLOSE close
+#define EMUSC_OPEN open
+static const int kNullFlags = O_WRONLY;
+static const char *const kNullDevice = "/dev/null";
+#endif
 
 namespace {
 
@@ -42,6 +63,18 @@ scripts that drive emusc-render and another renderer with the same options):
                          OS or user MIDI player. Always 16-bit regardless of
                          --bits/--float; paced by the audio device itself,
                          so this run takes as long as the song does.
+  --block N              --play only: audio frames per device write, same
+                         meaning as emuscd's/emusc-winmidi's --block
+                         (default: 2048)
+  --latency MS           --play only: requested output buffer depth, same
+                         meaning as emuscd's/emusc-winmidi's --latency.
+                         Raise this (and --block) if playback breaks up on
+                         slow hardware (default: 200)
+  --max-voices N         caps simultaneous voices below the loaded device's
+                         real polyphony (24 SC-55, 28 SC-55mkII/JV-880, 64
+                         SC-88), trading polyphony for headroom on hardware
+                         too slow to sustain the worst case (default: the
+                         device's own ceiling - this can only lower it)
 
 ROM selection (either --device with --rom-dir, or the three explicit options):
   --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880)
@@ -91,10 +124,14 @@ struct Options {
   bool as_float = false;
   bool verbose = false;
   bool play = false;
+  unsigned block = 2048;
+  unsigned latency = 200;
+  bool max_voices_set = false;
+  unsigned max_voices = 0;
 };
 
 [[noreturn]] void die(int code, const std::string &msg) {
-  std::cerr << "emusc-render: " << msg << std::endl;
+  std::fprintf(stderr, "emusc-render: %s\n", msg.c_str());
   std::exit(code);
 }
 
@@ -127,22 +164,29 @@ Options parse_args(int argc, char **argv) {
     }
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--play")        o.play = true;
+    else if (a == "--block")       o.block = static_cast<unsigned>(std::stoul(need("--block")));
+    else if (a == "--latency")     o.latency = static_cast<unsigned>(std::stoul(need("--latency")));
+    else if (a == "--max-voices") {
+      o.max_voices_set = true;
+      o.max_voices = static_cast<unsigned>(std::stoul(need("--max-voices")));
+    }
     else if (a == "--version") {
       // The commit is read at CMake configure time and can be stale - it has
       // twice reported the wrong thing on this project. The source hash is
       // taken at build time from the files actually compiled in and is the
       // identity to quote in a measurement.
-      std::cout << "emusc-render " << EMUSC_RENDER_VERSION << "\n"
-                << "libEmuSC source-sha256 " << EMUSC_RENDER_LIBEMUSC_SOURCE_SHA
-                << " (" << EMUSC_RENDER_LIBEMUSC_SOURCE_FILES << " files)\n"
-                << "libEmuSC commit " << EMUSC_RENDER_LIBEMUSC_COMMIT
-                << " (" << EMUSC_RENDER_LIBEMUSC_REF
-                << ", read at configure time - may be stale)\n"
-                << "libEmuSC version string " << EmuSC::Synth::version() << "\n"
-                << "libEmuSC source " << EMUSC_RENDER_LIBEMUSC_SOURCE_DIR << std::endl;
+      std::printf("emusc-render %s\n"
+                  "libEmuSC source-sha256 %s (%s files)\n"
+                  "libEmuSC commit %s (%s, read at configure time - may be stale)\n"
+                  "libEmuSC version string %s\n"
+                  "libEmuSC source %s\n",
+                  EMUSC_RENDER_VERSION, EMUSC_RENDER_LIBEMUSC_SOURCE_SHA,
+                  EMUSC_RENDER_LIBEMUSC_SOURCE_FILES, EMUSC_RENDER_LIBEMUSC_COMMIT,
+                  EMUSC_RENDER_LIBEMUSC_REF, EmuSC::Synth::version().c_str(),
+                  EMUSC_RENDER_LIBEMUSC_SOURCE_DIR);
       std::exit(0);
     }
-    else if (a == "--help" || a == "-h") { std::cout << USAGE; std::exit(0); }
+    else if (a == "--help" || a == "-h") { std::printf("%s", USAGE); std::exit(0); }
     else if (!a.empty() && a[0] == '-') die(1, "unknown option " + a + "\n" + USAGE);
     else positional.push_back(a);
   }
@@ -169,6 +213,9 @@ Options parse_args(int argc, char **argv) {
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
     die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
+  if (o.block < 1) die(1, "--block must be >= 1");
+  if (o.max_voices_set && o.max_voices < 1)
+    die(1, "--max-voices must be >= 1");
 
   if (!o.device.empty()) {
     if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" && o.device != "jv880")
@@ -194,7 +241,7 @@ Options parse_args(int argc, char **argv) {
       o.cpu_rom = dir + "/" + o.device + "_cpu.bin";
     if (o.wave_roms.empty()) {
       // Chip counts: SC-55 3, SC-55mkII 2 (waverom bank layout), SC-88 4
-      // (SC88_WAVE_CHIP_COUNT in engines/xp/device.h), JV-880 2
+      // (XP_WAVE_CHIP_COUNT in engines/xp/devices/sc88.h), JV-880 2
       // (DeviceProfile waveRomBanks in devices/jv880.cc).
       int n = (o.device == "sc55") ? 3 : (o.device == "sc55mkii") ? 2 :
               (o.device == "sc88") ? 4 : 2;
@@ -206,9 +253,6 @@ Options parse_args(int argc, char **argv) {
     die(1, "ROMs not specified: give --device with --rom-dir, or --control-rom and --wave-rom");
   return o;
 }
-
-// libEmuSC reports progress on std::cout. Keep stdout clean unless asked.
-struct NullBuf : std::streambuf { int overflow(int c) override { return c; } };
 
 inline int16_t to_i16(float x) {
   // Clamp then round to nearest (lrintf honours the default FE_TONEAREST).
@@ -225,10 +269,26 @@ inline int16_t to_i16(float x) {
 int main(int argc, char **argv) {
   Options o = parse_args(argc, argv);
 
-  NullBuf nullbuf;
-  std::streambuf *saved_cout = std::cout.rdbuf();
-  if (!o.verbose) std::cout.rdbuf(&nullbuf);
-  auto restore_cout = [&]() { std::cout.rdbuf(saved_cout); };
+  // libEmuSC reports progress on stdout. Keep it clean unless --verbose.
+  // Redirecting the file descriptor itself, rather than an iostream buffer,
+  // catches libEmuSC's stdio-based prints the same as it would iostream's.
+  int saved_stdout_fd = -1;
+  if (!o.verbose) {
+    std::fflush(stdout);
+    saved_stdout_fd = EMUSC_DUP(fileno(stdout));
+    int null_fd = EMUSC_OPEN(kNullDevice, kNullFlags);
+    if (null_fd >= 0) {
+      EMUSC_DUP2(null_fd, fileno(stdout));
+      EMUSC_CLOSE(null_fd);
+    }
+  }
+  auto restore_cout = [&]() {
+    if (saved_stdout_fd < 0) return;
+    std::fflush(stdout);
+    EMUSC_DUP2(saved_stdout_fd, fileno(stdout));
+    EMUSC_CLOSE(saved_stdout_fd);
+    saved_stdout_fd = -1;
+  };
 
   // ---- MIDI file ------------------------------------------------------------
   smf::File midi;
@@ -280,9 +340,9 @@ int main(int argc, char **argv) {
     die(2, std::string("wave ROM load failed: ") + e.what());
   }
 
-  std::cerr << "emusc-render: control ROM " << ctrl->model() << " v" << ctrl->version()
-            << " (" << ctrl->date() << "), wave ROM v" << wave->version()
-            << " (" << wave->date() << ")" << std::endl;
+  std::fprintf(stderr, "emusc-render: control ROM %s v%s (%s), wave ROM v%s (%s)\n",
+               ctrl->model().c_str(), ctrl->version().c_str(), ctrl->date().c_str(),
+               wave->version().c_str(), wave->date().c_str());
 
   // ---- Synth ----------------------------------------------------------------
   EmuSC::Synth::SoundMap map = (o.reset == "gm") ? EmuSC::Synth::SoundMap::GS_GM
@@ -292,6 +352,7 @@ int main(int argc, char **argv) {
   // draws from std::rand() for random pan, random pitch and the sample-and-hold
   // LFO. Re-seed with a fixed value so the render is reproducible.
   std::srand(o.seed);
+  if (o.max_voices_set) synth.set_max_voices(o.max_voices);
   synth.set_audio_format(o.rate, 2);   // also instantiates the 16 parts
 
   // Power-on reset, before the first event is queued. --reset selects the sound
@@ -332,18 +393,21 @@ int main(int argc, char **argv) {
   uint64_t tail_frames = static_cast<uint64_t>(std::llround(o.tail * o.rate));
   uint64_t total_frames = (sched.empty() ? 0 : last_event_frame + 1) + tail_frames;
 
-  std::cerr << "emusc-render: " << o.in << ": format " << midi.format << ", "
-            << midi.ntracks << " tracks, "
-            << (midi.smpte ? "SMPTE time base" : std::to_string(midi.ppqn) + " ppqn")
-            << ", " << midi.n_tempo_changes << " tempo change(s), "
-            << n_channel << " channel events, " << n_sysex << " SysEx, " << n_meta << " meta"
-            << std::endl;
-  std::cerr << "emusc-render: last event at frame " << last_event_frame << " ("
-            << (double)last_event_frame / o.rate << " s), end-of-track at "
-            << (double)midi.end_of_track_num / midi.time_den << " s, rendering "
-            << total_frames << " frames at " << o.rate << " Hz ("
-            << (double)total_frames / o.rate << " s), reset=" << o.reset
-            << ", seed=" << o.seed << std::endl;
+  std::string timeBase = midi.smpte ? "SMPTE time base"
+                                     : std::to_string(midi.ppqn) + " ppqn";
+  std::fprintf(stderr,
+               "emusc-render: %s: format %d, %d tracks, %s, %zu tempo change(s), "
+               "%zu channel events, %zu SysEx, %zu meta\n",
+               o.in.c_str(), midi.format, midi.ntracks, timeBase.c_str(),
+               midi.n_tempo_changes, n_channel, n_sysex, n_meta);
+  std::fprintf(stderr,
+               "emusc-render: last event at frame %llu (%g s), end-of-track at "
+               "%g s, rendering %llu frames at %u Hz (%g s), reset=%s, seed=%u\n",
+               (unsigned long long) last_event_frame,
+               (double) last_event_frame / o.rate,
+               (double) midi.end_of_track_num / midi.time_den,
+               (unsigned long long) total_frames, o.rate,
+               (double) total_frames / o.rate, o.reset.c_str(), o.seed);
 
   // ---- Render ---------------------------------------------------------------
   try {
@@ -353,7 +417,7 @@ int main(int argc, char **argv) {
     // audio device claims the sound card for a run that was going to fail
     // anyway.
     std::unique_ptr<AudioOut> audio_out;
-    if (o.play) audio_out.reset(new AudioOut(o.rate));
+    if (o.play) audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
 
     std::vector<int16_t> buf;
     std::vector<float> fbuf;
@@ -363,7 +427,7 @@ int main(int argc, char **argv) {
     std::vector<int16_t> play_buf;
     buf.reserve(2 * 4096);
     fbuf.reserve(2 * 4096);
-    play_buf.reserve(2 * 4096);
+    play_buf.reserve(2 * (size_t) o.block);
     // Enough lead for one control period (256 samples at 32 kHz, at most
     // 1024 output frames up to 128 kHz) plus the synth's own note-on delay,
     // so every event is queued before the period it belongs to is generated.
@@ -391,9 +455,19 @@ int main(int argc, char **argv) {
       int onB = 0;
       for (uint8_t p : trackPort) if (p) onB++;
       if (onB)
-        std::cerr << "emusc-render: " << onB << " of " << trackPort.size()
-                  << " tracks play into MIDI port B" << std::endl;
+        std::fprintf(stderr, "emusc-render: %d of %zu tracks play into MIDI port B\n",
+                     onB, trackPort.size());
     }
+
+    // --play real-time headroom: printed periodically so a render that
+    // cannot keep up shows exactly when it falls behind, rather than just
+    // sounding increasingly delayed with no way to tell why. "window" is
+    // since the last report, "overall" is since playback started - a
+    // steadily healthy window ratio with a falling overall ratio means an
+    // early one-time stall (e.g. ROM load) rather than a sustained deficit.
+    const auto play_start = std::chrono::steady_clock::now();
+    auto window_start = play_start;
+    uint64_t window_start_frame = 0;
 
     size_t next = 0;
     for (uint64_t fr = 0; fr < total_frames; fr++) {
@@ -408,7 +482,7 @@ int main(int argc, char **argv) {
                            off, port);
         } else if (e.kind == smf::Kind::SysEx) {
           if (e.bytes.size() > 0xffff)
-            std::cerr << "emusc-render: SysEx longer than 65535 bytes skipped" << std::endl;
+            std::fprintf(stderr, "emusc-render: SysEx longer than 65535 bytes skipped\n");
           else
             synth.midi_input_sysex(const_cast<uint8_t *>(e.bytes.data()),
                                    static_cast<uint16_t>(e.bytes.size()), off,
@@ -434,9 +508,27 @@ int main(int argc, char **argv) {
       if (audio_out) {
         play_buf.push_back(to_i16(l));
         play_buf.push_back(to_i16(r));
-        if (play_buf.size() >= 2 * 4096) {
+        if (play_buf.size() >= 2 * (size_t) o.block) {
           audio_out->write(play_buf.data(), play_buf.size() / 2);
           play_buf.clear();
+
+          const auto now = std::chrono::steady_clock::now();
+          if (now - window_start >= std::chrono::seconds(2)) {
+            const double window_wall =
+              std::chrono::duration<double>(now - window_start).count();
+            const double window_audio =
+              (double)(fr + 1 - window_start_frame) / o.rate;
+            const double overall_wall =
+              std::chrono::duration<double>(now - play_start).count();
+            const double overall_audio = (double)(fr + 1) / o.rate;
+            std::fprintf(stderr,
+                         "emusc-render: --play: window %.0f%% real-time, "
+                         "overall %.0f%% real-time\n",
+                         100.0 * window_audio / window_wall,
+                         100.0 * overall_audio / overall_wall);
+            window_start = now;
+            window_start_frame = fr + 1;
+          }
         }
       }
     }
@@ -444,16 +536,20 @@ int main(int argc, char **argv) {
       if (!buf.empty()) wav->write(buf.data(), buf.size() / 2);
       if (!fbuf.empty()) wav->write(fbuf.data(), fbuf.size() / 2);
       wav->close();
-      std::cerr << "emusc-render: wrote " << wav->frames() << " frames to " << o.out
-                << "; libEmuSC reported " << synth.get_num_clipped_samples(false)
-                << " clipped samples" << std::endl;
+      std::fprintf(stderr,
+                   "emusc-render: wrote %llu frames to %s; libEmuSC reported "
+                   "%u clipped samples\n",
+                   (unsigned long long) wav->frames(), o.out.c_str(),
+                   synth.get_num_clipped_samples(false));
     }
     if (audio_out) {
       if (!play_buf.empty()) audio_out->write(play_buf.data(), play_buf.size() / 2);
       if (!wav)
-        std::cerr << "emusc-render: played " << total_frames << " frames; "
-                  << "libEmuSC reported " << synth.get_num_clipped_samples(false)
-                  << " clipped samples" << std::endl;
+        std::fprintf(stderr,
+                     "emusc-render: played %llu frames; libEmuSC reported "
+                     "%u clipped samples\n",
+                     (unsigned long long) total_frames,
+                     synth.get_num_clipped_samples(false));
     }
   } catch (const std::exception &e) {
     restore_cout();

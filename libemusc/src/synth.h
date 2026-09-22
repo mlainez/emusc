@@ -21,18 +21,18 @@
 #define __SYNTH_H__
 
 
-#include "analog_stage.h"
 #include "control_rom.h"
+#include "engines/gp/analog_stage.h"
+#include "engines/gp/resampler.h"
+#include "engines/gp/system_effects.h"
 #include "params.h"
-#include "resampler.h"
-#include "system_effects.h"
+#include "simple_mutex.h"
 #include "wave_rom.h"
 
 #include <array>
 #include <atomic>
 #include <deque>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -62,7 +62,7 @@ namespace EmuSC { namespace Xp { struct Device; } }
 
 namespace EmuSC {
 
-class Part;
+namespace Gp { class Part; }
 class Settings;
 
 class Synth
@@ -102,6 +102,19 @@ public:
 
   // Setting audio properties (default is 44100, 2)
   void set_audio_format(uint32_t sampleRate, uint8_t channels);
+
+  // Caps simultaneous voices below whatever the loaded device's own real
+  // hardware ceiling is (24 SC-55, 28 SC-55mkII/JV-880, 64 SC-88), for a
+  // host too slow to sustain that device's worst case; never raises it.
+  // Which engine is actually running underneath (the SC-88's own XP
+  // engine, or the shared Part/Note engine every other device uses) is
+  // not the caller's concern - this applies to whichever one is loaded.
+  // Applies immediately if the SC-88 engine is already open, and also on
+  // every future set_audio_format() (which reopens it at the new rate),
+  // so call order relative to set_audio_format() doesn't matter; the
+  // Part/Note engine re-reads this on every note, so it takes effect on
+  // the very next one regardless of when it's called.
+  void set_max_voices(unsigned maxVoices);
 
   void reset(SoundMap sm, bool resetParts = false);
 
@@ -170,18 +183,26 @@ private:
   // control ROM itself and renders a stereo frame at a time off its own
   // scheduler clock. When the loaded ROM is an SC-88 this holds that engine and
   // every audio and MIDI call is forwarded to it. Null for every other device.
-  Xp::Device *_sc88 = nullptr;
+  Xp::Device *_xpDevice = nullptr;
 
-  bool _sc88_configure(uint32_t sampleRate);
+  bool _xp_configure(uint32_t sampleRate);
+
+  // set_max_voices()'s stored request, applied to whichever engine is
+  // actually loaded: the XP engine's own free-slot list (_xp_configure,
+  // on every (re)open) or _add_note()'s maxPolyphony clamp, whichever is
+  // relevant. Not SC-88-specific despite _xp_configure being the one
+  // place besides set_max_voices() itself that reads it.
+  bool _maxVoicesSet = false;
+  unsigned _maxVoices = 0;
   
   uint32_t _sampleRate;
   uint8_t _channels;
 
   std::atomic<uint32_t> _numClippedSamples;
 
-  std::mutex midiMutex;
+  SimpleMutex midiMutex;
 
-  struct std::vector<Part> _parts;
+  struct std::vector<Gp::Part> _parts;
   uint32_t _noteSerial = 0;   // Note on order, for voice allocation
   std::vector<std::function<void(const int)>> _partMidiModCallbacks;
   std::vector<std::function<void(const int)>> _partChangeCallbacks;
@@ -236,13 +257,13 @@ private:
   std::array<std::array<float, 256>, 2> _chorusOut;
   std::array<std::array<float, 256>, 2> _reverbOut;
 
-  SystemEffects *_systemEffects = nullptr;
-  Resampler *_resampler = nullptr;
+  Gp::SystemEffects *_systemEffects = nullptr;
+  Gp::Resampler *_resampler = nullptr;
 
   // The device's analog board, after the converter. See analog_stage.h: the
   // single place for what a module does to the finished mix that its chip did
   // not, and a no-op for every device whose board has not been measured.
-  AnalogStage *_analogStage = nullptr;
+  Gp::AnalogStage *_analogStage = nullptr;
 
   // MIDI message types
   static const uint8_t midi_NoteOff         = 0x80;
@@ -269,8 +290,8 @@ private:
                    int startDelay);
   void _apply_midi_sysex(uint8_t *data, uint16_t length);
   int _partials_in_use(void);
-  int _steal_partials(Part &requester);
-  int _steal_partial_jv(Part &requester);
+  int _steal_partials(Gp::Part &requester);
+  int _steal_partial_jv(Gp::Part &requester);
 
   void _midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length);
 

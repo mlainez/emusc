@@ -1,16 +1,13 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "pitch.h"
 
+#include "devices/sc88.h"
+
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kEnvelopeRateTable = 0x1543eu;
-constexpr uint32_t kRateScaleTable = 0x1573eu;
-constexpr uint32_t kReleasePedalTable = 0x78a02u;
-constexpr uint32_t kPortamentoRateTable = 0x78502u;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -41,14 +38,15 @@ int16_t scale_target(int16_t target, uint16_t depth)
   return s16((uint16_t)floor16((int32_t)target * depth));
 }
 
-bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                 const struct sc88_component *component, uint8_t key,
+bool rate_scale(const struct xp_rom *rom, const struct xp_tone *tone,
+                 const struct xp_component *component, uint8_t key,
                  uint16_t pointerAt, uint8_t factorAt, uint8_t velocity,
                  int velocityFactor, bool useVelocity, uint16_t *scale)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !scale || key > 127 || velocity > 127 ||
-      kRateScaleTable + 258u > rom->size)
+      profile->rateScaleTable + 258u > rom->size)
     return false;
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
@@ -58,7 +56,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
                       s8((uint8_t)(0u - component->bytes[factorAt])) * 256) + 64;
   if (index < 0 || index > 128)
     return false;
-  uint16_t keyScale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  uint16_t keyScale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   uint16_t velocityScale = 0x0100;
   if (useVelocity) {
     int product = 2 * ((int)velocity - 64) * velocityFactor;
@@ -66,7 +64,7 @@ bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
              -(int)(((unsigned)(-product) + 255u) >> 8)) + 64;
     if (index < 0 || index > 128)
       return false;
-    velocityScale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+    velocityScale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   }
   *scale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
   return true;
@@ -104,14 +102,15 @@ uint16_t velocity_depth(uint16_t input, uint8_t velocity, int factor)
 
 }  // namespace
 
-bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                             const struct sc88_component *component,
+bool pitch_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                             const struct xp_component *component,
                              uint8_t selectorKey, uint8_t velocity,
-                             struct sc88_pitch_envelope *envelope)
+                             struct xp_pitch_envelope *envelope)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kEnvelopeRateTable + 256u > rom->size)
+      profile->envelopeRateTable + 256u > rom->size)
     return false;
   uint16_t scale;
   if (!rate_scale(rom, tone, component, selectorKey, 0x30, 0x34,
@@ -121,7 +120,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
   envelope->depth = velocity_depth(be16(component->bytes + 0x1a), velocity,
                                    s16(be16(component->bytes + 0x36)));
   for (unsigned stage = 0; stage < 4; ++stage) {
-    uint16_t rate = be16(rom->bytes + kEnvelopeRateTable +
+    uint16_t rate = be16(rom->bytes + profile->envelopeRateTable +
                          (uint32_t)component->bytes[0x2a + stage] * 2);
     envelope->targets[stage] = scale_target(
       s16(be16(component->bytes + 0x20 + stage * 2)), envelope->depth);
@@ -140,7 +139,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
   return true;
 }
 
-bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
+bool pitch_envelope_advance(struct xp_pitch_envelope *envelope,
                              unsigned elapsedPeriods)
 {
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
@@ -180,10 +179,10 @@ bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
   return true;
 }
 
-bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                            const struct sc88_component *component,
+bool pitch_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                            const struct xp_component *component,
                             uint8_t selectorKey, uint16_t envelopeDepth,
-                            struct sc88_pitch_release *release)
+                            struct xp_pitch_release *release)
 {
   if (!release || !component || !component->bytes)
     return false;
@@ -193,7 +192,7 @@ bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *t
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
-  uint16_t rate = be16(rom->bytes + kEnvelopeRateTable +
+  uint16_t rate = be16(rom->bytes + xp_profile(rom)->envelopeRateTable +
                        (uint32_t)component->bytes[0x2e] * 2);
   uint16_t phase;
   prepare_increment(rate, scale, &phase, &release->increment);
@@ -203,16 +202,16 @@ bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *t
   /* `6559` and `58ce` write ONE word, `0x2a5a`: the destination at note on,
      and the distance left to it at note off. `delta` is that word and
      `destination` is kept beside it, so a note off that does not reach
-     `58ce` - the `+0x15` tones, `sc88_engine_start_release` - ramps toward
+     `58ce` - the `+0x15` tones, `startRelease` - ramps toward
      the destination exactly as the machine does. */
   release->delta = release->destination;
   return true;
 }
 
-bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
+bool pitch_release_activate(const struct xp_rom *rom, uint8_t hold1,
                              bool continuousHold, bool keepScaleAtZero,
                              bool sostenutoRetained,
-                             struct sc88_pitch_release *release)
+                             struct xp_pitch_release *release)
 {
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
@@ -227,7 +226,7 @@ bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = xp_profile(rom)->releasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -237,7 +236,7 @@ bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
   return true;
 }
 
-bool pitch_release_advance(struct sc88_pitch_release *release,
+bool pitch_release_advance(struct xp_pitch_release *release,
                             unsigned elapsedPeriods)
 {
   if (!release || !release->active || elapsedPeriods == 0)
@@ -258,8 +257,8 @@ bool pitch_release_advance(struct sc88_pitch_release *release,
   return true;
 }
 
-int16_t pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                            const struct sc88_pitch_release *release)
+int16_t pitch_envelope_sum(const struct xp_pitch_envelope *envelope,
+                            const struct xp_pitch_release *release)
 {
   if (!envelope || !release)
     return 0;
@@ -287,17 +286,17 @@ uint32_t pitch_current_word(uint32_t base, int32_t offset, int16_t envelopeSum)
   return value & ~UINT32_C(1);
 }
 
-uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time)
+uint32_t portamento_rate(const struct xp_rom *rom, uint8_t time)
 {
   if (!rom || !rom->bytes || time == 0 || time > 127)
     return 0;
-  uint32_t at = kPortamentoRateTable + (uint32_t)time * 4u;
+  uint32_t at = xp_profile(rom)->portamentoRateTable + (uint32_t)time * 4u;
   if (at + 4u > rom->size)
     return 0;
   return ((uint32_t)be16(rom->bytes + at) << 16) | be16(rom->bytes + at + 2);
 }
 
-void portamento_advance(struct sc88_portamento *portamento,
+void portamento_advance(struct xp_portamento *portamento,
                          unsigned elapsedPeriods)
 {
   if (!portamento || !portamento->active)
@@ -328,74 +327,3 @@ void portamento_advance(struct sc88_portamento *portamento,
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_pitch_envelope_prepare(const struct sc88_rom *rom,
-                                 const struct sc88_tone *tone,
-                                 const struct sc88_component *component,
-                                 uint8_t selector_key, uint8_t velocity,
-                                 struct sc88_pitch_envelope *envelope)
-{
-  return EmuSC::Xp::pitch_envelope_prepare(rom, tone, component, selector_key,
-                                            velocity, envelope);
-}
-
-bool sc88_pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
-                                 unsigned elapsed_periods)
-{
-  return EmuSC::Xp::pitch_envelope_advance(envelope, elapsed_periods);
-}
-
-bool sc88_pitch_release_prepare(const struct sc88_rom *rom,
-                                const struct sc88_tone *tone,
-                                const struct sc88_component *component,
-                                uint8_t selector_key, uint16_t envelope_depth,
-                                struct sc88_pitch_release *release)
-{
-  return EmuSC::Xp::pitch_release_prepare(rom, tone, component, selector_key,
-                                           envelope_depth, release);
-}
-
-bool sc88_pitch_release_activate(const struct sc88_rom *rom,
-                                 uint8_t hold1, bool continuous_hold,
-                                 bool keep_scale_at_zero,
-                                 bool sostenuto_retained,
-                                 struct sc88_pitch_release *release)
-{
-  return EmuSC::Xp::pitch_release_activate(rom, hold1, continuous_hold,
-                                            keep_scale_at_zero,
-                                            sostenuto_retained, release);
-}
-
-bool sc88_pitch_release_advance(struct sc88_pitch_release *release,
-                                unsigned elapsed_periods)
-{
-  return EmuSC::Xp::pitch_release_advance(release, elapsed_periods);
-}
-
-int16_t sc88_pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                                const struct sc88_pitch_release *release)
-{
-  return EmuSC::Xp::pitch_envelope_sum(envelope, release);
-}
-
-uint32_t sc88_pitch_current_word(uint32_t base, int32_t offset,
-                                 int16_t envelope_sum)
-{
-  return EmuSC::Xp::pitch_current_word(base, offset, envelope_sum);
-}
-
-uint32_t sc88_portamento_rate(const struct sc88_rom *rom, uint8_t time)
-{
-  return EmuSC::Xp::portamento_rate(rom, time);
-}
-
-void sc88_portamento_advance(struct sc88_portamento *portamento,
-                             unsigned elapsed_periods)
-{
-  EmuSC::Xp::portamento_advance(portamento, elapsed_periods);
-}
-
-}  // extern "C"

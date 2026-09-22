@@ -37,12 +37,12 @@ extern "C" {
  * labelled choice: the centre time is the delay's own period and is used.
  */
 
-struct sc88_delay {
+struct xp_delay {
   float *buf;
   size_t len;
   size_t pos;
   double output_rate;
-  double centre_samples, left_samples, right_samples;
+  float centre_samples, left_samples, right_samples;
   float centre_level, left_level, right_level;
   float overall, feedback;
   float pre_fb, pre_in, pre_state;
@@ -50,47 +50,34 @@ struct sc88_delay {
   bool active;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_delay
- * by value, and sc88_delay_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-bool sc88_delay_init(struct sc88_delay *dl, double output_rate);
-void sc88_delay_destroy(struct sc88_delay *dl);
-void sc88_delay_reset(struct sc88_delay *dl);
-bool sc88_delay_macro(const struct sc88_rom *rom, uint8_t macro,
-                      uint8_t out[10]);
-bool sc88_delay_set_params(const struct sc88_rom *rom,
-                           struct sc88_delay *dl, const uint8_t p[10]);
-void sc88_delay_process(struct sc88_delay *dl, const float *send,
-                        float *stereo, float *to_reverb, size_t frames);
-
 #ifdef __cplusplus
 }
 
 namespace EmuSC { namespace Xp {
 
 // Separate delay block for the XP-generation-1 engine (see
-// engines/xp/README.md). The plain sc88_delay struct above is shared,
+// engines/xp/README.md). The plain xp_delay struct above is shared,
 // unrenamed, with EmuSC::Xp::Device (device.h), which embeds it by
-// value, and with sc88_delay_test.c, which reads it directly.
+// value, and with xp_delay_test.c, which reads it directly.
 
-bool delay_init(struct sc88_delay *dl, double outputRate);
-void delay_destroy(struct sc88_delay *dl);
-void delay_reset(struct sc88_delay *dl);
+bool delay_init(struct xp_delay *dl, double outputRate,
+                 const struct XpDeviceProfile *profile);
+void delay_destroy(struct xp_delay *dl);
+void delay_reset(struct xp_delay *dl);
 
 /* One of the ten macro presets at `0x158be + 16*macro`, copied over
  * pre-LPF through reverb send exactly as writing the macro address does. */
-bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10]);
+bool delay_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[10]);
 
 /* The ten public parameters in their manual order: pre-LPF, centre time,
  * left ratio, right ratio, centre level, left level, right level, overall
  * level, feedback, reverb send. */
-bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
+bool delay_set_params(const struct xp_rom *rom, struct xp_delay *dl,
                        const uint8_t p[10]);
 
 /* Adds the delay's stereo return to `stereo` from a mono send bus, and
  * accumulates its own reverb send into `toReverb` when that is given. */
-void delay_process(struct sc88_delay *dl, const float *send, float *stereo,
+void delay_process(struct xp_delay *dl, const float *send, float *stereo,
                     float *toReverb, size_t frames);
 
 }}  // namespace EmuSC::Xp

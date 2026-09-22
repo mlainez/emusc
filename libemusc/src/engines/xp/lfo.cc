@@ -1,26 +1,12 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "lfo.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-/* SC88-CTL v1.01 offsets. The two increment tables sit immediately after the
- * 16-entry callback dispatch table at 0x29ba. */
-constexpr uint32_t kRateTable = 0x29dau;
-constexpr uint32_t kDelayTable = 0x2adau;
-constexpr uint32_t kSineTable = 0x1492cu;
-constexpr uint32_t kTable10 = 0x14524u;
-constexpr uint32_t kTable12 = 0x14626u;
-constexpr uint32_t kTable14 = 0x14728u;
-constexpr uint32_t kTable16 = 0x1482au;
-constexpr uint32_t kTablePoints = 129u;
-constexpr uint16_t kMaxIncrement = UINT16_C(0x28f6);
-constexpr uint16_t kInterpolateBelow = UINT16_C(0x0200);
-constexpr int32_t kSlewStep = INT32_C(0x1c2);
-
-/* The control task's own period, 8.0008 ms, gives the phase unit its size. */
-constexpr double kServiceHz = 124.987501249875;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -43,7 +29,7 @@ int32_t floor_shift(int32_t value, unsigned bits)
                    : (int32_t)((uint32_t)value >> bits);
 }
 
-bool prepare_ramp(struct sc88_lfo *lfo, uint16_t delay, uint16_t fade)
+bool prepare_ramp(struct xp_lfo *lfo, uint16_t delay, uint16_t fade)
 {
   if (!lfo_ramp_initialize(delay, fade, &lfo->ramp))
     return false;
@@ -107,8 +93,8 @@ bool lfo_effective_increment(uint16_t base, int16_t control, uint16_t *out)
   uint16_t sum = (uint16_t)(base + (uint16_t)control);
   if (s16(sum) <= 0)
     sum = 0;
-  else if (sum > kMaxIncrement)
-    sum = kMaxIncrement;
+  else if (sum > kXpLfoMaxIncrement)
+    sum = kXpLfoMaxIncrement;
   *out = sum;
   return true;
 }
@@ -138,10 +124,10 @@ int16_t lfo_slew_random(int16_t current, int16_t target)
 {
   int32_t candidate;
   if (target >= current) {
-    candidate = (int32_t)current + kSlewStep;
+    candidate = (int32_t)current + kXpLfoSlewStep;
     return candidate > target ? target : (int16_t)candidate;
   }
-  candidate = (int32_t)current - kSlewStep;
+  candidate = (int32_t)current - kXpLfoSlewStep;
   return candidate < target ? target : (int16_t)candidate;
 }
 
@@ -155,7 +141,7 @@ bool lfo_phase_advance(uint16_t increment, uint8_t catchupCount,
                         uint16_t *phase, uint16_t *seed, uint16_t *target)
 {
   if (!phase || !seed || !target || increment == 0 ||
-      increment > kMaxIncrement)
+      increment > kXpLfoMaxIncrement)
     return false;
   unsigned steps = (unsigned)catchupCount + 1u;
   for (unsigned index = 0; index < steps; ++index) {
@@ -172,15 +158,16 @@ bool lfo_phase_advance(uint16_t increment, uint8_t catchupCount,
   return true;
 }
 
-bool lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
+bool lfo_table_sample(const struct xp_rom *rom, uint32_t table,
                        uint16_t phase, uint16_t increment, int16_t *out)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !out ||
-      rom->size < table + kTablePoints * 2u)
+      rom->size < table + profile->tablePoints * 2u)
     return false;
   unsigned index = phase >> 9;
   uint16_t first = be16(rom->bytes + table + index * 2u);
-  if (increment >= kInterpolateBelow) {
+  if (increment >= profile->interpolateBelow) {
     *out = s16(first);
     return true;
   }
@@ -195,15 +182,16 @@ bool lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
   return true;
 }
 
-bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
+bool lfo_waveform(const struct xp_rom *rom, uint8_t selector,
                    uint16_t phase, uint16_t increment, int16_t previous,
                    int16_t target, int16_t *out)
 {
   if (!out || (selector & 1u) || selector > 0x1e)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   switch (selector) {
   case 0x00:
-    return lfo_table_sample(rom, kSineTable, phase, increment, out);
+    return lfo_table_sample(rom, profile->sineTable, phase, increment, out);
   case 0x02:
     *out = lfo_square(phase);
     return true;
@@ -220,13 +208,13 @@ bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
     *out = lfo_slew_random(previous, target);
     return true;
   case 0x10:
-    return lfo_table_sample(rom, kTable10, phase, increment, out);
+    return lfo_table_sample(rom, profile->table10, phase, increment, out);
   case 0x12:
-    return lfo_table_sample(rom, kTable12, phase, increment, out);
+    return lfo_table_sample(rom, profile->table12, phase, increment, out);
   case 0x14:
-    return lfo_table_sample(rom, kTable14, phase, increment, out);
+    return lfo_table_sample(rom, profile->table14, phase, increment, out);
   case 0x16:
-    return lfo_table_sample(rom, kTable16, phase, increment, out);
+    return lfo_table_sample(rom, profile->table16, phase, increment, out);
   default:
     /* 0x04, 0x0e and 0x18..0x1e all return the phase word itself */
     *out = s16(phase);
@@ -235,7 +223,7 @@ bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
 }
 
 bool lfo_ramp_initialize(uint16_t delayIncrement, uint16_t fadeIncrement,
-                          struct sc88_lfo_ramp *ramp)
+                          struct xp_lfo_ramp *ramp)
 {
   if (!ramp)
     return false;
@@ -247,7 +235,7 @@ bool lfo_ramp_initialize(uint16_t delayIncrement, uint16_t fadeIncrement,
   return true;
 }
 
-bool lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp)
+bool lfo_ramp_activate_immediate(struct xp_lfo_ramp *ramp)
 {
   if (!ramp)
     return false;
@@ -256,7 +244,7 @@ bool lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp)
   return true;
 }
 
-bool lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchupCount)
+bool lfo_ramp_advance(struct xp_lfo_ramp *ramp, uint8_t catchupCount)
 {
   if (!ramp)
     return false;
@@ -283,13 +271,14 @@ bool lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchupCount)
   return true;
 }
 
-bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
+bool lfo_common_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
                          unsigned partRate, unsigned userRate,
                          unsigned partDelay, unsigned userDelay,
-                         struct sc88_lfo *lfo)
+                         struct xp_lfo *lfo)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !tone->common || !lfo ||
-      rom->size < kDelayTable + 256u)
+      rom->size < profile->delayTable + 256u)
     return false;
   uint8_t rateIndex;
   int16_t delayIndex;
@@ -302,16 +291,17 @@ bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone
   lfo->share_request = tone->common[0x18];
   /* the initial phase is a high byte; the low byte is cleared */
   lfo->phase = (uint16_t)((uint16_t)tone->common[0x19] << 8);
-  lfo->base_increment = be16(rom->bytes + kRateTable + (unsigned)rateIndex * 2u);
+  lfo->base_increment = be16(rom->bytes + profile->rateTable +
+                             (unsigned)rateIndex * 2u);
   /* a negative delay byte bypasses the table rather than indexing it */
   uint16_t delay = delayIndex < 0 ? 0 : be16(
-    rom->bytes + kDelayTable + (unsigned)delayIndex * 2u);
+    rom->bytes + profile->delayTable + (unsigned)delayIndex * 2u);
   return prepare_ramp(lfo, delay, be16(tone->common + 0x1c));
 }
 
-bool lfo_local_prepare(const struct sc88_rom *rom,
-                        const struct sc88_component *component,
-                        struct sc88_lfo *lfo)
+bool lfo_local_prepare(const struct xp_rom *rom,
+                        const struct xp_component *component,
+                        struct xp_lfo *lfo)
 {
   if (!rom || !rom->bytes || !component || !component->bytes || !lfo)
     return false;
@@ -324,7 +314,7 @@ bool lfo_local_prepare(const struct sc88_rom *rom,
                       be16(component->bytes + 0x0e));
 }
 
-bool lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
+bool lfo_advance(const struct xp_rom *rom, struct xp_lfo *lfo,
                   int16_t rateControl, uint8_t catchupCount, uint16_t *seed)
 {
   if (!lfo || !seed)
@@ -347,128 +337,7 @@ bool lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
 
 double lfo_frequency(uint16_t increment)
 {
-  return (double)increment * kServiceHz / 65536.0;
+  return (double)increment * kXpControlPeriodHz / 65536.0;
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_lfo_rate_control(int16_t routed, int16_t *out)
-{
-  return EmuSC::Xp::lfo_rate_control(routed, out);
-}
-
-bool sc88_lfo_common_rate_index(unsigned tone_rate, unsigned part_rate,
-                                unsigned user_rate, uint8_t *out)
-{
-  return EmuSC::Xp::lfo_common_rate_index(tone_rate, part_rate, user_rate, out);
-}
-
-bool sc88_lfo_common_delay_index(int tone_delay, unsigned part_delay,
-                                 unsigned user_delay, int16_t *out)
-{
-  return EmuSC::Xp::lfo_common_delay_index(tone_delay, part_delay, user_delay,
-                                            out);
-}
-
-bool sc88_lfo_effective_increment(uint16_t base, int16_t control,
-                                  uint16_t *out)
-{
-  return EmuSC::Xp::lfo_effective_increment(base, control, out);
-}
-
-bool sc88_lfo_common_prepare(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone,
-                             unsigned part_rate, unsigned user_rate,
-                             unsigned part_delay, unsigned user_delay,
-                             struct sc88_lfo *lfo)
-{
-  return EmuSC::Xp::lfo_common_prepare(rom, tone, part_rate, user_rate,
-                                        part_delay, user_delay, lfo);
-}
-
-bool sc88_lfo_local_prepare(const struct sc88_rom *rom,
-                            const struct sc88_component *component,
-                            struct sc88_lfo *lfo)
-{
-  return EmuSC::Xp::lfo_local_prepare(rom, component, lfo);
-}
-
-bool sc88_lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
-                      int16_t rate_control, uint8_t catchup_count,
-                      uint16_t *seed)
-{
-  return EmuSC::Xp::lfo_advance(rom, lfo, rate_control, catchup_count, seed);
-}
-
-bool sc88_lfo_ramp_initialize(uint16_t delay_increment,
-                              uint16_t fade_increment,
-                              struct sc88_lfo_ramp *ramp)
-{
-  return EmuSC::Xp::lfo_ramp_initialize(delay_increment, fade_increment, ramp);
-}
-
-bool sc88_lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp)
-{
-  return EmuSC::Xp::lfo_ramp_activate_immediate(ramp);
-}
-
-bool sc88_lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchup_count)
-{
-  return EmuSC::Xp::lfo_ramp_advance(ramp, catchup_count);
-}
-
-int16_t sc88_lfo_square(uint16_t phase)
-{
-  return EmuSC::Xp::lfo_square(phase);
-}
-
-int16_t sc88_lfo_triangle(uint16_t phase)
-{
-  return EmuSC::Xp::lfo_triangle(phase);
-}
-
-int16_t sc88_lfo_rectified_triangle(uint16_t phase)
-{
-  return EmuSC::Xp::lfo_rectified_triangle(phase);
-}
-
-int16_t sc88_lfo_slew_random(int16_t current, int16_t target)
-{
-  return EmuSC::Xp::lfo_slew_random(current, target);
-}
-
-uint16_t sc88_lfo_random_target(uint16_t seed, uint16_t phase)
-{
-  return EmuSC::Xp::lfo_random_target(seed, phase);
-}
-
-bool sc88_lfo_phase_advance(uint16_t increment, uint8_t catchup_count,
-                            uint16_t *phase, uint16_t *seed, uint16_t *target)
-{
-  return EmuSC::Xp::lfo_phase_advance(increment, catchup_count, phase, seed,
-                                       target);
-}
-
-bool sc88_lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
-                           uint16_t phase, uint16_t increment, int16_t *out)
-{
-  return EmuSC::Xp::lfo_table_sample(rom, table, phase, increment, out);
-}
-
-bool sc88_lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
-                       uint16_t phase, uint16_t increment, int16_t previous,
-                       int16_t target, int16_t *out)
-{
-  return EmuSC::Xp::lfo_waveform(rom, selector, phase, increment, previous,
-                                  target, out);
-}
-
-double sc88_lfo_frequency(uint16_t increment)
-{
-  return EmuSC::Xp::lfo_frequency(increment);
-}
-
-}  // extern "C"

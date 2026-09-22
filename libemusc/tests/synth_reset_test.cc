@@ -3,7 +3,7 @@
 /* Synth::reset() on an SC-88.
  *
  * The SC-88 leaves Synth::_parts empty, so reset()'s part loop reaches none
- * of its state; what it holds lives in the sc88_device the Synth owns. This
+ * of its state; what it holds lives in the Xp::Device the Synth owns. This
  * exercises the public API only - a caller cannot see that device - so the
  * proof that a reset acted is audio: a part silenced through its own volume
  * controller sounds again after reset(), and the middle phase confirms the

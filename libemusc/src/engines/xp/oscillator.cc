@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "oscillator.h"
 
+#include "common/constants.h"
+
 #include <cmath>
 
 namespace EmuSC { namespace Xp {
@@ -9,8 +11,8 @@ double pitch_word_rate(uint32_t pitchWord, double outputRate)
 {
   if (outputRate <= 0.0)
     return 0.0;
-  return (SC88_WAVE_SAMPLE_RATE / outputRate) *
-    std::pow(2.0, ((double)pitchWord - 0x38000) / 0x4000);
+  return (kXpNativeRate / outputRate) *
+    std::pow(2.0, ((double)pitchWord - kXpPitchUnity) / kXpPitchUnitsPerOctave);
 }
 
 namespace {
@@ -42,11 +44,11 @@ namespace {
    x[c] by the invariant above, so it is answered directly rather than read:
    b-1 can sit before the first decoded frame when a zone loops from its own
    start.  */
-uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
+uint32_t cycle_address(const struct xp_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
   index %= oscillator->cycle_count;
-  if (oscillator->mode == SC88_WAVE_FORWARD_LOOP)
+  if (oscillator->mode == XP_WAVE_FORWARD_LOOP)
     return oscillator->loop + (uint32_t)index;
   if (index < span)
     return oscillator->end - 1 - (uint32_t)index;
@@ -54,15 +56,15 @@ uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
 }
 
 /* True while the cycle is on its reflected descending pass. */
-bool cycle_reflected(const struct sc88_oscillator *oscillator, size_t index)
+bool cycle_reflected(const struct xp_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
-  if (oscillator->mode != SC88_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
+  if (oscillator->mode != XP_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
     return false;
   return (index % oscillator->cycle_count) < span;
 }
 
-bool reflected(const struct sc88_oscillator *oscillator, size_t index)
+bool reflected(const struct xp_oscillator *oscillator, size_t index)
 {
   if (oscillator->initial) {
     if (index < oscillator->initial_count || !oscillator->cycle_count)
@@ -72,23 +74,23 @@ bool reflected(const struct sc88_oscillator *oscillator, size_t index)
   return cycle_reflected(oscillator, index);
 }
 
-uint32_t address_at(const struct sc88_oscillator *oscillator, size_t index)
+uint32_t address_at(const struct xp_oscillator *oscillator, size_t index)
 {
   if (oscillator->initial) {
     if (index < oscillator->initial_count) {
-      if (oscillator->mode == SC88_WAVE_REVERSE_ONE_SHOT)
+      if (oscillator->mode == XP_WAVE_REVERSE_ONE_SHOT)
         return oscillator->start - (uint32_t)index;
       return oscillator->start + (uint32_t)index;
     }
     if (oscillator->cycle_count)
       return cycle_address(oscillator, index - oscillator->initial_count);
-    return oscillator->mode == SC88_WAVE_REVERSE_ONE_SHOT
+    return oscillator->mode == XP_WAVE_REVERSE_ONE_SHOT
       ? oscillator->end + 1 : oscillator->end;
   }
   return cycle_address(oscillator, index);
 }
 
-bool contains(const struct sc88_oscillator *oscillator, uint32_t address)
+bool contains(const struct xp_oscillator *oscillator, uint32_t address)
 {
   return address >= oscillator->pcm_base &&
     (size_t)(address - oscillator->pcm_base) < oscillator->pcm_count;
@@ -96,20 +98,23 @@ bool contains(const struct sc88_oscillator *oscillator, uint32_t address)
 
 }  // namespace
 
-bool oscillator_init(struct sc88_oscillator *oscillator,
+bool oscillator_init(const struct XpDeviceProfile *profile,
+                      struct xp_oscillator *oscillator,
                       const int32_t *pcm24, size_t pcmCount,
                       uint32_t pcmBase,
-                      const struct sc88_wave_registers *registers,
-                      enum sc88_wave_loop_type mode,
+                      const struct xp_wave_registers *registers,
+                      enum xp_wave_loop_type mode,
                       uint32_t pitchWord, double outputRate,
-                      enum sc88_fractional_wrap wrap)
+                      enum xp_fractional_wrap wrap)
 {
+  if (!profile)
+    profile = &SC88_PROFILE;
   if (!oscillator || !pcm24 || !pcmCount || !registers ||
-      outputRate <= 0.0 || pitchWord > 0x3ffff ||
-      wrap < SC88_WRAP_FULL_CARRY || wrap > SC88_WRAP_FRACTION_ONLY ||
-      registers->start >= SC88_WAVE_BANK_SIZE ||
-      registers->loop >= SC88_WAVE_BANK_SIZE ||
-      registers->end >= SC88_WAVE_BANK_SIZE)
+      outputRate <= 0.0 || pitchWord > kXpPitchSaturation ||
+      wrap < XP_WRAP_FULL_CARRY || wrap > XP_WRAP_FRACTION_ONLY ||
+      registers->start >= profile->waveBankSize ||
+      registers->loop >= profile->waveBankSize ||
+      registers->end >= profile->waveBankSize)
     return false;
 
   oscillator->pcm24 = pcm24;
@@ -127,7 +132,7 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
   oscillator->cycle_count = 0;
 
   uint32_t last;
-  if (mode == SC88_WAVE_REVERSE_ONE_SHOT) {
+  if (mode == XP_WAVE_REVERSE_ONE_SHOT) {
     last = registers->end + 1;
     if (last > registers->start)
       return false;
@@ -137,17 +142,17 @@ bool oscillator_init(struct sc88_oscillator *oscillator,
       return false;
     oscillator->initial_count =
       (size_t)(registers->end - registers->start) + 1;
-    if (mode == SC88_WAVE_FORWARD_LOOP ||
-        mode == SC88_WAVE_PING_PONG_LOOP) {
+    if (mode == XP_WAVE_FORWARD_LOOP ||
+        mode == XP_WAVE_PING_PONG_LOOP) {
       if (registers->loop > registers->end)
         return false;
       size_t span = (size_t)(registers->end - registers->loop) + 1;
-      oscillator->cycle_count = mode == SC88_WAVE_FORWARD_LOOP
+      oscillator->cycle_count = mode == XP_WAVE_FORWARD_LOOP
         ? span : span * 2;
     }
   }
 
-  last = mode == SC88_WAVE_REVERSE_ONE_SHOT
+  last = mode == XP_WAVE_REVERSE_ONE_SHOT
     ? registers->end + 1 : registers->end;
   return contains(oscillator, registers->start) &&
     contains(oscillator, last) &&
@@ -207,14 +212,14 @@ namespace {
    opposite reading came from a metric that rewarded an output for repeating
    on the integer sample grid, which is exactly what clearing the phase
    manufactures. */
-double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
+double wrapped_phase(const struct xp_oscillator *oscillator, double overflow)
 {
   switch (oscillator->wrap) {
-  case SC88_WRAP_FULL_CARRY:
+  case XP_WRAP_FULL_CARRY:
     return std::fmod(overflow, (double)oscillator->cycle_count);
-  case SC88_WRAP_FULL_RESET:
+  case XP_WRAP_FULL_RESET:
     return 0.0;
-  case SC88_WRAP_FRACTION_ONLY:
+  case XP_WRAP_FRACTION_ONLY:
     return overflow - std::floor(overflow);
   }
   return 0.0;
@@ -224,17 +229,21 @@ double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
    descending pass of a ping-pong applied.  The one position the reflection
    cannot read is address_b - 1, which can precede the first decoded frame;
    the ROM's zero-sum invariant answers it as x[c] exactly. */
-bool value_at(const struct sc88_oscillator *oscillator, size_t index,
-              double *out)
+/* pcm24 samples are int32_t in [-2^23, 2^23), and a float's 24-bit
+   significand represents every integer in that range exactly, so this
+   float carries the sample - and the plain integer arithmetic below it -
+   with no precision loss versus double. */
+bool value_at(const struct xp_oscillator *oscillator, size_t index,
+              float *out)
 {
   uint32_t address = address_at(oscillator, index);
 
   if (reflected(oscillator, index)) {
-    double anchor = (double)oscillator->pcm24[oscillator->end -
-                                               oscillator->pcm_base];
+    float anchor = (float)oscillator->pcm24[oscillator->end -
+                                             oscillator->pcm_base];
     if (contains(oscillator, address)) {
-      *out = 2.0 * anchor -
-        (double)oscillator->pcm24[address - oscillator->pcm_base];
+      *out = 2.0f * anchor -
+        (float)oscillator->pcm24[address - oscillator->pcm_base];
       return true;
     }
     /* address_b - 1 only: it can precede the first decoded frame when a
@@ -248,7 +257,7 @@ bool value_at(const struct sc88_oscillator *oscillator, size_t index,
   }
   if (!contains(oscillator, address))
     return false;
-  *out = (double)oscillator->pcm24[address - oscillator->pcm_base];
+  *out = (float)oscillator->pcm24[address - oscillator->pcm_base];
   return true;
 }
 
@@ -378,7 +387,7 @@ bool value_at(const struct sc88_oscillator *oscillator, size_t index,
    Before the note's FIRST position there is genuinely nothing: the zone's
    decode starts at `start`, and in a differential format the frame before
    it is not a sample of this wave at all.  The caller folds back. */
-bool previous_index(const struct sc88_oscillator *oscillator, size_t index,
+bool previous_index(const struct xp_oscillator *oscillator, size_t index,
                     size_t *out)
 {
   if (index > 0) {
@@ -400,19 +409,19 @@ bool previous_index(const struct sc88_oscillator *oscillator, size_t index,
    exactly the one the two-point read used.
 
    Which of the two can actually be missing is not symmetric.  The forward
-   tap, index + 2, is answered for every zone `sc88_oscillator_init`
+   tap, index + 2, is answered for every zone `xp_oscillator_init`
    accepts: a loop wraps it modulo the cycle, a one-shot holds it at `end`
    (`end + 1` reversed) and init has already checked that address is inside
    the zone, and the ping-pong's one unreadable position is answered by the
-   ROM's zero-sum invariant in `sc88_oscillator_value`.  Its fallback is a
+   ROM's zero-sum invariant in `xp_oscillator_value`.  Its fallback is a
    guard, not a case that arises.  The backward tap goes missing exactly
    once per note - at position zero of the initial pass - and the value it
    falls back to is a CHOICE, not a recovered one: nothing measured here
    says what the chip reads when its address counter is still on the zone's
    first frame.  It costs at most the note's first 1/step output samples
    and weight (1-f)^3/6 of one of them. */
-double outer_tap(const struct sc88_oscillator *oscillator, size_t index,
-                  bool back, double inner)
+float outer_tap(const struct xp_oscillator *oscillator, size_t index,
+                 bool back, float inner)
 {
   size_t at;
 
@@ -422,20 +431,28 @@ double outer_tap(const struct sc88_oscillator *oscillator, size_t index,
   } else {
     at = index + 1;
   }
-  double value;
+  float value;
   return value_at(oscillator, at, &value) ? value : inner;
 }
 
 }  // namespace
 
-bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
+bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
 {
   if (!oscillator || !sample || oscillator->ended)
     return false;
-  size_t index = (size_t)std::floor(oscillator->phase);
+  /* oscillator->phase is provably never negative: it starts at 0.0,
+     advances by a non-negative step (pitch_word_rate can't return a
+     negative rate), and every wrapped_phase branch also returns a
+     non-negative value. A truncating cast of a non-negative double is
+     the same integer as std::floor of it, so this skips std::floor's
+     FPU-control-word juggling (real cost on the 32-bit x87 target;
+     invisible on x86-64, which lowers std::floor to a single SSE2
+     instruction) for a value that already truncates to the same place. */
+  size_t index = (size_t)oscillator->phase;
   double fraction = oscillator->phase - (double)index;
-  double value0;
-  double value1;
+  float value0;
+  float value1;
   if (!value_at(oscillator, index, &value0) ||
       !value_at(oscillator, index + 1, &value1))
     return false;
@@ -451,8 +468,8 @@ bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 
      which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
      identity - and sums to one at every fraction. */
-  double left = outer_tap(oscillator, index, true, value0);
-  double right = outer_tap(oscillator, index + 1, false, value1);
+  float left = outer_tap(oscillator, index, true, value0);
+  float right = outer_tap(oscillator, index + 1, false, value1);
   double rest = 1.0 - fraction;
   *sample = (float)((rest * rest * rest / 6.0 * left +
                      (2.0 / 3.0 - fraction * fraction *
@@ -481,31 +498,3 @@ bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-double sc88_pitch_word_rate(uint32_t pitch_word, double output_rate)
-{
-  return EmuSC::Xp::pitch_word_rate(pitch_word, output_rate);
-}
-
-bool sc88_oscillator_init(struct sc88_oscillator *oscillator,
-                          const int32_t *pcm24, size_t pcm_count,
-                          uint32_t pcm_base,
-                          const struct sc88_wave_registers *registers,
-                          enum sc88_wave_loop_type mode,
-                          uint32_t pitch_word, double output_rate,
-                          enum sc88_fractional_wrap wrap)
-{
-  return EmuSC::Xp::oscillator_init(oscillator, pcm24, pcm_count, pcm_base,
-                                     registers, mode, pitch_word, output_rate,
-                                     wrap);
-}
-
-bool sc88_oscillator_next(struct sc88_oscillator *oscillator, float *sample)
-{
-  return EmuSC::Xp::oscillator_next(oscillator, sample);
-}
-
-}  // extern "C"

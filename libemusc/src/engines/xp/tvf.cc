@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "tvf.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
 #include "tva.h"
+#include "../common/dsp_kernels.h"
 
 #include <cmath>
 #include <cstring>
@@ -10,120 +13,6 @@
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kBaseTable = 0x78702u;
-/* [FW-EXACT] TVF-Q current is the companion word << 2, i.e.
-   resonance_index << 11, and one unit of damping is 131072 - that is,
-   q = resonance_index / 64.
-
-   The scaling is fixed by the chip's own limit table; see the note on
-   kLimitTable. Read with q = index/64 that table is exactly
-   f*f + f*q = 2 on all 128 entries; read with index/32 it spans
-   2.000..3.458 and with index/128 1.270..2.000. The value libEmuSC's
-   SC-55 path uses (svf.cc's set_resonance, q = resonance/64, which the
-   SC-55's own two stability tables fix to a rounding unit in P-0130 and
-   P-0131) is the value the SC-88's ROM asks for too. */
-constexpr double kQUnity = 131072.0;
-/* [FW-EXACT] The TVF-F register is a log-frequency word in the XP pitch
-   register's own domain. `07_synthesis/pitch.md` has the pitch word at
-   16384 units per octave, 18 bits, unity playback at 0x38000; routine
-   67a8 forms TVF-F as the same 18-bit high/low pair in the same scratch
-   tuple with the same interpolation word 0x4100, and the base table at
-   0x78702 steps by exactly 16384/12 per index once expanded - one
-   semitone per index. That is the slope. The anchor - which frequency a
-   register value names - is the ROM's too, and the limit table fixes it
-   in integer arithmetic.
-
-   The limit table's law is f*f + f*q = 2 (see kLimitTable), which gives
-   f = sqrt(2) at resonance index 0 and f = 1 at index 64. With
-   f = 2*sin(pi*fc/fs) those two ceilings are fc = fs/4 and fs/6 exactly,
-   so their sines are sqrt(2)/2 and 1/2 and their words sit 16384/2 and
-   16384 units below the word whose sine is one. The entries are 0xf800
-   and 0xf000, which the firmware expands ((e >> 1) << 3) to 0x3e000 and
-   0x3c000:
-
-       0x3e000 + 8192  = 0x40000
-       0x3c000 + 16384 = 0x40000
-
-   Neither equation rounds. Those two are the only entries in either
-   table whose exact word is a multiple of four, so they are the only
-   two the table's floor leaves untouched, and both name 0x40000 - the
-   word one past the 18-bit range - as the chip's Nyquist.
-
-   With that anchor both tables decode to the bit:
-
-       entry = floor((0x40000 + 16384*log2(sin(pi*f/fs))) / 4)
-
-   the base table over f = 440*2^((i - 64)/12) for all 127 indices below
-   Nyquist, and the limit table over the stability law for all 128. So
-   the base table is a note table whose index 64 is A440; index 127 asks
-   for 16744 Hz, past the fold, and holds 0xffff instead. floor is what
-   reproduces them - round gets 64 and 57, ceil 0 and 2 - and moving the
-   anchor by one word unit breaks at least 28 entries per table. The
-   limit table runs fs/4 at resonance index 0 through fs/6 at 64 to
-   3835 Hz at 127, and 0x38000 - unity playback in the pitch register -
-   is 2573.8 Hz here.
-
-   fc and fs enter only as sin(pi*fc/fs), so the ROM fixes their ratio
-   and nothing more. Fit the base table with the anchor and the absolute
-   scale both free and index 64 comes out at 439.9996 Hz, 1sd 0.05 cent,
-   which is a second reading of the 32.000 kHz rate - `M-166` has it from
-   the DAC image mirror. The coefficient the chip derives from the word
-   is recovered as well: see kLimitTable. */
-constexpr double kOctaveUnits = 16384.0;
-constexpr uint32_t kNyquistWord = 0x40000;
-/* [FW-EXACT] The limit table is the filter's own topology, written down.
- *
- * 0x78802 holds one cutoff ceiling per resonance index. Read in the base
- * table's domain - f = 2*sin(pi*fc/32000), the Chamberlin coefficient the
- * base table already is - and with q = resonance_index/64, every one of
- * its 128 entries satisfies
- *
- *     f*f + f*q = 2
- *
- * to a rounding unit: the residual against the exact law is -0.53 +- 0.29
- * table units and lies in [-0.99, 0], which is the signature of a floor(),
- * not of a fit. In octaves that is 0.33 cent of cutoff.
- *
- * That expression is not a general fact about two-pole filters. It is the
- * trace of the state matrix of the forward-Euler state-variable filter
- *
- *     lp[n] = lp[n-1] + f*bp[n-1]
- *     hp[n] = x[n] - lp[n] - q*bp[n-1]
- *     bp[n] = bp[n-1] + f*hp[n]
- *
- * whose trace is 2 - f*f - f*q and whose determinant is 1 - f*q. Setting
- * the trace to zero puts the pole pair at exactly +-90 degrees: the chip
- * refuses to let the filter's realised resonance climb past fs/4, and the
- * ceiling it writes for each resonance is the cutoff at which that
- * happens. A trapezoidal (bilinear) realisation is stable for every
- * positive coefficient and has no such ceiling to tabulate; its own
- * coefficient g = tan(pi*fc/fs) puts g*g + g*q at 0.906..1.000 over the
- * same table, and reading the word as a frequency instead of a sine puts
- * it at 3.211..3.414. The topology is forward-Euler.
- *
- * This is the SC-55's filter. libEmuSC's svf.cc is the same three lines,
- * and the SC-55's control ROM carries the same law twice: TVFResonance[]
- * is 128*(sqrt(q*q+4) - q) and TVFResonanceFreq[] is 32*(4-f*f)/f, the
- * two sides of that state matrix's stability edge, with q = r/64 and
- * f = x/128 (P-0130, P-0131). The SC-88 tabulates the same topology at a
- * tighter bound.
- *
- * Two things follow that the audio path could not have been told any
- * other way. The coefficient is the ROM's own word and is not warped
- * again; and a tone whose computed cutoff is clamped to this ceiling is
- * a tone the chip has been asked to leave alone - at q = 1 the law gives
- * f = 1 exactly, where the difference equations above collapse to
- * y[n] = x[n-1], a bare sample of delay. "Wide open" is realised as
- * transparent, which is what asking for a cutoff above the ceiling
- * should mean. */
-constexpr uint32_t kLimitTable = 0x78802u;
-/* The sound chip's own sample rate, which the cutoff word is a
-   fraction of. */
-constexpr double kNativeRate = 32000.0;
-constexpr uint32_t kEnvelopeRateTable = 0x1543eu;
-constexpr uint32_t kRateScaleTable = 0x1573eu;
-constexpr uint32_t kReleasePedalTable = 0x78a02u;
 
 uint16_t be16(const uint8_t *p)
 {
@@ -181,44 +70,46 @@ int32_t signedProductHigh(int32_t left, int16_t right)
   return -(int32_t)(magnitude >> 16) - 1;
 }
 
-bool keyRateScale(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                   const struct sc88_component *component,
+bool keyRateScale(const struct xp_rom *rom, const struct xp_tone *tone,
+                   const struct xp_component *component,
                    uint8_t selectorKey, uint16_t pointerAt, uint8_t factorAt,
                    uint16_t *scale)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !scale || selectorKey > 127)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint32_t curve = ((uint32_t)tone->common[0x21] << 16) |
     be16(component->bytes + pointerAt);
   if (curve + selectorKey >= rom->size ||
-      kRateScaleTable + 129u * 2 > rom->size)
+      profile->rateScaleTable + 129u * 2 > rom->size)
     return false;
   int keyValue = s8(rom->bytes[curve + selectorKey]);
   int factor = s8((uint8_t)(0u - component->bytes[factorAt]));
   int index = floorDivPow2(keyValue * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
-bool velocityRateScale(const struct sc88_rom *rom, uint8_t velocity,
+bool velocityRateScale(const struct xp_rom *rom, uint8_t velocity,
                         int factor, uint16_t *scale)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !scale || velocity > 127 ||
       factor < -128 || factor > 127 ||
-      kRateScaleTable + 129u * 2 > rom->size)
+      profile->rateScaleTable + 129u * 2 > rom->size)
     return false;
   int index = floorDivPow2((2 * ((int)velocity - 64)) * factor, 8) + 64;
   if (index < 0 || index > 128)
     return false;
-  *scale = be16(rom->bytes + kRateScaleTable + (uint32_t)index * 2);
+  *scale = be16(rom->bytes + profile->rateScaleTable + (uint32_t)index * 2);
   return true;
 }
 
-bool envelopeDepth(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                    const struct sc88_component *component, uint8_t velocity,
+bool envelopeDepth(const struct xp_rom *rom, const struct xp_tone *tone,
+                    const struct xp_component *component, uint8_t velocity,
                     bool softPedal, uint16_t *depth)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -274,12 +165,19 @@ int16_t scaleTarget(int16_t target, uint16_t depth)
  * the interpolation pair beside them; `683f: ea 2a 07 41 00` puts
  * `#0x4100` in the low word, which `tva_curve_decode` reads as the LINEAR
  * family at value 256 and `q = 4 * periods` - see tva.cc. */
-double frequencyProgress(const struct sc88_tvf_registers *registers,
+double frequencyProgress(const struct xp_tvf_registers *registers,
                           double periods)
 {
-  struct sc88_tva_curve curve;
-  tva_curve_decode(registers->frequency_interpolation, &curve);
-  return tva_curve_progress(&curve, periods);
+  /* frequency_interpolation has exactly one writer, a few lines below in
+     tvf_prepare_registers: always the literal 0x4100 (also asserted by
+     xp_rom_test.c, xp_tvf_test.c and xp_renderer_test.c). Decoding
+     that fixed word is always the linear family at rate 256/64 = 4.0
+     exactly - a power-of-two divisor, so this is that double, not an
+     approximation of it - which is what tva_curve_decode/_progress
+     reduce to below. Called once per voice per output sample, this skips
+     redoing that decode from scratch every time. */
+  const double q = 4.0 * periods;
+  return q >= 1.0 ? 1.0 : q;
 }
 
 }  // namespace
@@ -294,7 +192,7 @@ double frequencyProgress(const struct sc88_tvf_registers *registers,
 
    The SC-88's base table at 0x78702 is that same quantity in the XP pitch
    register's log domain and decodes to the bit; see the note on
-   kNyquistWord. Reading the word as a log FREQUENCY instead leaves an sd
+   XP_TVF_NYQUIST_WORD. Reading the word as a log FREQUENCY instead leaves an sd
    of 2072 word units and up to 0.67 octave, because it has no account of
    why the table's steps shrink from 1368 to 0 over its last twelve
    entries. That compression is the sine approaching one; the frequency
@@ -316,11 +214,11 @@ double frequencyProgress(const struct sc88_tvf_registers *registers,
    top. */
 double tvf_word_to_hz(uint32_t word)
 {
-  double sine = std::exp2(((double)word - kNyquistWord) / kOctaveUnits);
+  double sine = std::exp2(((double)word - XP_TVF_NYQUIST_WORD) / kXpTvfOctaveUnits);
 
   if (sine >= 1.0)
-    return 0.5 * kNativeRate;
-  return (kNativeRate / 3.14159265358979323846) * std::asin(sine);
+    return 0.5 * kXpNativeRate;
+  return (kXpNativeRate / 3.14159265358979323846) * std::asin(sine);
 }
 
 /* `0x6ad0`..`0x6aff`. The matrix's cached word is a controller reading,
@@ -372,13 +270,14 @@ int16_t tvf_lfo_filter_term(int16_t fadedDepth, int16_t waveform)
   return (int16_t)signedProductHigh(value, waveform);
 }
 
-bool tvf_prepare_registers(const struct sc88_rom *rom,
-                            const struct sc88_component *component,
+bool tvf_prepare_registers(const struct xp_rom *rom,
+                            const struct xp_component *component,
                             int16_t preBaseModulation,
-                            const struct sc88_tvf_controls *controls,
-                            struct sc88_tvf_registers *registers)
+                            const struct xp_tvf_controls *controls,
+                            struct xp_tvf_registers *registers)
 {
-  if (!rom || !rom->bytes || rom->size < kLimitTable + 256u ||
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (!rom || !rom->bytes || rom->size < profile->limitTable + 256u ||
       !component || !component->bytes || !controls || !registers ||
       controls->part_cutoff > 127 || controls->secondary_cutoff > 127 ||
       controls->part_resonance > 127 ||
@@ -422,7 +321,7 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   int16_t accumulator = s16(
     (uint16_t)((uint16_t)preBaseModulation +
                (uint16_t)tvf_matrix_cutoff_term(controls->matrix_cutoff)));
-  int32_t combined = be16(rom->bytes + kBaseTable + (unsigned)cutoffIndex * 2u);
+  int32_t combined = be16(rom->bytes + profile->baseTable + (unsigned)cutoffIndex * 2u);
   combined += accumulator;
   if (combined < 0)
     combined = 0;
@@ -432,7 +331,7 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   combined >>= 1;
   registers->base_value = (uint16_t)combined;
   uint16_t limit = (uint16_t)(be16(
-    rom->bytes + kLimitTable + (unsigned)resonanceIndex * 2u) >> 1);
+    rom->bytes + profile->limitTable + (unsigned)resonanceIndex * 2u) >> 1);
   if (combined > limit)
     combined = limit;
 
@@ -447,8 +346,8 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   return true;
 }
 
-bool tvf_key_modulation(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                         const struct sc88_component *component,
+bool tvf_key_modulation(const struct xp_rom *rom, const struct xp_tone *tone,
+                         const struct xp_component *component,
                          uint8_t selectorKey, int16_t *modulation)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -465,14 +364,15 @@ bool tvf_key_modulation(const struct sc88_rom *rom, const struct sc88_tone *tone
   return true;
 }
 
-bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool tvf_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, uint8_t velocity, bool softPedal,
-                           struct sc88_tvf_envelope *envelope)
+                           struct xp_tvf_envelope *envelope)
 {
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !envelope || selectorKey > 127 || velocity > 127 ||
-      kEnvelopeRateTable + 128u * 2 > rom->size ||
+      profile->envelopeRateTable + 128u * 2 > rom->size ||
       !envelopeDepth(rom, tone, component, velocity, softPedal,
                      &envelope->depth))
     return false;
@@ -493,7 +393,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
     if (!velocityRateScale(rom, velocity, factor, &velocityScale))
       return false;
     uint16_t finalScale = (uint16_t)(((uint32_t)keyScale * velocityScale) >> 8);
-    uint16_t tableRate = be16(rom->bytes + kEnvelopeRateTable +
+    uint16_t tableRate = be16(rom->bytes + profile->envelopeRateTable +
       (uint32_t)component->bytes[0x54 + stage] * 2);
     prepareIncrement(tableRate, finalScale, envelope->initial_phases + stage,
                       envelope->increments + stage);
@@ -510,7 +410,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
   return true;
 }
 
-bool tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
+bool tvf_envelope_advance(struct xp_tvf_envelope *envelope,
                            unsigned elapsedPeriods)
 {
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
@@ -555,14 +455,14 @@ bool tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
   return true;
 }
 
-bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
+bool tvf_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
                           uint8_t selectorKey, uint16_t envelopeDepthValue,
-                          struct sc88_tvf_release *release)
+                          struct xp_tvf_release *release)
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !release || selectorKey > 127 ||
-      kEnvelopeRateTable + 128u * 2 > rom->size)
+      xp_profile(rom)->envelopeRateTable + 128u * 2 > rom->size)
     return false;
   std::memset(release, 0, sizeof *release);
   release->scale = UINT16_MAX;
@@ -571,7 +471,7 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   uint16_t keyScale;
   if (!keyRateScale(rom, tone, component, selectorKey, 0x5c, 0x5f, &keyScale))
     return false;
-  uint16_t tableRate = be16(rom->bytes + kEnvelopeRateTable +
+  uint16_t tableRate = be16(rom->bytes + xp_profile(rom)->envelopeRateTable +
                             (uint32_t)component->bytes[0x58] * 2);
   uint16_t initialPhase;
   prepareIncrement(tableRate, keyScale, &initialPhase, &release->increment);
@@ -581,10 +481,10 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   return true;
 }
 
-bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
+bool tvf_release_set_pedal(const struct xp_rom *rom, uint8_t hold1,
                             bool continuousHold, bool keepScaleAtZero,
                             bool sostenutoRetained,
-                            struct sc88_tvf_release *release)
+                            struct xp_tvf_release *release)
 {
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
@@ -598,7 +498,7 @@ bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
       if (!keepScaleAtZero)
         release->scale_enabled = false;
     } else {
-      uint32_t offset = kReleasePedalTable + (127u - effective) * 2;
+      uint32_t offset = xp_profile(rom)->releasePedalTable + (127u - effective) * 2;
       if (offset + 2 > rom->size)
         return false;
       release->scale = be16(rom->bytes + offset);
@@ -608,7 +508,7 @@ bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
   return true;
 }
 
-bool tvf_release_advance(struct sc88_tvf_release *release,
+bool tvf_release_advance(struct xp_tvf_release *release,
                           unsigned elapsedPeriods)
 {
   if (!release || !release->active || elapsedPeriods == 0)
@@ -629,11 +529,12 @@ bool tvf_release_advance(struct sc88_tvf_release *release,
   return true;
 }
 
-bool tvf_update_frequency(const struct sc88_rom *rom,
+bool tvf_update_frequency(const struct xp_rom *rom,
                            int16_t postBaseModulation,
-                           struct sc88_tvf_registers *registers)
+                           struct xp_tvf_registers *registers)
 {
-  if (!rom || !rom->bytes || !registers || rom->size < kLimitTable + 256u)
+  if (!rom || !rom->bytes || !registers ||
+      rom->size < xp_profile(rom)->limitTable + 256u)
     return false;
   if (registers->fixed_tuple)
     return true;
@@ -650,7 +551,8 @@ bool tvf_update_frequency(const struct sc88_rom *rom,
   uint16_t combined = (uint16_t)((uint16_t)registers->base_value +
                                  (uint16_t)postBaseModulation);
   uint16_t limit = (uint16_t)(be16(
-    rom->bytes + kLimitTable + (uint32_t)registers->resonance_index * 2) >> 1);
+    rom->bytes + xp_profile(rom)->limitTable +
+    (uint32_t)registers->resonance_index * 2) >> 1);
   if (combined > limit)
     combined = limit;
   registers->combined = combined;
@@ -658,13 +560,13 @@ bool tvf_update_frequency(const struct sc88_rom *rom,
   return true;
 }
 
-void tvf_latch_frequency(struct sc88_tvf_registers *registers)
+void tvf_latch_frequency(struct xp_tvf_registers *registers)
 {
   if (registers)
     registers->frequency_current = registers->frequency_target;
 }
 
-void tvf_advance_registers(struct sc88_tvf_registers *registers,
+void tvf_advance_registers(struct xp_tvf_registers *registers,
                             unsigned periods)
 {
   if (!registers || periods == 0)
@@ -677,14 +579,14 @@ void tvf_advance_registers(struct sc88_tvf_registers *registers,
      with two more fraction bits (see the damping note in the audio path). */
 }
 
-void tvf_audio_reset(struct sc88_tvf_audio_state *state)
+void tvf_audio_reset(struct xp_tvf_audio_state *state)
 {
   if (state)
     std::memset(state, 0, sizeof *state);
 }
 
-float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *state,
-                                     const struct sc88_tvf_registers *registers,
+float tvf_audio_process_provisional(void *user, struct xp_tvf_audio_state *state,
+                                     const struct xp_tvf_registers *registers,
                                      double periodFraction, float input)
 {
   if (!state || !registers)
@@ -706,17 +608,30 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
     ((double)registers->frequency_target - registers->frequency_current);
   double g;
   {
-    /* The coefficient the ROM's word already is. At the chip's own rate
-       this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
-       taken out of the word by tvf_word_to_hz and put straight back -
-       and at any other host rate it is the same analog corner retuned
-       to that rate, which is the only part of this that is a choice. */
-    double rate = user ? *(const double *)user : kNativeRate;
-    double cutoff = tvf_word_to_hz((uint32_t)(word + 0.5));
-    double nyquist = rate * 0.5;
-    if (cutoff > nyquist * 0.99)
-      cutoff = nyquist * 0.99;
-    g = 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+    const uint32_t wordInt = (uint32_t)(word + 0.5);
+    /* g is a pure function of wordInt at a fixed host rate, and the host
+       rate is set once per Device and never changes mid-render (it comes
+       from renderer->tvf_audio_user, wired up once at device init) - so
+       memoizing on wordInt alone, per voice, is exact, not an
+       approximation of the rate-dependent case. */
+    if (state->memo_valid && state->memo_word == wordInt) {
+      g = state->memo_g;
+    } else {
+      /* The coefficient the ROM's word already is. At the chip's own rate
+         this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
+         taken out of the word by tvf_word_to_hz and put straight back -
+         and at any other host rate it is the same analog corner retuned
+         to that rate, which is the only part of this that is a choice. */
+      double rate = user ? *(const double *)user : kXpNativeRate;
+      double cutoff = tvf_word_to_hz(wordInt);
+      double nyquist = rate * 0.5;
+      if (cutoff > nyquist * 0.99)
+        cutoff = nyquist * 0.99;
+      g = 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+      state->memo_word = wordInt;
+      state->memo_g = g;
+      state->memo_valid = true;
+    }
   }
   /* Damping from the register the ROM supplies. `07_synthesis/tvf.md`:
    * the companion table at 0x78902 is exactly index * 512, expanded left
@@ -729,7 +644,7 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
    * (`M-105`). The fixed-tuple path's TVF-Q current 0x20000 is what index
    * 64 produces, so 64 is the neutral resonance; the index runs opposite
    * to the player's setting, so a low index is a high Q. */
-  double damping = (double)registers->resonance_current / kQUnity;
+  double damping = (double)registers->resonance_current / kXpTvfQUnity;
   /* The register runs to index 127, which asks for 3.97. The topology is
      stable for any positive damping, so the only bound needed is one that
      keeps the denominator away from zero; refusing the overdamped end
@@ -738,44 +653,56 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
     damping = 0.05;
   else if (damping > 4.0)
     damping = 4.0;
-  /* The two poles are realised with forward-Euler integrators, the
-     topology the chip's limit table names (see kLimitTable) and the one
-     libEmuSC's SC-55 path already runs in svf.cc. The trapezoidal form
-     this replaced is a bilinear transform: it leaves a double zero at
+  /* The two poles are realised with forward-Euler integrators (svf_step,
+     engines/common/dsp_kernels.h), the topology the chip's limit table
+     names (see XpDeviceProfile::limitTable) and the one libEmuSC's SC-55
+     path already runs. The trapezoidal form this replaced is a bilinear
+     transform: it leaves a double zero at
      Nyquist, so the two poles the ROM asks for rolled off like three near
      the top of the band - 0.5 dB darker than its own analog prototype at
      twice the corner for a tone cut off at 1.6 kHz, 3.0 dB at 3.7 kHz and
      7.5 dB at 5.3 kHz. Forward Euler has no zero but the one sample of
      delay, and its error runs the other way. */
   unsigned section;
-  double signal = input;
-  double high = 0.0;
-  double band = 0.0;
-  double low = 0.0;
-  for (section = 0; section < SC88_TVF_SECTIONS; ++section) {
-    double d = section == 0 ? damping : 2.0;
-    double f = g;
-    double sb = section == 0 ? state->integrator_band
-                             : state->section_band[section];
-    double sl = section == 0 ? state->integrator_low
+  float signal = input;
+  for (section = 0; section < XP_TVF_SECTIONS; ++section) {
+    float d = section == 0 ? (float)damping : 2.0f;
+    float f = (float)g;
+    float &lp = section == 0 ? state->integrator_low
                              : state->section_low[section];
+    float &bp = section == 0 ? state->integrator_band
+                             : state->section_band[section];
     /* The chip's own limit table keeps f*f + f*d at or below 2, which is
        well inside this bound; the bound is here because the damping floor
        above and a host sample rate other than the chip's are not the ROM's
-       doing and must not be able to put a pole outside the unit circle. */
-    double bound = 0.99 * (std::sqrt(d * d + 4.0) - d);
+       doing and must not be able to put a pole outside the unit circle.
+       Run in float: the persistent state either side of this loop is
+       already float, and the section arithmetic itself only ever differs
+       from a double computation by <=1 LSB of 16-bit output, on 0.045% of
+       samples in a 137s SC-88 reference render - below the noise floor of
+       the 16-bit format this ships as.
+
+       Section 0's bound is a pure function of resonance_current (via d),
+       which - like g above - glides in steps far coarser than one sample,
+       so it is memoized the same way. A hypothetical section > 0 (d fixed
+       at 2.0f; XP_TVF_SECTIONS is 1 today, so this never runs) is not
+       memoized: it would be one constant, but there is no live case to
+       verify that against. */
+    float bound;
+    if (section == 0 && state->bound_valid &&
+        state->memo_resonance == registers->resonance_current) {
+      bound = state->memo_bound;
+    } else {
+      bound = 0.99f * (std::sqrt(d * d + 4.0f) - d);
+      if (section == 0) {
+        state->memo_resonance = registers->resonance_current;
+        state->memo_bound = bound;
+        state->bound_valid = true;
+      }
+    }
     if (f > bound)
       f = bound;
-    low = sl + f * sb;
-    high = signal - low - d * sb;
-    band = sb + f * high;
-    if (section == 0) {
-      state->integrator_band = (float)band;
-      state->integrator_low = (float)low;
-    } else {
-      state->section_band[section] = (float)band;
-      state->section_low[section] = (float)low;
-    }
+    float high = svf_step(signal, f, d, lp, bp);
     /* XP bits 10..11 carry a type code - 0 on 1193 components, 1 on 12,
        2 on 38 - and the name binding proposed from JV-1080
        documentation is LPF/BPF/HPF for 0/1/2. Code 2 takes the
@@ -813,124 +740,9 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
        2, which is not in the single-note set - so band-pass is
        unverified here and is not adopted on the strength of the
        binding alone. */
-    signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : low;
+    signal = ((registers->filter_select >> 10) & 3u) == 2u ? high : lp;
   }
-  return (float)signal;
+  return signal;
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_tvf_prepare_registers(const struct sc88_rom *rom,
-                                const struct sc88_component *component,
-                                int16_t pre_base_modulation,
-                                const struct sc88_tvf_controls *controls,
-                                struct sc88_tvf_registers *registers)
-{
-  return EmuSC::Xp::tvf_prepare_registers(rom, component, pre_base_modulation,
-                                           controls, registers);
-}
-
-int16_t sc88_tvf_matrix_cutoff_term(int16_t cached)
-{
-  return EmuSC::Xp::tvf_matrix_cutoff_term(cached);
-}
-
-int16_t sc88_tvf_lfo_filter_term(int16_t faded_depth, int16_t waveform)
-{
-  return EmuSC::Xp::tvf_lfo_filter_term(faded_depth, waveform);
-}
-
-bool sc88_tvf_key_modulation(const struct sc88_rom *rom,
-                             const struct sc88_tone *tone,
-                             const struct sc88_component *component,
-                             uint8_t selector_key, int16_t *modulation)
-{
-  return EmuSC::Xp::tvf_key_modulation(rom, tone, component, selector_key,
-                                        modulation);
-}
-
-bool sc88_tvf_envelope_prepare(const struct sc88_rom *rom,
-                               const struct sc88_tone *tone,
-                               const struct sc88_component *component,
-                               uint8_t selector_key, uint8_t velocity,
-                               bool soft_pedal,
-                               struct sc88_tvf_envelope *envelope)
-{
-  return EmuSC::Xp::tvf_envelope_prepare(rom, tone, component, selector_key,
-                                          velocity, soft_pedal, envelope);
-}
-
-bool sc88_tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
-                               unsigned elapsed_periods)
-{
-  return EmuSC::Xp::tvf_envelope_advance(envelope, elapsed_periods);
-}
-
-bool sc88_tvf_release_prepare(const struct sc88_rom *rom,
-                              const struct sc88_tone *tone,
-                              const struct sc88_component *component,
-                              uint8_t selector_key, uint16_t envelope_depth,
-                              struct sc88_tvf_release *release)
-{
-  return EmuSC::Xp::tvf_release_prepare(rom, tone, component, selector_key,
-                                         envelope_depth, release);
-}
-
-bool sc88_tvf_release_set_pedal(const struct sc88_rom *rom,
-                                uint8_t hold1, bool continuous_hold,
-                                bool keep_scale_at_zero,
-                                bool sostenuto_retained,
-                                struct sc88_tvf_release *release)
-{
-  return EmuSC::Xp::tvf_release_set_pedal(rom, hold1, continuous_hold,
-                                           keep_scale_at_zero,
-                                           sostenuto_retained, release);
-}
-
-bool sc88_tvf_release_advance(struct sc88_tvf_release *release,
-                              unsigned elapsed_periods)
-{
-  return EmuSC::Xp::tvf_release_advance(release, elapsed_periods);
-}
-
-bool sc88_tvf_update_frequency(const struct sc88_rom *rom,
-                               int16_t post_base_modulation,
-                               struct sc88_tvf_registers *registers)
-{
-  return EmuSC::Xp::tvf_update_frequency(rom, post_base_modulation, registers);
-}
-
-void sc88_tvf_latch_frequency(struct sc88_tvf_registers *registers)
-{
-  EmuSC::Xp::tvf_latch_frequency(registers);
-}
-
-void sc88_tvf_advance_registers(struct sc88_tvf_registers *registers,
-                                unsigned periods)
-{
-  EmuSC::Xp::tvf_advance_registers(registers, periods);
-}
-
-double sc88_tvf_word_to_hz(uint32_t word)
-{
-  return EmuSC::Xp::tvf_word_to_hz(word);
-}
-
-void sc88_tvf_audio_reset(struct sc88_tvf_audio_state *state)
-{
-  EmuSC::Xp::tvf_audio_reset(state);
-}
-
-float sc88_tvf_audio_process_provisional(
-  void *user, struct sc88_tvf_audio_state *state,
-  const struct sc88_tvf_registers *registers,
-  double period_fraction, float input)
-{
-  return EmuSC::Xp::tvf_audio_process_provisional(user, state, registers,
-                                                   period_fraction, input);
-}
-
-}  // extern "C"

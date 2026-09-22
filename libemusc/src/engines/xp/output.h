@@ -7,7 +7,7 @@
  *  samples through a converter and an analog board, and this file is the
  *  single place for that class of thing on the SC-88 - the same role
  *  analog_stage.cc plays for the devices that run through synth.cc. The
- *  SC-88's voice path is the sc88_* C engine and never reaches synth.cc,
+ *  SC-88's voice path is the xp_* C engine and never reaches synth.cc,
  *  so it needs its own.
  *
  *  Nothing here is [FW-EXACT]. Every section is [MEASURED], carries the
@@ -19,6 +19,8 @@
 #ifndef EMUSC_XP_OUTPUT_H
 #define EMUSC_XP_OUTPUT_H
 
+#include "devices/sc88.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -26,43 +28,40 @@
 extern "C" {
 #endif
 
-enum sc88_output_section_type {
-  SC88_OUTPUT_LOW_SHELF,
-  SC88_OUTPUT_PEAKING,
-  SC88_OUTPUT_HIGH_SHELF
+enum xp_output_section_type {
+  XP_OUTPUT_LOW_SHELF,
+  XP_OUTPUT_PEAKING,
+  XP_OUTPUT_HIGH_SHELF
 };
 
-struct sc88_output_section {
-  enum sc88_output_section_type type;
+struct xp_output_section {
+  enum xp_output_section_type type;
   float frequency;
   float gain_db;
   float q;
 };
 
-struct sc88_output_biquad {
+struct xp_output_biquad {
   float b0, b1, b2, a1, a2;
   float x1[2], x2[2], y1[2], y2[2];
 };
-
-#define SC88_OUTPUT_MAX_SECTIONS 4
 
 /* The converter hold, as a symmetric FIR. 31 taps realises the target to
    0.003 dB through 13.9 kHz and 0.05 dB at 15 kHz at the chip's own
    32 kHz, 0.007 dB across the whole band at 44.1 kHz; only the last few
    hundred hertz before Nyquist fall short, where the target is a cusp.
-   The cost is a constant group delay of SC88_OUTPUT_HOLD_TAPS / 2
+   The cost is a constant group delay of XP_OUTPUT_HOLD_TAPS / 2
    samples on the whole render, 0.47 ms at 32 kHz. */
-#define SC88_OUTPUT_HOLD_TAPS 31
 
-struct sc88_output {
-  struct sc88_output_biquad section[SC88_OUTPUT_MAX_SECTIONS];
+struct xp_output {
+  struct xp_output_biquad section[XP_OUTPUT_MAX_SECTIONS];
   unsigned sections;
   /* The DAC's zero-order hold. See output.cc for the measurement. */
-  float hold[SC88_OUTPUT_HOLD_TAPS];
-  float hold_z[2][SC88_OUTPUT_HOLD_TAPS];
+  float hold[XP_OUTPUT_HOLD_TAPS];
+  float hold_z[2][XP_OUTPUT_HOLD_TAPS];
   unsigned hold_taps;
   unsigned hold_pos;
-  /* The DC blocker, which lived inline in sc88_device.c until it was
+  /* The DC blocker, which lived inline in xp_device.c until it was
      moved here. It is not cited to any ROM either, so it belongs in the
      labelled stage rather than unmarked in the middle of the render. */
   float dc_pole;
@@ -70,28 +69,15 @@ struct sc88_output {
   bool enabled;
 };
 
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_output
- * by value, and sc88_output_test.c). Each forwards to the real
- * implementation in namespace EmuSC::Xp. */
-void sc88_output_init(struct sc88_output *out, double rate);
-void sc88_output_reset(struct sc88_output *out);
-void sc88_output_process(struct sc88_output *out, float *stereo,
-                         size_t frames);
-
 /* The profile itself, exposed so a test can assert its response. */
-extern const struct sc88_output_section SC88_OUTPUT_RESPONSE[];
-extern const unsigned SC88_OUTPUT_RESPONSE_SECTIONS;
-
-/* The converter's hold, in hertz: the rate the DAC is clocked at. */
-#define SC88_OUTPUT_DAC_RATE 32000.0
+extern const struct xp_output_section XP_OUTPUT_RESPONSE[];
+extern const unsigned XP_OUTPUT_RESPONSE_SECTIONS;
 
 /* The analog board's own poles, as the R and C that make them. See
    output.cc for the schematic they are read from. */
-#define SC88_OUTPUT_ANALOG_SECTIONS 5
-struct sc88_output_rc { double r_ohm, c_farad; };
-extern const struct sc88_output_rc
-  SC88_OUTPUT_ANALOG[SC88_OUTPUT_ANALOG_SECTIONS];
+struct xp_output_rc { double r_ohm, c_farad; };
+extern const struct xp_output_rc
+  XP_OUTPUT_ANALOG[XP_OUTPUT_ANALOG_SECTIONS];
 
 #ifdef __cplusplus
 }
@@ -101,13 +87,13 @@ namespace EmuSC { namespace Xp {
 // Output stage (converter hold, analog board, DC blocker) for the
 // XP-generation-1 engine (see engines/xp/README.md). The plain C types
 // above are shared, unrenamed, with EmuSC::Xp::Device (device.h), which
-// embeds struct sc88_output by value, and with sc88_output_test.c, which
+// embeds struct xp_output by value, and with xp_output_test.c, which
 // reads it directly.
 
 /* Designs the profile at `rate` and clears the state. */
-void output_init(struct sc88_output *out, double rate);
-void output_reset(struct sc88_output *out);
-void output_process(struct sc88_output *out, float *stereo, size_t frames);
+void output_init(struct xp_output *out, double rate);
+void output_reset(struct xp_output *out);
+void output_process(struct xp_output *out, float *stereo, size_t frames);
 
 }}  // namespace EmuSC::Xp
 #endif

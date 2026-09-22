@@ -2,23 +2,15 @@
 #include "delay.h"
 #include "reverb.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <cstdlib>
 #include <cstring>
 
 namespace EmuSC { namespace Xp {
 
 namespace {
-
-constexpr uint32_t kDelayCentreTable = 0x15fb4u;
-constexpr uint32_t kDelayRatioTable = 0x165cau;
-constexpr uint32_t kDelayMacroTable = 0x158beu;
-/* The delay memory counts in 1/32 ms in this path, and both the centre
-   time and the side taps cap at 0x7d00 above the 0x8000 base: one second. */
-constexpr double kDelayUnitsPerMs = 32.0;
-constexpr unsigned kDelayMaxUnits = 0x7d00u;
-constexpr double kDelayMaxMs = 1000.0;
-
-constexpr unsigned kShift[4] = {0u, 1u, 2u, 4u};
 
 uint16_t be16(const uint8_t *p)
 {
@@ -30,10 +22,10 @@ double xp(uint16_t raw)
   int value = raw & 0x3fff;
   if (value & 0x2000)
     value -= 0x4000;
-  return (double)value * (double)(1u << kShift[raw >> 14]) / 8192.0;
+  return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
-float tap(const struct sc88_delay *dl, double back)
+float tap(const struct xp_delay *dl, double back)
 {
   if (back < 1.0)
     back = 1.0;
@@ -50,13 +42,16 @@ float tap(const struct sc88_delay *dl, double back)
 
 }  // namespace
 
-bool delay_init(struct sc88_delay *dl, double outputRate)
+bool delay_init(struct xp_delay *dl, double outputRate,
+                 const struct XpDeviceProfile *profile)
 {
   if (!dl || outputRate < 8000.0 || outputRate > 192000.0)
     return false;
+  if (!profile)
+    profile = &SC88_PROFILE;
   std::memset(dl, 0, sizeof *dl);
   /* one second of delay plus a little for interpolation */
-  dl->len = (size_t)(kDelayMaxMs * outputRate / 1000.0) + 8u;
+  dl->len = (size_t)(profile->delayMaxMs * outputRate / 1000.0) + 8u;
   dl->buf = (float *)std::calloc(dl->len, sizeof *dl->buf);
   if (!dl->buf)
     return false;
@@ -66,7 +61,7 @@ bool delay_init(struct sc88_delay *dl, double outputRate)
   return true;
 }
 
-void delay_destroy(struct sc88_delay *dl)
+void delay_destroy(struct xp_delay *dl)
 {
   if (!dl)
     return;
@@ -74,7 +69,7 @@ void delay_destroy(struct sc88_delay *dl)
   std::memset(dl, 0, sizeof *dl);
 }
 
-void delay_reset(struct sc88_delay *dl)
+void delay_reset(struct xp_delay *dl)
 {
   if (!dl || !dl->buf)
     return;
@@ -83,11 +78,11 @@ void delay_reset(struct sc88_delay *dl)
   dl->pre_state = 0.0f;
 }
 
-bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10])
+bool delay_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[10])
 {
   if (!rom || !rom->bytes || !out || macro > 9)
     return false;
-  uint32_t base = kDelayMacroTable + (uint32_t)macro * 16u;
+  uint32_t base = xp_profile(rom)->delayMacroTable + (uint32_t)macro * 16u;
   if (base + 10u > rom->size)
     return false;
   for (unsigned i = 0; i < 10; ++i)
@@ -95,11 +90,12 @@ bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10])
   return true;
 }
 
-bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
+bool delay_set_params(const struct xp_rom *rom, struct xp_delay *dl,
                        const uint8_t p[10])
 {
   if (!rom || !rom->bytes || !dl || !p)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(rom);
   uint8_t v[10];
   for (unsigned i = 0; i < 10; ++i)
     v[i] = p[i] > 127 ? 127 : p[i];
@@ -113,30 +109,31 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
      range and must not be treated as a time. */
   if (v[1] < 1 || v[1] > 0x73)
     return false;
-  if (kDelayCentreTable + (uint32_t)v[1] * 2u + 2u > rom->size)
+  if (profile->delayCentreTable + (uint32_t)v[1] * 2u + 2u > rom->size)
     return false;
-  uint16_t centreWord = be16(rom->bytes + kDelayCentreTable +
+  uint16_t centreWord = be16(rom->bytes + profile->delayCentreTable +
                              (uint32_t)v[1] * 2u);
   if (centreWord < 0x8000u)
     return false;
   unsigned centreUnits = centreWord - 0x8000u;
-  double scale = dl->output_rate / (kDelayUnitsPerMs * 1000.0);
-  dl->centre_samples = (double)centreUnits * scale;
+  double scale = dl->output_rate / (profile->delayUnitsPerMs * 1000.0);
+  dl->centre_samples = (float)((double)centreUnits * scale);
 
   for (unsigned i = 0; i < 2; ++i) {
     uint8_t r = v[2 + i];
     unsigned units = 0;
     if (r >= 1 && r <= 0x78 &&
-        kDelayRatioTable + (uint32_t)r * 2u + 2u <= rom->size) {
-      uint32_t ratio = be16(rom->bytes + kDelayRatioTable + (uint32_t)r * 2u);
+        profile->delayRatioTable + (uint32_t)r * 2u + 2u <= rom->size) {
+      uint32_t ratio = be16(rom->bytes + profile->delayRatioTable +
+                             (uint32_t)r * 2u);
       units = (unsigned)((ratio * (uint32_t)centreUnits) / 256u);
-      if (units > kDelayMaxUnits)
-        units = kDelayMaxUnits;
+      if (units > profile->delayMaxUnits)
+        units = profile->delayMaxUnits;
     }
     if (i == 0)
-      dl->left_samples = (double)units * scale;
+      dl->left_samples = (float)((double)units * scale);
     else
-      dl->right_samples = (double)units * scale;
+      dl->right_samples = (float)((double)units * scale);
   }
 
   /* `64*p` read as an XP coefficient is p/128 */
@@ -152,7 +149,7 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
   return true;
 }
 
-void delay_process(struct sc88_delay *dl, const float *send, float *stereo,
+void delay_process(struct xp_delay *dl, const float *send, float *stereo,
                     float *toReverb, size_t frames)
 {
   if (!dl || !dl->active || !dl->buf || !send || !stereo)
@@ -181,41 +178,3 @@ void delay_process(struct sc88_delay *dl, const float *send, float *stereo,
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-bool sc88_delay_init(struct sc88_delay *dl, double output_rate)
-{
-  return EmuSC::Xp::delay_init(dl, output_rate);
-}
-
-void sc88_delay_destroy(struct sc88_delay *dl)
-{
-  EmuSC::Xp::delay_destroy(dl);
-}
-
-void sc88_delay_reset(struct sc88_delay *dl)
-{
-  EmuSC::Xp::delay_reset(dl);
-}
-
-bool sc88_delay_macro(const struct sc88_rom *rom, uint8_t macro,
-                      uint8_t out[10])
-{
-  return EmuSC::Xp::delay_macro(rom, macro, out);
-}
-
-bool sc88_delay_set_params(const struct sc88_rom *rom,
-                           struct sc88_delay *dl, const uint8_t p[10])
-{
-  return EmuSC::Xp::delay_set_params(rom, dl, p);
-}
-
-void sc88_delay_process(struct sc88_delay *dl, const float *send,
-                        float *stereo, float *to_reverb, size_t frames)
-{
-  EmuSC::Xp::delay_process(dl, send, stereo, to_reverb, frames);
-}
-
-}  // extern "C"

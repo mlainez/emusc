@@ -27,9 +27,9 @@
 #include <stdint.h>
 
 #include "device_profile.h"
+#include "bin_file.h"
 
 #include <array>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -80,8 +80,8 @@ public:
     // tone at level 127 and 127 on the tone at level 75. -1 means the device
     // has no such field, which is every Sound Canvas, and then the note's own
     // depth stands alone. scdb D-40.
-    int16_t revSend;
-    int16_t choSend;
+    int16_t revSend = -1;
+    int16_t choSend = -1;
 
     uint16_t partialIndex;  // Partial table index, 0xFFFF for unused
     int8_t panpot;          // [-64, 64]. Default 0x40 (0-127)
@@ -253,7 +253,7 @@ public:
     // are the Sound Canvas's sign-and-magnitude bytes (scdb D-75).
     int8_t  JVLfoTvaDepth[2];
     int8_t  JVLfoPitchDepth[2];
-    uint8_t hasJVLfo;
+    uint8_t hasJVLfo = 0;
 
     // Random Pitch Depth, 0-15, an index into LookupTables::JVRandomPitch;
     // 0 = none. Drawn once per voice in Pitch::_jv_init().
@@ -265,7 +265,7 @@ public:
     // A per-NOTE pitch bend range in semitones, 0-12, which the JV's rhythm
     // notes carry in place of the part's. hasJVBendRange 0 (every Sound Canvas
     // partial and every JV patch tone) keeps the part's own range.
-    uint8_t JVBendRange, hasJVBendRange;
+    uint8_t JVBendRange = 0, hasJVBendRange = 0;
 
     // The JV's two per-tone CC enables, patch tone +0x47 bits 7 and 6 (scdb
     // D-30). Volume off takes the tone out of CC7's reach; Hold-1 off takes it
@@ -559,6 +559,13 @@ public:
   std::string date(void) { return _date; }
   enum SynthGen generation(void) { return _synthGeneration; }
 
+  // Whether this device is rendered by engines/xp/'s own engine (which
+  // reads the control ROM itself) rather than the Part/Note path. Only
+  // SC-88 today; the one place this needs to change to add a second
+  // XP-family device (e.g. a JV-1080), rather than re-auditing every
+  // generation() == SC88 check scattered by hand.
+  bool uses_xp_engine(void) { return _synthGeneration == SynthGen::SC88; }
+
   // The whole control ROM image, verbatim. The SC-88 path hands this to its own
   // engine, which reads the device's tables itself; it is empty for a device
   // whose tables this class parses.
@@ -689,19 +696,19 @@ private:
   static const DeviceProfile *_profile_for(enum SynthModel model);
   const RomLookupTable *_find_lookup(RomLookup id);
 
-  int _read_lookup_tables_progrom(std::ifstream &romFile);
-  int _read_lookup_tables_cpurom(std::ifstream &romFile);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 11> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 21> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 47> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 128> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 129> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 130> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 136> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 256> &lut);
-  int _read_lut_16bit(std::ifstream &ifs, int pos, std::array<int, 257> &lut);
+  int _read_lookup_tables_progrom(BinFile &romFile);
+  int _read_lookup_tables_cpurom(BinFile &romFile);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 11> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 21> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 47> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 128> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 129> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 130> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 136> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 256> &lut);
+  int _read_lut_16bit(BinFile &ifs, int pos, std::array<int, 257> &lut);
 
-  int _identify_model(std::ifstream &romFile);
+  int _identify_model(BinFile &romFile);
   const std::vector<uint32_t> &_banks(void);
 
   // To be replaced with std::endian::native from C++20
@@ -725,7 +732,7 @@ private:
   static const DeviceEntry DEVICES[];
   static const int      DEVICE_COUNT;
 
-  bool _identify_device(std::ifstream &romFile);
+  bool _identify_device(BinFile &romFile);
   void _init_neutral_partial(struct InstPartial &ip);
   int  _read_device_waveforms(void);
   int  _read_device_samples(void);
@@ -773,11 +780,11 @@ private:   // set when the device is identified
   std::array<int, 16> _channelChorus;
   int _deviceDrumChannel = 9;
 
-  int _read_instruments(std::ifstream &romFile);
-  int _read_partials(std::ifstream &romFile);
-  int _read_variations(std::ifstream &romFile);
-  int _read_samples(std::ifstream &romFile);
-  int _read_drum_sets(std::ifstream &romFile);
+  int _read_instruments(BinFile &romFile);
+  int _read_partials(BinFile &romFile);
+  int _read_variations(BinFile &romFile);
+  int _read_samples(BinFile &romFile);
+  int _read_drum_sets(BinFile &romFile);
 
   std::array<uint8_t, 128> _drumSetsLUT;
 

@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "renderer.h"
 
+#include "common/constants.h"
+#include "devices/sc88.h"
+
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -66,31 +69,27 @@ int bankIndex(uint8_t selector)
   }
 }
 
-const struct sc88_wave_bank *findBank(const struct sc88_renderer *renderer,
+const struct xp_wave_bank *findBank(const struct xp_renderer *renderer,
                                        uint8_t selector)
 {
   int index = bankIndex(selector);
   return index < 0 ? nullptr : renderer->banks + index;
 }
 
-/* Centre of the 255-word bipolar pitch-control curve at 0x78304..0x78502,
- * indexed -127..127 about this address (`02_rom/tables.md`). */
-constexpr uint32_t kPitchCurveCentre = 0x78402u;
-
 /* The body both note-on entry points share. A melodic note selects its tone
  * through the variation map and plays it at the MIDI key; a rhythm note's
  * tone and key both come from its kit record, so the two differ only in
  * what they hand in here. */
-bool noteOnTone(const struct sc88_renderer *renderer,
-                 struct sc88_render_voice *voice, uint32_t toneOffset,
+bool noteOnTone(const struct xp_renderer *renderer,
+                 struct xp_render_voice *voice, uint32_t toneOffset,
                  uint8_t key, uint8_t zoneKey, uint8_t velocity,
-                 const struct sc88_tva_levels *levels, uint8_t drumLevel,
-                 const struct sc88_pan_controls *pan,
-                 const struct sc88_tvf_controls *tvfControls,
-                 const struct sc88_tva_controls *tvaControls,
-                 const struct sc88_lfo_controls *lfoControls)
+                 const struct xp_tva_levels *levels, uint8_t drumLevel,
+                 const struct xp_pan_controls *pan,
+                 const struct xp_tvf_controls *tvfControls,
+                 const struct xp_tva_controls *tvaControls,
+                 const struct xp_lfo_controls *lfoControls)
 {
-  struct sc88_tone tone;
+  struct xp_tone tone;
 
   if (!renderer || !voice || !levels || !pan || !tvfControls ||
       levels->master > 127 ||
@@ -116,12 +115,12 @@ bool noteOnTone(const struct sc88_renderer *renderer,
   voice->tvf_audio_user = renderer->tvf_audio_user;
 
   for (unsigned i = 0; i < tone.component_count; ++i) {
-    struct sc88_render_component *renderComponent;
-    struct sc88_component component;
-    struct sc88_zone_selection zone;
-    struct sc88_wave_registers registers;
-    enum sc88_wave_loop_type mode;
-    const struct sc88_wave_bank *bank;
+    struct xp_render_component *renderComponent;
+    struct xp_component component;
+    struct xp_zone_selection zone;
+    struct xp_wave_registers registers;
+    enum xp_wave_loop_type mode;
+    const struct xp_wave_bank *bank;
     uint32_t selectorKey;
     uint16_t keyFraction;
     uint32_t pitchWord;
@@ -181,7 +180,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
         // 45 Hz on both paths, and the 76-instrument set is unchanged at 65
         // within 6 dB, because the loop points are separate from the start
         // address and the sustain never moves.
-        !wave_prepare_registers(&zone.descriptor, true, &registers) ||
+        !wave_prepare_registers(xp_profile(&renderer->rom), &zone.descriptor,
+                                 true, &registers) ||
         !renderer_static_pitch_word(&renderer->rom, &tone, &component,
                                      &zone.descriptor, key,
                                      (uint8_t)selectorKey, keyFraction,
@@ -272,7 +272,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
         idx = -127;
       else if (idx > 127)
         idx = 127;
-      uint32_t at = (uint32_t)(kPitchCurveCentre + 2 * idx);
+      uint32_t at = (uint32_t)(
+        xp_profile(&renderer->rom)->pitchCurveCentre + 2 * idx);
       renderComponent->lfo1_pitch_depth =
         at + 2 <= renderer->rom.size
           ? s16(be16(renderer->rom.bytes + at))
@@ -313,7 +314,8 @@ bool noteOnTone(const struct sc88_renderer *renderer,
     renderComponent->pcm24 = (int32_t *)std::malloc(
       capacity * sizeof *renderComponent->pcm24);
     if (!renderComponent->pcm24 ||
-        !fce_decode_storage(bank->bytes, bank->size, &zone.descriptor,
+        !fce_decode_storage(xp_profile(&renderer->rom), bank->bytes,
+                             bank->size, &zone.descriptor,
                              renderComponent->pcm24, capacity, &pcmBase,
                              &renderComponent->pcm_count))
       goto fail;
@@ -325,17 +327,19 @@ bool noteOnTone(const struct sc88_renderer *renderer,
        gaps it sits in the middle of, and the standing of the claim.  It is
        applied to the static word, so the per-period recomposition carries it
        for the life of the note. */
-    if (wave_loop_reads_double(renderComponent->pcm24,
+    if (wave_loop_reads_double(xp_profile(&renderer->rom),
+                                renderComponent->pcm24,
                                 renderComponent->pcm_count, pcmBase,
                                 &zone.descriptor)) {
-      pitchWord += 0x4000u;
-      if (pitchWord > 0x3ffffu)
-        pitchWord = 0x3ffffu;
+      pitchWord += kXpPitchUnitsPerOctave;
+      if (pitchWord > kXpPitchSaturation)
+        pitchWord = kXpPitchSaturation;
     }
     renderComponent->static_pitch_word = pitchWord;
     pitchWord = pitch_current_word(pitchWord, 0,
                                     renderComponent->pitch_envelope.current);
-    if (!oscillator_init(&renderComponent->oscillator, renderComponent->pcm24,
+    if (!oscillator_init(xp_profile(&renderer->rom),
+                          &renderComponent->oscillator, renderComponent->pcm24,
                           renderComponent->pcm_count, pcmBase, &registers,
                           mode, pitchWord, renderer->output_rate,
                           renderer->wrap))
@@ -360,7 +364,7 @@ fail:
 
 }  // namespace
 
-uint8_t renderer_selector_key(const struct sc88_component *component,
+uint8_t renderer_selector_key(const struct xp_component *component,
                                uint8_t midiKey)
 {
   if (!component || !component->bytes || midiKey > 127)
@@ -390,7 +394,7 @@ uint8_t renderer_selector_key(const struct sc88_component *component,
    (0x6116 key <- 0, 0x611a key <- 0x7f), so a clamped key contributes no
    fraction. The multiply is unsigned, and the remainder is the distance
    above the floored key, so the term is 0..1364 and never negative. */
-uint16_t renderer_key_fraction(const struct sc88_component *component,
+uint16_t renderer_key_fraction(const struct xp_component *component,
                                 uint8_t midiKey)
 {
   if (!component || !component->bytes || midiKey > 127)
@@ -401,14 +405,14 @@ uint16_t renderer_key_fraction(const struct sc88_component *component,
   if (key < 0 || key > 127)
     return 0;
   uint32_t remainder = ((uint32_t)product << 2) & 0xffffu;
-  return (uint16_t)((0x555u * remainder) >> 16);
+  return (uint16_t)((kXpPitchRemainderStep * remainder) >> 16);
 }
 
-bool renderer_portamento_terms(const struct sc88_rom *rom,
-                                const struct sc88_tone *tone,
-                                const struct sc88_component *component,
-                                const struct sc88_wave_descriptor *desc,
-                                struct sc88_portamento *portamento)
+bool renderer_portamento_terms(const struct xp_rom *rom,
+                                const struct xp_tone *tone,
+                                const struct xp_component *component,
+                                const struct xp_wave_descriptor *desc,
+                                struct xp_portamento *portamento)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !desc || !portamento)
@@ -421,7 +425,7 @@ bool renderer_portamento_terms(const struct sc88_rom *rom,
   portamento->key_table = table;
   /* Both of the descriptor's pitch corrections, as in the static word; the
      evidence and the open condition are on `wave_pitch_correction`. */
-  portamento->fixed = 0x38000 + wave_pitch_correction(desc, true) +
+  portamento->fixed = (int32_t)kXpPitchUnity + wave_pitch_correction(desc, true) +
     s16(be16(component->bytes + 0x10));
   portamento->key_factor = s16(be16(component->bytes + 0x14));
   portamento->key_transpose = s8(component->bytes[0x16]);
@@ -429,8 +433,8 @@ bool renderer_portamento_terms(const struct sc88_rom *rom,
   return true;
 }
 
-bool renderer_pitch_word_at(const struct sc88_rom *rom,
-                             const struct sc88_portamento *portamento,
+bool renderer_pitch_word_at(const struct xp_rom *rom,
+                             const struct xp_portamento *portamento,
                              uint32_t keyQ16, uint32_t *pitchWord)
 {
   if (!rom || !rom->bytes || !portamento || !pitchWord ||
@@ -463,7 +467,7 @@ bool renderer_pitch_word_at(const struct sc88_rom *rom,
     fraction = 0;
   } else {
     selector = (uint32_t)key;
-    fraction = (uint16_t)((0x555u * ((uint32_t)product & 0xffffu)) >> 16);
+    fraction = (uint16_t)((kXpPitchRemainderStep * ((uint32_t)product & 0xffffu)) >> 16);
   }
   int32_t pitch = portamento->fixed +
     relativePitch((int)selector - (int)portamento->root_key) +
@@ -471,8 +475,8 @@ bool renderer_pitch_word_at(const struct sc88_rom *rom,
     s16(be16(rom->bytes + portamento->key_table + rawKey * 2u));
   if (pitch < 0)
     pitch = 0;
-  if (pitch > 0x3ffff)
-    pitch = 0x3ffff;
+  if (pitch > (int32_t)kXpPitchSaturation)
+    pitch = (int32_t)kXpPitchSaturation;
   *pitchWord = (uint32_t)pitch;
   return true;
 }
@@ -495,10 +499,10 @@ bool renderer_pitch_word_at(const struct sc88_rom *rom,
 
    So the key-difference term uses the TRANSFORMED key and the tone-common
    table uses the RAW one. We used the transformed key for both. */
-bool renderer_static_pitch_word(const struct sc88_rom *rom,
-                                 const struct sc88_tone *tone,
-                                 const struct sc88_component *component,
-                                 const struct sc88_wave_descriptor *desc,
+bool renderer_static_pitch_word(const struct xp_rom *rom,
+                                 const struct xp_tone *tone,
+                                 const struct xp_component *component,
+                                 const struct xp_wave_descriptor *desc,
                                  uint8_t midiKey, uint8_t selectorKey,
                                  uint16_t keyFraction, uint32_t *pitchWord)
 {
@@ -510,7 +514,7 @@ bool renderer_static_pitch_word(const struct sc88_rom *rom,
     be16(tone->common + 0x10);
   if (tableOffset + (uint32_t)midiKey * 2 + 2 > rom->size)
     return false;
-  int32_t pitch = 0x38000 +
+  int32_t pitch = (int32_t)kXpPitchUnity +
     relativePitch((int)selectorKey - desc->root_key) +
     /* SC88-CTL 0x6081 adds RAM 0x197c into the low word of the pitch the
        key table just produced, before the 0x6124 offsets land on it. */
@@ -524,30 +528,35 @@ bool renderer_static_pitch_word(const struct sc88_rom *rom,
     s16(be16(component->bytes + 0x10));
   if (pitch < 0)
     pitch = 0;
-  if (pitch > 0x3ffff)
-    pitch = 0x3ffff;
+  if (pitch > (int32_t)kXpPitchSaturation)
+    pitch = (int32_t)kXpPitchSaturation;
   *pitchWord = (uint32_t)pitch;
   return true;
 }
 
-bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
-                    size_t controlRomSize, const struct sc88_wave_bank *banks,
+bool renderer_init(struct xp_renderer *renderer, const uint8_t *controlRom,
+                    size_t controlRomSize, const struct xp_wave_bank *banks,
                     size_t bankCount, double outputRate,
-                    enum sc88_fractional_wrap wrap)
+                    enum xp_fractional_wrap wrap)
 {
-  bool occupied[SC88_WAVE_BANK_COUNT] = {false};
+  bool occupied[XP_WAVE_BANK_COUNT] = {false};
 
-  if (!renderer || !banks || bankCount != SC88_WAVE_BANK_COUNT ||
-      outputRate <= 0.0 || wrap < SC88_WRAP_FULL_CARRY ||
-      wrap > SC88_WRAP_FRACTION_ONLY)
+  if (!renderer || !banks || bankCount != XP_WAVE_BANK_COUNT ||
+      outputRate <= 0.0 || wrap < XP_WRAP_FULL_CARRY ||
+      wrap > XP_WRAP_FRACTION_ONLY)
     return false;
   std::memset(renderer, 0, sizeof *renderer);
   if (!rom_init(&renderer->rom, controlRom, controlRomSize))
     return false;
+  for (unsigned c = 0; c < 128; ++c) {
+    uint16_t raw = 0;
+    renderer->send_ok[c] = control_gain_q15(&renderer->rom, (uint8_t)c, &raw);
+    renderer->send_gain[c] = raw / 32768.0f;
+  }
   for (size_t i = 0; i < bankCount; ++i) {
     int index = bankIndex(banks[i].selector);
     if (index < 0 || occupied[index] || !banks[i].bytes ||
-        banks[i].size != SC88_WAVE_BANK_SIZE)
+        banks[i].size != xp_profile(&renderer->rom)->waveBankSize)
       return false;
     occupied[index] = true;
     renderer->banks[index] = banks[i];
@@ -572,8 +581,8 @@ bool renderer_init(struct sc88_renderer *renderer, const uint8_t *controlRom,
   return true;
 }
 
-void renderer_set_pan(struct sc88_renderer *renderer,
-                       const struct sc88_pan_controls *pan)
+void renderer_set_pan(struct xp_renderer *renderer,
+                       const struct xp_pan_controls *pan)
 {
   if (!renderer || !pan || pan->master < 1 || pan->master > 127 ||
       pan->part > 127)
@@ -581,8 +590,8 @@ void renderer_set_pan(struct sc88_renderer *renderer,
   renderer->pan = *pan;
 }
 
-void renderer_set_levels(struct sc88_renderer *renderer,
-                          const struct sc88_tva_levels *levels)
+void renderer_set_levels(struct xp_renderer *renderer,
+                          const struct xp_tva_levels *levels)
 {
   if (!renderer || !levels || levels->master > 127 ||
       levels->secondary > 127 || levels->part > 127 ||
@@ -591,15 +600,15 @@ void renderer_set_levels(struct sc88_renderer *renderer,
   renderer->levels = *levels;
 }
 
-void renderer_set_only_component(struct sc88_renderer *renderer,
+void renderer_set_only_component(struct xp_renderer *renderer,
                                   unsigned which)
 {
   if (renderer)
     renderer->only_component = which;
 }
 
-void renderer_set_tvf_audio_transfer(struct sc88_renderer *renderer,
-                                      sc88_tvf_audio_transfer_fn transfer,
+void renderer_set_tvf_audio_transfer(struct xp_renderer *renderer,
+                                      xp_tvf_audio_transfer_fn transfer,
                                       void *user)
 {
   if (!renderer)
@@ -608,8 +617,8 @@ void renderer_set_tvf_audio_transfer(struct sc88_renderer *renderer,
   renderer->tvf_audio_user = user;
 }
 
-void renderer_set_tvf_controls(struct sc88_renderer *renderer,
-                                const struct sc88_tvf_controls *controls)
+void renderer_set_tvf_controls(struct xp_renderer *renderer,
+                                const struct xp_tvf_controls *controls)
 {
   if (!renderer || !controls || controls->part_cutoff > 127 ||
       controls->secondary_cutoff > 127 || controls->part_resonance > 127 ||
@@ -618,17 +627,17 @@ void renderer_set_tvf_controls(struct sc88_renderer *renderer,
   renderer->tvf_controls = *controls;
 }
 
-void renderer_voice_destroy(struct sc88_render_voice *voice)
+void renderer_voice_destroy(struct xp_render_voice *voice)
 {
   if (!voice)
     return;
-  for (unsigned i = 0; i < SC88_MAX_TONE_COMPONENTS; ++i)
+  for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i)
     std::free(voice->components[i].pcm24);
   std::memset(voice, 0, sizeof *voice);
 }
 
-bool renderer_note_on(const struct sc88_renderer *renderer,
-                       struct sc88_render_voice *voice, uint8_t variation,
+bool renderer_note_on(const struct xp_renderer *renderer,
+                       struct xp_render_voice *voice, uint8_t variation,
                        uint8_t program, uint8_t key, uint8_t velocity)
 {
   if (!renderer)
@@ -637,11 +646,11 @@ bool renderer_note_on(const struct sc88_renderer *renderer,
                                        key, velocity, &renderer->levels);
 }
 
-bool renderer_note_on_with_levels(const struct sc88_renderer *renderer,
-                                   struct sc88_render_voice *voice,
+bool renderer_note_on_with_levels(const struct xp_renderer *renderer,
+                                   struct xp_render_voice *voice,
                                    uint8_t variation, uint8_t program,
                                    uint8_t key, uint8_t velocity,
-                                   const struct sc88_tva_levels *levels)
+                                   const struct xp_tva_levels *levels)
 {
   if (!renderer)
     return false;
@@ -650,28 +659,28 @@ bool renderer_note_on_with_levels(const struct sc88_renderer *renderer,
                                          &renderer->pan);
 }
 
-bool renderer_note_on_with_controls(const struct sc88_renderer *renderer,
-                                     struct sc88_render_voice *voice,
+bool renderer_note_on_with_controls(const struct xp_renderer *renderer,
+                                     struct xp_render_voice *voice,
                                      uint8_t variation, uint8_t program,
                                      uint8_t key, uint8_t velocity,
-                                     const struct sc88_tva_levels *levels,
-                                     const struct sc88_pan_controls *pan)
+                                     const struct xp_tva_levels *levels,
+                                     const struct xp_pan_controls *pan)
 {
   if (!renderer)
     return false;
   return renderer_note_on_with_part_controls(
-    renderer, voice, SC88_TONE_MAP_SC88, variation, program, key, velocity,
+    renderer, voice, XP_TONE_MAP_SC88, variation, program, key, velocity,
     levels, pan, &renderer->tvf_controls, &renderer->tva_controls, nullptr);
 }
 
 bool renderer_note_on_with_glide(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  const struct xp_renderer *renderer, struct xp_render_voice *voice,
   uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t zoneKey, uint8_t velocity, const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvfControls,
-  const struct sc88_tva_controls *tvaControls,
-  const struct sc88_lfo_controls *lfoControls)
+  uint8_t zoneKey, uint8_t velocity, const struct xp_tva_levels *levels,
+  const struct xp_pan_controls *pan,
+  const struct xp_tvf_controls *tvfControls,
+  const struct xp_tva_controls *tvaControls,
+  const struct xp_lfo_controls *lfoControls)
 {
   uint32_t toneOffset;
   if (!renderer ||
@@ -679,18 +688,18 @@ bool renderer_note_on_with_glide(
                            &toneOffset))
     return false;
   return noteOnTone(renderer, voice, toneOffset, key, zoneKey, velocity,
-                     levels, SC88_TVA_NO_DRUM_LEVEL, pan, tvfControls,
+                     levels, XP_TVA_NO_DRUM_LEVEL, pan, tvfControls,
                      tvaControls, lfoControls);
 }
 
 bool renderer_note_on_with_part_controls(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  const struct xp_renderer *renderer, struct xp_render_voice *voice,
   uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t velocity, const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvfControls,
-  const struct sc88_tva_controls *tvaControls,
-  const struct sc88_lfo_controls *lfoControls)
+  uint8_t velocity, const struct xp_tva_levels *levels,
+  const struct xp_pan_controls *pan,
+  const struct xp_tvf_controls *tvfControls,
+  const struct xp_tva_controls *tvaControls,
+  const struct xp_lfo_controls *lfoControls)
 {
   return renderer_note_on_with_glide(renderer, voice, map, variation, program,
                                       key, key, velocity, levels, pan,
@@ -698,17 +707,17 @@ bool renderer_note_on_with_part_controls(
 }
 
 bool renderer_note_on_drum(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
+  const struct xp_renderer *renderer, struct xp_render_voice *voice,
   uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvfControls,
-  const struct sc88_tva_controls *tvaControls,
-  const struct sc88_lfo_controls *lfoControls,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *note)
+  const struct xp_tva_levels *levels,
+  const struct xp_pan_controls *pan,
+  const struct xp_tvf_controls *tvfControls,
+  const struct xp_tva_controls *tvaControls,
+  const struct xp_lfo_controls *lfoControls,
+  const struct xp_drum_overlay *overlay, uint8_t setup,
+  struct xp_drum_note *note)
 {
-  struct sc88_drum_note slot;
+  struct xp_drum_note slot;
   uint32_t kit;
   if (!renderer || !levels || !pan ||
       !rom_select_drum(&renderer->rom, map, program, &kit) ||
@@ -728,10 +737,10 @@ bool renderer_note_on_drum(
      `4d76` gates it on bit 7 of this note's `+0x280` assign-group byte
      being clear, which is the state of every sounding slot in all 24
      kits. */
-  struct sc88_tva_levels drumLevels = *levels;
-  struct sc88_pan_controls drumPan = *pan;
+  struct xp_tva_levels drumLevels = *levels;
+  struct xp_pan_controls drumPan = *pan;
   uint8_t drumLevel = ((slot.assign_group & 0x80u) == 0u && slot.level <= 127)
-    ? slot.level : (uint8_t)SC88_TVA_NO_DRUM_LEVEL;
+    ? slot.level : (uint8_t)XP_TVA_NO_DRUM_LEVEL;
   if (slot.pan >= 1 && slot.pan <= 127)
     drumPan.part = slot.pan;
   if (note)
@@ -750,7 +759,7 @@ bool renderer_note_on_drum(
   return true;
 }
 
-bool renderer_voice_active(const struct sc88_render_voice *voice)
+bool renderer_voice_active(const struct xp_render_voice *voice)
 {
   if (!voice)
     return false;
@@ -761,7 +770,7 @@ bool renderer_voice_active(const struct sc88_render_voice *voice)
   return false;
 }
 
-size_t renderer_render(struct sc88_render_voice *voice, float *stereo,
+size_t renderer_render(struct xp_render_voice *voice, float *stereo,
                         size_t frames)
 {
   size_t frame;
@@ -772,7 +781,7 @@ size_t renderer_render(struct sc88_render_voice *voice, float *stereo,
     float right = 0.0f;
     bool active = false;
     for (unsigned i = 0; i < voice->component_count; ++i) {
-      struct sc88_render_component *component = voice->components + i;
+      struct xp_render_component *component = voice->components + i;
       float sample;
       if (component->active &&
           oscillator_next(&component->oscillator, &sample)) {
@@ -781,7 +790,7 @@ size_t renderer_render(struct sc88_render_voice *voice, float *stereo,
             voice->tvf_audio_user, &component->tvf_audio, &component->tvf,
             1.0, sample);
         float gained = sample *
-          (sc88_render_static_gain_q17(component, 1.0) / 131072.0f);
+          (xp_render_static_gain_q17(component, 1.0) / 131072.0f);
         left += gained * (component->left_gain_q15 / 32768.0f);
         right += gained * (component->right_gain_q15 / 32768.0f);
         active = true;
@@ -800,182 +809,3 @@ size_t renderer_render(struct sc88_render_voice *voice, float *stereo,
 }
 
 }}  // namespace EmuSC::Xp
-
-// Compatibility shims for callers not yet ported to the EmuSC::Xp API.
-extern "C" {
-
-uint8_t sc88_renderer_selector_key(const struct sc88_component *component,
-                                   uint8_t midi_key)
-{
-  return EmuSC::Xp::renderer_selector_key(component, midi_key);
-}
-
-uint16_t sc88_renderer_key_fraction(const struct sc88_component *component,
-                                    uint8_t midi_key)
-{
-  return EmuSC::Xp::renderer_key_fraction(component, midi_key);
-}
-
-bool sc88_renderer_portamento_terms(const struct sc88_rom *rom,
-                                    const struct sc88_tone *tone,
-                                    const struct sc88_component *component,
-                                    const struct sc88_wave_descriptor *desc,
-                                    struct sc88_portamento *portamento)
-{
-  return EmuSC::Xp::renderer_portamento_terms(rom, tone, component, desc,
-                                               portamento);
-}
-
-bool sc88_renderer_pitch_word_at(const struct sc88_rom *rom,
-                                 const struct sc88_portamento *portamento,
-                                 uint32_t key_q16, uint32_t *pitch_word)
-{
-  return EmuSC::Xp::renderer_pitch_word_at(rom, portamento, key_q16,
-                                            pitch_word);
-}
-
-bool sc88_renderer_static_pitch_word(const struct sc88_rom *rom,
-                                     const struct sc88_tone *tone,
-                                     const struct sc88_component *component,
-                                     const struct sc88_wave_descriptor *desc,
-                                     uint8_t midi_key,
-                                     uint8_t selector_key,
-                                     uint16_t key_fraction,
-                                     uint32_t *pitch_word)
-{
-  return EmuSC::Xp::renderer_static_pitch_word(
-    rom, tone, component, desc, midi_key, selector_key, key_fraction,
-    pitch_word);
-}
-
-bool sc88_renderer_init(struct sc88_renderer *renderer,
-                        const uint8_t *control_rom, size_t control_rom_size,
-                        const struct sc88_wave_bank *banks, size_t bank_count,
-                        double output_rate, enum sc88_fractional_wrap wrap)
-{
-  return EmuSC::Xp::renderer_init(renderer, control_rom, control_rom_size,
-                                   banks, bank_count, output_rate, wrap);
-}
-
-void sc88_renderer_set_levels(struct sc88_renderer *renderer,
-                              const struct sc88_tva_levels *levels)
-{
-  EmuSC::Xp::renderer_set_levels(renderer, levels);
-}
-
-void sc88_renderer_set_pan(struct sc88_renderer *renderer,
-                           const struct sc88_pan_controls *pan)
-{
-  EmuSC::Xp::renderer_set_pan(renderer, pan);
-}
-
-void sc88_renderer_set_only_component(struct sc88_renderer *renderer,
-                                      unsigned which)
-{
-  EmuSC::Xp::renderer_set_only_component(renderer, which);
-}
-
-void sc88_renderer_set_tvf_audio_transfer(
-  struct sc88_renderer *renderer, sc88_tvf_audio_transfer_fn transfer,
-  void *user)
-{
-  EmuSC::Xp::renderer_set_tvf_audio_transfer(renderer, transfer, user);
-}
-
-void sc88_renderer_set_tvf_controls(
-  struct sc88_renderer *renderer, const struct sc88_tvf_controls *controls)
-{
-  EmuSC::Xp::renderer_set_tvf_controls(renderer, controls);
-}
-
-bool sc88_renderer_note_on(const struct sc88_renderer *renderer,
-                           struct sc88_render_voice *voice,
-                           uint8_t variation, uint8_t program,
-                           uint8_t key, uint8_t velocity)
-{
-  return EmuSC::Xp::renderer_note_on(renderer, voice, variation, program,
-                                      key, velocity);
-}
-
-bool sc88_renderer_note_on_with_levels(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels)
-{
-  return EmuSC::Xp::renderer_note_on_with_levels(
-    renderer, voice, variation, program, key, velocity, levels);
-}
-
-bool sc88_renderer_note_on_with_controls(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t variation, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan)
-{
-  return EmuSC::Xp::renderer_note_on_with_controls(
-    renderer, voice, variation, program, key, velocity, levels, pan);
-}
-
-bool sc88_renderer_note_on_with_part_controls(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls)
-{
-  return EmuSC::Xp::renderer_note_on_with_part_controls(
-    renderer, voice, map, variation, program, key, velocity, levels, pan,
-    tvf_controls, tva_controls, lfo_controls);
-}
-
-bool sc88_renderer_note_on_with_glide(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t variation, uint8_t program, uint8_t key,
-  uint8_t zone_key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls)
-{
-  return EmuSC::Xp::renderer_note_on_with_glide(
-    renderer, voice, map, variation, program, key, zone_key, velocity,
-    levels, pan, tvf_controls, tva_controls, lfo_controls);
-}
-
-bool sc88_renderer_note_on_drum(
-  const struct sc88_renderer *renderer, struct sc88_render_voice *voice,
-  uint8_t map, uint8_t program, uint8_t key, uint8_t velocity,
-  const struct sc88_tva_levels *levels,
-  const struct sc88_pan_controls *pan,
-  const struct sc88_tvf_controls *tvf_controls,
-  const struct sc88_tva_controls *tva_controls,
-  const struct sc88_lfo_controls *lfo_controls,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *note)
-{
-  return EmuSC::Xp::renderer_note_on_drum(
-    renderer, voice, map, program, key, velocity, levels, pan, tvf_controls,
-    tva_controls, lfo_controls, overlay, setup, note);
-}
-
-void sc88_renderer_voice_destroy(struct sc88_render_voice *voice)
-{
-  EmuSC::Xp::renderer_voice_destroy(voice);
-}
-
-bool sc88_renderer_voice_active(const struct sc88_render_voice *voice)
-{
-  return EmuSC::Xp::renderer_voice_active(voice);
-}
-
-size_t sc88_renderer_render(struct sc88_render_voice *voice,
-                            float *stereo, size_t frames)
-{
-  return EmuSC::Xp::renderer_render(voice, stereo, frames);
-}
-
-}  // extern "C"

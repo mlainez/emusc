@@ -26,26 +26,15 @@ extern "C" {
  * that ignores this plays it with the wrong balance throughout.
  */
 
-struct sc88_eq_band {
+struct xp_eq_band {
   float c0, c1, c2;
   float x1[2], y1[2];
 };
 
-struct sc88_eq {
-  struct sc88_eq_band low, high;
+struct xp_eq {
+  struct xp_eq_band low, high;
   bool enabled;
 };
-
-/* Compatibility surface for callers not yet ported to the EmuSC::Xp API
- * below (EmuSC::Xp::Device in device.h, which embeds struct sc88_eq by
- * value, and sc88_eq_test.c). Each forwards to the real implementation in
- * namespace EmuSC::Xp. */
-void sc88_eq_init(struct sc88_eq *eq);
-bool sc88_eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
-                        uint8_t low_frequency, uint8_t low_gain,
-                        uint8_t high_frequency, uint8_t high_gain);
-void sc88_eq_reset(struct sc88_eq *eq);
-void sc88_eq_process(struct sc88_eq *eq, float *stereo, size_t frames);
 
 #ifdef __cplusplus
 }
@@ -53,9 +42,9 @@ void sc88_eq_process(struct sc88_eq *eq, float *stereo, size_t frames);
 namespace EmuSC { namespace Xp {
 
 // Two-band output equaliser for the XP-generation-1 engine (see
-// engines/xp/README.md). The plain sc88_eq struct above is shared,
+// engines/xp/README.md). The plain xp_eq struct above is shared,
 // unrenamed, with EmuSC::Xp::Device (device.h), which embeds it by
-// value, and with sc88_eq_test.c, which reads it directly.
+// value, and with xp_eq_test.c, which reads it directly.
 
 /* `lowFrequency` and `highFrequency` select the band corner: 0 is 200 Hz
  * and 400 Hz respectively for low, 3 kHz and 6 kHz for high. The gains are
@@ -64,15 +53,15 @@ namespace EmuSC { namespace Xp {
  * not carry the coefficient records then leaves the output untouched
  * instead of silencing it, and eq_set_params leaves the bands alone when
  * it cannot read a record. */
-void eq_init(struct sc88_eq *eq);
+void eq_init(struct xp_eq *eq);
 
-bool eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
+bool eq_set_params(const struct xp_rom *rom, struct xp_eq *eq,
                     uint8_t lowFrequency, uint8_t lowGain,
                     uint8_t highFrequency, uint8_t highGain);
-void eq_reset(struct sc88_eq *eq);
+void eq_reset(struct xp_eq *eq);
 
 /* In place, on an interleaved stereo buffer. */
-void eq_process(struct sc88_eq *eq, float *stereo, size_t frames);
+void eq_process(struct xp_eq *eq, float *stereo, size_t frames);
 
 }}  // namespace EmuSC::Xp
 #endif
