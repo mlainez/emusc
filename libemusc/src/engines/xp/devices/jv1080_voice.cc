@@ -280,24 +280,30 @@ const double kAmpEnvAttackShape[15] = {
    x[loop_last] directly rather than read: it can sit before the element's
    first decoded frame when a zone loops from its own start.
 
-   THE SIBLING'S TELL-TALE IS ABSENT HERE, AND THAT IS WORTH KNOWING BEFORE
-   ANYONE TREATS THIS AS A FIX. On the SC-88 a forward read of a ping-pong
-   loop leaves a visible step and a phase jump at the join - correlation
-   across it +0.197 against +0.968 for its forward loops. On this device both
-   ends of the loop sit at EXACTLY ZERO: on the three loop-type-1 elements
-   examined sample by sample, x[loop_last] and x[loop_first-1] are both 0,
-   and the step a FORWARD wrap would leave measures 0.23, 0.58 and 0.48 times
-   the loop's own median sample-to-sample delta - smaller, on two of the
-   three, than the reflected turn's own step. So a forward read is continuous
-   in value here and nothing measured on this device says it is wrong.
+   THE SIBLING'S TELL-TALE IS ABSENT HERE, which is why the ROM alone could
+   not settle it. On the SC-88 a forward read leaves a visible step and a
+   phase jump at the join - correlation across it +0.197 against +0.968 for
+   its forward loops. On this device both ends of the loop sit at EXACTLY
+   ZERO: on the loop-type-1 elements examined sample by sample, x[loop_last]
+   and x[loop_first-1] are both 0, and the step a FORWARD wrap would leave
+   measures 0.23, 0.58 and 0.48 times the loop's own median sample-to-sample
+   delta. A forward read is continuous in VALUE here, so the step says
+   nothing either way.
 
-   CROSS-DEVICE LEAD, NOT CONFIRMED ON JV-1080 HARDWARE (`TASK-346` AC#2).
-   This is carried on the owner's ruling: the reflected turn is MEASURED on
-   the SC-88, the two devices are the same Roland part 15239239, and
-   ping-pong traversal is chip-level playback behaviour rather than anything
-   that should depend on whose ROM is being read. Because the usual tell-tale
-   is missing here, only a JV-1080 recording of a sustained loop-type-1
-   element can settle it, which makes AC#2 more important and not less. */
+   MEASURED ON THIS DEVICE'S OWN HARDWARE RECORDINGS (`TASK-346` AC#2), and
+   the answer is the reflection. Rendering two preset rhythm kits both ways
+   and comparing each against the machine's recording of the same key, in the
+   key's own 520 ms slot: on the ELEVEN keys where the two readings differ at
+   all, the reflected read matches the machine's sustained spectrum better on
+   TEN, the one exception being a key whose correlation is 0.19 either way.
+   The two tonal ones settle it outright. On the Long Whistle the machine's
+   strongest partial is 2047.0 Hz: the reflected read puts it at 2038.9,
+   -6.8 cents away, while the forward read's strongest is 2269.6 - it
+   promotes to dominant what is only the machine's SECOND partial at 2277.
+   On the Short Whistle the forward read adds partials at 3692 Hz that the
+   machine does not have at all, where the reflected read's partial set is
+   the machine's, 9418-9422 against 9416-9419. Both reproduce identically
+   from two different kits, the same element through two banks. */
 double cycle_sample(const struct XpJv1080Voice *voice, long long index)
 {
   if (voice->loop_last >= voice->pcm_count ||
