@@ -68,6 +68,24 @@ bool efx_program_load(const struct xp_rom *rom, unsigned type,
 unsigned efx_program_sites(const struct xp_efx_program *program,
                             struct xp_efx_site *out, unsigned max);
 
+/* THE OUTPUT ASSIGN'S SEND MASK. The insert effect's own chorus and reverb
+ * sends are written as `table[v] & mask`, and `mask` is 0xFFFF only while
+ * the assign says MIX - 0x0000 for OUTPUT1 and OUTPUT2. So routing the
+ * effect to a separate output forces both sends to EXACTLY zero in
+ * hardware, which is the firmware implementing the manual's own rule
+ * rather than anyone's reading of it (`08_effects/routing.md`, FW-EXACT).
+ *
+ * Returns the coefficient the firmware would write, 0 on a device with no
+ * such table. `efx_output_level` carries no mask: the effect's own output
+ * level is not silenced by where it is routed. */
+unsigned efx_send_level(const struct xp_rom *rom, unsigned assign,
+                         unsigned value);
+unsigned efx_output_level(const struct xp_rom *rom, unsigned value);
+
+/* The assign value that means MIX, which is the only one that lets the
+ * sends through. */
+#define XP_EFX_ASSIGN_MIX 0u
+
 }}  // namespace EmuSC::Xp
 #endif
 

@@ -27,6 +27,7 @@
 #include "jv1080.h"
 #include "../reverb.h"
 #include "../chorus.h"
+#include "../efx.h"
 #include "../common/constants.h"
 
 #include "../packed_rom.h"
@@ -98,6 +99,15 @@ const unsigned kChorusLevelField = 0x22u;
 const unsigned kChorusRateField = 0x23u;
 const unsigned kChorusDepthField = 0x24u;
 const unsigned kChorusPreDelayField = 0x25u;
+/* The insert effect's output block. The assign decides whether the effect's
+   own chorus and reverb sends reach anything at all: they are written as
+   `table[v] & mask`, and the mask is all ones only for MIX
+   (`08_effects/routing.md`, FW-EXACT). */
+const unsigned kEfxOutputAssignField = 0x1au;
+const unsigned kEfxOutputLevelField = 0x1bu;
+const unsigned kEfxChorusSendField = 0x1cu;
+const unsigned kEfxReverbSendField = 0x1du;
+
 const unsigned kChorusFeedbackField = 0x26u;
 const unsigned kChorusOutputField = 0x27u;
 /* MIX / REVERB / MIX+REV, the machine's own order (`02_rom/strings.md`
@@ -231,6 +241,13 @@ struct Engine {
   float delay_gain_right;
   float delay_feedback;
   bool delay_ready;
+  /* The insert effect's output block, as coefficients. No effect renders
+     yet, so nothing reads these but the parameter path that forms them -
+     which is the point: the routing rule is testable before any algorithm
+     exists. */
+  float efx_output_level;
+  float efx_chorus_send;
+  float efx_reverb_send;
 };
 
 /* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
@@ -519,6 +536,21 @@ void delay_refresh(struct Engine *engine, bool panning)
   engine->delay_gain_right =
     (float)(level * ret * kReverbDelayTapSumRight / norm);
   engine->delay_ready = true;
+}
+
+/* The EFX output block: level, and the two sends the assign may mask out. */
+void efx_refresh(struct Engine *engine)
+{
+  unsigned assign = engine->common[kEfxOutputAssignField];
+  engine->efx_output_level = (float)
+    (efx_output_level(&engine->rom,
+                       engine->common[kEfxOutputLevelField]) / 8192.0);
+  engine->efx_chorus_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     engine->common[kEfxChorusSendField]) / 8192.0);
+  engine->efx_reverb_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     engine->common[kEfxReverbSendField]) / 8192.0);
 }
 
 void reverb_refresh(struct Engine *engine)
@@ -972,6 +1004,7 @@ bool engine_sysex_block(void *state, const uint8_t *address,
                              kPerfCommonFields);
     reverb_refresh(engine);
     chorus_refresh(engine);
+    efx_refresh(engine);
     return true;
   }
   if (a1 == 0x03u)

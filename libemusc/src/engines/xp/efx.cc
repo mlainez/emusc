@@ -80,6 +80,40 @@ bool efx_program_load(const struct xp_rom *rom, unsigned type,
   return true;
 }
 
+namespace {
+
+unsigned efx_level_word(const struct xp_rom *rom, unsigned value)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (!profile->efxLevelTable || value > 127u)
+    return 0u;
+  uint32_t a = profile->efxLevelTable + 2u * value;
+  if (a + 2u > rom->size)
+    return 0u;
+  return be16(rom->bytes + a);
+}
+
+}  // namespace
+
+unsigned efx_send_level(const struct xp_rom *rom, unsigned assign,
+                         unsigned value)
+{
+  if (!rom || !rom->bytes)
+    return 0u;
+  /* `mask` is 0xFFFF only for MIX, so anything else is an exact zero and
+     not an attenuation. */
+  if (assign != XP_EFX_ASSIGN_MIX)
+    return 0u;
+  return efx_level_word(rom, value);
+}
+
+unsigned efx_output_level(const struct xp_rom *rom, unsigned value)
+{
+  if (!rom || !rom->bytes)
+    return 0u;
+  return efx_level_word(rom, value);
+}
+
 unsigned efx_program_sites(const struct xp_efx_program *program,
                             struct xp_efx_site *out, unsigned max)
 {

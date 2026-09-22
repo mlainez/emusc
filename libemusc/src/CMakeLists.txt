@@ -81,6 +81,8 @@ set(EMUSC_SOURCES
   engines/xp/chorus.h
   engines/xp/delay.cc
   engines/xp/delay.h
+  engines/xp/efx.cc
+  engines/xp/efx.h
   engines/xp/eq.cc
   engines/xp/eq.h
   engines/xp/renderer.cc

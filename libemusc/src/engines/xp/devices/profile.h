@@ -580,6 +580,10 @@ struct XpDeviceProfile {
   uint32_t efxTypeTable;
   uint16_t efxTypeCount;
   uint32_t efxPointerBase;
+  /* The level table the EFX output block reads, shared in this device's ROM
+     with the chorus's and the reverb's but named here per block because it
+     is that block's own reference. */
+  uint32_t efxLevelTable;
 
   /* Null on a device the shared firmware-port engine serves; see
      struct XpVoiceEngineOps above. */

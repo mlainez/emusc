@@ -115,7 +115,30 @@ int main(void)
     assert(!efx_program_load(&rom, profile->efxTypeCount, &program));
   }
 
-  printf("efx: %u types over %u slots, %u of them reaching delay memory\n",
+  /* THE OUTPUT ASSIGN'S SEND MASK, which is a real pass/fail rule that
+     needs no effect to exist: routed anywhere but MIX, the insert's own
+     chorus and reverb sends are EXACTLY zero, not merely small. */
+  {
+    bool anyNonZero = false;
+    for (unsigned v = 0; v <= 127u; ++v) {
+      unsigned mix = efx_send_level(&rom, XP_EFX_ASSIGN_MIX, v);
+      if (mix)
+        anyNonZero = true;
+      /* the level itself is what MIX lets through, unmasked */
+      assert(mix == efx_output_level(&rom, v));
+      for (unsigned assign = 1u; assign <= 2u; ++assign)
+        assert(efx_send_level(&rom, assign, v) == 0u);
+    }
+    /* and the table really does carry something, so the zeros above are
+       the mask's doing and not an empty table's */
+    assert(anyNonZero);
+    assert(efx_output_level(&rom, 127u) > efx_output_level(&rom, 0u));
+    /* out-of-range parameters read as nothing rather than off the end */
+    assert(efx_output_level(&rom, 128u) == 0u);
+  }
+
+  printf("efx: %u types over %u slots, %u of them reaching delay memory; "
+         "sends masked to zero off MIX at all 128 levels\n",
          profile->efxTypeCount, distinct, withSites);
   return 0;
 }

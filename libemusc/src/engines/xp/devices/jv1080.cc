@@ -597,6 +597,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .efxTypeTable = 0x044EBCu,
   .efxTypeCount = 46u,
   .efxPointerBase = 0x0A000000u,
+  .efxLevelTable = 0x03856Cu,
 
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };
