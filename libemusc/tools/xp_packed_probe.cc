@@ -479,6 +479,14 @@ int main(int argc, char **argv)
                 common[0x27]);
     std::printf("  reverb  type %u level %u time %u hfdamp %u\n",
                 common[0x28], common[0x29], common[0x2a], common[0x2b]);
+    std::printf("  efx     source %u type %u  assign %u level %u "
+                "chorus send %u reverb send %u\n",
+                common[0x0c], common[0x0d], common[0x1a], common[0x1b],
+                common[0x1c], common[0x1d]);
+    std::printf("  common fields 0x0c..0x1f:");
+    for (unsigned f = 0x0c; f < 0x20; ++f)
+      std::printf(" %u", common[f]);
+    std::printf("\n");
     std::printf("  common fields 0x20..0x2f:");
     for (unsigned f = 0x20; f < 0x30; ++f)
       std::printf(" %u", common[f]);

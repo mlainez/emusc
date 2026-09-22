@@ -102,6 +102,23 @@ unsigned efx_output_level(const struct xp_rom *rom, unsigned value);
 #define XP_EFX_TABLE_BALANCE 14u   /* (wet, dry) */
 #define XP_EFX_TABLE_HF_DAMP 15u   /* (a, 0x1FFF - a), and a bypass row */
 
+/* WHICH PATCH THE INSERT'S SETTINGS COME FROM. In performance mode one
+ * selector decides whether the effect's type and twelve parameters are the
+ * performance's own or a part's, and the firmware's index arithmetic has a
+ * DISCONTINUITY AT 10 that is in the code exactly as written:
+ *
+ *     src == 0        the performance's own block
+ *     1 <= src <= 9   the patch image at src - 1
+ *     src >= 10       the patch image at src
+ *
+ * which lines up with the manual printing the choices as PERFORM, 1-9,
+ * 11-16 with 10 absent. WHY the index skips is not established
+ * (`U-R5-26`); that it does is FW-EXACT (`08_effects/routing.md`).
+ *
+ * Returns false past the selector's range. `*image` is left alone when the
+ * source is the performance itself, which `*performance` reports. */
+bool efx_resolve_source(unsigned source, bool *performance, unsigned *image);
+
 unsigned efx_table_count(const struct xp_rom *rom);
 
 /* How long a table is and how many words one of its entries takes. */

@@ -114,6 +114,18 @@ unsigned efx_output_level(const struct xp_rom *rom, unsigned value)
   return efx_level_word(rom, value);
 }
 
+bool efx_resolve_source(unsigned source, bool *performance, unsigned *image)
+{
+  if (source > 15u)
+    return false;
+  bool own = source == 0u;
+  if (performance)
+    *performance = own;
+  if (!own && image)
+    *image = source <= 9u ? source - 1u : source;
+  return true;
+}
+
 unsigned efx_table_count(const struct xp_rom *rom)
 {
   if (!rom || !rom->bytes)

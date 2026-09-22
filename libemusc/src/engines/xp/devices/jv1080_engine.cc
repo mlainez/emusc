@@ -103,6 +103,16 @@ const unsigned kChorusPreDelayField = 0x25u;
    own chorus and reverb sends reach anything at all: they are written as
    `table[v] & mask`, and the mask is all ones only for MIX
    (`08_effects/routing.md`, FW-EXACT). */
+/* The performance common's own effect block: the source selector, the type
+   and its twelve parameters, then the four output bytes. A PATCH's copy of
+   the same block sits one byte lower throughout, because a patch has no
+   source selector to carry (`05_data_model/effect_schema.md`). */
+const unsigned kEfxSourceField = 0x0cu;
+const unsigned kEfxTypeField = 0x0du;
+const unsigned kEfxFirstParameterField = 0x0eu;
+const unsigned kEfxParameters = 12u;
+const unsigned kEfxPatchBlockShift = 1u;
+
 const unsigned kEfxOutputAssignField = 0x1au;
 const unsigned kEfxOutputLevelField = 0x1bu;
 const unsigned kEfxChorusSendField = 0x1cu;
@@ -248,6 +258,15 @@ struct Engine {
   float efx_output_level;
   float efx_chorus_send;
   float efx_reverb_send;
+  /* The effect block in force: its type and twelve parameters, fetched
+     from whichever patch the source selector names. `efx_dirty` is the
+     change detection the firmware's own applied-cache stands for - set
+     when anything in the block moves, and the type moving clears the
+     parameters with it, since a parameter means something different under
+     a different effect. */
+  uint8_t efx_type;
+  uint8_t efx_parameter[kEfxParameters];
+  bool efx_dirty;
 };
 
 /* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
@@ -536,6 +555,48 @@ void delay_refresh(struct Engine *engine, bool panning)
   engine->delay_gain_right =
     (float)(level * ret * kReverbDelayTapSumRight / norm);
   engine->delay_ready = true;
+}
+
+/* The effect block in force. The output bytes are the performance's own;
+   the type and its twelve parameters come from whichever patch the source
+   selector names, which is the only part of this the firmware documents as
+   following the selector. Whether the output bytes follow it too is NOT
+   established, so they do not. */
+void efx_block_refresh(struct Engine *engine)
+{
+  bool performance = true;
+  unsigned image = 0;
+  if (!efx_resolve_source(engine->common[kEfxSourceField], &performance,
+                           &image))
+    return;                      /* past the selector's range: leave it */
+  const uint8_t *block;
+  unsigned first;
+  if (performance) {
+    block = engine->common;
+    first = kEfxTypeField;
+  } else {
+    if (image >= kParts)
+      return;
+    block = engine->parts[image].common;
+    first = kEfxTypeField - kEfxPatchBlockShift;
+    if (first + kEfxParameters >= XP_JV1080_PATCH_COMMON_FIELDS)
+      return;
+  }
+  uint8_t type = block[first];
+  if (type != engine->efx_type) {
+    /* A parameter means something different under a different effect, so
+       the type carries the parameters away with it. */
+    engine->efx_type = type;
+    std::memset(engine->efx_parameter, 0, sizeof engine->efx_parameter);
+    engine->efx_dirty = true;
+  }
+  for (unsigned i = 0; i < kEfxParameters; ++i) {
+    uint8_t v = block[first + 1u + i];
+    if (v != engine->efx_parameter[i]) {
+      engine->efx_parameter[i] = v;
+      engine->efx_dirty = true;
+    }
+  }
 }
 
 /* The EFX output block: level, and the two sends the assign may mask out. */
@@ -1005,6 +1066,7 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     reverb_refresh(engine);
     chorus_refresh(engine);
     efx_refresh(engine);
+    efx_block_refresh(engine);
     return true;
   }
   if (a1 == 0x03u)

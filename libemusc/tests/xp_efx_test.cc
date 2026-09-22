@@ -202,6 +202,33 @@ int main(void)
     }
   }
 
+  /* THE SOURCE SELECTOR'S DISCONTINUITY. The manual prints the choices as
+     PERFORM, 1-9, 11-16 with 10 absent, and the firmware's arithmetic
+     skips to match: images 0..8 for selectors 1..9, then images 10..15 for
+     selectors 10..15. Image 9 - the rhythm part - is unreachable, which is
+     the shape of the thing and is why the skip is not a typo. */
+  {
+    bool own = false;
+    unsigned image = 0xffffu;
+    assert(efx_resolve_source(0, &own, &image));
+    assert(own && image == 0xffffu);      /* untouched for PERFORM */
+    bool reached[16] = { false };
+    for (unsigned src = 1u; src <= 15u; ++src) {
+      image = 0xffffu;
+      assert(efx_resolve_source(src, &own, &image));
+      assert(!own);
+      assert(image == (src <= 9u ? src - 1u : src));
+      assert(image < 16u);
+      reached[image] = true;
+    }
+    for (unsigned i = 0; i < 9u; ++i)
+      assert(reached[i]);
+    assert(!reached[9]);                  /* the skip */
+    for (unsigned i = 10u; i < 16u; ++i)
+      assert(reached[i]);
+    assert(!efx_resolve_source(16u, &own, &image));
+  }
+
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "
          "sends masked to zero off MIX at all 128 levels; "
          "%u conversion tables\n",
