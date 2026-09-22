@@ -79,16 +79,16 @@ static double traversal(uint32_t pitch_word, enum xp_fractional_wrap wrap,
                          32000.0, wrap));
   assert(oscillator.cycle_count == 86);
   assert(oscillator.initial_count == 117);
-  previous = oscillator.phase;
+  previous = oscillator_phase(&oscillator);
   for (i = 0; i < 32000 * 2; ++i) {
     assert(oscillator_next(&oscillator, &sample));
-    if (!oscillator.initial && oscillator.phase < previous) {
+    if (!oscillator.initial && oscillator_phase(&oscillator) < previous) {
       ++wraps;
       if (wraps == 1)
         first = i;
       last = i;
     }
-    previous = oscillator.phase;
+    previous = oscillator_phase(&oscillator);
   }
   assert(wraps > 100);
   return (double)(last - first) / (double)(wraps - 1);
@@ -243,7 +243,7 @@ int main()
                          XP_WAVE_FORWARD_LOOP, 0x38000, 32000.0,
                          XP_WRAP_FULL_CARRY));
   oscillator.initial = false;
-  oscillator.phase = 0.25;
+  oscillator_set_phase(&oscillator, 0.25);
   assert(oscillator_next(&oscillator, &sample));
   assert(fabs((double)sample * 8388608.0 -
               (27 * 12 + 235 * 10 + 121 * 11 + 12) / 384.0) < 1e-4);

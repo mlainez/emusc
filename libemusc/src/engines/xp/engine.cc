@@ -209,8 +209,8 @@ void updateSlotPitch(struct xp_engine *engine,
       lfoPitchOffset(engine, slot, note->part),
     pitch_envelope_sum(&slot->component.pitch_envelope,
                         &slot->component.pitch_release));
-  slot->component.oscillator.step = pitch_word_rate(
-    word, engine->renderer->output_rate);
+  oscillator_set_step(&slot->component.oscillator,
+                       pitch_word_rate(word, engine->renderer->output_rate));
 }
 
 void freeNoteIfEmpty(struct xp_engine *engine, uint8_t noteIndex)

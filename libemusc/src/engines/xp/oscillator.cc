@@ -15,6 +15,59 @@ double pitch_word_rate(uint32_t pitchWord, double outputRate)
     std::pow(2.0, ((double)pitchWord - kXpPitchUnity) / kXpPitchUnitsPerOctave);
 }
 
+/* Fractional bits in the fixed-point phase accumulator, of the 64 it has.
+   40 leaves 24 for the sample index, against the 20 a 1 Mi-sample bank -
+   the widest any XP device profile declares - actually needs, and puts the
+   playback rate's own quantization at 2^-41 of a sample: a relative rate
+   error of 6.5e-13 at unity, or 1.1e-9 cent, against the 0.0732 cent that
+   one unit of the pitch register is worth. That margin is what keeps the
+   accumulator's drift away from the double path's below the point where
+   the converted 16-bit output can tell the two apart. */
+#ifndef XP_PHASE_FRACTION_BITS
+#define XP_PHASE_FRACTION_BITS 40
+#endif
+static constexpr unsigned kPhaseFractionBits = XP_PHASE_FRACTION_BITS;
+static constexpr double kPhaseScale =
+  (double)(UINT64_C(1) << kPhaseFractionBits);
+/* Bits of the fraction the float kernel is handed - every one of which a
+   float's significand holds exactly, so the conversion below is exact and
+   introduces nothing the kernel would not introduce anyway. */
+static constexpr unsigned kPhaseFloatFractionBits = 24;
+
+double oscillator_phase(const struct xp_oscillator *oscillator)
+{
+  if (!oscillator)
+    return 0.0;
+#ifdef EMUSC_LEGACY_DSP_FAST
+  return (double)oscillator->phase_fixed / kPhaseScale;
+#else
+  return oscillator->phase;
+#endif
+}
+
+void oscillator_set_phase(struct xp_oscillator *oscillator, double phase)
+{
+  if (!oscillator)
+    return;
+  if (phase < 0.0)
+    phase = 0.0;
+  oscillator->phase = phase;
+  oscillator->phase_fixed = (uint64_t)(phase * kPhaseScale + 0.5);
+}
+
+void oscillator_set_step(struct xp_oscillator *oscillator, double step)
+{
+  if (!oscillator)
+    return;
+  if (step < 0.0)
+    step = 0.0;
+  oscillator->step = step;
+  /* Rounded rather than truncated: truncation would leave every rate
+     short of the one asked for, which is a pitch that is always flat
+     rather than one off by half a unit either way. */
+  oscillator->step_fixed = (uint64_t)(step * kPhaseScale + 0.5);
+}
+
 namespace {
 
 /* A ping-pong turn in a DIFFERENTIAL format is not a time reversal.
@@ -125,8 +178,8 @@ bool oscillator_init(const struct XpDeviceProfile *profile,
   oscillator->end = registers->end;
   oscillator->mode = mode;
   oscillator->wrap = wrap;
-  oscillator->phase = 0.0;
-  oscillator->step = pitch_word_rate(pitchWord, outputRate);
+  oscillator_set_phase(oscillator, 0.0);
+  oscillator_set_step(oscillator, pitch_word_rate(pitchWord, outputRate));
   oscillator->initial = true;
   oscillator->ended = false;
   oscillator->cycle_count = 0;
@@ -211,7 +264,16 @@ namespace {
    5.9 against the 4.2 the same waveform reaches at other phases.  The
    opposite reading came from a metric that rewarded an output for repeating
    on the integer sample grid, which is exactly what clearing the phase
-   manufactures. */
+   manufactures.
+
+   The fixed-point form below says the same three things about the
+   accumulator EMUSC_LEGACY_DSP_FAST advances: the carry is a modulo, and
+   one subtraction is all it takes unless the step is longer than the
+   cycle itself - a loop the transposition traverses more than once per
+   output sample, where the wide divide is what fmod costs here too.
+   Dropping the integer part is masking off the bits above the
+   fraction. */
+#ifndef EMUSC_LEGACY_DSP_FAST
 double wrapped_phase(const struct xp_oscillator *oscillator, double overflow)
 {
   switch (oscillator->wrap) {
@@ -224,6 +286,27 @@ double wrapped_phase(const struct xp_oscillator *oscillator, double overflow)
   }
   return 0.0;
 }
+#else
+uint64_t wrapped_phase_fixed(const struct xp_oscillator *oscillator,
+                              uint64_t overflow)
+{
+  switch (oscillator->wrap) {
+  case XP_WRAP_FULL_CARRY: {
+    const uint64_t cycle =
+      (uint64_t)oscillator->cycle_count << kPhaseFractionBits;
+    if (overflow < cycle)
+      return overflow;
+    overflow -= cycle;
+    return overflow < cycle ? overflow : overflow % cycle;
+  }
+  case XP_WRAP_FULL_RESET:
+    return 0;
+  case XP_WRAP_FRACTION_ONLY:
+    return overflow & ((UINT64_C(1) << kPhaseFractionBits) - 1);
+  }
+  return 0;
+}
+#endif
 
 /* The decoded value the oscillator is standing on, with the reflected
    descending pass of a ping-pong applied.  The one position the reflection
@@ -445,34 +528,33 @@ float outer_tap(const struct xp_oscillator *oscillator, size_t index,
      index + 1   2/3 - rest^2     + rest^3 / 2
      index + 2   fraction^3 / 6
 
-   which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
-   identity - and sums to one at every fraction.  8388608 is pcm24's own
-   full scale.
+   which is [1/6, 2/3, 1/6] at fraction 0 - a smoother, not an identity -
+   and sums to one at every fraction.  8388608 is the pcm24 full scale.
 
-   The legacy-fast tier multiplies by the sixth rather than dividing by
-   six. SSE1 carries no double at all, so on the 32-bit Windows target
-   both of those divisions land on x87 as unpipelined `fdiv`; the
-   reciprocal makes them multiplies. It is the same kernel, and its
-   error does not accumulate - it moves the two sixths by one unit in
-   the last place of a double, nine orders of magnitude under a 16-bit
-   step, and leaves the phase alone. Which is why it measures
-   byte-identical on the whole reference corpus and still belongs in the
-   approximate tier: nothing proves it output-preserving, only
-   measurement does. */
+   One kernel in the arithmetic the tier in force evaluates it in:
+   double, exactly as the measurement that recovered it was made, or -
+   under EMUSC_LEGACY_DSP_FAST - float, where the two divisions become
+   reciprocal multiplies and a Pentium III-class target reaches the whole
+   expression with scalar SSE1 instead of x87, which carries no float at
+   all below SSE2. Same kernel either way. */
+#ifdef EMUSC_LEGACY_DSP_FAST
+float bspline4(float fraction, float left, float value0, float value1,
+                float right)
+{
+  const float rest = 1.0f - fraction;
+  return (rest * rest * rest * (1.0f / 6.0f) * left +
+          (2.0f / 3.0f - fraction * fraction *
+           (1.0f - fraction * 0.5f)) * value0 +
+          (2.0f / 3.0f - rest * rest *
+           (1.0f - rest * 0.5f)) * value1 +
+          fraction * fraction * fraction * (1.0f / 6.0f) * right) *
+         (1.0f / 8388608.0f);
+}
+#else
 float bspline4(double fraction, float left, float value0, float value1,
                 float right)
 {
   const double rest = 1.0 - fraction;
-#ifdef EMUSC_LEGACY_DSP_FAST
-  const double sixth = 1.0 / 6.0;
-  const double scale = 1.0 / 8388608.0;
-  return (float)((rest * rest * rest * sixth * left +
-                  (2.0 / 3.0 - fraction * fraction *
-                   (1.0 - fraction * 0.5)) * value0 +
-                  (2.0 / 3.0 - rest * rest *
-                   (1.0 - rest * 0.5)) * value1 +
-                  fraction * fraction * fraction * sixth * right) * scale);
-#else
   return (float)((rest * rest * rest / 6.0 * left +
                   (2.0 / 3.0 - fraction * fraction *
                    (1.0 - fraction * 0.5)) * value0 +
@@ -480,8 +562,8 @@ float bspline4(double fraction, float left, float value0, float value1,
                    (1.0 - rest * 0.5)) * value1 +
                   fraction * fraction * fraction / 6.0 * right) /
                  8388608.0);
-#endif
 }
+#endif
 
 }  // namespace
 
@@ -489,6 +571,21 @@ bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
 {
   if (!oscillator || !sample || oscillator->ended)
     return false;
+#ifdef EMUSC_LEGACY_DSP_FAST
+  /* The index is the accumulator's high half and the fraction its low
+     half: no conversion, and so none of the FPU control-word juggling a
+     double-to-integer cast costs on the 32-bit x87 target. The fraction
+     is taken to kPhaseFloatFractionBits, every one of which a float's
+     significand holds exactly, so this carries as much of it as the float
+     kernel below can use. The accumulator itself keeps all of
+     kPhaseFractionBits, which is what the playback rate rides on. */
+  const size_t index = (size_t)(oscillator->phase_fixed >> kPhaseFractionBits);
+  const float fraction =
+    (float)(int32_t)((oscillator->phase_fixed >>
+                      (kPhaseFractionBits - kPhaseFloatFractionBits)) &
+                     ((UINT32_C(1) << kPhaseFloatFractionBits) - 1)) *
+    (1.0f / (float)(UINT32_C(1) << kPhaseFloatFractionBits));
+#else
   /* oscillator->phase is provably never negative: it starts at 0.0,
      advances by a non-negative step (pitch_word_rate can't return a
      negative rate), and every wrapped_phase branch also returns a
@@ -497,8 +594,9 @@ bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
      FPU-control-word juggling (real cost on the 32-bit x87 target;
      invisible on x86-64, which lowers std::floor to a single SSE2
      instruction) for a value that already truncates to the same place. */
-  size_t index = (size_t)oscillator->phase;
-  double fraction = oscillator->phase - (double)index;
+  const size_t index = (size_t)oscillator->phase;
+  const double fraction = oscillator->phase - (double)index;
+#endif
   float value0;
   float value1;
   if (!value_at(oscillator, index, &value0) ||
@@ -506,6 +604,29 @@ bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
     return false;
   float left = outer_tap(oscillator, index, true, value0);
   float right = outer_tap(oscillator, index + 1, false, value1);
+#ifdef EMUSC_LEGACY_DSP_FAST
+  *sample = bspline4(fraction, left, value0, value1, right);
+
+  oscillator->phase_fixed += oscillator->step_fixed;
+  if (oscillator->initial &&
+      (oscillator->phase_fixed >> kPhaseFractionBits) >=
+        (uint64_t)oscillator->initial_count) {
+    const uint64_t overflow = oscillator->phase_fixed -
+      ((uint64_t)oscillator->initial_count << kPhaseFractionBits);
+    if (!oscillator->cycle_count) {
+      oscillator->ended = true;
+    } else {
+      oscillator->initial = false;
+      oscillator->phase_fixed = wrapped_phase_fixed(oscillator, overflow);
+    }
+  } else if (!oscillator->initial &&
+             (oscillator->phase_fixed >> kPhaseFractionBits) >=
+               (uint64_t)oscillator->cycle_count) {
+    oscillator->phase_fixed = wrapped_phase_fixed(
+      oscillator, oscillator->phase_fixed -
+        ((uint64_t)oscillator->cycle_count << kPhaseFractionBits));
+  }
+#else
   *sample = bspline4(fraction, left, value0, value1, right);
 
   oscillator->phase += oscillator->step;
@@ -523,6 +644,7 @@ bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
     oscillator->phase = wrapped_phase(
       oscillator, oscillator->phase - oscillator->cycle_count);
   }
+#endif
   return true;
 }
 
