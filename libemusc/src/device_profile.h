@@ -261,6 +261,21 @@ struct PerformanceLayout
   uint32_t offset;
   int      stride, commonSize, partStride, parts;
   int      bootIndex;                   // the performance the device powers on in
+
+  // The performance a host reset selects, in the same `bank flag | program`
+  // selector the control-channel Performance select takes (the encoding is at
+  // presetABase below). Synth::reset() fires it through the device's own
+  // mechanism - Settings::select_performance(), the call a control-channel
+  // program change makes - so a host reset leaves the machine where the trigger
+  // every ROM demo song opens with leaves it, rather than in the boot
+  // performance the field above names. Negative when the device has no such
+  // state to reach.
+  //
+  // Not appended at the end of this struct, because 0 is a valid selector
+  // (Internal performance 0) and so cannot double as "none": a device that
+  // fills a PerformanceLayout must say what it wants here.
+  int      resetSelector;
+
   int      reverbType, reverbLevel, reverbTime, reverbFeedback;
 
   // The chorus block. chorusType shares its byte with reverbType (bits 3-5),
