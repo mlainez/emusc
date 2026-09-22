@@ -93,6 +93,34 @@ Measure every optimization independently before combining it, using dense live-M
 
 If a candidate misses the legacy-fast gate, reject it or narrow it until it passes; do not weaken the gate.
 
+#### RULING (owner, 2026-09-22): item 3 admitted despite missing the sample-count bound
+
+Item 3, the fixed-point phase accumulator with the kernel in `float`, meets
+every part of this gate except the 0.1% bound, and only on effect-heavy
+material: over 105 renders (SC-55, SC-55mkII, JV-880, SC-88 at 32, 44.1 and
+48 kHz) the converted 16-bit output differs by at most 1 LSB everywhere,
+0.0311% of samples in aggregate and 0.0894% worst on any other stimulus, but
+an effect-heavy stimulus measures 0.1431%, 0.1354% and 0.1302% at the three
+rates, worst null residual -118.75 dBFS against a -15.49 dBFS reference. The
+same stimulus built for `i686-w64-mingw32 -march=pentium3` gives 0.1347% at
+32 kHz and 0.1313% at 44.1 kHz.
+
+The owner reviewed this and ruled it acceptable. The evidence he ruled on: the
+bound is saturated on that stimulus by arithmetic noise rather than by
+audibility. Nudging the `double` path's own playback rate by one unit in its
+last place - 2.2e-16, or 1.4e-12 cent, against the 0.0732 cent one unit of the
+pitch register is worth - already costs 0.0955% of that stimulus's samples, and
+an accumulator whose rate quantization is 2^-65 still measures 0.1146%. No
+fixed-point accumulator passes it at any precision, so narrowing cannot rescue
+it and rejecting it forfeits the item. The trade is taken only where it is
+wanted: `EMUSC_LEGACY_DSP_FAST` defaults ON for `WIN32` with a 4-byte pointer
+and OFF everywhere else, so it reaches the 32-bit Windows binary and nothing
+else.
+
+This admits one change on one criterion. The gate stands unchanged for
+everything else, including every other criterion for this change, and a
+candidate that misses it still needs a ruling of its own.
+
 ## Delivery order
 
 Implement and benchmark in this sequence: XP FIR, GP oscillator, XP delay, GP resampler lossless work, stereo filter packing, XP TVA recurrence, XP fixed-point oscillator, chorus approximation, then LTO. Land each logically independent change separately so its performance and fidelity evidence can be reviewed or reverted without affecting the others.
