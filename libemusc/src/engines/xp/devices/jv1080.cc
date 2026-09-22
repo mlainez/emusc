@@ -48,6 +48,69 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      laws measured on the hardware. Left zero deliberately; see the file
      comment. */
 
+  /* --- The reverb, as the ROM describes it ---------------------------
+     THE SAME RECORD THE SC-88 CARRIES, at different offsets. Table
+     `0x0599C8` holds one whole pointer per type - ROOM1, ROOM2, STAGE1,
+     STAGE2, HALL1, HALL2, DELAY, PAN-DELAY - into 114-byte records: an
+     input one-pole pair at word 0, the eight allpass coefficient pairs at
+     2, the two damping pairs at 18 and the thirty-two delay-memory
+     addresses at 22. The SC-88's are at 0, 16 and 20 with no input pair,
+     which is the whole difference (`M-075`, `M-094`, both `FW-EXACT`).
+
+     THE ADDRESS LAYOUT IS IDENTICAL, which is the finding rather than an
+     assumption. `0x03E588` gives the instruction each address patches, and
+     the eight that land on 192..206 are exactly the taps `0x038546`
+     patches; pairing what is left by adjacency gives twelve buffers whose
+     head and far indices, and whose eight allpass-carrying buffers, come
+     out the same numbers this engine already holds for the SC-88. It
+     checks against the ROM: under that pairing STAGE1's first six buffers
+     measure 917, 377, 110, 76, 665 and 813 samples where the boot image's
+     own allpass lines are documented at 918, 378, 111, 77, 666 and 813 -
+     five to a single sample, one exact.
+
+     THE COEFFICIENTS ARE THE SAME TWO WORDS: `0x3000` and `0x1000`, which
+     the shared law reads as -0.5 and +0.5, the Schroeder pair at g = 0.5.
+     Seven of the eight slots are enabled on every reverb type and all
+     eight are zero on DELAY and PAN-DELAY, which is a control on the
+     reading. THOSE VALUES REST ON THE SHIFT-FIELD HALF OF `U-R5-01`, which
+     is corroborated across 33 coefficient images decoding self-
+     consistently but is NOT measured against the machine - `FW-STRUCT`,
+     not `MEASURED`. What is measured is the other half: bit 15 tags a
+     length, confirmed to 0.5 ms on `effects/chorus_pre_delay_127`.
+
+     THE CHAIN ORDER IS NOT RECOVERED and is not guessed here. `M-094`
+     argues that is the diffuser's purpose rather than a measurement
+     failure - a 3 ms tick produces three arrivals above 5 % in 300 ms
+     where a comb network would show one per line - and a control settles
+     it: ROOM1's lengths score 68 of 83 against a HALL1 recording where
+     HALL1's own score 49. The buffers are therefore run in the record's
+     own order, which is an ordering and not a claim about the silicon. */
+  .reverbPointers = 0x0599C8u,
+  .reverbPage = 0u,
+  .reverbMacroTable = 0u,
+  .reverbAllpassPairA = 0x3000u,
+  .reverbAllpassPairB = 0x1000u,
+  .reverbAllpassG = 0.5f,
+  .reverbImage0Cram = 0x03F77Cu,
+  .headWord = { 0u, 2u, 4u, 6u, 8u, 10u, 14u, 16u, 20u, 22u, 26u, 28u },
+  .farWord = { 1u, 3u, 5u, 7u, 9u, 13u, 15u, 19u, 21u, 25u, 27u, 31u },
+  .tapWord = { 11u, 17u, 23u, 29u, 12u, 18u, 24u, 30u },
+  .allpassBuffer = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 10u },
+  .tapInstruction = { 192u, 194u, 196u, 198u, 200u, 202u, 204u, 206u },
+  .reverbCharacters = 8u,
+  .reverbRecordWords = 57u,
+  .reverbAllpassWord = 2u,
+  /* The record's two damping pairs read (0, 8191) on every type, which is
+     the neutral default: `M-094` has the HF-damp PARAMETER overwrite these
+     two slots, and `M-064` solves that law to the unit. So the character
+     carries no damping of its own here and the parameter supplies it. */
+  .reverbDampWord = XP_REVERB_WORD_NONE,
+  .reverbAddressWord = 22u,
+  .reverbTrimWord = XP_REVERB_WORD_NONE,
+  .reverbInputWord = 0u,
+  .reverbPointerBytes = 4u,
+  .reverbPointerBase = 0x0A000000u,
+
   .waveDescriptorSize = 0u,       /* waves are reached through the
                                      multisample chain below, not through
                                      one flat descriptor table */
@@ -294,6 +357,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      own twelve, so the three terms add. Key sweeps on both parts (keys
      36..64 and 48..66) hold to 0.04 semitones, so the term is a constant
      and not a key follow. */
+
   .patchFieldName = 0x00u,
   .patchFieldNameLength = 12u,
   .patchFieldLevel = 0x2eu,

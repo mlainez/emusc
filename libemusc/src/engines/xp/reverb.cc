@@ -110,8 +110,12 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
   if (table + pointerBytes > rom->size)
     return false;
   uint32_t offset = be16(rom->bytes + table);
-  if (pointerBytes == 4u)
+  if (pointerBytes == 4u) {
     offset = (offset << 16) | be16(rom->bytes + table + 2u);
+    if (offset < profile->reverbPointerBase)
+      return false;
+    offset -= profile->reverbPointerBase;
+  }
   uint32_t block = profile->reverbPage + offset;
   if (block + 2u * (uint32_t)profile->reverbRecordWords > rom->size)
     return false;
@@ -140,6 +144,14 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
      and the half then runs undamped rather than on coefficients chosen
      here - which is what Delay and Panning Delay leave behind. */
   for (unsigned i = 0; i < 2; ++i) {
+    if (profile->reverbDampWord == XP_REVERB_WORD_NONE) {
+      /* A device whose record carries no usable damping pair: the pair is
+         a neutral default there and the damping arrives as a parameter
+         instead, so the character itself passes the half through. */
+      out->damp_input[i] = 1.0f;
+      out->damp_pole[i] = 0.0f;
+      continue;
+    }
     const uint8_t *pair = rec + 2u * (profile->reverbDampWord + 2u * i);
     double a = xp(be16(pair));
     double b = xp(be16(pair + 2u));

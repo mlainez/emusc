@@ -359,10 +359,11 @@ struct XpDeviceProfile {
   uint8_t reverbTrimWord;
   uint8_t reverbInputWord;
   /* How the per-character pointer table is written. The SC-88 stores a u16
-     offset from `reverbPage`; a device storing whole pointers sets
-     `reverbPointerBytes` to 4 and `reverbPage` to the value its pointers
-     are relative to (0 where they are absolute ROM offsets). */
+     offset from `reverbPage`. A device storing whole pointers sets
+     `reverbPointerBytes` to 4, and `reverbPointerBase` to the address its
+     ROM is mapped at, which is subtracted to get a file offset. */
   uint8_t reverbPointerBytes;
+  uint32_t reverbPointerBase;
 
   uint32_t chorusMacroTable;
   double chorusMaxMs;
