@@ -17,6 +17,7 @@
 #include "../libemusc/src/synth.h"
 #include "../libemusc/src/control_rom.h"
 #include "../libemusc/src/wave_rom.h"
+#include "../libemusc/tools/mxcsr_ftz.h"
 
 using namespace emuscd;
 
@@ -330,6 +331,8 @@ private:
 };
 
 int main(int argc, char* argv[]) {
+  set_flush_denormals_to_zero();
+
   std::string device = "sc88";
   std::string port_name = "emuscd";
   std::string pcm_device = "default";

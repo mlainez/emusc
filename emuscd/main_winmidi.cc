@@ -23,6 +23,7 @@
 #include "../libemusc/src/synth.h"
 #include "../libemusc/src/control_rom.h"
 #include "../libemusc/src/wave_rom.h"
+#include "../libemusc/tools/mxcsr_ftz.h"
 #include "../libemusc/src/simple_mutex.h"
 
 using namespace emuscd;
@@ -392,6 +393,8 @@ private:
 };
 
 int main(int argc, char **argv) {
+  set_flush_denormals_to_zero();
+
   std::string device = "sc88";
   std::string romDir;
   int midiInId = 0;

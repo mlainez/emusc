@@ -13,6 +13,7 @@
 #include "wav.h"
 #include "audio_out.h"
 #include "version.h"
+#include "mxcsr_ftz.h"
 
 #include "synth.h"          // libEmuSC public API (emusc/libemusc/src)
 #include "control_rom.h"
@@ -267,6 +268,8 @@ inline int16_t to_i16(float x) {
 }  // namespace
 
 int main(int argc, char **argv) {
+  set_flush_denormals_to_zero();
+
   Options o = parse_args(argc, argv);
 
   // libEmuSC reports progress on stdout. Keep it clean unless --verbose.
