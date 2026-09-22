@@ -359,14 +359,19 @@ int main(int argc, char **argv) {
   // MAP, which the constructor above already applied; it does not put the parts
   // on their default instrument, and only reset(map, resetParts=true) does.
   //
-  // On this engine that is redundant here: Settings::reset() runs exactly the
-  // four _initialize_*/_apply_device_performance calls the Settings constructor
-  // runs, so the synth already holds bank 0 program 0 on every part and Drum1
-  // on part 10, and Part::reset() only clears notes and counters that are
-  // already clear on a part built moments ago. Renders are unchanged by it. It
-  // is here because the tool should start the device the way the device starts
-  // itself, so that a file which plays a note before its first program change
-  // is rendered from a stated default rather than an implied one.
+  // On a Sound Canvas that is redundant here: Settings::reset() runs exactly
+  // the four _initialize_*/_apply_device_performance calls the Settings
+  // constructor runs, so the synth already holds bank 0 program 0 on every part
+  // and Drum1 on part 10, and Part::reset() only clears notes and counters that
+  // are already clear on a part built moments ago. It is here because the tool
+  // should start the device the way the device starts itself, so that a file
+  // which plays a note before its first program change is rendered from a
+  // stated default rather than an implied one.
+  //
+  // It is not redundant on a device whose profile names a reset Performance
+  // (DeviceProfile's PerformanceLayout::resetSelector): there this call is what
+  // takes the machine out of its layered boot Performance, and the render is
+  // not the same without it.
   //
   // --reset none skips this call, for comparing against a renderer that
   // never injects a reset of its own and leaves the map exactly as the

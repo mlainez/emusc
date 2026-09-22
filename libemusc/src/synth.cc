@@ -194,6 +194,20 @@ void Synth::reset(SoundMap sm, bool resetParts)
   } else if (sm == SoundMap::MT32) {
     _settings->set_map_mt32();
   }
+
+  // The same idea as the XP branch above, for a device that reaches its
+  // known-good multitimbral state through its own control channel: put it
+  // there with the call that channel's own program change makes, so a host
+  // reset and the device's own trigger leave the same state behind. The
+  // profile names the selector; devices without the concept carry no record
+  // layout at all and are not reached here.
+  //
+  // Last, and after set_gm_mode(): Settings::select_performance() has to run
+  // after every pass that writes parts, or the passes above undo it - the
+  // reasoning is at the function itself.
+  const DeviceProfile *dev = _ctrlRom.device();
+  if (dev->records && dev->records->performance.resetSelector >= 0)
+    _settings->select_performance(dev->records->performance.resetSelector);
 }
 
 

@@ -264,4 +264,20 @@ if(BUILD_TESTING)
   set_target_properties(synth_reset_test PROPERTIES CXX_EXTENSIONS OFF)
   add_test(NAME synth_reset_test COMMAND synth_reset_test)
   set_property(TEST synth_reset_test PROPERTY SKIP_RETURN_CODE 77)
+
+  # The same public API, for the branch of reset() that puts a device into the
+  # Performance its own control channel would select. It needs that device's
+  # ROMs, read from the environment at run time, and reports skipped without
+  # them.
+  add_executable(synth_reset_performance_test ../tests/synth_reset_performance_test.cc)
+  target_include_directories(synth_reset_performance_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(synth_reset_performance_test PRIVATE emusc_static)
+  if(MSVC)
+    target_compile_options(synth_reset_performance_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(synth_reset_performance_test PRIVATE -UNDEBUG)
+  endif()
+  set_target_properties(synth_reset_performance_test PROPERTIES CXX_EXTENSIONS OFF)
+  add_test(NAME synth_reset_performance_test COMMAND synth_reset_performance_test)
+  set_property(TEST synth_reset_performance_test PROPERTY SKIP_RETURN_CODE 77)
 endif()

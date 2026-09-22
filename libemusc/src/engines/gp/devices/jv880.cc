@@ -556,6 +556,15 @@ static const RecordRomLayout JV880_RECORDS = {
     // on in performance 1.
     0x008020, 204, 28, 22, 8, 0,
 
+    // A host reset selects 0xC8 - Preset B index 8, "for CompuMix" - which is
+    // the selector CC0 81 + PC 72 forms and what every ROM demo song opens
+    // with. The boot performance above is a layered patch, not a multitimbral
+    // setup: its part map is [1,1,1,2,2,3,4,10], three copies of SAW Lead on
+    // channel 1 and nothing on channels 5-9 or 11-16, so a file that plays
+    // anything else is left with most of its parts silent and the rest
+    // detuned against each other.
+    0xC8,
+
     // Effects, from the common block. The columns identify themselves across the
     // sixteen performances: +12's low three bits are always 0..7 (a type), +13
     // runs 92..127 and +14 74..127 (a level and a time), +15 0..68 (a feedback).
