@@ -254,11 +254,88 @@ const double kAmpEnvAttackShape[15] = {
    really has rather than inventing one and leaves the four weights summing
    to one, so a boundary cannot put a gain step or a DC offset into the
    output. The same choice `oscillator.cc` makes for the sibling engine. */
+/* One position of a ping-pong loop's cycle, as a value.
+
+   A ping-pong turn in a DIFFERENTIAL format is not a time reversal. The
+   decoder accumulates deltas, so running the address back down the stream
+   while still adding what it reads gives
+
+       y[m] = x[c] + d[c] + ... + d[c-m+1] = 2*x[c] - x[c-m]
+
+   - the loop backwards AND reflected about the value it turned at, which is
+   continuous in value and in SLOPE. A plain time reversal leaves a corner
+   and a forward wrap leaves a phase jump.
+
+   The cycle is `2*span` long, `span = loop_last - loop_first + 1`:
+
+     index < span     address loop_last-1 down to loop_first-1, REFLECTED
+     index >= span    address loop_first up to loop_last, as decoded
+
+   This ROM satisfies the invariant the turn needs. The reflected pass lands
+   on x[loop_first-1] as its address reaches loop_first-1, and the cycle
+   closes with no step and no drift only if x[loop_last] == x[loop_first-1].
+   Decoded through this engine's own FCE decoder that holds with INTEGER
+   EQUALITY on 204 OF 204 of this ROM's loop-type-1 elements - every one -
+   against 1029 of 1031 for loop type 0. So loop_first-1 is answered with
+   x[loop_last] directly rather than read: it can sit before the element's
+   first decoded frame when a zone loops from its own start.
+
+   THE SIBLING'S TELL-TALE IS ABSENT HERE, AND THAT IS WORTH KNOWING BEFORE
+   ANYONE TREATS THIS AS A FIX. On the SC-88 a forward read of a ping-pong
+   loop leaves a visible step and a phase jump at the join - correlation
+   across it +0.197 against +0.968 for its forward loops. On this device both
+   ends of the loop sit at EXACTLY ZERO: on the three loop-type-1 elements
+   examined sample by sample, x[loop_last] and x[loop_first-1] are both 0,
+   and the step a FORWARD wrap would leave measures 0.23, 0.58 and 0.48 times
+   the loop's own median sample-to-sample delta - smaller, on two of the
+   three, than the reflected turn's own step. So a forward read is continuous
+   in value here and nothing measured on this device says it is wrong.
+
+   CROSS-DEVICE LEAD, NOT CONFIRMED ON JV-1080 HARDWARE (`TASK-346` AC#2).
+   This is carried on the owner's ruling: the reflected turn is MEASURED on
+   the SC-88, the two devices are the same Roland part 15239239, and
+   ping-pong traversal is chip-level playback behaviour rather than anything
+   that should depend on whose ROM is being read. Because the usual tell-tale
+   is missing here, only a JV-1080 recording of a sustained loop-type-1
+   element can settle it, which makes AC#2 more important and not less. */
+double cycle_sample(const struct XpJv1080Voice *voice, long long index)
+{
+  if (voice->loop_last >= voice->pcm_count ||
+      voice->loop_last < voice->loop_first)
+    return 0.0;
+  long long first = (long long)voice->loop_first;
+  long long last = (long long)voice->loop_last;
+  long long span = last - first + 1;
+  long long cycle = 2 * span;
+  index %= cycle;
+  if (index < 0)
+    index += cycle;
+  double turn = (double)voice->pcm[voice->loop_last];
+  if (index >= span) {
+    long long at = first + (index - span);
+    if (at < 0 || (size_t)at >= voice->pcm_count)
+      return turn;
+    return (double)voice->pcm[(size_t)at];
+  }
+  long long at = last - 1 - index;
+  if (at < first || at < 0 || (size_t)at >= voice->pcm_count)
+    return turn;                 /* the invariant's own answer at b-1 */
+  return 2.0 * turn - (double)voice->pcm[(size_t)at];
+}
+
 double wave_tap(const struct XpJv1080Voice *voice, size_t index, int offset,
                  double fallback)
 {
   long long at = (long long)index + offset;
-  if (voice->looping && voice->loop_last >= voice->loop_first) {
+  /* A ping-pong element has not wrapped when the head runs past the loop's
+     end - it has TURNED, so the sample after loop_last is the cycle's first
+     reflected one. Behind the head it is still plain memory, because this
+     branch is only reached before the first turn. */
+  if (voice->ping_pong && voice->loop_last >= voice->loop_first &&
+      at > (long long)voice->loop_last)
+    return cycle_sample(voice, at - (long long)voice->loop_last - 1);
+  if (!voice->ping_pong && voice->looping &&
+      voice->loop_last >= voice->loop_first) {
     long long first = (long long)voice->loop_first;
     long long last = (long long)voice->loop_last;
     long long length = last - first + 1;
@@ -774,6 +851,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->reverse = element.reverse;
   voice->looping = element.mode == XP_WAVE_FORWARD_LOOP ||
     element.mode == XP_WAVE_PING_PONG_LOOP;
+  voice->ping_pong = element.mode == XP_WAVE_PING_PONG_LOOP;
+  voice->in_cycle = false;
   voice->loop_first = (size_t)(element.bank_loop - base);
   voice->loop_last = (size_t)(element.bank_end - base);
   /* MEASURED (`M-090`): a reversed element plays its last N samples
@@ -783,8 +862,10 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->position = voice->reverse
     ? (double)(voice->pcm_count - 1u)
     : (double)(element.bank_start - base);
-  if (voice->reverse)
+  if (voice->reverse) {
     voice->looping = false;
+    voice->ping_pong = false;
+  }
 
   /* MEASURED (`M-014`), all exact: coarse tune is `value - 48` semitones to
      within 0.3 cents over the whole range and fine tune is `value - 50`
@@ -1012,6 +1093,20 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
        the interpolation's images unsmoothed, and against a hardware take
        of the first factory song this engine carried 15.2 % of its energy
        between 8 and 16 kHz where the machine carries 1.3 %. */
+    double frac;
+    double v0, v1, vBack, vFwd;
+    if (voice->in_cycle) {
+      /* Past the first turn, `position` is a position in the ping-pong
+         cycle, not an index into `pcm`. Every one of the four taps goes
+         through the same mapping, so the turn needs no special case: the
+         interpolator reads across it exactly as it reads anywhere else. */
+      long long c0 = (long long)voice->position;
+      frac = voice->position - (double)c0;
+      v0 = cycle_sample(voice, c0);
+      v1 = cycle_sample(voice, c0 + 1);
+      vBack = cycle_sample(voice, c0 - 1);
+      vFwd = cycle_sample(voice, c0 + 2);
+    } else {
     size_t i0 = (size_t)voice->position;
     /* The loop's last sample is a valid read head position - its partner
        for the interpolation is the loop's first sample - so only a head
@@ -1029,7 +1124,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       i0 = voice->loop_first;
       voice->position = (double)i0;
     }
-    double frac = voice->position - (double)i0;
+    frac = voice->position - (double)i0;
     /* The uniform cubic B-spline basis, with `rest` = 1 - fraction:
          index - 1   rest^3 / 6
          index       2/3 - fraction^2 + fraction^3 / 2
@@ -1037,10 +1132,11 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
          index + 2   fraction^3 / 6
        which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
        identity - and sums to one at every fraction. */
-    double v0 = (double)voice->pcm[i0];
-    double v1 = wave_tap(voice, i0, 1, v0);
-    double vBack = wave_tap(voice, i0, -1, v0);
-    double vFwd = wave_tap(voice, i0, 2, v1);
+    v0 = (double)voice->pcm[i0];
+    v1 = wave_tap(voice, i0, 1, v0);
+    vBack = wave_tap(voice, i0, -1, v0);
+    vFwd = wave_tap(voice, i0, 2, v1);
+    }
     double rest = 1.0 - frac;
     double sample = (rest * rest * rest / 6.0 * vBack +
                       (2.0 / 3.0 - frac * frac * (1.0 - frac * 0.5)) * v0 +
@@ -1114,8 +1210,21 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       }
     } else {
       voice->position += voice->increment;
-      if (voice->position >= (double)voice->loop_last + 1.0) {
-        if (voice->looping)
+      if (voice->in_cycle) {
+        /* Wrapped by the cycle, not by the loop's length: a full cycle is
+           the reflected descending pass and the forward ascending one, so
+           it is twice the loop. */
+        double cycle =
+          2.0 * (double)(voice->loop_last - voice->loop_first + 1u);
+        while (voice->position >= cycle)
+          voice->position -= cycle;
+      } else if (voice->position >= (double)voice->loop_last + 1.0) {
+        if (voice->ping_pong) {
+          /* The head has read loop_last and turned. Cycle position 0 is the
+             first reflected sample, at loop_last-1. */
+          voice->in_cycle = true;
+          voice->position -= (double)voice->loop_last + 1.0;
+        } else if (voice->looping)
           voice->position -=
             (double)(voice->loop_last - voice->loop_first + 1u);
         else if (voice->position + 1.0 >= (double)voice->pcm_count) {
