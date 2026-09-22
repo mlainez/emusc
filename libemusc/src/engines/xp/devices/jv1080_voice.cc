@@ -64,8 +64,8 @@ const struct { uint8_t distance; double difference_db; } kPanTable[] = {
   { 48u, 15.60 }, { 64u, 65.00 },
 };
 
-double interpolate_db(const double *xs, const double *ys, unsigned count,
-                       double x)
+double interpolate_points(const double *xs, const double *ys, unsigned count,
+                           double x)
 {
   if (x <= xs[0])
     return ys[0];
@@ -87,7 +87,7 @@ double amp_env_level_db(unsigned value)
     xs[i] = kAmpEnvLevelTable[i].value;
     ys[i] = kAmpEnvLevelTable[i].db;
   }
-  return interpolate_db(xs, ys, 10u, (double)value);
+  return interpolate_points(xs, ys, 10u, (double)value);
 }
 
 double pan_difference_db(int offset)
@@ -97,8 +97,9 @@ double pan_difference_db(int offset)
     xs[i] = kPanTable[i].distance;
     ys[i] = kPanTable[i].difference_db;
   }
-  double magnitude = interpolate_db(xs, ys, 6u, (double)(offset < 0 ? -offset
-                                                                    : offset));
+  double magnitude = interpolate_points(xs, ys, 6u,
+                                         (double)(offset < 0 ? -offset
+                                                             : offset));
   return offset < 0 ? -magnitude : magnitude;
 }
 
@@ -173,9 +174,167 @@ double wave_gain(unsigned raw)
    against a -99.96 floor - and so does extrapolating the law, because a
    12 Hz corner attenuates everything audible by over 100 dB. The two cannot
    be told apart, so the law is simply extrapolated there. */
-double tvf_cutoff_hz(unsigned cutoff)
+double tvf_cutoff_hz(double cutoff)
 {
-  return 341.0 * std::pow(2.0, ((double)cutoff - 64.0) / 10.0);
+  return 341.0 * std::pow(2.0, (cutoff - 64.0) / 10.0);
+}
+
+/* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
+   functions of velocity onto the fraction of the envelope's travel - and
+   the travel is in CUTOFF-PARAMETER units, not in hertz, which is what
+   curve 0 coming out linear in the normalised OCTAVE fraction says. The
+   take was built for this reading: depth +30 from cutoff 24 keeps the whole
+   sweep below the 7891 Hz ceiling that clipped five of the seven in
+   `M-078`.
+
+   Between the ten velocities this interpolates linearly, which is
+   interpolation and not a recovered law. THE BOTTOM OF EACH CURVE IS SOFT:
+   the take's velocity-1 note read 41 Hz where cutoff 24 predicts about
+   23 Hz, so the rig's own low-frequency roll-off (`M-012`: below 33 Hz it
+   cannot place a corner) is what the zeros at velocities 1 and 8 rest on,
+   and the real curve may leave zero earlier than this table does. */
+const uint8_t kFilterEnvCurveVelocity[10] = {
+  1u, 8u, 16u, 32u, 48u, 64u, 80u, 96u, 112u, 127u,
+};
+
+const double kFilterEnvCurve[7][10] = {
+  { 0.0, 0.0,   0.024, 0.164, 0.301, 0.443, 0.579, 0.721, 0.864, 1.0 },
+  { 0.0, 0.0,   0.0,   0.005, 0.046, 0.144, 0.277, 0.452, 0.700, 1.0 },
+  { 0.0, 0.0,   0.0,   0.0,   0.0,   0.0,   0.005, 0.155, 0.452, 1.0 },
+  { 0.0, 0.098, 0.252, 0.459, 0.608, 0.718, 0.801, 0.875, 0.943, 1.0 },
+  { 0.0, 0.397, 0.541, 0.694, 0.781, 0.849, 0.900, 0.937, 0.968, 1.0 },
+  { 0.0, 0.0,   0.0,   0.0,   0.046, 0.452, 0.844, 0.941, 0.980, 1.0 },
+  { 0.0, 0.183, 0.277, 0.366, 0.410, 0.441, 0.471, 0.511, 0.605, 1.0 },
+};
+
+/* NOT RECOVERED - the one quantity in this envelope that no measurement
+   pins, labelled here rather than hidden in a literal.
+
+   `M-082` gives one calibration point: depth +30 with the velocity
+   sensitivity at 74 sweeps 6.80 octaves, which at the measured 10.0 value
+   steps per octave (`M-012`) is 68 cutoff units. A depth field read one
+   unit for one cutoff unit would give 30, so the machine's scale is about
+   2.3x that - and ONE POINT CANNOT SEPARATE the depth's own scale from the
+   velocity sensitivity's, since only their product is observed.
+
+   What bounds it - three anchors on two takes, under the sensitivity law
+   below, and they do not agree:
+
+     `M-082`, its whole travel                                       2.27
+     `M-082`, its velocity-127 peak alone (4563 Hz from cutoff 24)   2.58
+     `M-078` (depth +63, cutoff 40, sensitivity +50), its two
+       unclipped points at velocities 32 and 48, absolute        2.17, 2.16
+
+   The travel and the endpoint of the SAME take disagree because that
+   take's velocity-1 note reads 41 Hz where cutoff 24 predicts 21 Hz, and
+   `M-012` says this rig cannot place a corner below about 33 Hz - so the
+   bottom of the travel is the interface's roll-off, not the machine, and
+   the normalised curve rests on it.
+
+   2.27 is kept: it is the value from the take built for this reading, it
+   lies between the two takes' absolute anchors rather than at either end,
+   and it is NOT the brightest of the three - a scale chosen to open the
+   filter further would be the one to distrust. What is justified is the
+   ORDER, a couple of cutoff units per unit of depth, which is also why
+   `M-078` found the field clipping against the top of the range at depth
+   +63: the +-63 field spans more than the whole 0..127 cutoff parameter.
+   THE EXACT SCALE IS NOT RECOVERED and the 2.16-2.58 spread is the honest
+   width of it - about two thirds of an octave at the top of a sweep. */
+inline constexpr double kFilterEnvDepthScale = 2.27;
+
+/* The record's velocity curve, interpolated between `M-082`'s ten points.
+   A record type with no curve field is rendered on curve 0; which curve
+   such a record uses is not established. */
+double filter_env_curve_fraction(unsigned curve, unsigned velocity)
+{
+  if (curve > 6u)
+    curve = 0u;
+  double xs[10], ys[10];
+  for (unsigned i = 0; i < 10u; ++i) {
+    xs[i] = kFilterEnvCurveVelocity[i];
+    ys[i] = kFilterEnvCurve[curve][i];
+  }
+  return interpolate_points(xs, ys, 10u, (double)velocity);
+}
+
+/* How far velocity is allowed to move the envelope, from the record's
+   velocity sensitivity field (decoded -50..+75).
+
+   MEASURED, IN PART, AND THE FORM IS THIS MODEL'S OWN. Two things are
+   measured and both are reproduced exactly here: at sensitivity 0 velocity
+   does not move the envelope at all - the corpus states it as the
+   `fenv_vel_sens_000` stimulus's own hypothesis, "sensitivity 0 must be
+   flat" - and at the top of the field the curve spans the whole travel
+   (`M-082` at 74). A THIRD fact rules out the obvious interpolation
+   between those two: `M-078` at sensitivity +50 reads its velocity-1 note
+   at 72 Hz, which is the unmodulated cutoff 40 and not the third of full
+   depth that a linear blend predicts (that would put it near 1.4 kHz).
+
+   So the sensitivity is applied as an exponent on the curve rather than as
+   a blend with it, which is 1 at sensitivity 0 for every velocity, is the
+   bare curve at the top of the field, and vanishes at velocity 1 for every
+   positive setting - the three measured facts, in that order. The negative
+   half inverts the curve over its own half-range. THE EXPONENT IS THIS
+   MODEL'S CHOICE: it is the simplest form consistent with all three, not a
+   recovered law, and the `fenv_vel_sens_{000,m50,p75}` takes have never
+   been read. */
+double filter_env_velocity_scale(int sensitivity, double fraction)
+{
+  if (!sensitivity)
+    return 1.0;
+  if (fraction < 0.0)
+    fraction = 0.0;
+  if (fraction > 1.0)
+    fraction = 1.0;
+  if (sensitivity > 0)
+    return std::pow(fraction, (double)sensitivity / 75.0);
+  return std::pow(1.0 - fraction, (double)(-sensitivity) / 50.0);
+}
+
+/* MEASURED (`M-040`): the filter envelope reads the amplitude envelope's
+   time table, scaled. Read as a 20 dB fall on both sides - which needed an
+   amplitude envelope outliving the filter, and `gaps/fenv_t4_hold` was
+   written for it - F-ENV time 4 falls in 25, 95, 250, 540 and 1125 ms
+   against the A-ENV's 25, 50, 130, 310 and 685, a ratio running 1.90,
+   1.92, 1.74 and 1.64 over values 16 to 64.
+
+   1.75 is `M-040`'s own figure for that scale. WHICH OF THE TWO IT IS -
+   a per-envelope scale on one table, or a second table of the same shape -
+   IS NOT SEPARABLE from seven points, and M-040 says so; the single
+   constant also flattens a ratio that measures 1.64 to 1.92 across the
+   field.
+
+   The value returned is a FULL 0-to-127 traverse, so a segment that has
+   less far to go takes proportionally less - which is linear in the cutoff
+   parameter and therefore a constant rate in octaves per second, the form
+   `M-069` read the F-ENV's own glide as. */
+inline constexpr double kFilterEnvTimeScale = 1.75;
+
+double filter_env_full_traverse_seconds(unsigned value)
+{
+  return kFilterEnvTimeScale * amp_env_fall_seconds_per_20db(value);
+}
+
+/* MEASURED (`M-069`): time key follow is one law on all three envelopes -
+   a factor of two per octave of key, pivoting exactly on key 60, with the
+   15-entry enum running -1 to +1. `M-066` measured on the A-ENV that it
+   does NOT scale the attack; whether the filter envelope's own attack is
+   likewise exempt was not measured, and this follows the amplitude
+   envelope's rule. */
+double time_key_follow_scale(unsigned enumValue, unsigned key)
+{
+  double kf = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
+  return std::pow(2.0, -kf * ((double)key - 60.0) / 12.0);
+}
+
+/* MEASURED (`M-070`): velocity-time sensitivity is the same shape 27x
+   weaker, pivoting on velocity 64 - `t = t_64 * 2^(-vs*0.39*(vel-64)/63)`
+   with vs from -1 to +1 - and the pitch and filter envelopes measure the
+   same 1.30x span from velocity 1 to 127 to within 0.4 %. */
+double velocity_time_scale(unsigned enumValue, unsigned velocity)
+{
+  double vs = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
+  return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 63.0);
 }
 
 /* MEASURED (`M-021`): resonance does not saturate. It is roughly 0.28 dB
@@ -201,7 +360,12 @@ double tvf_q(unsigned resonance)
 /* A two-pole section per filter type. MEASURED (`M-017`): all four types
    are active and each has the response its name says - the type register
    reading zero says the type is carried elsewhere, not that the types are
-   unused. The realisation is this model's own: the chip's is silicon. */
+   unused. The realisation is this model's own: the chip's is silicon.
+
+   This writes the coefficients and leaves the delay line alone, because
+   the filter envelope re-solves it while the note is sounding and
+   restarting the section every millisecond would put a step in the output
+   at every control block. */
 void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
                  double q, double rate)
 {
@@ -240,7 +404,58 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
   }
   voice->a1 = (-2.0 * cs) / a0;
   voice->a2 = (1.0 - alpha) / a0;
-  voice->x1 = voice->x2 = voice->y1 = voice->y2 = 0.0;
+}
+
+/* Where the filter envelope currently puts the cutoff parameter, clamped
+   to the field's own 0..127 range. The machine's further ceiling - a
+   resonant peak that stops climbing around 7891 Hz whatever the cutoff
+   asks for (`M-077`, `M-078`) - is a property of the wave rather than of
+   this law and is NOT modelled here. */
+double filter_env_cutoff(const struct XpJv1080Voice *voice)
+{
+  double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value;
+  if (cutoff < 0.0)
+    return 0.0;
+  return cutoff > 127.0 ? 127.0 : cutoff;
+}
+
+/* Enter a segment, from wherever the envelope currently stands. The time
+   field names a FULL 0-to-127 traverse, so a segment that has less far to
+   go takes proportionally less of it. */
+void filter_env_enter(struct XpJv1080Voice *voice, unsigned segment)
+{
+  voice->fenv_segment = segment;
+  voice->fenv_start = voice->fenv_value;
+  voice->fenv_total = voice->fenv_time[segment] *
+    std::fabs(voice->fenv_level[segment] - voice->fenv_start);
+  voice->fenv_remaining = voice->fenv_total;
+}
+
+/* Step the envelope on by one control block. Segments 0 to 2 run from
+   note-on; segment 3 is the release, entered by jv1080_voice_release.
+   Several segments may finish inside one block - every time field reaches
+   down to a few milliseconds - so this consumes the block rather than
+   assuming one segment survives it. */
+void filter_env_advance(struct XpJv1080Voice *voice, double seconds)
+{
+  while (voice->fenv_segment < 4u && seconds > 0.0) {
+    if (voice->fenv_remaining > seconds) {
+      voice->fenv_remaining -= seconds;
+      double done = voice->fenv_total > 0.0
+        ? 1.0 - voice->fenv_remaining / voice->fenv_total : 1.0;
+      double target = voice->fenv_level[voice->fenv_segment];
+      voice->fenv_value =
+        voice->fenv_start + (target - voice->fenv_start) * done;
+      return;
+    }
+    seconds -= voice->fenv_remaining;
+    voice->fenv_value = voice->fenv_level[voice->fenv_segment];
+    if (voice->releasing || voice->fenv_segment >= 2u) {
+      voice->fenv_segment = 4u;    /* holding, or released to level 4 */
+      return;
+    }
+    filter_env_enter(voice, voice->fenv_segment + 1u);
+  }
 }
 
 int tone_field(const struct xp_rom *rom, const uint8_t *tone, unsigned index)
@@ -304,6 +519,29 @@ bool record_sounds(const struct XpVoiceFieldMap *fields,
 }
 
 }  // namespace
+
+double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
+{
+  return filter_env_curve_fraction(curve, velocity);
+}
+
+double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
+                                 const uint8_t *record, unsigned velocity)
+{
+  if (!fields || !record || fields->filterEnvDepth == XP_VOICE_FIELD_NONE)
+    return 0.0;
+  int depth = (int8_t)record[fields->filterEnvDepth];
+  if (!depth)
+    return 0.0;
+  /* A record type with no velocity-curve field of its own is rendered on
+     curve 0; which curve such a record uses is not established. */
+  unsigned curve = field_or(fields, fields->filterEnvVelCurve, record, 0u);
+  int sensitivity =
+    (int8_t)(uint8_t)field_or(fields, fields->filterEnvVelSens, record, 0u);
+  double fraction = filter_env_curve_fraction(curve, velocity);
+  return kFilterEnvDepthScale * (double)depth *
+    filter_env_velocity_scale(sensitivity, fraction);
+}
 
 bool jv1080_voice_span(const struct xp_rom *rom,
                         const struct XpVoiceFieldMap *fields,
@@ -477,10 +715,48 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->segment_total = voice->segment_remaining;
 
   voice->filter_type = (int)tone[fields->filterType];
+  voice->output_rate = outputRate;
+  voice->cutoff_base = (double)tone[fields->cutoff];
+  voice->resonance_q = tvf_q(tone[fields->resonance]);
+
+  /* The filter envelope. It moves the cutoff PARAMETER, so its whole
+     sweep is worked out in cutoff units here and the corner law is applied
+     to the sum once per control block. */
+  voice->cutoff_offset = jv1080_filter_env_offset(fields, tone, velocity);
+  if (voice->cutoff_offset != 0.0) {
+    unsigned timeKf = field_or(fields, fields->filterEnvTimeKeyFollow, tone, 7u);
+    unsigned velT1 = field_or(fields, fields->filterEnvVelTime1, tone, 7u);
+    unsigned velT4 = field_or(fields, fields->filterEnvVelTime4, tone, 7u);
+    for (unsigned i = 0; i < 4u; ++i) {
+      voice->fenv_level[i] =
+        (double)tone[fields->filterEnvLevel1 + i] / 127.0;
+      voice->fenv_time[i] =
+        filter_env_full_traverse_seconds(tone[fields->filterEnvTime1 + i]);
+      /* `M-066` measured on the amplitude envelope that time key follow
+         does not scale the attack; the filter envelope's own attack was
+         not measured separately and follows that rule here. */
+      if (i)
+        voice->fenv_time[i] *= time_key_follow_scale(timeKf, soundedKey);
+    }
+    voice->fenv_time[0] *= velocity_time_scale(velT1, velocity);
+    voice->fenv_time[3] *= velocity_time_scale(velT4, velocity);
+    /* The envelope starts closed - at the record's own cutoff - and its
+       first segment is the move to level 1. */
+    voice->fenv_value = 0.0;
+    filter_env_enter(voice, 0u);
+    /* `M-074`: a modulator re-evaluated once per block of a millisecond or
+       less is indistinguishable from the machine on the one observable
+       that can see it. */
+    voice->control_period = (size_t)(outputRate / 1000.0);
+    if (!voice->control_period)
+      voice->control_period = 1u;
+    voice->control_countdown = 0u;
+  }
+
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
-                tvf_cutoff_hz(tone[fields->cutoff]),
-                tvf_q(tone[fields->resonance]), outputRate);
+                tvf_cutoff_hz(filter_env_cutoff(voice)),
+                voice->resonance_q, outputRate);
 
   voice->active = true;
   return true;
@@ -498,6 +774,10 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
   voice->segment_start = voice->envelope;
   voice->segment_total = (60.0 / 20.0) * voice->time[3];
   voice->segment_remaining = voice->segment_total;
+  /* The filter envelope releases on the same note-off, from wherever it
+     had reached, to its own level 4. */
+  if (voice->cutoff_offset != 0.0)
+    filter_env_enter(voice, 3u);
 }
 
 bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
@@ -506,7 +786,25 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
   if (!voice || !voice->active || !voice->pcm || !l || !r)
     return false;
 
+  const bool sweeping = voice->filter_type && voice->cutoff_offset != 0.0;
+
   for (size_t n = 0; n < frames; ++n) {
+    /* The filter envelope, once per control block rather than per sample
+       (`M-074`). A voice whose envelope cannot move the corner - no filter
+       or no depth - never enters here and its section is solved once at
+       note-on, as it was before this envelope existed. */
+    if (sweeping) {
+      if (!voice->control_countdown) {
+        filter_env_advance(voice, (double)voice->control_period *
+                                    voice->sample_period);
+        set_biquad(voice, voice->filter_type,
+                    tvf_cutoff_hz(filter_env_cutoff(voice)),
+                    voice->resonance_q, voice->output_rate);
+        voice->control_countdown = voice->control_period;
+      }
+      --voice->control_countdown;
+    }
+
     /* THE INTERPOLATOR IS TWO-POINT LINEAR, AND A BETTER ONE IS WRONG
        (`M-087`). Two single-element looping waves swept across their phase
        increments - one with 84 % of its energy above 8 kHz - give linear on

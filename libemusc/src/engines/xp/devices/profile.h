@@ -137,6 +137,19 @@ struct XpVoiceFieldMap {
   uint16_t cutoff;
   uint16_t resonance;
   uint16_t filterType;
+  /* The filter envelope. Its depth is signed and its levels are not: the
+     sign of the whole sweep is the depth's. A record type may carry one
+     velocity-time sensitivity where another carries two, and may carry
+     neither a velocity curve nor a time key follow at all - hence the
+     separate indices rather than one run. */
+  uint16_t filterEnvDepth;
+  uint16_t filterEnvVelCurve;
+  uint16_t filterEnvVelSens;
+  uint16_t filterEnvVelTime1;
+  uint16_t filterEnvVelTime4;
+  uint16_t filterEnvTimeKeyFollow;
+  uint16_t filterEnvTime1;       /* four times run from here */
+  uint16_t filterEnvLevel1;      /* four levels run from here */
   uint16_t ampTime1;             /* four times run from here */
   uint16_t ampLevel1;            /* three levels run from here */
   uint16_t keyRangeLow;

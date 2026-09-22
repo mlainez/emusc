@@ -218,6 +218,10 @@ if(BUILD_TESTING)
   xp_test(xp_packed_rom_test ${XP_JV1080_SOURCES}
     engines/xp/devices/sc88.cc engines/xp/rom.cc)
   set_property(TEST xp_packed_rom_test PROPERTY SKIP_RETURN_CODE 77)
+  # The filter envelope's measured tables and laws, checked as arithmetic:
+  # no ROM is involved, so this one never reports skipped.
+  xp_test(xp_filter_env_test ${XP_JV1080_SOURCES}
+    engines/xp/devices/sc88.cc engines/xp/rom.cc)
   xp_test(xp_lfo_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/lfo.cc engines/xp/rom.cc)
   xp_test(xp_pitch_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/pitch.cc engines/xp/rom.cc)
   xp_test(xp_tvf_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/rom.cc engines/xp/tvf.cc engines/xp/tva.cc)

@@ -67,9 +67,11 @@ extern const struct XpVoiceEngineOps JV1080_VOICE_ENGINE;
  *
  *   What this model does NOT yet include, so that nothing reading it
  *   mistakes silence for a measurement: the two LFOs and all their
- *   destinations, the pitch and filter envelopes, FXM, the booster, the
+ *   destinations, the pitch envelope, FXM, the booster, the
  *   ten structures (six of which ring-modulate), tone delay, the TVA bias,
- *   every key-follow field, the alternate and random pan depths, velocity
+ *   every key-follow field INCLUDING the cutoff's own (M-077 measures it
+ *   exactly and it is not wired here), the resonance's velocity
+ *   sensitivity, the alternate and random pan depths, the A-ENV's velocity
  *   curves 1 to 6 (measured in M-029, not yet transcribed here), the
  *   element record's own attenuation and fine-tune fields (units open,
  *   U-R3-03), and the insert, chorus and reverb effects, which are
@@ -124,6 +126,33 @@ struct XpJv1080Voice {
   int filter_type;
   double b0, b1, b2, a1, a2;
   double x1, x2, y1, y2;
+
+  /* The filter envelope, which moves the CUTOFF PARAMETER and not a
+     frequency (`M-082`), so everything here is in cutoff units on the
+     0..127 scale and the corner law is applied to the sum.
+
+     cutoff_offset is the whole sweep at full envelope level, signed by the
+     depth; fenv_value is the fraction of it the envelope currently stands
+     at. fenv_time[] is a full 0-to-127 traverse, so a segment's own
+     duration is how far it has to go. */
+  double cutoff_base;
+  double cutoff_offset;
+  double resonance_q;
+  double fenv_level[4];          /* fraction of full scale per segment */
+  double fenv_time[4];           /* seconds for a full traverse */
+  unsigned fenv_segment;
+  double fenv_value;
+  double fenv_start;
+  double fenv_total;
+  double fenv_remaining;
+  /* The modulator is re-evaluated once per block rather than per sample -
+     `M-074` measures a step completing inside one carrier cycle, so a
+     block of a millisecond or less is indistinguishable from the machine,
+     and it is what makes a moving corner affordable without a coefficient
+     solve per sample. */
+  size_t control_period;
+  size_t control_countdown;
+  double output_rate;
 };
 
 #ifdef __cplusplus
@@ -167,6 +196,20 @@ bool jv1080_voice_span(const struct xp_rom *rom,
                         size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
+
+/* The filter envelope's two measured pieces, exposed so a test can check
+ * them against the takes they come from without a ROM.
+ *
+ * jv1080_filter_env_curve is `M-082`'s velocity curve `curve` (0..6) at
+ * `velocity`, as the fraction of the envelope's travel - zero at the
+ * bottom of the curve's own range and one at velocity 127.
+ *
+ * jv1080_filter_env_offset is this record's whole sweep at full envelope
+ * level, in CUTOFF-PARAMETER units and signed by the depth field.
+ */
+double jv1080_filter_env_curve(unsigned curve, unsigned velocity);
+double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
+                                 const uint8_t *record, unsigned velocity);
 
 /* Adds this voice's output into l/r. Returns false once it has finished,
  * having written whatever it had left. */

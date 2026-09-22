@@ -196,9 +196,10 @@ int main(void)
         low[f] = d.minimum;
         high[f] = d.maximum;
       }
-      assert(packed_apply_wire_block(&rom, groups[g], low.data(), low.size(),
-                                      decodedLow.data(), decodedLow.size()));
-      assert(packed_apply_wire_block(&rom, groups[g], high.data(),
+      assert(packed_apply_wire_block(&rom, groups[g], 0u, low.data(),
+                                      low.size(), decodedLow.data(),
+                                      decodedLow.size()));
+      assert(packed_apply_wire_block(&rom, groups[g], 0u, high.data(),
                                       high.size(), decodedHigh.data(),
                                       decodedHigh.size()));
       for (unsigned f = 0; f < group.fieldCount; ++f) {
@@ -220,10 +221,19 @@ int main(void)
       profile->packedGroups[melodicBank.partGroup].fieldCount, 0);
     std::vector<uint8_t> decoded(payload.size(), 0);
     payload[profile->toneFields.coarseTune] = 48u;
-    assert(packed_apply_wire_block(&rom, melodicBank.partGroup,
+    assert(packed_apply_wire_block(&rom, melodicBank.partGroup, 0u,
                                     payload.data(), payload.size(),
                                     decoded.data(), decoded.size()));
     assert((int8_t)decoded[profile->toneFields.coarseTune] == 0);
+    /* And the same write addressed at the field itself, one byte long,
+       which is how a panel edit or an editor's parameter change arrives -
+       a record is not always written whole. */
+    std::vector<uint8_t> one(decoded.size(), 0);
+    uint8_t coarse = 48u;
+    assert(packed_apply_wire_block(&rom, melodicBank.partGroup,
+                                    profile->toneFields.coarseTune, &coarse,
+                                    1u, one.data(), one.size()) == 1u);
+    assert((int8_t)one[profile->toneFields.coarseTune] == 0);
   }
 
   /* The wave ROMs, if they were given: the descramble must reveal each

@@ -51,6 +51,10 @@ const unsigned kBlockPatchCommon = 0x00u;
 const unsigned kBlockFirstTone = 0x10u;
 const unsigned kBlockToneStride = 0x02u;
 
+/* A block addresses 128 parameters - the offset byte is seven bits - which
+   is why a 130-parameter tone needs two of them. */
+const unsigned kBlockParameters = 0x80u;
+
 /* The performance-part block is twenty decoded bytes; the engine reads four
    of them by role and keeps the rest so a write is not discarded. */
 const unsigned kPartFields = 20u;
@@ -485,8 +489,13 @@ bool engine_program_change(void *state, unsigned channel, unsigned program)
 }
 
 /* One DT1 payload. This device's parameter address is four seven-bit
-   bytes - group, part, block, offset - and every block this acts on is
-   addressed at its own offset zero. */
+   bytes - group, part, block, offset - and a write may start at any
+   parameter of a block and run past its end, which is the ordinary
+   editing case: the front panel and every editor address one parameter at
+   a time. `device_spec.md` S10 records that a DT1 may run past a block
+   boundary and that the machine relies on it - the tone record is 130
+   parameters where a block addresses 128, so its last two live in the
+   next block along. */
 bool engine_sysex_block(void *state, const uint8_t *address,
                          unsigned addressBytes, const uint8_t *data,
                          size_t count)
@@ -510,14 +519,14 @@ bool engine_sysex_block(void *state, const uint8_t *address,
      for patch mode - and the second is the first with part zero. */
   /* The temporary performance's own part blocks, `01 00 1n xx`: where each
      part's receive channel, level, pan and key shift come from. */
-  if (a1 == 0x01u && part == 0x00u && (block & 0xf0u) == 0x10u && !within) {
+  if (a1 == 0x01u && part == 0x00u && (block & 0xf0u) == 0x10u) {
     unsigned index = block & 0x0fu;
-    if (index >= kParts)
+    if (index >= kParts || within >= kPartFields)
       return false;
     packed_apply_wire_block(&engine->rom,
                              xp_profile(&engine->rom)
                                ->packedPerformancePartGroup,
-                             data, count, engine->parts[index].part,
+                             within, data, count, engine->parts[index].part,
                              kPartFields);
     return true;
   }
@@ -529,39 +538,49 @@ bool engine_sysex_block(void *state, const uint8_t *address,
   /* The rhythm set has its own part index: `02 09 00 xx` is its common
      block and `02 09 kk xx` its record for key kk. */
   if (a1 == 0x02u && part == profile->rhythmPartIndex) {
-    if (within)
-      return false;
     if (!block) {
+      if (within >= kRhythmCommonFields)
+        return false;
       packed_apply_wire_block(&engine->rom, profile->packedRhythmCommonGroup,
-                               data, count, engine->rhythm.common,
+                               within, data, count, engine->rhythm.common,
                                kRhythmCommonFields);
       return true;
     }
     if (block < profile->rhythmFirstKey ||
-        block >= (unsigned)profile->rhythmFirstKey + kRhythmKeys)
+        block >= (unsigned)profile->rhythmFirstKey + kRhythmKeys ||
+        within >= kRhythmNoteFields)
       return false;
     packed_apply_wire_block(&engine->rom, profile->packedRhythmNoteGroup,
-                             data, count,
+                             within, data, count,
                              engine->rhythm.note[block -
                                                  profile->rhythmFirstKey],
                              kRhythmNoteFields);
     return true;
   }
-  if (part >= kParts || within)
+  if (part >= kParts)
     return false;
 
   if (block == kBlockPatchCommon) {
-    packed_apply_wire_block(&engine->rom, commonGroup, data, count,
+    if (within >= XP_JV1080_PATCH_COMMON_FIELDS)
+      return false;
+    packed_apply_wire_block(&engine->rom, commonGroup, within, data, count,
                              engine->parts[part].common,
                              XP_JV1080_PATCH_COMMON_FIELDS);
     return true;
   }
+  /* A tone's 130 parameters span two blocks, so the block index carries
+     both which tone and which page of it: the low bit of the offset from
+     the first tone block is the page, and the rest is the tone. */
   if (block >= kBlockFirstTone &&
       block < kBlockFirstTone +
-                kBlockToneStride * XP_JV1080_TONES_PER_PATCH &&
-      (block - kBlockFirstTone) % kBlockToneStride == 0u) {
-    unsigned tone = (block - kBlockFirstTone) / kBlockToneStride;
-    packed_apply_wire_block(&engine->rom, toneGroup, data, count,
+                kBlockToneStride * XP_JV1080_TONES_PER_PATCH) {
+    unsigned relative = block - kBlockFirstTone;
+    unsigned tone = relative / kBlockToneStride;
+    unsigned page = relative % kBlockToneStride;
+    unsigned offset = page * kBlockParameters + within;
+    if (offset >= XP_JV1080_TONE_FIELDS)
+      return false;
+    packed_apply_wire_block(&engine->rom, toneGroup, offset, data, count,
                              engine->parts[part].tone[tone],
                              XP_JV1080_TONE_FIELDS);
     return true;

@@ -120,10 +120,13 @@ bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
 
 /* Apply one parameter-write payload, as it arrives on the wire, to a
  * group's decoded byte array - the form the voice path reads. Payload byte
- * k is field k, and each field is turned from its wire value into its
- * decoded one; see the comment on the definition for why that is not a
- * copy. Returns how many fields were written. */
+ * k is field `first + k`, and each field is turned from its wire value into
+ * its decoded one; see the comment on the definition for why that is not a
+ * copy. `first` is what lets a write start part way into a record, which
+ * is the ordinary editing case and not an exception: a device addresses
+ * every parameter individually. Returns how many fields were written. */
 size_t packed_apply_wire_block(const struct xp_rom *rom, unsigned group,
+                                unsigned first,
                                 const uint8_t *payload, size_t count,
                                 uint8_t *fields, size_t fieldCount);
 

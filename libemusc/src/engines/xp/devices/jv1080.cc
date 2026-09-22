@@ -221,6 +221,14 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .cutoff = 0x51u,
     .resonance = 0x53u,
     .filterType = 0x50u,
+    .filterEnvDepth = 0x55u,
+    .filterEnvVelCurve = 0x56u,
+    .filterEnvVelSens = 0x57u,
+    .filterEnvVelTime1 = 0x58u,
+    .filterEnvVelTime4 = 0x59u,
+    .filterEnvTimeKeyFollow = 0x5au,
+    .filterEnvTime1 = 0x5bu,
+    .filterEnvLevel1 = 0x5fu,
     .ampTime1 = 0x6eu,
     .ampLevel1 = 0x72u,
     .keyRangeLow = 0x0eu,
@@ -243,6 +251,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .cutoff = 0x1bu,
     .resonance = 0x1cu,
     .filterType = 0x1au,
+    /* A rhythm note's filter envelope carries ONE velocity-time
+       sensitivity where a tone carries two, and carries neither a velocity
+       curve nor a time key follow (`rhythm_schema.md`). The one it has is
+       given to time 1, which is the segment `M-070` measured. */
+    .filterEnvDepth = 0x1eu,
+    .filterEnvVelCurve = XP_VOICE_FIELD_NONE,
+    .filterEnvVelSens = 0x1fu,
+    .filterEnvVelTime1 = 0x20u,
+    .filterEnvVelTime4 = XP_VOICE_FIELD_NONE,
+    .filterEnvTimeKeyFollow = XP_VOICE_FIELD_NONE,
+    .filterEnvTime1 = 0x21u,
+    .filterEnvLevel1 = 0x25u,
     .ampTime1 = 0x2cu,
     .ampLevel1 = 0x30u,
     .keyRangeLow = XP_VOICE_FIELD_NONE,

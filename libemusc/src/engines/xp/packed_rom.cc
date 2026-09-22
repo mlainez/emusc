@@ -118,25 +118,27 @@ bool packed_field_is_eight_bit(const struct xp_rom *rom, unsigned group,
  *   descriptor over the same bits. Both get the value.
  */
 size_t packed_apply_wire_block(const struct xp_rom *rom, unsigned group,
+                                unsigned first,
                                 const uint8_t *payload, size_t count,
                                 uint8_t *fields, size_t fieldCount)
 {
-  if (!rom || !payload || !fields)
+  if (!rom || !payload || !fields || first >= fieldCount)
     return 0;
   size_t written = 0;
-  for (size_t k = 0; k < count && k < fieldCount; ++k) {
+  for (size_t k = 0; k < count && first + k < fieldCount; ++k) {
+    size_t f = first + k;
     struct xp_field_descriptor d;
-    if (!packed_group_descriptor(rom, group, (unsigned)k, &d))
+    if (!packed_group_descriptor(rom, group, (unsigned)f, &d))
       break;                     /* past this group's own fields */
     unsigned raw = payload[k];
     bool wide = (unsigned)(d.mask >> d.shift) == 0xffu;
     if (wide && k + 1u < count)
       raw = (unsigned)((payload[k] << 4) | (payload[k + 1u] & 0x0fu));
-    fields[k] = (uint8_t)((int)raw + (int)d.bias);
+    fields[f] = (uint8_t)((int)raw + (int)d.bias);
     ++written;
     if (wide && k + 1u < count) {
-      if (k + 1u < fieldCount) {
-        fields[k + 1u] = fields[k];
+      if (f + 1u < fieldCount) {
+        fields[f + 1u] = fields[f];
         ++written;
       }
       ++k;

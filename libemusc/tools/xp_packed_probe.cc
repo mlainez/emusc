@@ -488,19 +488,25 @@ int main(int argc, char **argv)
         unsigned a1 = s[5];
         unsigned part = s[6];
         unsigned block = s[7];
+        unsigned within = s[8];
         const uint8_t *payload = s.data() + 9;
         size_t count = s.size() - 11u;   /* strip the checksum and F7 */
         if (a1 != 0x02u || part >= kParts)
           continue;                      /* not a temporary patch write */
         if (!block) {
-          packed_apply_wire_block(&rom, patchCommonGroup, payload, count,
-                                  common[part].data(), common[part].size());
+          packed_apply_wire_block(&rom, patchCommonGroup, within, payload,
+                                  count, common[part].data(),
+                                  common[part].size());
           ++applied;
-        } else if ((block & 0x10u) && !(block & 0x01u) && block <= 0x16u) {
+        } else if (block >= 0x10u && block <= 0x17u) {
+          /* A tone's 130 parameters span two blocks of 128, so the block
+             carries the tone and the page of it. */
           unsigned index = (block - 0x10u) / 2u;
-          if (index < XP_JV1080_TONES_PER_PATCH) {
+          unsigned offset = ((block - 0x10u) % 2u) * 0x80u + within;
+          if (index < XP_JV1080_TONES_PER_PATCH &&
+              offset < XP_JV1080_TONE_FIELDS) {
             packed_apply_wire_block(
-              &rom, toneGroup, payload, count,
+              &rom, toneGroup, offset, payload, count,
               tone[part * XP_JV1080_TONES_PER_PATCH + index].data(),
               XP_JV1080_TONE_FIELDS);
             ++applied;
