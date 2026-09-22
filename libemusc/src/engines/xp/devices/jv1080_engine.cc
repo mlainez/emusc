@@ -52,6 +52,7 @@ const unsigned kReverbTypeField = 0x28u;
 const unsigned kReverbLevelField = 0x29u;
 const unsigned kReverbTimeField = 0x2au;
 const unsigned kReverbDampField = 0x2bu;
+const unsigned kReverbFeedbackField = 0x2cu;
 /* REVERB TYPES 6 AND 7 ARE NOT TANKS. For them Reverb:Time is the DELAY
    LENGTH rather than the decay, and it is patched straight into nine PRAM
    ERAM address fields as `112*v + 0x2016` - the eight output taps plus
@@ -70,11 +71,21 @@ const unsigned kReverbDampField = 0x2bu;
    +1, +1, +1 and +0.0006 and the four right ones +1 each, so the right
    return sits 0.56 dB above the left.
 
-   TYPE 6 IS DELIBERATELY NOT BUILT. On the machine it produces NO repeat at
-   all under the settings that make PAN-DLY loud - six seconds of flat noise
-   floor after the click against repeats at 168 and 336 ms - so building it
-   from this same law would invent audio the device does not make. Why the
-   two differ is not established. */
+   FEEDBACK IS THE LOOP GAIN ON THESE TWO TYPES, and it writes the same two
+   CRAM slots - 165 and 181 - that Reverb:Time writes on types 0..5. One
+   coefficient under two names: `48*v` as a time, `64*v` as a feedback, both
+   against 8192 (`08_effects/reverb.md`, FW-EXACT). On types 0..5 the
+   feedback parameter is NOT APPLIED AT ALL, which is why `M-045` could only
+   measure 3 dB across its whole range.
+
+   THE TWO TYPES RETURN THEIR LINE DIFFERENTLY, which is measured rather than
+   reasoned. Type 7 at feedback 0 still repeats at full level - +3.58 dB
+   against the click - while type 6 at feedback 0 is silent for six seconds.
+   On type 6 the return is scaled by the loop gain: at feedback 64 the gain
+   is 64*64/8192 = 0.5 and the first repeat measures -6 dB, at 127 it is
+   0.992 and the repeats sustain past two and a half seconds without
+   decaying. So type 6's return carries the loop gain and type 7's does not.
+   Why the two differ that way is not established; that they do is. */
 const unsigned kReverbTypeDelay = 6u;
 const unsigned kReverbTypePanningDelay = 7u;
 const double kReverbDelaySlopeLeft = 112.0;
@@ -82,10 +93,12 @@ const double kReverbDelaySlopeRight = 56.0;
 const double kReverbDelayLatency = 17.0;
 const double kReverbDelayTapSumLeft = 3.7511;
 const double kReverbDelayTapSumRight = 4.0;
+const double kReverbDelayFeedbackSlope = 64.0;
 const unsigned kChorusLevelField = 0x22u;
 const unsigned kChorusRateField = 0x23u;
 const unsigned kChorusDepthField = 0x24u;
 const unsigned kChorusPreDelayField = 0x25u;
+const unsigned kChorusFeedbackField = 0x26u;
 const unsigned kChorusOutputField = 0x27u;
 /* MIX / REVERB / MIX+REV, the machine's own order (`02_rom/strings.md`
    `0x057109`). */
@@ -216,6 +229,7 @@ struct Engine {
   double delay_right;
   float delay_gain_left;
   float delay_gain_right;
+  float delay_feedback;
   bool delay_ready;
 };
 
@@ -416,8 +430,12 @@ void chorus_refresh(struct Engine *engine)
   }
   float level = (float)table_unit(engine, profile->chorusLevelTable,
                                    common[kChorusLevelField]);
+  /* Feedback is the level table read UNSHIFTED into CRAM word 225, so 127
+     is 8191/8192 (`08_effects/chorus.md`, FW-EXACT). */
+  float feedback = (float)table_unit(engine, profile->chorusLevelTable,
+                                      common[kChorusFeedbackField]);
   chorus_set_runtime(&engine->chorus, delay, depth,
-                      hz / engine->output_rate, 0.0f, level);
+                      hz / engine->output_rate, feedback, level);
 }
 
 /* One tap of the delay line, read back a fractional number of samples. */
@@ -441,25 +459,31 @@ void delay_process(struct Engine *engine, const float *send, float *stereo,
                     size_t frames)
 {
   for (size_t k = 0; k < frames; ++k) {
-    engine->delay_buf[engine->delay_pos] = send[k];
+    float l = delay_tap(engine, engine->delay_left);
+    float r = delay_tap(engine, engine->delay_right);
+    /* The line is written with the input plus what the loop returns, which
+       is what makes the repeats repeat. */
+    engine->delay_buf[engine->delay_pos] =
+      send[k] + engine->delay_feedback * 0.5f * (l + r);
     if (++engine->delay_pos >= engine->delay_len)
       engine->delay_pos = 0;
-    stereo[k * 2u] += engine->delay_gain_left *
-      delay_tap(engine, engine->delay_left);
-    stereo[k * 2u + 1u] += engine->delay_gain_right *
-      delay_tap(engine, engine->delay_right);
+    stereo[k * 2u] += engine->delay_gain_left * l;
+    stereo[k * 2u + 1u] += engine->delay_gain_right * r;
   }
 }
 
 /* The panning delay's own refresh: two taps on one line, from the same
    Time parameter the tank reads as a decay. */
-void delay_refresh(struct Engine *engine)
+void delay_refresh(struct Engine *engine, bool panning)
 {
   const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
   double scale = engine->output_rate / kXpNativeRate;
   unsigned v = engine->common[kReverbTimeField];
   if (v > 127u)
     v = 127u;
+  unsigned fb = engine->common[kReverbFeedbackField];
+  if (fb > 127u)
+    fb = 127u;
   if (!engine->delay_buf) {
     double longest = (kReverbDelaySlopeLeft * 127.0 + kReverbDelayLatency) *
       scale + 4.0;
@@ -474,18 +498,26 @@ void delay_refresh(struct Engine *engine)
   }
   engine->delay_left =
     (kReverbDelaySlopeLeft * (double)v + kReverbDelayLatency) * scale;
-  engine->delay_right =
-    (kReverbDelaySlopeRight * (double)v + kReverbDelayLatency) * scale;
+  /* DELAY puts all nine taps on one address; PAN-DLY splits them, and the
+     right list gets half the left's delay. */
+  engine->delay_right = panning
+    ? (kReverbDelaySlopeRight * (double)v + kReverbDelayLatency) * scale
+    : engine->delay_left;
+  engine->delay_feedback =
+    (float)(kReverbDelayFeedbackSlope * (double)fb / 8192.0);
   /* The same return the tank uses - this device's level table against a
      512 full scale - carrying each side's own tap sum, and normalised the
      way the tank's eight taps are. */
   double level = table_unit(engine, profile->reverbLevelTable,
                              engine->common[kReverbLevelField]);
   double norm = std::sqrt((double)XP_REVERB_TAPS);
+  /* Type 6 carries the loop gain into its return and type 7 does not - the
+     measurement above, not a choice made here. */
+  double ret = panning ? 1.0 : (double)engine->delay_feedback;
   engine->delay_gain_left =
-    (float)(level * kReverbDelayTapSumLeft / norm);
+    (float)(level * ret * kReverbDelayTapSumLeft / norm);
   engine->delay_gain_right =
-    (float)(level * kReverbDelayTapSumRight / norm);
+    (float)(level * ret * kReverbDelayTapSumRight / norm);
   engine->delay_ready = true;
 }
 
@@ -497,22 +529,15 @@ void reverb_refresh(struct Engine *engine)
   unsigned type = engine->common[kReverbTypeField];
   if (type >= profile->reverbCharacters)
     type = 0u;
-  if (type == kReverbTypePanningDelay) {
+  if (type == kReverbTypeDelay || type == kReverbTypePanningDelay) {
     if (engine->reverb_ready) {
       reverb_destroy(&engine->reverb);
       engine->reverb_ready = false;
     }
-    delay_refresh(engine);
+    delay_refresh(engine, type == kReverbTypePanningDelay);
     return;
   }
   engine->delay_ready = false;
-  if (type == kReverbTypeDelay) {
-    if (engine->reverb_ready) {
-      reverb_destroy(&engine->reverb);
-      engine->reverb_ready = false;
-    }
-    return;                      /* measured silent; see the note above */
-  }
   if (!engine->reverb_ready || type != engine->reverb_character) {
     if (engine->reverb_ready)
       reverb_destroy(&engine->reverb);
