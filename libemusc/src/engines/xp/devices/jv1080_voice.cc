@@ -244,6 +244,34 @@ const double kAmpEnvAttackShape[15] = {
   0.760, 0.816, 0.866, 0.905, 0.938, 0.966, 0.983,
 };
 
+/* One sample of the element, `offset` positions from the read head, with a
+   loop read as the cycle it is: a position past the loop's end comes back
+   round to its start, and the position one before its start is its end -
+   but only once the head is inside the loop, since before that the element
+   is still playing straight through and the sample behind really is the one
+   behind it in memory. Where there is no such sample - a one-shot's two
+   ends - the caller's inner tap stands in, which repeats a sample the note
+   really has rather than inventing one and leaves the four weights summing
+   to one, so a boundary cannot put a gain step or a DC offset into the
+   output. The same choice `oscillator.cc` makes for the sibling engine. */
+double wave_tap(const struct XpJv1080Voice *voice, size_t index, int offset,
+                 double fallback)
+{
+  long long at = (long long)index + offset;
+  if (voice->looping && voice->loop_last >= voice->loop_first) {
+    long long first = (long long)voice->loop_first;
+    long long last = (long long)voice->loop_last;
+    long long length = last - first + 1;
+    if (at > last)
+      at = first + (at - first) % length;
+    else if (at < first && (long long)index >= first)
+      at = last + 1 - (first - at);
+  }
+  if (at < 0 || (size_t)at >= voice->pcm_count)
+    return fallback;
+  return (double)voice->pcm[(size_t)at];
+}
+
 double amp_env_attack_shape(double done)
 {
   if (done <= 0.0)
@@ -944,17 +972,39 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       --voice->control_countdown;
     }
 
-    /* THE INTERPOLATOR IS TWO-POINT LINEAR, AND A BETTER ONE IS WRONG
-       (`M-087`). Two single-element looping waves swept across their phase
-       increments - one with 84 % of its energy above 8 kHz - give linear on
-       29 of 29 and 26 of 29 slots, with Hermite and sinc progressively
-       better as interpolators and progressively WORSE as matches, which can
-       only happen if the recording carries linear interpolation's own
-       error. */
+    /* THE INTERPOLATOR IS A FOUR-POINT CUBIC B-SPLINE, the kernel this
+       chip was measured to use - the same one `oscillator.cc` gives the
+       sibling engine, since it is the same Roland part.
+
+       This read was two-point linear, on `M-087`. THAT MEASUREMENT IS
+       WITHDRAWN ON THE KERNEL by `M-107` and `M-108`, and the reason is
+       instructive rather than a correction of arithmetic: M-087 ranked
+       four candidates by time-domain correlation, all four of them
+       INTERPOLATING kernels and therefore the identity at fraction 0, so
+       none of them could represent a chip that smooths when the fraction
+       is zero and the ranking could not detect one. Linear won by being
+       the least sharp of four candidates all sharper than the chip. Read
+       as a RESPONSE instead, over 42 dB of span, a cubic B-spline fits to
+       0.63 and 0.59 dB rms on the two waves against two-point linear's
+       5.48 and 4.23; and a dedicated unity-ladder capture measures the
+       fraction-0 weights directly as `[w, 1-2w, w]` with
+       w = 0.1614 +- 0.0088, against 1/6 for the cubic (0.6 sigma) and 0
+       for every interpolating kernel (18.3 sigma). The chip is NOT
+       transparent at its own root key: it is 8.4 dB down at theta 0.39
+       where a linear read would be flat.
+
+       What that costs in the mix is the top octave. Reading linearly left
+       the interpolation's images unsmoothed, and against a hardware take
+       of the first factory song this engine carried 15.2 % of its energy
+       between 8 and 16 kHz where the machine carries 1.3 %. */
     size_t i0 = (size_t)voice->position;
     /* The loop's last sample is a valid read head position - its partner
-       for the interpolation is the loop's first sample, below - so only a
-       head genuinely past it has run off the end. */
+       for the interpolation is the loop's first sample - so only a head
+       genuinely past it has run off the end. THE LOOP INCLUDES THAT LAST
+       SAMPLE: reading straight on past it instead costs the loop a sample,
+       a pitch error of one part in the loop's length, which is nothing on
+       a long loop and 73.6 measured cents on the internal `Sine` wave's
+       24-sample top zone. */
     bool atLoopEnd = voice->looping && i0 == voice->loop_last;
     if (!atLoopEnd && i0 + 1u >= voice->pcm_count) {
       if (!voice->looping) {
@@ -963,21 +1013,24 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       }
       i0 = voice->loop_first;
       voice->position = (double)i0;
-      atLoopEnd = false;
     }
     double frac = voice->position - (double)i0;
-    double a = (double)voice->pcm[i0];
-    /* THE LOOP INCLUDES ITS LAST SAMPLE, so the point after it is the loop's
-       own first and not the one that happens to follow in memory. Reading
-       straight on there instead costs the loop a sample, which is a pitch
-       error of one part in the loop's length - inaudible on a long loop and
-       very audible on a short one. MEASURED: the internal `Sine` wave's
-       top zone loops 24 samples, and playing it 23 long put key 84 at
-       1092.32 Hz where the machine plays 1046.54, the nominal frequency -
-       73.6 cents sharp, against the 73.7 that 24/23 predicts. */
-    double b = atLoopEnd ? (double)voice->pcm[voice->loop_first]
-                         : (double)voice->pcm[i0 + 1u];
-    double sample = (a + (b - a) * frac) / 8388608.0;   /* 24-bit full scale */
+    /* The uniform cubic B-spline basis, with `rest` = 1 - fraction:
+         index - 1   rest^3 / 6
+         index       2/3 - fraction^2 + fraction^3 / 2
+         index + 1   2/3 - rest^2     + rest^3 / 2
+         index + 2   fraction^3 / 6
+       which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
+       identity - and sums to one at every fraction. */
+    double v0 = (double)voice->pcm[i0];
+    double v1 = wave_tap(voice, i0, 1, v0);
+    double vBack = wave_tap(voice, i0, -1, v0);
+    double vFwd = wave_tap(voice, i0, 2, v1);
+    double rest = 1.0 - frac;
+    double sample = (rest * rest * rest / 6.0 * vBack +
+                      (2.0 / 3.0 - frac * frac * (1.0 - frac * 0.5)) * v0 +
+                      (2.0 / 3.0 - rest * rest * (1.0 - rest * 0.5)) * v1 +
+                      frac * frac * frac / 6.0 * vFwd) / 8388608.0;
 
     /* The envelope, one segment at a time. The attack follows the measured
        front-loaded shape over its measured duration; the three falls are
