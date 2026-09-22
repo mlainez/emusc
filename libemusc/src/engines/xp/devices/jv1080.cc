@@ -352,6 +352,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .coarseTune = 0x3du,
     .fineTune = 0x3eu,
     .sourceKey = XP_VOICE_FIELD_NONE,
+    /* MIX / EFX / OUTPUT1 / OUTPUT2 (`05_data_model/partial_schema.md`,
+       PRG 0x057158). A tone has no PATCH value - only a part does. */
+    .outputAssign = 0x7du,
     .cutoff = 0x51u,
     .resonance = 0x53u,
     .filterType = 0x50u,
@@ -382,6 +385,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .coarseTune = XP_VOICE_FIELD_NONE,
     .fineTune = 0x0du,
     .sourceKey = 0x0cu,
+    .outputAssign = 0x36u,       /* the rhythm note's own, same four values */
     .cutoff = 0x1bu,
     .resonance = 0x1cu,
     .filterType = 0x1au,
@@ -457,6 +461,13 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      on the device by +50.1 cents, measured against the same note with the
      field at its centre. */
   .partFieldKeyShift = 0x08u,
+  /* Field 10 of the performance part, five values MIX / EFX / OUTPUT1 /
+     OUTPUT2 / PATCH (PRG 0x057158). In the factory demo songs the parts
+     that read PATCH are exactly the ones whose tones then say EFX, which
+     is the law being self-consistent across sixteen parts and three
+     songs. */
+  .partFieldOutputAssign = 10u,
+  .partOutputAssignPatch = 4u,
   .partFieldReverbSend = 0x0du,
   .partFieldChorusSend = 0x0cu,
   .partFieldFineTune = 0x09u,

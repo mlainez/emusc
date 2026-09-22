@@ -152,6 +152,12 @@ struct XpVoiceFieldMap {
      transposing by the key that triggered it - which is what makes a drum
      a drum rather than a sample pitched to whatever key struck it. */
   uint16_t sourceKey;
+  /* Where this record's audio leaves the chip: the mix, the insert effect,
+     or one of the separate output pairs. A part's own assign OVERRIDES it
+     unless the part says PATCH, which is the part deferring to whatever
+     its records say (`M-006`, `M-019`). XP_VOICE_FIELD_NONE where a record
+     type carries no such field. */
+  uint16_t outputAssign;
   uint16_t cutoff;
   uint16_t resonance;
   uint16_t filterType;
@@ -527,6 +533,11 @@ struct XpDeviceProfile {
   uint16_t partFieldLevel;
   uint16_t partFieldPan;
   uint16_t partFieldKeyShift;
+  /* The part's own output assign, which decides for the whole part unless
+     it reads PATCH - the one value that hands the decision to the record.
+     `partOutputAssignPatch` is that value. */
+  uint16_t partFieldOutputAssign;
+  uint8_t partOutputAssignPatch;
   /* The part's own reverb send. `M-039`/`M-052`: the PART's send is the
      live one and a melodic tone's is inert, so a voice carries its part's
      at note-on. XP_VOICE_FIELD_NONE where a device has no such field. */

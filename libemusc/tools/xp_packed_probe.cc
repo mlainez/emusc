@@ -491,6 +491,46 @@ int main(int argc, char **argv)
     for (unsigned f = 0x20; f < 0x30; ++f)
       std::printf(" %u", common[f]);
     std::printf("\n");
+    /* The tone records too, so a part whose assign says PATCH can be
+       followed to the tones that actually decide. */
+    const unsigned kToneAssign = 0x7du;
+    const unsigned kPartAssign = 10u;
+    std::vector<std::vector<uint8_t>> tone(
+      kParts * XP_JV1080_TONES_PER_PATCH,
+      std::vector<uint8_t>(XP_JV1080_TONE_FIELDS, 0));
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x02u || x[6] >= kParts)
+        continue;
+      unsigned block = x[7];
+      if (block < 0x10u || block > 0x17u)
+        continue;
+      unsigned t = (block - 0x10u) / 2u;
+      unsigned off = ((block - 0x10u) % 2u) * 128u + x[8];
+      if (t >= XP_JV1080_TONES_PER_PATCH || off >= XP_JV1080_TONE_FIELDS)
+        continue;
+      packed_apply_wire_block(&rom, toneGroup, off, x.data() + 9,
+                              x.size() - 11u,
+                              tone[x[6] * XP_JV1080_TONES_PER_PATCH + t].data(),
+                              XP_JV1080_TONE_FIELDS);
+    }
+    static const char *kAssign[] = { "MIX", "EFX", "OUT1", "OUT2", "PATCH" };
+    std::printf("output assign per part (0-based), and its tones:\n");
+    for (unsigned i = 0; i < kParts; ++i) {
+      unsigned pa = part[i][kPartAssign];
+      std::printf("  part %2u  part-assign %-5s  tones", i,
+                  pa < 5u ? kAssign[pa] : "?");
+      for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+        unsigned ta = tone[i * XP_JV1080_TONES_PER_PATCH + t][kToneAssign];
+        std::printf(" %s", ta < 5u ? kAssign[ta] : "?");
+      }
+      std::printf("\n");
+    }
     std::printf("%u performance-part frames applied\n", applied);
     std::printf("part  chorusSend(%u)  reverbSend(%u)  all %u fields\n",
                 profile->partFieldChorusSend, profile->partFieldReverbSend,

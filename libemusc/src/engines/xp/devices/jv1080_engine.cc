@@ -107,6 +107,15 @@ const unsigned kChorusPreDelayField = 0x25u;
    and its twelve parameters, then the four output bytes. A PATCH's copy of
    the same block sits one byte lower throughout, because a patch has no
    source selector to carry (`05_data_model/effect_schema.md`). */
+/* Where a voice's audio leaves the chip. The part's own assign decides for
+   the whole part unless it reads PATCH, which hands the decision to the
+   record the voice came from - a tone, or a rhythm note (`M-006`,
+   `M-019`). A record has no PATCH value of its own; only a part does. */
+const unsigned kOutputMix = 0u;
+const unsigned kOutputEfx = 1u;
+const unsigned kOutputOne = 2u;
+const unsigned kOutputTwo = 3u;
+
 const unsigned kEfxSourceField = 0x0cu;
 const unsigned kEfxTypeField = 0x0du;
 const unsigned kEfxFirstParameterField = 0x0eu;
@@ -177,6 +186,8 @@ struct Voice {
   /* This voice's share of each send bus, from its part at note-on. */
   float reverb_send;
   float chorus_send;
+  /* MIX, EFX, OUTPUT1 or OUTPUT2, resolved at note-on. */
+  uint8_t destination;
   bool allocated;
   bool key_down;
 };
@@ -660,6 +671,23 @@ void part_controls(const struct Engine *engine, unsigned part,
     : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
 }
 
+/* The part's assign, or the record's where the part defers to it. */
+unsigned voice_destination(const struct Engine *engine, unsigned part,
+                            const struct XpVoiceFieldMap *fields,
+                            const uint8_t *bytes)
+{
+  const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
+  if (prof->partFieldOutputAssign == XP_VOICE_FIELD_NONE)
+    return kOutputMix;
+  unsigned assign = engine->parts[part].part[prof->partFieldOutputAssign];
+  if (assign != prof->partOutputAssignPatch)
+    return assign > kOutputTwo ? kOutputMix : assign;
+  if (fields->outputAssign == XP_VOICE_FIELD_NONE)
+    return kOutputMix;
+  unsigned own = bytes[fields->outputAssign];
+  return own > kOutputTwo ? kOutputMix : own;
+}
+
 bool start_record(struct Engine *engine, unsigned part,
                    const struct XpVoiceFieldMap *fields, const uint8_t *bytes,
                    unsigned key, unsigned velocity)
@@ -693,6 +721,8 @@ bool start_record(struct Engine *engine, unsigned part,
   voice->part = (uint8_t)part;
   voice->reverb_send = 0.0f;
   voice->chorus_send = 0.0f;
+  voice->destination =
+    (uint8_t)voice_destination(engine, part, fields, bytes);
   {
     const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
     if (prof->partFieldReverbSend != XP_VOICE_FIELD_NONE)
@@ -1163,6 +1193,26 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
       struct Voice *voice = engine->voices + i;
       if (!voice->allocated)
         continue;
+      /* A voice assigned to OUTPUT1 or OUTPUT2 leaves the machine by its
+         own jacks and is not on the MIX bus the chorus and reverb return
+         to, so it is rendered - it still holds its slot and runs its
+         envelopes - and then dropped. Whether its per-voice sends survive
+         that routing is NOT established, so it sends nothing rather than
+         sending something unverified.
+
+         MEASURED EXPOSURE, before this changed anything: across all three
+         factory demo songs exactly one record asks for OUTPUT1 - tone 1 of
+         part 1 in `1080 rave` - and that part's own assign reads EFX, so
+         the part decides and the tone's OUTPUT1 never applies. No voice in
+         any of the three is affected. */
+      if (voice->destination == kOutputOne ||
+          voice->destination == kOutputTwo) {
+        std::memset(vl, 0, n * sizeof *vl);
+        std::memset(vr, 0, n * sizeof *vr);
+        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+          free_voice(voice);
+        continue;
+      }
       /* The reverb bus is live whichever shape the module has taken: the
          tank on types 0..5, the panning delay on type 7. */
       bool reverbLive = engine->reverb_ready || engine->delay_ready;
