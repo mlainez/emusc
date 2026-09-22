@@ -680,8 +680,26 @@ float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *sta
        already float, and the section arithmetic itself only ever differs
        from a double computation by <=1 LSB of 16-bit output, on 0.045% of
        samples in a 137s SC-88 reference render - below the noise floor of
-       the 16-bit format this ships as. */
-    float bound = 0.99f * (std::sqrt(d * d + 4.0f) - d);
+       the 16-bit format this ships as.
+
+       Section 0's bound is a pure function of resonance_current (via d),
+       which - like g above - glides in steps far coarser than one sample,
+       so it is memoized the same way. A hypothetical section > 0 (d fixed
+       at 2.0f; XP_TVF_SECTIONS is 1 today, so this never runs) is not
+       memoized: it would be one constant, but there is no live case to
+       verify that against. */
+    float bound;
+    if (section == 0 && state->bound_valid &&
+        state->memo_resonance == registers->resonance_current) {
+      bound = state->memo_bound;
+    } else {
+      bound = 0.99f * (std::sqrt(d * d + 4.0f) - d);
+      if (section == 0) {
+        state->memo_resonance = registers->resonance_current;
+        state->memo_bound = bound;
+        state->bound_valid = true;
+      }
+    }
     if (f > bound)
       f = bound;
     float high = svf_step(signal, f, d, lp, bp);

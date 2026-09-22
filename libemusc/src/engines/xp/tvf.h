@@ -90,6 +90,13 @@ struct sc88_tvf_audio_state {
   uint32_t memo_word;
   double memo_g;
   bool memo_valid;
+  /* section 0's coefficient-clamp bound, similarly memoized: a pure
+     function of resonance_current, which (07_synthesis/tvf.md) does not
+     move after note-on for the vast majority of components - see the
+     note in tvf_audio_process_provisional. */
+  uint32_t memo_resonance;
+  float memo_bound;
+  bool bound_valid;
 };
 
 typedef float (*sc88_tvf_audio_transfer_fn)(
