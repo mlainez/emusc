@@ -30,8 +30,8 @@ int main()
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
   };
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
-  struct sc88_rom rom;
-  struct sc88_drum_note note;
+  struct xp_rom rom;
+  struct xp_drum_note note;
   uint32_t kit, i;
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);

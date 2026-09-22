@@ -39,9 +39,9 @@ int main()
   static const unsigned len[12] = {100, 80, 40, 20, 60, 300, 50, 400,
                                    70, 320, 55, 380};
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
-  struct sc88_rom rom;
-  struct sc88_reverb_character ch;
-  struct sc88_reverb rv;
+  struct xp_rom rom;
+  struct xp_reverb_character ch;
+  struct xp_reverb rv;
   float fb, in, gains[XP_REVERB_TAPS];
   unsigned i, head[12], at = 0;
   uint32_t block = 0x15992u;             /* where Room 1's record really is */

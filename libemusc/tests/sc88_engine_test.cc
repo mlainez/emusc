@@ -24,7 +24,7 @@ static void put24(uint8_t *p, uint32_t value)
 }
 
 static void make_fixture(uint8_t *control, uint8_t *wave,
-                         struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT])
+                         struct xp_wave_bank banks[XP_WAVE_BANK_COUNT])
 {
   static const uint8_t selectors[XP_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
@@ -137,9 +137,9 @@ int main()
 {
   uint8_t *control = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   uint8_t *wave = (uint8_t *)calloc(SC88_PROFILE.waveBankSize, 1);
-  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
-  struct sc88_renderer renderer;
-  struct sc88_engine engine;
+  struct xp_wave_bank banks[XP_WAVE_BANK_COUNT];
+  struct xp_renderer renderer;
+  struct xp_engine engine;
   struct service_count count = {0, 0};
   float stereo[514];
   float send[514];
@@ -172,7 +172,7 @@ int main()
   assert(engine_released_slots(&engine) == 2);
 
   {
-    const struct sc88_tva_levels muted = {0, 127, 127, 127};
+    const struct xp_tva_levels muted = {0, 127, 127, 127};
     bool found_muted = false;
     put16(control + 0x14f3e, 0xffff);
     assert(engine_note_on(&engine, 2, 0, 0, 63, 100, 0,
@@ -193,7 +193,7 @@ int main()
   }
 
   {
-    const struct sc88_tvf_controls tvf = {127, 64, 32, 64, 0};
+    const struct xp_tvf_controls tvf = {127, 64, 32, 64, 0};
     for (i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
       if (engine.slots[i].allocated &&
           engine.notes[engine.slots[i].note].part == 1) {
@@ -372,7 +372,7 @@ int main()
      the fixture's depth of zero every pitch quantity is zero and the two
      halves below would agree while modelling nothing. */
   {
-    struct sc88_render_component *released;
+    struct xp_render_component *released;
     put16(control + 0x40000 + 34 + 0x1a, 0x4000);
     put16(control + 0x40000 + 34 + 0x1e, 0x1000);
     put16(control + 0x40000 + 34 + 0x28, 0xc000);
@@ -539,7 +539,7 @@ int main()
     assert(engine.notes[newest].slot_count >= 1);
     glides = 0;
     for (i = 0; i < engine.notes[newest].slot_count; ++i) {
-      const struct sc88_portamento *g =
+      const struct xp_portamento *g =
         &engine.slots[engine.notes[newest].slots[i]].component.portamento;
       assert(g->active);
       assert(g->current == 40u << 16);
@@ -573,7 +573,7 @@ int main()
         newest = (uint8_t)i;
     assert(newest != XP_ENGINE_NONE);
     for (i = 0; i < engine.notes[newest].slot_count; ++i) {
-      const struct sc88_portamento *g =
+      const struct xp_portamento *g =
         &engine.slots[engine.notes[newest].slots[i]].component.portamento;
       assert(g->active);
       assert(g->current == 47u << 16);

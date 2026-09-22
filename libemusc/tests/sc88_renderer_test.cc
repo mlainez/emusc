@@ -71,10 +71,10 @@ static void test_held_rom(char **paths)
   static const uint8_t selectors[XP_WAVE_BANK_COUNT] = {
     0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31
   };
-  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
-  struct sc88_renderer renderer;
-  struct sc88_render_voice voice = {0};
-  struct sc88_engine engine;
+  struct xp_wave_bank banks[XP_WAVE_BANK_COUNT];
+  struct xp_renderer renderer;
+  struct xp_render_voice voice = {0};
+  struct xp_engine engine;
   uint8_t *control = read_exact(paths[0], XP_CONTROL_ROM_SIZE);
   uint8_t *chips[4];
   float output[32];
@@ -126,10 +126,10 @@ int main()
   };
   uint8_t *control = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   uint8_t *wave = (uint8_t *)calloc(SC88_PROFILE.waveBankSize, 1);
-  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
-  struct sc88_renderer renderer;
-  struct sc88_render_voice voice;
-  struct sc88_component component;
+  struct xp_wave_bank banks[XP_WAVE_BANK_COUNT];
+  struct xp_renderer renderer;
+  struct xp_render_voice voice;
+  struct xp_component component;
   float output[4];
   size_t i;
 
@@ -239,7 +239,7 @@ int main()
     /* The tone common's own pointer: page byte `+0x21` (2) over the word at
        `+0x10` (0xb6d0), exactly as `0x614b`/`0x6146` assemble it. */
 #define SC88_TEST_KEY_TABLE 0x2b6d0u
-    struct sc88_render_voice probe;
+    struct xp_render_voice probe;
     uint32_t with_raw, with_transformed, flat;
     assert((((uint32_t)control[0x40000 + 0x21] << 16) |
             (uint32_t)((control[0x40000 + 0x10] << 8) |
@@ -278,7 +278,7 @@ int main()
      its neighbours so the fraction is actually reaching the word. */
   {
     unsigned k;
-    struct sc88_render_voice probe;
+    struct xp_render_voice probe;
     for (k = 0; k < 128; ++k) {
       uint32_t here, above, half;
       memset(&probe, 0, sizeof probe);
@@ -349,7 +349,7 @@ int main()
      change in the kernel names itself. */
   assert(voice.component_count == 1);
   assert(voice.components[0].left_gain_q15 == 0x4c00);
-  assert(sc88_render_static_gain_q17(&voice.components[0], 1.0) == 0x1fffc);
+  assert(xp_render_static_gain_q17(&voice.components[0], 1.0) == 0x1fffc);
   assert(fabs(output[0] - (((128.0 + 4.0 * 128.0 + 256.0) / 6.0)
                            / 8388608.0) *
          (32767.0 / 32768.0) * (0x4c00 / 32768.0)) < 1e-9);
@@ -360,7 +360,7 @@ int main()
   renderer_voice_destroy(&voice);
 
   {
-    const struct sc88_pan_controls hard_left = {64, 1};
+    const struct xp_pan_controls hard_left = {64, 1};
     put16(control + 0x15db6 + 126 * 2, 0x8000);
     renderer_set_pan(&renderer, &hard_left);
     assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
@@ -370,7 +370,7 @@ int main()
   }
 
   {
-    const struct sc88_tva_levels muted = {0, 127, 127, 127};
+    const struct xp_tva_levels muted = {0, 127, 127, 127};
     put16(control + 0x14f3e, 0xffff);
     renderer_set_levels(&renderer, &muted);
     assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));

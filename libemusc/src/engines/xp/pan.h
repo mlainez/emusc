@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-struct sc88_pan_controls {
+struct xp_pan_controls {
   uint8_t master;
   uint8_t part;
   /* Part pan zero is a random-pan request, not a position. The firmware
@@ -28,12 +28,12 @@ struct sc88_pan_controls {
 namespace EmuSC { namespace Xp {
 
 // Pan/send gain laws for the XP-generation-1 engine (see
-// engines/xp/README.md). The plain sc88_pan_controls struct above is
-// shared, unrenamed, with device_test.cc and sc88_pan_test.c, which
+// engines/xp/README.md). The plain xp_pan_controls struct above is
+// shared, unrenamed, with device_test.cc and xp_pan_test.c, which
 // read it directly.
 
-bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool pan_component_offset(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, int16_t *offset);
 
 /* The 127-word curve the pan pair is read from is also the curve the
@@ -42,7 +42,7 @@ bool pan_component_offset(const struct sc88_rom *rom, const struct sc88_tone *to
  * unity at 127 and is deliberately not a straight line, so a send may not
  * be modelled as `control / 127`. Control 0 is silence.
  */
-bool control_gain_q15(const struct sc88_rom *rom, uint8_t control,
+bool control_gain_q15(const struct xp_rom *rom, uint8_t control,
                        uint16_t *gainQ15);
 
 /* The 0..127 send a rhythm voice ends up with, from its part's control and
@@ -52,14 +52,14 @@ bool control_gain_q15(const struct sc88_rom *rom, uint8_t control,
  */
 uint8_t send_combine(uint8_t part, uint8_t note);
 
-bool pan_pair_q15(const struct sc88_rom *rom, uint8_t position,
+bool pan_pair_q15(const struct xp_rom *rom, uint8_t position,
                    uint16_t *leftQ15, uint16_t *rightQ15);
 
 /* Fixed melodic pan only. Part pan zero requests XP-derived random pan and
  * returns false until that sound-chip random source is implemented. */
-bool pan_static_q15(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                     const struct sc88_component *component,
-                     uint8_t selectorKey, const struct sc88_pan_controls *controls,
+bool pan_static_q15(const struct xp_rom *rom, const struct xp_tone *tone,
+                     const struct xp_component *component,
+                     uint8_t selectorKey, const struct xp_pan_controls *controls,
                      uint8_t *position, uint16_t *leftQ15, uint16_t *rightQ15);
 
 }}  // namespace EmuSC::Xp

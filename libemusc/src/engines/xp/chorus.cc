@@ -22,7 +22,7 @@ double xp(uint16_t raw)
   return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
-float tap(const struct sc88_chorus *ch, double back)
+float tap(const struct xp_chorus *ch, double back)
 {
   if (back < 1.0)
     back = 1.0;
@@ -39,7 +39,7 @@ float tap(const struct sc88_chorus *ch, double back)
 
 }  // namespace
 
-bool chorus_init(struct sc88_chorus *ch, double outputRate,
+bool chorus_init(struct xp_chorus *ch, double outputRate,
                   const struct XpDeviceProfile *profile)
 {
   if (!ch || outputRate < 8000.0 || outputRate > 192000.0)
@@ -60,7 +60,7 @@ bool chorus_init(struct sc88_chorus *ch, double outputRate,
   return true;
 }
 
-void chorus_destroy(struct sc88_chorus *ch)
+void chorus_destroy(struct xp_chorus *ch)
 {
   if (!ch)
     return;
@@ -68,7 +68,7 @@ void chorus_destroy(struct sc88_chorus *ch)
   std::memset(ch, 0, sizeof *ch);
 }
 
-void chorus_reset(struct sc88_chorus *ch)
+void chorus_reset(struct xp_chorus *ch)
 {
   if (!ch || !ch->buf)
     return;
@@ -80,7 +80,7 @@ void chorus_reset(struct sc88_chorus *ch)
   ch->fb_state_r = 0.0f;
 }
 
-bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8])
+bool chorus_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[8])
 {
   if (!rom || !rom->bytes || !out || macro > 7)
     return false;
@@ -92,7 +92,7 @@ bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8])
   return true;
 }
 
-void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
+void chorus_set_params(const struct xp_rom *rom, struct xp_chorus *ch,
                         uint8_t level, uint8_t feedback, uint8_t delay,
                         uint8_t rate, uint8_t depth, uint8_t preLpf)
 {
@@ -131,7 +131,7 @@ void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
     ch->depth_samples = ch->delay_samples;
 }
 
-void chorus_process(struct sc88_chorus *ch, const float *send, float *stereo,
+void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
                      size_t frames)
 {
   if (!ch || !ch->active || !ch->buf || !send || !stereo)

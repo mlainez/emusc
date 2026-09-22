@@ -31,7 +31,7 @@ static int sample_value(float sample)
    asserts.  The tap before the first position falls back to the first, as
    the oscillator does.  The two-away taps are exercised at a fractional
    phase at the end of main(), where they carry weight. */
-static void expect(struct sc88_oscillator *oscillator,
+static void expect(struct xp_oscillator *oscillator,
                    const int *values, size_t count)
 {
   size_t i;
@@ -51,7 +51,7 @@ static void expect(struct sc88_oscillator *oscillator,
    samples of loop, 2.7 ms at its own rate, so whatever the wrap does recurs
    370 times a second and is heard as a buzz rather than a pop.
 
-   The ROM decides what the wrap does, at `sc88_oscillator_wrapped_phase`.
+   The ROM decides what the wrap does, at `wrapped_phase`.
    These two cases are the arithmetic that decision rests on, on the real
    geometry, so it cannot quietly reopen:
 
@@ -65,11 +65,11 @@ static void expect(struct sc88_oscillator *oscillator,
 
    The oscillator is stepped for real rather than having its phase inspected,
    because it is the sounding period that the ROM constrains. */
-static double traversal(uint32_t pitch_word, enum sc88_fractional_wrap wrap,
+static double traversal(uint32_t pitch_word, enum xp_fractional_wrap wrap,
                         const int32_t *pcm, size_t count,
-                        const struct sc88_wave_registers *registers)
+                        const struct xp_wave_registers *registers)
 {
-  struct sc88_oscillator oscillator;
+  struct xp_oscillator oscillator;
   double previous;
   size_t i, wraps = 0, first = 0, last = 0;
   float sample;
@@ -99,7 +99,7 @@ static void short_loop_wrap(void)
   /* Addresses are the descriptor's; the values are not, because what these
      cases fix is the POSITION progression and not what is read at it. */
   static const uint32_t start = 0x0fbc41, loop = 0x0fbc60, end = 0x0fbcb5;
-  const struct sc88_wave_registers registers = {0, start, loop, end, 0, 0x18};
+  const struct xp_wave_registers registers = {0, start, loop, end, 0, 0x18};
   int32_t pcm[117];
   size_t i;
   double period;
@@ -152,8 +152,8 @@ int main()
      deltas from address_b to address_c sum to zero, so x[b-1] == x[c].
      Every looping descriptor in the SC-88 ROM satisfies this. */
   const int32_t closed[] = {8, 12, 10, 11, 12};
-  const struct sc88_wave_registers registers = {0, 8, 10, 12, 0, 0x18};
-  struct sc88_oscillator oscillator;
+  const struct xp_wave_registers registers = {0, 8, 10, 12, 0, 0x18};
+  struct xp_oscillator oscillator;
   static const int forward[] = {8, 9, 10, 11, 12, 10, 11, 12};
   /* Ping-pong descends by REFLECTION about x[c], not by replaying the
      samples backwards: the decoder is an accumulator and running the

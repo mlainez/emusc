@@ -29,7 +29,7 @@ int32_t floor_shift(int32_t value, unsigned bits)
                    : (int32_t)((uint32_t)value >> bits);
 }
 
-bool prepare_ramp(struct sc88_lfo *lfo, uint16_t delay, uint16_t fade)
+bool prepare_ramp(struct xp_lfo *lfo, uint16_t delay, uint16_t fade)
 {
   if (!lfo_ramp_initialize(delay, fade, &lfo->ramp))
     return false;
@@ -158,7 +158,7 @@ bool lfo_phase_advance(uint16_t increment, uint8_t catchupCount,
   return true;
 }
 
-bool lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
+bool lfo_table_sample(const struct xp_rom *rom, uint32_t table,
                        uint16_t phase, uint16_t increment, int16_t *out)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
@@ -182,7 +182,7 @@ bool lfo_table_sample(const struct sc88_rom *rom, uint32_t table,
   return true;
 }
 
-bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
+bool lfo_waveform(const struct xp_rom *rom, uint8_t selector,
                    uint16_t phase, uint16_t increment, int16_t previous,
                    int16_t target, int16_t *out)
 {
@@ -223,7 +223,7 @@ bool lfo_waveform(const struct sc88_rom *rom, uint8_t selector,
 }
 
 bool lfo_ramp_initialize(uint16_t delayIncrement, uint16_t fadeIncrement,
-                          struct sc88_lfo_ramp *ramp)
+                          struct xp_lfo_ramp *ramp)
 {
   if (!ramp)
     return false;
@@ -235,7 +235,7 @@ bool lfo_ramp_initialize(uint16_t delayIncrement, uint16_t fadeIncrement,
   return true;
 }
 
-bool lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp)
+bool lfo_ramp_activate_immediate(struct xp_lfo_ramp *ramp)
 {
   if (!ramp)
     return false;
@@ -244,7 +244,7 @@ bool lfo_ramp_activate_immediate(struct sc88_lfo_ramp *ramp)
   return true;
 }
 
-bool lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchupCount)
+bool lfo_ramp_advance(struct xp_lfo_ramp *ramp, uint8_t catchupCount)
 {
   if (!ramp)
     return false;
@@ -271,10 +271,10 @@ bool lfo_ramp_advance(struct sc88_lfo_ramp *ramp, uint8_t catchupCount)
   return true;
 }
 
-bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
+bool lfo_common_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
                          unsigned partRate, unsigned userRate,
                          unsigned partDelay, unsigned userDelay,
-                         struct sc88_lfo *lfo)
+                         struct xp_lfo *lfo)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !tone->common || !lfo ||
@@ -299,9 +299,9 @@ bool lfo_common_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone
   return prepare_ramp(lfo, delay, be16(tone->common + 0x1c));
 }
 
-bool lfo_local_prepare(const struct sc88_rom *rom,
-                        const struct sc88_component *component,
-                        struct sc88_lfo *lfo)
+bool lfo_local_prepare(const struct xp_rom *rom,
+                        const struct xp_component *component,
+                        struct xp_lfo *lfo)
 {
   if (!rom || !rom->bytes || !component || !component->bytes || !lfo)
     return false;
@@ -314,7 +314,7 @@ bool lfo_local_prepare(const struct sc88_rom *rom,
                       be16(component->bytes + 0x0e));
 }
 
-bool lfo_advance(const struct sc88_rom *rom, struct sc88_lfo *lfo,
+bool lfo_advance(const struct xp_rom *rom, struct xp_lfo *lfo,
                   int16_t rateControl, uint8_t catchupCount, uint16_t *seed)
 {
   if (!lfo || !seed)

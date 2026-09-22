@@ -23,12 +23,12 @@ using namespace EmuSC::Xp;
      SC88_CONTROL_ROM  the control ROM
    Without it the test reports skipped rather than passing while checking
    nothing. */
-static double dc_gain(const struct sc88_eq_band *b)
+static double dc_gain(const struct xp_eq_band *b)
 {
   return (b->c0 + b->c1) / (1.0 - b->c2);
 }
 
-static double nyquist_gain(const struct sc88_eq_band *b)
+static double nyquist_gain(const struct xp_eq_band *b)
 {
   return (b->c0 - b->c1) / (1.0 + b->c2);
 }
@@ -38,8 +38,8 @@ int main()
   const char *romPath;
   uint8_t *bytes;
   size_t size;
-  struct sc88_rom rom;
-  struct sc88_eq eq;
+  struct xp_rom rom;
+  struct xp_eq eq;
   FILE *file;
   unsigned gain;
   romPath = getenv("SC88_CONTROL_ROM");

@@ -33,16 +33,16 @@ static void test_held_rom(const char *path)
   FILE *file = fopen(path, "rb");
   uint8_t *bytes = (uint8_t *)malloc(XP_CONTROL_ROM_SIZE);
   bool seen[XP_CONTROL_ROM_SIZE] = {false};
-  struct sc88_rom rom;
+  struct xp_rom rom;
   unsigned map;
   unsigned variation;
   unsigned program;
   unsigned selection_count = 0;
   unsigned tone_count = 0;
   unsigned component_count = 0;
-  const struct sc88_tva_levels levels = {127, 127, 127, 127};
-  const struct sc88_pan_controls pan = {64, 64};
-  const struct sc88_tvf_controls tvf_controls = {64, 64, 64, 64, 0};
+  const struct xp_tva_levels levels = {127, 127, 127, 127};
+  const struct xp_pan_controls pan = {64, 64};
+  const struct xp_tvf_controls tvf_controls = {64, 64, 64, 64, 0};
 
   assert(file && bytes);
   assert(fread(bytes, 1, XP_CONTROL_ROM_SIZE, file) ==
@@ -56,7 +56,7 @@ static void test_held_rom(const char *path)
   for (map = XP_TONE_MAP_SC55; map <= XP_TONE_MAP_SC88; ++map) {
     for (variation = 0; variation < 128; ++variation) {
       for (program = 0; program < 128; ++program) {
-        struct sc88_tone tone;
+        struct xp_tone tone;
         uint32_t offset;
         unsigned component_index;
 
@@ -72,26 +72,26 @@ static void test_held_rom(const char *path)
         component_count += tone.component_count;
         for (component_index = 0; component_index < tone.component_count;
              ++component_index) {
-          struct sc88_component component;
+          struct xp_component component;
           unsigned key;
           unsigned selected = 0;
           assert(rom_open_component(&rom, &tone, component_index,
                                     &component));
           for (key = 0; key < 128; ++key) {
-            struct sc88_zone_selection zone;
-            enum sc88_wave_loop_type mode;
+            struct xp_zone_selection zone;
+            enum xp_wave_loop_type mode;
             uint16_t attenuation;
             uint16_t left_q15;
             uint16_t right_q15;
             uint32_t gain_q17;
             uint8_t pan_position;
-            struct sc88_tva_release release;
-            struct sc88_tva_envelope envelope;
-            struct sc88_tvf_registers tvf;
-            struct sc88_tvf_envelope tvf_envelope;
-            struct sc88_tvf_release tvf_release;
-            struct sc88_pitch_envelope pitch_envelope;
-            struct sc88_pitch_release pitch_release;
+            struct xp_tva_release release;
+            struct xp_tva_envelope envelope;
+            struct xp_tvf_registers tvf;
+            struct xp_tvf_envelope tvf_envelope;
+            struct xp_tvf_release tvf_release;
+            struct xp_pitch_envelope pitch_envelope;
+            struct xp_pitch_release pitch_release;
             int16_t tvf_key_modulation;
             if (!rom_select_zone(&rom, &component, (uint8_t)key, &zone))
               continue;
@@ -173,10 +173,10 @@ int main()
     0x00, 0x02, 0x92, 0x0d, 0x00, 0x00, 0x0a, 0x00, 0xf4, 0x30
   };
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
-  struct sc88_rom rom;
-  struct sc88_tone tone;
-  struct sc88_component component;
-  struct sc88_zone_selection zone;
+  struct xp_rom rom;
+  struct xp_tone tone;
+  struct xp_component component;
+  struct xp_zone_selection zone;
   uint32_t tone_offset;
   char name[13];
 

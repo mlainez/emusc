@@ -3,8 +3,8 @@
  *  Roland SC-88 device profile for the XP engine (engines/xp/).
  *
  *  The single instance below is this device's DeviceProfile equivalent -
- *  see sc88.h for the struct and the injection mechanism (sc88_rom::profile,
- *  sc88_engine::profile, xp_profile()).
+ *  see sc88.h for the struct and the injection mechanism (xp_rom::profile,
+ *  xp_engine::profile, xp_profile()).
  */
 #include "sc88.h"
 #include "../rom.h"
@@ -270,7 +270,7 @@ const struct XpDeviceProfile SC88_PROFILE = {
   .selectors = { 0x00u, 0x01u, 0x10u, 0x11u, 0x20u, 0x21u, 0x30u, 0x31u },
 };
 
-const struct XpDeviceProfile *xp_profile(const struct sc88_rom *rom)
+const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom)
 {
   return (rom && rom->profile) ? rom->profile : &SC88_PROFILE;
 }

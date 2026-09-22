@@ -9,7 +9,7 @@
  *  engines/xp/'s own engine.
  *
  *  Most facts live in struct XpDeviceProfile, injected at runtime through
- *  sc88_rom::profile / sc88_engine::profile - the same shape as the older
+ *  xp_rom::profile / xp_engine::profile - the same shape as the older
  *  Part/Note engine's DeviceProfile, selected once and read everywhere
  *  through a pointer rather than hardcoded in generic code. A handful of
  *  constants stay as compile-time values below instead: they size this
@@ -24,7 +24,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct sc88_rom;
+struct xp_rom;
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,7 +60,7 @@ inline constexpr unsigned XP_CONTROL_ROM_SIZE = 0x80000u;
    and tva_curve_decode's fixed result for it (linear false, rate 679/64 -
    a power-of-two divisor, so this is that exact double, not an
    approximation). Stays compile-time rather than an XpDeviceProfile field:
-   its one reader, sc88_static_gain_progress() below, is a static inline
+   its one reader, xp_static_gain_progress() below, is a static inline
    hot-path function taking only a period fraction, with no rom/profile
    parameter to thread one through without touching the whole per-sample
    render call chain. */
@@ -260,11 +260,11 @@ extern const struct XpDeviceProfile SC88_PROFILE;
 
 /* Never-null: falls back to SC88_PROFILE, since this engine has exactly
    one device today and several existing tests build a bare struct
-   sc88_rom by hand (bypassing rom_init(), so .profile is never set).
+   xp_rom by hand (bypassing rom_init(), so .profile is never set).
    Mirrors ControlRom::device()'s own fallback (the older engine's), not
    its nullable profile(). A second XP-family device would set .profile
    explicitly and this would return that instead. */
-const struct XpDeviceProfile *xp_profile(const struct sc88_rom *rom);
+const struct XpDeviceProfile *xp_profile(const struct xp_rom *rom);
 
 #ifdef __cplusplus
 }

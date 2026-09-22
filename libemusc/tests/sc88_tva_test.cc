@@ -51,7 +51,7 @@ int main()
     {0, 2, 4, 6}, {0, 3, 6, 9}, {0, 4, 8, 12}
   };
   const char *romPath;
-  struct sc88_tva_curve curve;
+  struct xp_tva_curve curve;
   uint8_t *bytes;
   size_t size;
   FILE *file;

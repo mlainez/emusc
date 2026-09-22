@@ -46,7 +46,7 @@ constexpr const struct XpDeviceProfile *kKnownProfiles[] = { &SC88_PROFILE };
 
 }  // namespace
 
-bool rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size)
+bool rom_init(struct xp_rom *rom, const uint8_t *bytes, size_t size)
 {
   if (!rom || !bytes)
     return false;
@@ -61,7 +61,7 @@ bool rom_init(struct sc88_rom *rom, const uint8_t *bytes, size_t size)
   return false;
 }
 
-bool rom_select_drum(const struct sc88_rom *rom, uint8_t map,
+bool rom_select_drum(const struct xp_rom *rom, uint8_t map,
                       uint8_t program, uint32_t *kitOffset)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
@@ -83,9 +83,9 @@ bool rom_select_drum(const struct sc88_rom *rom, uint8_t map,
 }
 
 bool rom_open_drum_note_overlaid(
-  const struct sc88_rom *rom, uint32_t kitOffset, uint8_t note,
-  const struct sc88_drum_overlay *overlay, uint8_t setup,
-  struct sc88_drum_note *out)
+  const struct xp_rom *rom, uint32_t kitOffset, uint8_t note,
+  const struct xp_drum_overlay *overlay, uint8_t setup,
+  struct xp_drum_note *out)
 {
   if (!rom_open_drum_note(rom, kitOffset, note, out))
     return false;
@@ -123,8 +123,8 @@ bool rom_open_drum_note_overlaid(
   return true;
 }
 
-bool rom_open_drum_note(const struct sc88_rom *rom, uint32_t kitOffset,
-                         uint8_t note, struct sc88_drum_note *out)
+bool rom_open_drum_note(const struct xp_rom *rom, uint32_t kitOffset,
+                         uint8_t note, struct xp_drum_note *out)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !out || note > 127 ||
@@ -144,7 +144,7 @@ bool rom_open_drum_note(const struct sc88_rom *rom, uint32_t kitOffset,
   return true;
 }
 
-bool rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
+bool rom_select_melodic(const struct xp_rom *rom, uint8_t map,
                          uint8_t variation, uint8_t program,
                          uint32_t *toneOffset)
 {
@@ -171,8 +171,8 @@ bool rom_select_melodic(const struct sc88_rom *rom, uint8_t map,
   return true;
 }
 
-bool rom_open_tone(const struct sc88_rom *rom, uint32_t toneOffset,
-                    struct sc88_tone *tone)
+bool rom_open_tone(const struct xp_rom *rom, uint32_t toneOffset,
+                    struct xp_tone *tone)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || toneOffset < profile->toneBase ||
@@ -192,8 +192,8 @@ bool rom_open_tone(const struct sc88_rom *rom, uint32_t toneOffset,
   return true;
 }
 
-bool rom_open_component(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                         unsigned index, struct sc88_component *component)
+bool rom_open_component(const struct xp_rom *rom, const struct xp_tone *tone,
+                         unsigned index, struct xp_component *component)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       index >= tone->component_count)
@@ -213,7 +213,7 @@ bool rom_open_component(const struct sc88_rom *rom, const struct sc88_tone *tone
   return true;
 }
 
-bool rom_component_sounds(const struct sc88_component *component,
+bool rom_component_sounds(const struct xp_component *component,
                            uint8_t velocity)
 {
   if (!component || !component->bytes)
@@ -223,10 +223,10 @@ bool rom_component_sounds(const struct sc88_component *component,
   return velocity >= low && velocity <= high;
 }
 
-bool rom_select_zone(const struct sc88_rom *rom,
-                      const struct sc88_component *component,
+bool rom_select_zone(const struct xp_rom *rom,
+                      const struct xp_component *component,
                       uint8_t selectorKey,
-                      struct sc88_zone_selection *selection)
+                      struct xp_zone_selection *selection)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !component || !component->bytes || !selection ||
@@ -273,7 +273,7 @@ bool rom_select_zone(const struct sc88_rom *rom,
   return false;
 }
 
-void rom_tone_name(const struct sc88_tone *tone, char name[13])
+void rom_tone_name(const struct xp_tone *tone, char name[13])
 {
   if (!name)
     return;

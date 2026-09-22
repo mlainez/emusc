@@ -22,8 +22,8 @@ float coefficient(uint16_t raw)
   return (float)((double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0);
 }
 
-bool readBand(const struct sc88_rom *rom, uint32_t block, uint8_t gain,
-              struct sc88_eq_band *band)
+bool readBand(const struct xp_rom *rom, uint32_t block, uint8_t gain,
+              struct xp_eq_band *band)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !band || gain < profile->eqGainMin ||
@@ -49,7 +49,7 @@ bool readBand(const struct sc88_rom *rom, uint32_t block, uint8_t gain,
   return true;
 }
 
-float step(struct sc88_eq_band *band, unsigned ch, float x)
+float step(struct xp_eq_band *band, unsigned ch, float x)
 {
   float y = band->c0 * x + band->c1 * band->x1[ch] + band->c2 * band->y1[ch];
   band->x1[ch] = x;
@@ -59,14 +59,14 @@ float step(struct sc88_eq_band *band, unsigned ch, float x)
 
 }  // namespace
 
-bool eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
+bool eq_set_params(const struct xp_rom *rom, struct xp_eq *eq,
                     uint8_t lowFrequency, uint8_t lowGain,
                     uint8_t highFrequency, uint8_t highGain)
 {
   if (!eq || lowFrequency > 1 || highFrequency > 1)
     return false;
   const struct XpDeviceProfile *profile = xp_profile(rom);
-  struct sc88_eq_band low, high;
+  struct xp_eq_band low, high;
   if (!readBand(rom, lowFrequency ? profile->eqLow400 : profile->eqLow200,
                 lowGain, &low) ||
       !readBand(rom, highFrequency ? profile->eqHigh6k : profile->eqHigh3k,
@@ -81,7 +81,7 @@ bool eq_set_params(const struct sc88_rom *rom, struct sc88_eq *eq,
   return true;
 }
 
-void eq_init(struct sc88_eq *eq)
+void eq_init(struct xp_eq *eq)
 {
   if (!eq)
     return;
@@ -91,7 +91,7 @@ void eq_init(struct sc88_eq *eq)
   eq->enabled = true;
 }
 
-void eq_reset(struct sc88_eq *eq)
+void eq_reset(struct xp_eq *eq)
 {
   if (!eq)
     return;
@@ -101,7 +101,7 @@ void eq_reset(struct sc88_eq *eq)
   std::memset(eq->high.y1, 0, sizeof eq->high.y1);
 }
 
-void eq_process(struct sc88_eq *eq, float *stereo, size_t frames)
+void eq_process(struct xp_eq *eq, float *stereo, size_t frames)
 {
   if (!eq || !eq->enabled || !stereo)
     return;

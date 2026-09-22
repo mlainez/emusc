@@ -25,7 +25,7 @@ double xp(uint16_t raw)
   return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
-float tap(const struct sc88_delay *dl, double back)
+float tap(const struct xp_delay *dl, double back)
 {
   if (back < 1.0)
     back = 1.0;
@@ -42,7 +42,7 @@ float tap(const struct sc88_delay *dl, double back)
 
 }  // namespace
 
-bool delay_init(struct sc88_delay *dl, double outputRate,
+bool delay_init(struct xp_delay *dl, double outputRate,
                  const struct XpDeviceProfile *profile)
 {
   if (!dl || outputRate < 8000.0 || outputRate > 192000.0)
@@ -61,7 +61,7 @@ bool delay_init(struct sc88_delay *dl, double outputRate,
   return true;
 }
 
-void delay_destroy(struct sc88_delay *dl)
+void delay_destroy(struct xp_delay *dl)
 {
   if (!dl)
     return;
@@ -69,7 +69,7 @@ void delay_destroy(struct sc88_delay *dl)
   std::memset(dl, 0, sizeof *dl);
 }
 
-void delay_reset(struct sc88_delay *dl)
+void delay_reset(struct xp_delay *dl)
 {
   if (!dl || !dl->buf)
     return;
@@ -78,7 +78,7 @@ void delay_reset(struct sc88_delay *dl)
   dl->pre_state = 0.0f;
 }
 
-bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10])
+bool delay_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[10])
 {
   if (!rom || !rom->bytes || !out || macro > 9)
     return false;
@@ -90,7 +90,7 @@ bool delay_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[10])
   return true;
 }
 
-bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
+bool delay_set_params(const struct xp_rom *rom, struct xp_delay *dl,
                        const uint8_t p[10])
 {
   if (!rom || !rom->bytes || !dl || !p)
@@ -149,7 +149,7 @@ bool delay_set_params(const struct sc88_rom *rom, struct sc88_delay *dl,
   return true;
 }
 
-void delay_process(struct sc88_delay *dl, const float *send, float *stereo,
+void delay_process(struct xp_delay *dl, const float *send, float *stereo,
                     float *toReverb, size_t frames)
 {
   if (!dl || !dl->active || !dl->buf || !send || !stereo)

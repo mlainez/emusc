@@ -13,8 +13,8 @@ namespace {
 void syncPart(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tva_levels levels;
-  struct sc88_pan_controls pan;
+  struct xp_tva_levels levels;
+  struct xp_pan_controls pan;
   levels.master = device->master_volume;
   levels.secondary = device->secondary_level;
   levels.part = channel->volume;
@@ -62,7 +62,7 @@ bool loadChorusMacro(Device *device, uint8_t macro)
 void syncLfo(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_lfo_controls controls;
+  struct xp_lfo_controls controls;
   controls.rate = channel->vibrato_rate;
   controls.delay = channel->vibrato_delay;
   controls.depth = channel->vibrato_depth;
@@ -137,7 +137,7 @@ bool initCommon(Device *device, const uint8_t *controlRom,
                  size_t controlRomSize,
                  const uint8_t *const chips[XP_WAVE_CHIP_COUNT],
                  const size_t sizes[XP_WAVE_CHIP_COUNT], double outputRate,
-                 enum sc88_fractional_wrap wrap, bool raw)
+                 enum xp_fractional_wrap wrap, bool raw)
 {
   if (!device || !controlRom || !chips || !sizes ||
       controlRomSize != XP_CONTROL_ROM_SIZE)
@@ -145,7 +145,7 @@ bool initCommon(Device *device, const uint8_t *controlRom,
   /* Identifies the device before anything below needs its profile - the
      real identification rom_init() does; renderer_init() below repeats
      it on the same bytes once device->control_rom exists, harmlessly. */
-  struct sc88_rom identifyRom;
+  struct xp_rom identifyRom;
   if (!rom_init(&identifyRom, controlRom, controlRomSize))
     return false;
   const struct XpDeviceProfile *profile = xp_profile(&identifyRom);
@@ -224,7 +224,7 @@ fail:
 void syncTvf(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tvf_controls controls;
+  struct xp_tvf_controls controls;
   controls.part_cutoff = channel->cutoff;
   controls.secondary_cutoff = 64;
   controls.part_resonance = channel->resonance;
@@ -249,7 +249,7 @@ void syncLfo1PitchDepth(Device *device, uint8_t part)
 void syncTva(Device *device, uint8_t part)
 {
   const ChannelState *channel = device->channels + part;
-  struct sc88_tva_controls controls;
+  struct xp_tva_controls controls;
   controls.part_attack = channel->attack;
   controls.secondary_attack = 64;
   controls.part_decay = channel->decay;
@@ -289,7 +289,7 @@ bool blockPart(uint8_t block, uint8_t port, uint8_t *part)
 
 bool setReverbCharacter(Device *device, uint8_t character)
 {
-  struct sc88_reverb replacement;
+  struct xp_reverb replacement;
   if (character == device->reverb_character)
     return true;
   /* A character is a different set of delay lines read out of the ROM, so
@@ -644,7 +644,7 @@ bool device_init_raw(Device *device, const uint8_t *controlRom,
                       size_t controlRomSize,
                       const uint8_t *const rawChips[XP_WAVE_CHIP_COUNT],
                       const size_t rawSizes[XP_WAVE_CHIP_COUNT],
-                      double outputRate, enum sc88_fractional_wrap wrap)
+                      double outputRate, enum xp_fractional_wrap wrap)
 {
   return initCommon(device, controlRom, controlRomSize, rawChips, rawSizes,
                      outputRate, wrap, true);
@@ -655,7 +655,7 @@ bool device_init_decoded(
   size_t controlRomSize,
   const uint8_t *const decodedChips[XP_WAVE_CHIP_COUNT],
   const size_t decodedSizes[XP_WAVE_CHIP_COUNT], double outputRate,
-  enum sc88_fractional_wrap wrap)
+  enum xp_fractional_wrap wrap)
 {
   return initCommon(device, controlRom, controlRomSize, decodedChips,
                      decodedSizes, outputRate, wrap, false);

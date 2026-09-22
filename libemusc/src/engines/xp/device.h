@@ -23,7 +23,7 @@ extern "C" {
  * The wire address is `group * 0x10 + destination`; the matrix's own part
  * structure holds the same six groups twelve bytes apart at +0x28, with a
  * byte at +3 this routine does not read (`05_data_model/part_state.md`). */
-enum sc88_matrix_source {
+enum xp_matrix_source {
   XP_MATRIX_MODULATION = 0,
   XP_MATRIX_PITCH_BEND = 1,
   XP_MATRIX_CHANNEL_PRESSURE = 2,
@@ -32,7 +32,7 @@ enum sc88_matrix_source {
   XP_MATRIX_CC2 = 5
 };
 
-enum sc88_matrix_destination {
+enum xp_matrix_destination {
   XP_MATRIX_PITCH = 0,
   XP_MATRIX_CUTOFF = 1,
   XP_MATRIX_AMPLITUDE = 2,
@@ -55,7 +55,7 @@ namespace EmuSC { namespace Xp {
 // controller-to-engine parameter-sync bridge, and effects-chain ownership)
 // for the XP-generation-1 engine (see engines/xp/README.md).
 //
-// Unlike every sc88_-prefixed struct elsewhere in engines/xp/ - those are
+// Unlike every xp_-prefixed struct elsewhere in engines/xp/ - those are
 // SC-88 firmware-exact RAM and register layouts, reverse-engineered from
 // SC-88's own disassembled CPU program, and stay plain C structs shared
 // with not-yet-converted callers - ChannelState and Device below are this
@@ -66,7 +66,7 @@ namespace EmuSC { namespace Xp {
 // and device_test.cc (the one caller that reads their fields directly) is
 // C++ itself. Every other engines/xp/ struct (tva/tvf/renderer/engine
 // internals) is untouched and keeps its extern "C" compatibility surface,
-// because sc88_*_test.c files besides device_test.cc still read those
+// because xp_*_test.c files besides device_test.cc still read those
 // directly and are still plain C.
 //
 // Both remain plain aggregates with public fields rather than encapsulated
@@ -144,20 +144,20 @@ struct ChannelState {
      and so the one consumer that does exist - modulation to LFO1 pitch
      depth - reads the same bytes every other destination will. */
   uint8_t matrix_depth[XP_MATRIX_SOURCE_COUNT][XP_MATRIX_DEST_COUNT];
-  enum sc88_same_note_mode same_note_mode;
+  enum xp_same_note_mode same_note_mode;
 };
 
 struct Device {
   uint8_t *control_rom;
   uint8_t *decoded_chips[XP_WAVE_CHIP_COUNT];
-  struct sc88_wave_bank banks[XP_WAVE_BANK_COUNT];
-  struct sc88_renderer renderer;
-  struct sc88_engine engine;
-  struct sc88_reverb reverb;
-  struct sc88_chorus chorus;
-  struct sc88_delay delay;
-  struct sc88_eq eq;
-  struct sc88_output output;
+  struct xp_wave_bank banks[XP_WAVE_BANK_COUNT];
+  struct xp_renderer renderer;
+  struct xp_engine engine;
+  struct xp_reverb reverb;
+  struct xp_chorus chorus;
+  struct xp_delay delay;
+  struct xp_eq eq;
+  struct xp_output output;
   /* The reverb's own parameters. Writing the macro reloads all of them from
      a ROM preset, and a GS reset is the same read with macro 4. */
   uint8_t reverb_character, reverb_level, reverb_time, reverb_pre_lpf;
@@ -215,12 +215,12 @@ bool device_init_raw(Device *device, const uint8_t *controlRom,
                       size_t controlRomSize,
                       const uint8_t *const rawChips[XP_WAVE_CHIP_COUNT],
                       const size_t rawSizes[XP_WAVE_CHIP_COUNT],
-                      double outputRate, enum sc88_fractional_wrap wrap);
+                      double outputRate, enum xp_fractional_wrap wrap);
 bool device_init_decoded(
   Device *device, const uint8_t *controlRom, size_t controlRomSize,
   const uint8_t *const decodedChips[XP_WAVE_CHIP_COUNT],
   const size_t decodedSizes[XP_WAVE_CHIP_COUNT], double outputRate,
-  enum sc88_fractional_wrap wrap);
+  enum xp_fractional_wrap wrap);
 void device_destroy(Device *device);
 void device_reset_controllers(Device *device);
 void device_set_master_volume(Device *device, uint8_t value);

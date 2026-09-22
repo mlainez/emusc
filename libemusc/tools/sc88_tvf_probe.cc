@@ -5,11 +5,11 @@
  * The onset-aligned spectral centroid of the hardware demo recordings
  * swings by hundreds of hertz in the first 30 ms of every note while ours
  * barely moves, so the question is whether the cutoff word moves at all
- * and, if it does, whether the clamp in `sc88_tvf_update_frequency` eats
+ * and, if it does, whether the clamp in `tvf_update_frequency` eats
  * the movement. Both are internal values that no measurement of the
  * rendered audio can separate.
  *
- *   sc88_tvf_probe --control control.bin --program 56 [--variation 0]
+ *   xp_tvf_probe --control control.bin --program 56 [--variation 0]
  *                  [--key 60] [--velocity 100] [--periods 250]
  */
 
@@ -51,7 +51,7 @@ static uint8_t *read_file(const char *path, size_t *size)
   return data;
 }
 
-static unsigned comp_bytes_at(const struct sc88_component *c, unsigned off)
+static unsigned comp_bytes_at(const struct xp_component *c, unsigned off)
 {
   return c && c->bytes ? c->bytes[off] : 0u;
 }
@@ -70,8 +70,8 @@ int main(int argc, char **argv)
   bool keyfollow = false;
   size_t control_size = 0;
   uint8_t *control;
-  struct sc88_rom rom;
-  struct sc88_tone tone;
+  struct xp_rom rom;
+  struct xp_tone tone;
   uint32_t tone_offset;
   char name[13];
   unsigned i;
@@ -101,7 +101,7 @@ int main(int argc, char **argv)
     }
   }
   if (!control_path) {
-    fprintf(stderr, "usage: sc88_tvf_probe --control FILE --program N\n");
+    fprintf(stderr, "usage: xp_tvf_probe --control FILE --program N\n");
     return 2;
   }
   control = read_file(control_path, &control_size);
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
     for (v = 0; v <= 36; ++v) {
       for (pr = 0; pr < 128; ++pr) {
         uint32_t offset;
-        struct sc88_tone t;
+        struct xp_tone t;
         unsigned c;
         char n[13];
         if (!rom_select_melodic(&rom, XP_TONE_MAP_SC88, (uint8_t)v,
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
           continue;
         rom_tone_name(&t, n);
         for (c = 0; c < t.component_count; ++c) {
-          struct sc88_component comp;
+          struct xp_component comp;
           int16_t factor;
           if (!rom_open_component(&rom, &t, c, &comp))
             continue;
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
     for (v = 0; v <= 36; ++v) {
       for (pr = 0; pr < 128; ++pr) {
         uint32_t offset;
-        struct sc88_tone t;
+        struct xp_tone t;
         unsigned c;
         char n[13];
         if (!rom_select_melodic(&rom, XP_TONE_MAP_SC88, (uint8_t)v,
@@ -171,10 +171,10 @@ int main(int argc, char **argv)
           continue;
         rom_tone_name(&t, n);
         for (c = 0; c < t.component_count; ++c) {
-          struct sc88_component comp;
-          struct sc88_tvf_registers r;
-          struct sc88_tvf_envelope env;
-          struct sc88_tvf_controls ctl;
+          struct xp_component comp;
+          struct xp_tvf_registers r;
+          struct xp_tvf_envelope env;
+          struct xp_tvf_controls ctl;
           int16_t k36 = 0, k60 = 0, k84 = 0;
           ctl.part_cutoff = 64;
           ctl.secondary_cutoff = 64;
@@ -240,7 +240,7 @@ int main(int argc, char **argv)
     unsigned c;
     static const unsigned probe_keys[] = {24, 36, 48, 60, 72, 84, 96};
     for (c = 0; c < tone.component_count; ++c) {
-      struct sc88_component comp;
+      struct xp_component comp;
       unsigned k;
       if (!rom_open_component(&rom, &tone, c, &comp))
         continue;
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
              "boundary", "root", "address_a", "loop_b", "end_c", "off16", "bank", "atten",
              "basecor", "altcor", "ctrl");
       for (k = 0; k < sizeof probe_keys / sizeof *probe_keys; ++k) {
-        struct sc88_zone_selection zone;
+        struct xp_zone_selection zone;
         if (!rom_select_zone(&rom, &comp, (uint8_t)probe_keys[k],
                                   &zone)) {
           printf("    %4u  (no zone)\n", probe_keys[k]);
@@ -271,10 +271,10 @@ int main(int argc, char **argv)
   }
 
   for (i = 0; i < tone.component_count; ++i) {
-    struct sc88_component component;
-    struct sc88_tvf_registers regs;
-    struct sc88_tvf_envelope env;
-    struct sc88_tvf_controls controls;
+    struct xp_component component;
+    struct xp_tvf_registers regs;
+    struct xp_tvf_envelope env;
+    struct xp_tvf_controls controls;
     int16_t key_modulation = 0;
     uint16_t limit;
     unsigned p;
@@ -287,7 +287,7 @@ int main(int argc, char **argv)
     controls.matrix_cutoff = 0;
 
     if (getenv("SC88_DUMP_BYTES")) {
-      struct sc88_component cdump;
+      struct xp_component cdump;
       if (rom_open_component(&rom, &tone, i, &cdump) && cdump.bytes) {
         unsigned b;
         printf("BYTES\t%u\t%u", (unsigned)program, i);
@@ -347,8 +347,8 @@ int main(int argc, char **argv)
        hardware: if the render does not settle where these say, the fault
        is arithmetic rather than data. */
     {
-      struct sc88_tva_envelope env;
-      struct sc88_tva_controls tva = {64, 64, 64, 64};
+      struct xp_tva_envelope env;
+      struct xp_tva_controls tva = {64, 64, 64, 64};
       if (tva_envelope_prepare(&rom, &tone, &component,
                                     (uint8_t)key, (uint8_t)velocity,
                                     &tva, &env)) {
@@ -369,7 +369,7 @@ int main(int argc, char **argv)
       }
     }
 
-    /* The TVA release counter. `sc88_tva_release_advance` subtracts the
+    /* The TVA release counter. `tva_release_advance` subtracts the
        increment from 0xffff once per control period, so 0xffff/increment
        is the whole release in periods and the headroom falls by the
        increment each one - the composed amplitude is a new target every
@@ -377,7 +377,7 @@ int main(int argc, char **argv)
        Key scaling moves the increment, so it is printed for the key asked
        for, not a stored constant. */
     {
-      struct sc88_tva_release rel;
+      struct xp_tva_release rel;
       if (tva_release_prepare(&rom, &tone, &component, (uint8_t)key,
                                    &rel)) {
         double periods = rel.increment ? 65535.0 / rel.increment : 0.0;
@@ -396,8 +396,8 @@ int main(int argc, char **argv)
        cross over; if they are rendered at the wrong relative level the
        movement is lost, which is what `M-048` points at. */
     {
-      struct sc88_zone_selection zone;
-      struct sc88_tva_levels levels = {127, 127, 127, 127};
+      struct xp_zone_selection zone;
+      struct xp_tva_levels levels = {127, 127, 127, 127};
       uint16_t static_attenuation = 0;
       uint32_t gain = 0;
       if (rom_select_zone(&rom, &component, (uint8_t)key, &zone) &&

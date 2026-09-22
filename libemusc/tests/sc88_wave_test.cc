@@ -17,9 +17,9 @@ static void test_descriptor(void)
     0x00, 0x01, 0xee, 0x60, 0x00, 0x20, 0x24, 0x02, 0x6f, 0x9c,
     0x00, 0x02, 0x92, 0x0d, 0x00, 0x00, 0x0a, 0x00, 0xf4, 0x30
   };
-  struct sc88_wave_descriptor desc;
-  struct sc88_wave_registers registers;
-  enum sc88_wave_loop_type mode;
+  struct xp_wave_descriptor desc;
+  struct xp_wave_registers registers;
+  enum xp_wave_loop_type mode;
 
   assert(wave_descriptor_parse(&SC88_PROFILE, raw, sizeof raw, &desc));
   assert(desc.bank_select == 0);
@@ -54,7 +54,7 @@ static void test_pitch_correction(void)
     0x31, 0x0b, 0x04, 0x40, 0xfd, 0xd1, 0x4d, 0x0b, 0x09, 0x88,
     0x00, 0x0b, 0x09, 0xb4, 0x00, 0x84, 0x04, 0x5b, 0x09, 0xf8
   };
-  struct sc88_wave_descriptor desc;
+  struct xp_wave_descriptor desc;
 
   assert(wave_descriptor_parse(&SC88_PROFILE, raw, sizeof raw, &desc));
   assert(desc.root_key == 77);
@@ -84,7 +84,7 @@ static void test_pitch_correction(void)
 static void test_decoder(void)
 {
   uint8_t *bank = (uint8_t *)calloc(SC88_PROFILE.waveBankSize, 1);
-  struct sc88_fce_decoder decoder;
+  struct xp_fce_decoder decoder;
   int32_t pcm;
 
   assert(bank);
@@ -151,7 +151,7 @@ static void test_held_chip(const char *raw_path, const char *decoded_path)
   free(raw);
 }
 
-static void expect_cursor(struct sc88_wave_cursor *cursor,
+static void expect_cursor(struct xp_wave_cursor *cursor,
                           const uint32_t *expected, size_t count)
 {
   size_t i;
@@ -165,8 +165,8 @@ static void expect_cursor(struct sc88_wave_cursor *cursor,
 
 static void test_cursors(void)
 {
-  struct sc88_wave_registers registers = {0, 8, 10, 12, 0, 0x18};
-  struct sc88_wave_cursor cursor;
+  struct xp_wave_registers registers = {0, 8, 10, 12, 0, 0x18};
+  struct xp_wave_cursor cursor;
   static const uint32_t forward[] = {8, 9, 10, 11, 12, 10, 11};
   static const uint32_t ping_pong[] = {
     8, 9, 10, 11, 12, 12, 11, 10, 10, 11, 12

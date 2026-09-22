@@ -29,11 +29,11 @@ int main()
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   uint8_t common[34u] = {0};            /* SC88_PROFILE.toneCommonSize */
   uint8_t component_bytes[148u] = {0};  /* SC88_PROFILE.componentSize */
-  struct sc88_rom rom;
-  struct sc88_tone tone = {common, 0x40000, 1};
-  struct sc88_component component = {component_bytes, 0, 0};
-  struct sc88_lfo lfo;
-  struct sc88_lfo_ramp ramp;
+  struct xp_rom rom;
+  struct xp_tone tone = {common, 0x40000, 1};
+  struct xp_component component = {component_bytes, 0, 0};
+  struct xp_lfo lfo;
+  struct xp_lfo_ramp ramp;
   uint16_t phase, seed, target;
   uint8_t index;
   int16_t control, delay_index, out;

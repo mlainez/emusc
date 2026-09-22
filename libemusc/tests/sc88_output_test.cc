@@ -12,7 +12,7 @@ using namespace EmuSC::Xp;
 
 int main()
 {
-  struct sc88_output out;
+  struct xp_output out;
   double rate = 44100.0;
   double pi = 3.14159265358979323846;
   double sum;
@@ -99,7 +99,7 @@ int main()
   /* A null output disables processing rather than reporting failure - it
      is not a code path a caller has to guard defensively. */
   {
-    struct sc88_output disabled;
+    struct xp_output disabled;
     float stereo[2] = {0.5f, 0.25f};
     output_init(&disabled, rate);
     disabled.enabled = false;

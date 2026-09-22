@@ -149,12 +149,12 @@ static bool write_wav(const char *path, const int32_t *pcm24, size_t count,
  */
 static int32_t *play(const struct XpDeviceProfile *profile,
                      const int32_t *pcm, size_t count, uint32_t base,
-                     const struct sc88_wave_descriptor *desc,
-                     enum sc88_wave_loop_type loop, uint32_t pitch_word,
+                     const struct xp_wave_descriptor *desc,
+                     enum xp_wave_loop_type loop, uint32_t pitch_word,
                      unsigned rate, double seconds, size_t *out_count)
 {
-  struct sc88_wave_registers registers;
-  struct sc88_oscillator oscillator;
+  struct xp_wave_registers registers;
+  struct xp_oscillator oscillator;
   size_t target = (size_t)(seconds * rate);
   size_t initial, frames, fade, i;
   int32_t *out;
@@ -232,7 +232,7 @@ int main(int argc, char **argv)
   uint8_t *decoded[4] = {NULL, NULL, NULL, NULL};
   const uint8_t *banks[8];
   size_t control_size = 0, chip_size[4] = {0, 0, 0, 0};
-  struct sc88_rom rom;
+  struct xp_rom rom;
   uint32_t directory;
   unsigned written = 0, refused = 0;
   int i;
@@ -310,8 +310,8 @@ int main(int argc, char **argv)
       uint8_t boundary = control[position];
       uint16_t pointer = be16(control + position + 4);
       uint32_t descriptor_offset = DIRECTORY_BASE + pointer;
-      struct sc88_wave_descriptor desc;
-      enum sc88_wave_loop_type loop;
+      struct xp_wave_descriptor desc;
+      enum xp_wave_loop_type loop;
       int index_of_bank;
       if (boundary <= previous || boundary > 127 ||
           control[position + 1] != 0xff)

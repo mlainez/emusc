@@ -35,7 +35,7 @@ extern "C" {
  * register into a sweep. Both are marked provisional where they are used.
  */
 
-struct sc88_chorus {
+struct xp_chorus {
   float *buf;                    /* one delay line, read at two taps */
   size_t len;
   size_t pos;
@@ -59,30 +59,30 @@ struct sc88_chorus {
 namespace EmuSC { namespace Xp {
 
 // Chorus for the XP-generation-1 engine (see engines/xp/README.md). The
-// plain sc88_chorus struct above is shared, unrenamed, with
+// plain xp_chorus struct above is shared, unrenamed, with
 // EmuSC::Xp::Device (device.h), which embeds it by value, and with
-// device_test.cc and sc88_chorus_test.c, which read it directly.
+// device_test.cc and xp_chorus_test.c, which read it directly.
 
 /* One of the eight macro presets at `0x1587e + 8*macro`: pre-LPF, level,
  * feedback, delay, rate, depth, send to reverb and send to delay, in that
  * order. Writing the chorus macro address copies these eight bytes over the
  * rest of the block - SC88-CTL handler 0x3400 is the reverb handler 0x3388's
  * sibling and calls the same copy helper. */
-bool chorus_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[8]);
+bool chorus_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[8]);
 
-bool chorus_init(struct sc88_chorus *ch, double outputRate,
+bool chorus_init(struct xp_chorus *ch, double outputRate,
                   const struct XpDeviceProfile *profile);
-void chorus_destroy(struct sc88_chorus *ch);
-void chorus_reset(struct sc88_chorus *ch);
+void chorus_destroy(struct xp_chorus *ch);
+void chorus_reset(struct xp_chorus *ch);
 
 /* The GS parameters as received, 0..127 each (`preLpf` 0..7). */
-void chorus_set_params(const struct sc88_rom *rom, struct sc88_chorus *ch,
+void chorus_set_params(const struct xp_rom *rom, struct xp_chorus *ch,
                         uint8_t level, uint8_t feedback, uint8_t delay,
                         uint8_t rate, uint8_t depth, uint8_t preLpf);
 
 /* Adds the chorus's stereo return to `stereo`, which already holds the dry
  * mix, from a mono send bus. */
-void chorus_process(struct sc88_chorus *ch, const float *send, float *stereo,
+void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
                      size_t frames);
 
 }}  // namespace EmuSC::Xp

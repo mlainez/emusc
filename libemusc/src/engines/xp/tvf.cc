@@ -70,8 +70,8 @@ int32_t signedProductHigh(int32_t left, int16_t right)
   return -(int32_t)(magnitude >> 16) - 1;
 }
 
-bool keyRateScale(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                   const struct sc88_component *component,
+bool keyRateScale(const struct xp_rom *rom, const struct xp_tone *tone,
+                   const struct xp_component *component,
                    uint8_t selectorKey, uint16_t pointerAt, uint8_t factorAt,
                    uint16_t *scale)
 {
@@ -93,7 +93,7 @@ bool keyRateScale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   return true;
 }
 
-bool velocityRateScale(const struct sc88_rom *rom, uint8_t velocity,
+bool velocityRateScale(const struct xp_rom *rom, uint8_t velocity,
                         int factor, uint16_t *scale)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
@@ -108,8 +108,8 @@ bool velocityRateScale(const struct sc88_rom *rom, uint8_t velocity,
   return true;
 }
 
-bool envelopeDepth(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                    const struct sc88_component *component, uint8_t velocity,
+bool envelopeDepth(const struct xp_rom *rom, const struct xp_tone *tone,
+                    const struct xp_component *component, uint8_t velocity,
                     bool softPedal, uint16_t *depth)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -165,12 +165,12 @@ int16_t scaleTarget(int16_t target, uint16_t depth)
  * the interpolation pair beside them; `683f: ea 2a 07 41 00` puts
  * `#0x4100` in the low word, which `tva_curve_decode` reads as the LINEAR
  * family at value 256 and `q = 4 * periods` - see tva.cc. */
-double frequencyProgress(const struct sc88_tvf_registers *registers,
+double frequencyProgress(const struct xp_tvf_registers *registers,
                           double periods)
 {
   /* frequency_interpolation has exactly one writer, a few lines below in
      tvf_prepare_registers: always the literal 0x4100 (also asserted by
-     sc88_rom_test.c, sc88_tvf_test.c and sc88_renderer_test.c). Decoding
+     xp_rom_test.c, xp_tvf_test.c and xp_renderer_test.c). Decoding
      that fixed word is always the linear family at rate 256/64 = 4.0
      exactly - a power-of-two divisor, so this is that double, not an
      approximation of it - which is what tva_curve_decode/_progress
@@ -270,11 +270,11 @@ int16_t tvf_lfo_filter_term(int16_t fadedDepth, int16_t waveform)
   return (int16_t)signedProductHigh(value, waveform);
 }
 
-bool tvf_prepare_registers(const struct sc88_rom *rom,
-                            const struct sc88_component *component,
+bool tvf_prepare_registers(const struct xp_rom *rom,
+                            const struct xp_component *component,
                             int16_t preBaseModulation,
-                            const struct sc88_tvf_controls *controls,
-                            struct sc88_tvf_registers *registers)
+                            const struct xp_tvf_controls *controls,
+                            struct xp_tvf_registers *registers)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || rom->size < profile->limitTable + 256u ||
@@ -346,8 +346,8 @@ bool tvf_prepare_registers(const struct sc88_rom *rom,
   return true;
 }
 
-bool tvf_key_modulation(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                         const struct sc88_component *component,
+bool tvf_key_modulation(const struct xp_rom *rom, const struct xp_tone *tone,
+                         const struct xp_component *component,
                          uint8_t selectorKey, int16_t *modulation)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
@@ -364,10 +364,10 @@ bool tvf_key_modulation(const struct sc88_rom *rom, const struct sc88_tone *tone
   return true;
 }
 
-bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool tvf_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, uint8_t velocity, bool softPedal,
-                           struct sc88_tvf_envelope *envelope)
+                           struct xp_tvf_envelope *envelope)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
@@ -410,7 +410,7 @@ bool tvf_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
   return true;
 }
 
-bool tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
+bool tvf_envelope_advance(struct xp_tvf_envelope *envelope,
                            unsigned elapsedPeriods)
 {
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
@@ -455,10 +455,10 @@ bool tvf_envelope_advance(struct sc88_tvf_envelope *envelope,
   return true;
 }
 
-bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
+bool tvf_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
                           uint8_t selectorKey, uint16_t envelopeDepthValue,
-                          struct sc88_tvf_release *release)
+                          struct xp_tvf_release *release)
 {
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
       !release || selectorKey > 127 ||
@@ -481,10 +481,10 @@ bool tvf_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   return true;
 }
 
-bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
+bool tvf_release_set_pedal(const struct xp_rom *rom, uint8_t hold1,
                             bool continuousHold, bool keepScaleAtZero,
                             bool sostenutoRetained,
-                            struct sc88_tvf_release *release)
+                            struct xp_tvf_release *release)
 {
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
@@ -508,7 +508,7 @@ bool tvf_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
   return true;
 }
 
-bool tvf_release_advance(struct sc88_tvf_release *release,
+bool tvf_release_advance(struct xp_tvf_release *release,
                           unsigned elapsedPeriods)
 {
   if (!release || !release->active || elapsedPeriods == 0)
@@ -529,9 +529,9 @@ bool tvf_release_advance(struct sc88_tvf_release *release,
   return true;
 }
 
-bool tvf_update_frequency(const struct sc88_rom *rom,
+bool tvf_update_frequency(const struct xp_rom *rom,
                            int16_t postBaseModulation,
-                           struct sc88_tvf_registers *registers)
+                           struct xp_tvf_registers *registers)
 {
   if (!rom || !rom->bytes || !registers ||
       rom->size < xp_profile(rom)->limitTable + 256u)
@@ -560,13 +560,13 @@ bool tvf_update_frequency(const struct sc88_rom *rom,
   return true;
 }
 
-void tvf_latch_frequency(struct sc88_tvf_registers *registers)
+void tvf_latch_frequency(struct xp_tvf_registers *registers)
 {
   if (registers)
     registers->frequency_current = registers->frequency_target;
 }
 
-void tvf_advance_registers(struct sc88_tvf_registers *registers,
+void tvf_advance_registers(struct xp_tvf_registers *registers,
                             unsigned periods)
 {
   if (!registers || periods == 0)
@@ -579,14 +579,14 @@ void tvf_advance_registers(struct sc88_tvf_registers *registers,
      with two more fraction bits (see the damping note in the audio path). */
 }
 
-void tvf_audio_reset(struct sc88_tvf_audio_state *state)
+void tvf_audio_reset(struct xp_tvf_audio_state *state)
 {
   if (state)
     std::memset(state, 0, sizeof *state);
 }
 
-float tvf_audio_process_provisional(void *user, struct sc88_tvf_audio_state *state,
-                                     const struct sc88_tvf_registers *registers,
+float tvf_audio_process_provisional(void *user, struct xp_tvf_audio_state *state,
+                                     const struct xp_tvf_registers *registers,
                                      double periodFraction, float input)
 {
   if (!state || !registers)

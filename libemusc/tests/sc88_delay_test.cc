@@ -19,8 +19,8 @@ int main()
   static const uint8_t vectors[16] = {
     0, 0, 2, 0, 255, 255, 255, 255, 0, 0, 1, 244, 0, 0, 1, 244
   };
-  struct sc88_rom rom;
-  struct sc88_delay dl;
+  struct xp_rom rom;
+  struct xp_delay dl;
   uint8_t p[10];
   uint8_t macro[10];
   unsigned i;

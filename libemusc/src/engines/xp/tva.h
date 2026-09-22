@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-struct sc88_tva_levels {
+struct xp_tva_levels {
   uint8_t master;
   uint8_t secondary;
   uint8_t part;
@@ -31,7 +31,7 @@ struct sc88_tva_levels {
  * `XP_TVA_NO_DRUM_LEVEL` is that case. */
 #define XP_TVA_NO_DRUM_LEVEL 0xffu
 
-struct sc88_tva_release {
+struct xp_tva_release {
   uint16_t current;
   uint16_t increment;
   uint16_t scale;
@@ -45,7 +45,7 @@ struct sc88_tva_release {
  * index, clamped to 0..127 (`07_synthesis/tva.md`). The secondary source
  * is not modelled and stays neutral.
  */
-struct sc88_tva_controls {
+struct xp_tva_controls {
   uint8_t part_attack;
   uint8_t secondary_attack;
   uint8_t part_decay;
@@ -70,14 +70,14 @@ struct sc88_tva_controls {
  * exponential one - which is why the exponential arrives within 2e-5 of
  * its target exactly as the phase counter carries, and a stage boundary is
  * not a step. */
-struct sc88_tva_curve {
+struct xp_tva_curve {
   /* `value / 64`: the fraction of a linear stage covered per control
      period, and the reciprocal time constant of an exponential one. */
   double rate;
   bool linear;
 };
 
-struct sc88_tva_envelope {
+struct xp_tva_envelope {
   uint32_t targets_q17[4];
   /* The stage words as the component stores them, attenuations at about
      -5.26 dB per 0x1000. `targets_q17` above is what the chip is actually
@@ -87,7 +87,7 @@ struct sc88_tva_envelope {
   uint16_t target_attenuations[4];
   uint16_t start_attenuation;
   uint16_t curve_words[4];
-  struct sc88_tva_curve curves[4];
+  struct xp_tva_curve curves[4];
   /* Control periods elapsed inside the stage now running. The phase
      counter ends the stage; this is what the curve is evaluated on. */
   double stage_periods;
@@ -111,50 +111,50 @@ namespace EmuSC { namespace Xp {
 // above are shared, unrenamed, with sibling engines/xp/*.c modules not
 // yet ported.
 
-void tva_curve_decode(uint16_t word, struct sc88_tva_curve *curve);
+void tva_curve_decode(uint16_t word, struct xp_tva_curve *curve);
 /* How much of the gap the curve has closed after `periods` periods. */
-double tva_curve_progress(const struct sc88_tva_curve *curve, double periods);
+double tva_curve_progress(const struct xp_tva_curve *curve, double periods);
 
 /* Exact CPU-side note-on AmpM path. The returned linear XP gain is Q17 with
  * 0x20000 as unity. Envelope Amp, modulation and XP ramp precision are
  * separate stages and are deliberately not folded into this value. */
-bool tva_static_gain_q17(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
-                          const struct sc88_zone_selection *zone,
+bool tva_static_gain_q17(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
+                          const struct xp_zone_selection *zone,
                           uint8_t selectorKey, uint8_t velocity,
-                          const struct sc88_tva_levels *levels,
+                          const struct xp_tva_levels *levels,
                           uint8_t drumLevel, uint16_t *staticAttenuation,
                           uint32_t *gainQ17);
-bool tva_gain_from_headroom_q17(const struct sc88_rom *rom, uint16_t headroom,
-                                 const struct sc88_tva_levels *levels,
+bool tva_gain_from_headroom_q17(const struct xp_rom *rom, uint16_t headroom,
+                                 const struct xp_tva_levels *levels,
                                  uint8_t drumLevel, uint16_t staticAttenuation,
                                  uint32_t *gainQ17);
-bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
-                          uint8_t selectorKey, struct sc88_tva_release *release);
-bool tva_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
+bool tva_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
+                          uint8_t selectorKey, struct xp_tva_release *release);
+bool tva_release_set_pedal(const struct xp_rom *rom, uint8_t hold1,
                             bool continuousHold, bool keepScaleAtZero,
                             bool sostenutoRetained,
-                            struct sc88_tva_release *release);
-bool tva_release_advance(struct sc88_tva_release *release,
+                            struct xp_tva_release *release);
+bool tva_release_advance(struct xp_tva_release *release,
                           unsigned elapsedPeriods);
 
 /* Four-stage firmware clock, target gains, rate scaling and the packed XP
  * curve word each stage is approached with. Attack/decay modifiers are
  * neutral in this entry point. `controls` may be null, which is the same
  * as every modifier centred. */
-bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool tva_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, uint8_t velocity,
-                           const struct sc88_tva_controls *controls,
-                           struct sc88_tva_envelope *envelope);
-bool tva_envelope_advance(const struct sc88_rom *rom,
-                           struct sc88_tva_envelope *envelope,
+                           const struct xp_tva_controls *controls,
+                           struct xp_tva_envelope *envelope);
+bool tva_envelope_advance(const struct xp_rom *rom,
+                           struct xp_tva_envelope *envelope,
                            unsigned elapsedPeriods);
-uint32_t tva_envelope_linear_q17(const struct sc88_rom *rom,
-  const struct sc88_tva_envelope *envelope, double periodFraction);
-void tva_envelope_freeze(const struct sc88_rom *rom,
-                          struct sc88_tva_envelope *envelope,
+uint32_t tva_envelope_linear_q17(const struct xp_rom *rom,
+  const struct xp_tva_envelope *envelope, double periodFraction);
+void tva_envelope_freeze(const struct xp_rom *rom,
+                          struct xp_tva_envelope *envelope,
                           double periodFraction);
 
 }}  // namespace EmuSC::Xp

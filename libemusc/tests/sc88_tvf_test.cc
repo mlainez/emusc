@@ -57,12 +57,12 @@ int main()
   };
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   uint8_t component_bytes[148u] = {0};  /* SC88_PROFILE.componentSize */
-  struct sc88_rom rom;
-  struct sc88_component component = {component_bytes, 0, 0};
+  struct xp_rom rom;
+  struct xp_component component = {component_bytes, 0, 0};
   uint8_t tone_common[34u] = {0};       /* SC88_PROFILE.toneCommonSize */
-  struct sc88_tone tone = {tone_common, 0x40000, 1};
-  const struct sc88_tvf_controls neutral = {64, 64, 64, 64, 0};
-  struct sc88_tvf_registers registers;
+  struct xp_tone tone = {tone_common, 0x40000, 1};
+  const struct xp_tvf_controls neutral = {64, 64, 64, 64, 0};
+  struct xp_tvf_registers registers;
 
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
@@ -114,9 +114,9 @@ int main()
      from both. So one unit of matrix cutoff weighs exactly what one unit
      of key modulation does. */
   {
-    struct sc88_tvf_controls matrix = {64, 64, 64, 64, 0};
-    struct sc88_tvf_registers with_key;
-    struct sc88_tvf_registers with_matrix;
+    struct xp_tvf_controls matrix = {64, 64, 64, 64, 0};
+    struct xp_tvf_registers with_key;
+    struct xp_tvf_registers with_matrix;
     component_bytes[0x3e] = 4;
     /* 0x6ad4..0x6afd turns 1000 into 2047. */
     matrix.matrix_cutoff = 1000;
@@ -164,8 +164,8 @@ int main()
      the base entry and before the halving (`0x6bd7`, `0x6cbb`), so one
      unit of it weighs exactly what one unit of key modulation does. */
   {
-    struct sc88_tvf_registers with_key;
-    struct sc88_tvf_registers with_lfo;
+    struct xp_tvf_registers with_key;
+    struct xp_tvf_registers with_lfo;
     component_bytes[0x3e] = 4;
     assert(tvf_prepare_registers(&rom, &component, 2031, &neutral,
                                       &with_key));
@@ -186,7 +186,7 @@ int main()
   assert(registers.filter_select == 0x0800);
   assert(registers.fixed_tuple);
   {
-    struct sc88_tvf_audio_state audio;
+    struct xp_tvf_audio_state audio;
     float sample;
     tvf_audio_reset(&audio);
     sample = tvf_audio_process_provisional(
@@ -214,7 +214,7 @@ int main()
   put16(bytes + 0x1573e + 64 * 2, 0x0100);
   put16(bytes + 0x78802 + 12 * 2, 0xffff);
   {
-    struct sc88_tvf_envelope envelope;
+    struct xp_tvf_envelope envelope;
     int16_t key_modulation;
     assert(tvf_key_modulation(&rom, &tone, &component, 60,
                                     &key_modulation));
@@ -240,7 +240,7 @@ int main()
     assert(tvf_update_frequency(&rom, envelope.current, &registers));
     assert(registers.frequency_target != registers.frequency_current);
     {
-      struct sc88_tvf_audio_state audio;
+      struct xp_tvf_audio_state audio;
       float filtered;
       unsigned n;
       tvf_audio_reset(&audio);
@@ -286,7 +286,7 @@ int main()
       assert(filtered > 0.999f && filtered < 1.001f);
     }
     {
-      struct sc88_tvf_release release;
+      struct xp_tvf_release release;
       component_bytes[0x58] = 1;
       put16(component_bytes + 0x52, 0xc000);
       assert(tvf_release_prepare(

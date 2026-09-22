@@ -17,7 +17,7 @@ using namespace EmuSC::Xp;
    that came out of the ROM are. */
 int main()
 {
-  struct sc88_chorus ch;
+  struct xp_chorus ch;
   float stereo[64 * 2];
   float send[64];
   unsigned i;

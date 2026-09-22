@@ -33,7 +33,7 @@ unsigned scaleAddr(unsigned addr, double scale)
   return (unsigned)((double)addr * scale + 0.5);
 }
 
-float eramRead(const struct sc88_reverb *rv, unsigned a)
+float eramRead(const struct xp_reverb *rv, unsigned a)
 {
   unsigned i = rv->eram_pos + a;
   if (i >= rv->eram_len)
@@ -41,7 +41,7 @@ float eramRead(const struct sc88_reverb *rv, unsigned a)
   return rv->eram[i];
 }
 
-void eramWrite(struct sc88_reverb *rv, unsigned a, float v)
+void eramWrite(struct xp_reverb *rv, unsigned a, float v)
 {
   unsigned i = rv->eram_pos + a;
   if (i >= rv->eram_len)
@@ -52,7 +52,7 @@ void eramWrite(struct sc88_reverb *rv, unsigned a, float v)
 /* One buffer as the program runs it: the far end is already read, and the
  * section is an allpass where the character enables its pair and a plain
  * delay where it does not. */
-float section(struct sc88_reverb *rv, unsigned b, float x, float delayed)
+float section(struct xp_reverb *rv, unsigned b, float x, float delayed)
 {
   if (rv->character.allpass[b]) {
     float v = x + rv->allpass_g * delayed;
@@ -65,7 +65,7 @@ float section(struct sc88_reverb *rv, unsigned b, float x, float delayed)
 
 }  // namespace
 
-bool reverb_tap_gains(const struct sc88_rom *rom, float gains[XP_REVERB_TAPS])
+bool reverb_tap_gains(const struct xp_rom *rom, float gains[XP_REVERB_TAPS])
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !gains ||
@@ -84,8 +84,8 @@ bool reverb_tap_gains(const struct sc88_rom *rom, float gains[XP_REVERB_TAPS])
   return true;
 }
 
-bool reverb_read_character(const struct sc88_rom *rom, uint8_t character,
-                            struct sc88_reverb_character *out)
+bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
+                            struct xp_reverb_character *out)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !out || character >= kReverbCharacters ||
@@ -173,7 +173,7 @@ bool reverb_pre_lpf(uint8_t p, float *feedback, float *input)
 
 /* The eight reverb macro presets, one 8-byte record each, of which the
  * firmware copies the first seven bytes over character..predelay. */
-bool reverb_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[7])
+bool reverb_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[7])
 {
   if (!rom || !rom->bytes || !out || macro > 7)
     return false;
@@ -185,7 +185,7 @@ bool reverb_macro(const struct sc88_rom *rom, uint8_t macro, uint8_t out[7])
   return true;
 }
 
-bool reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
+bool reverb_init(struct xp_reverb *rv, const struct xp_rom *rom,
                   uint8_t character, double outputRate)
 {
   if (!rv || outputRate < 8000.0 || outputRate > 192000.0)
@@ -230,7 +230,7 @@ bool reverb_init(struct sc88_reverb *rv, const struct sc88_rom *rom,
   return true;
 }
 
-void reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
+void reverb_set_predelay(struct xp_reverb *rv, uint8_t milliseconds)
 {
   if (!rv || milliseconds > 127)
     return;
@@ -248,7 +248,7 @@ void reverb_set_predelay(struct sc88_reverb *rv, uint8_t milliseconds)
   rv->pre_delay_taps = want;
 }
 
-void reverb_destroy(struct sc88_reverb *rv)
+void reverb_destroy(struct xp_reverb *rv)
 {
   if (!rv)
     return;
@@ -257,7 +257,7 @@ void reverb_destroy(struct sc88_reverb *rv)
   std::memset(rv, 0, sizeof *rv);
 }
 
-void reverb_reset(struct sc88_reverb *rv)
+void reverb_reset(struct xp_reverb *rv)
 {
   if (!rv)
     return;
@@ -273,7 +273,7 @@ void reverb_reset(struct sc88_reverb *rv)
   rv->pre_delay_pos = 0;
 }
 
-void reverb_set_params(struct sc88_reverb *rv, uint8_t level, uint8_t time,
+void reverb_set_params(struct xp_reverb *rv, uint8_t level, uint8_t time,
                         uint8_t preLpf)
 {
   if (!rv)
@@ -395,7 +395,7 @@ void reverb_set_params(struct sc88_reverb *rv, uint8_t level, uint8_t time,
   rv->wet_gain_right = rv->wet_gain_left;
 }
 
-void reverb_process(struct sc88_reverb *rv, const float *send, float *stereo,
+void reverb_process(struct xp_reverb *rv, const float *send, float *stereo,
                      size_t frames)
 {
   if (!rv || !rv->active || !send || !stereo || !rv->eram)

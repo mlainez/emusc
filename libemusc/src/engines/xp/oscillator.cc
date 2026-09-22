@@ -44,7 +44,7 @@ namespace {
    x[c] by the invariant above, so it is answered directly rather than read:
    b-1 can sit before the first decoded frame when a zone loops from its own
    start.  */
-uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
+uint32_t cycle_address(const struct xp_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
   index %= oscillator->cycle_count;
@@ -56,7 +56,7 @@ uint32_t cycle_address(const struct sc88_oscillator *oscillator, size_t index)
 }
 
 /* True while the cycle is on its reflected descending pass. */
-bool cycle_reflected(const struct sc88_oscillator *oscillator, size_t index)
+bool cycle_reflected(const struct xp_oscillator *oscillator, size_t index)
 {
   const size_t span = (size_t)(oscillator->end - oscillator->loop) + 1;
   if (oscillator->mode != XP_WAVE_PING_PONG_LOOP || !oscillator->cycle_count)
@@ -64,7 +64,7 @@ bool cycle_reflected(const struct sc88_oscillator *oscillator, size_t index)
   return (index % oscillator->cycle_count) < span;
 }
 
-bool reflected(const struct sc88_oscillator *oscillator, size_t index)
+bool reflected(const struct xp_oscillator *oscillator, size_t index)
 {
   if (oscillator->initial) {
     if (index < oscillator->initial_count || !oscillator->cycle_count)
@@ -74,7 +74,7 @@ bool reflected(const struct sc88_oscillator *oscillator, size_t index)
   return cycle_reflected(oscillator, index);
 }
 
-uint32_t address_at(const struct sc88_oscillator *oscillator, size_t index)
+uint32_t address_at(const struct xp_oscillator *oscillator, size_t index)
 {
   if (oscillator->initial) {
     if (index < oscillator->initial_count) {
@@ -90,7 +90,7 @@ uint32_t address_at(const struct sc88_oscillator *oscillator, size_t index)
   return cycle_address(oscillator, index);
 }
 
-bool contains(const struct sc88_oscillator *oscillator, uint32_t address)
+bool contains(const struct xp_oscillator *oscillator, uint32_t address)
 {
   return address >= oscillator->pcm_base &&
     (size_t)(address - oscillator->pcm_base) < oscillator->pcm_count;
@@ -99,13 +99,13 @@ bool contains(const struct sc88_oscillator *oscillator, uint32_t address)
 }  // namespace
 
 bool oscillator_init(const struct XpDeviceProfile *profile,
-                      struct sc88_oscillator *oscillator,
+                      struct xp_oscillator *oscillator,
                       const int32_t *pcm24, size_t pcmCount,
                       uint32_t pcmBase,
-                      const struct sc88_wave_registers *registers,
-                      enum sc88_wave_loop_type mode,
+                      const struct xp_wave_registers *registers,
+                      enum xp_wave_loop_type mode,
                       uint32_t pitchWord, double outputRate,
-                      enum sc88_fractional_wrap wrap)
+                      enum xp_fractional_wrap wrap)
 {
   if (!profile)
     profile = &SC88_PROFILE;
@@ -212,7 +212,7 @@ namespace {
    opposite reading came from a metric that rewarded an output for repeating
    on the integer sample grid, which is exactly what clearing the phase
    manufactures. */
-double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
+double wrapped_phase(const struct xp_oscillator *oscillator, double overflow)
 {
   switch (oscillator->wrap) {
   case XP_WRAP_FULL_CARRY:
@@ -233,7 +233,7 @@ double wrapped_phase(const struct sc88_oscillator *oscillator, double overflow)
    significand represents every integer in that range exactly, so this
    float carries the sample - and the plain integer arithmetic below it -
    with no precision loss versus double. */
-bool value_at(const struct sc88_oscillator *oscillator, size_t index,
+bool value_at(const struct xp_oscillator *oscillator, size_t index,
               float *out)
 {
   uint32_t address = address_at(oscillator, index);
@@ -387,7 +387,7 @@ bool value_at(const struct sc88_oscillator *oscillator, size_t index,
    Before the note's FIRST position there is genuinely nothing: the zone's
    decode starts at `start`, and in a differential format the frame before
    it is not a sample of this wave at all.  The caller folds back. */
-bool previous_index(const struct sc88_oscillator *oscillator, size_t index,
+bool previous_index(const struct xp_oscillator *oscillator, size_t index,
                     size_t *out)
 {
   if (index > 0) {
@@ -409,18 +409,18 @@ bool previous_index(const struct sc88_oscillator *oscillator, size_t index,
    exactly the one the two-point read used.
 
    Which of the two can actually be missing is not symmetric.  The forward
-   tap, index + 2, is answered for every zone `sc88_oscillator_init`
+   tap, index + 2, is answered for every zone `xp_oscillator_init`
    accepts: a loop wraps it modulo the cycle, a one-shot holds it at `end`
    (`end + 1` reversed) and init has already checked that address is inside
    the zone, and the ping-pong's one unreadable position is answered by the
-   ROM's zero-sum invariant in `sc88_oscillator_value`.  Its fallback is a
+   ROM's zero-sum invariant in `xp_oscillator_value`.  Its fallback is a
    guard, not a case that arises.  The backward tap goes missing exactly
    once per note - at position zero of the initial pass - and the value it
    falls back to is a CHOICE, not a recovered one: nothing measured here
    says what the chip reads when its address counter is still on the zone's
    first frame.  It costs at most the note's first 1/step output samples
    and weight (1-f)^3/6 of one of them. */
-float outer_tap(const struct sc88_oscillator *oscillator, size_t index,
+float outer_tap(const struct xp_oscillator *oscillator, size_t index,
                  bool back, float inner)
 {
   size_t at;
@@ -437,7 +437,7 @@ float outer_tap(const struct sc88_oscillator *oscillator, size_t index,
 
 }  // namespace
 
-bool oscillator_next(struct sc88_oscillator *oscillator, float *sample)
+bool oscillator_next(struct xp_oscillator *oscillator, float *sample)
 {
   if (!oscillator || !sample || oscillator->ended)
     return false;

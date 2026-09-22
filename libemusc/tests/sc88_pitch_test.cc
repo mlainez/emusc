@@ -24,11 +24,11 @@ int main()
   uint8_t *bytes = (uint8_t *)calloc(XP_CONTROL_ROM_SIZE, 1);
   uint8_t component_bytes[148u] = {0};  /* SC88_PROFILE.componentSize */
   uint8_t common[34u] = {0};            /* SC88_PROFILE.toneCommonSize */
-  struct sc88_rom rom;
-  struct sc88_tone tone = {common, 0x40000, 1};
-  struct sc88_component component = {component_bytes, 0, 0};
-  struct sc88_pitch_envelope envelope;
-  struct sc88_pitch_release release;
+  struct xp_rom rom;
+  struct xp_tone tone = {common, 0x40000, 1};
+  struct xp_component component = {component_bytes, 0, 0};
+  struct xp_pitch_envelope envelope;
+  struct xp_pitch_release release;
   assert(bytes);
   memcpy(bytes, vectors, sizeof vectors);
   memcpy(bytes + 0x30000, "\0\0Piano 1A    \3\377", 16);
@@ -64,7 +64,7 @@ int main()
   assert(release.delta == release.destination);
   assert(pitch_release_activate(&rom, 0, false, false, false,
                                 &release));
-  /* `58ce..58d6`, which `sc88_engine_start_release` performs for a tone
+  /* `58ce..58d6`, which `startRelease` performs for a tone
      whose tone-common `+0x15` is clear. */
   release.delta = (int16_t)((uint16_t)release.destination -
                             (uint16_t)envelope.current);
@@ -133,7 +133,7 @@ int main()
   assert(portamento_rate(&rom, 0) == 0);
 
   {
-    struct sc88_portamento glide;
+    struct xp_portamento glide;
     memset(&glide, 0, sizeof glide);
     glide.current = 40u << 16;
     glide.target = 76u << 16;

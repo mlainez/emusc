@@ -19,7 +19,7 @@ built on) put every device into one of:
 This directory is Class X's home. It exists because SC-88's engine is
 architecturally nothing like Class G's: it reads the control ROM itself,
 owns every table it needs, and is driven from `synth.cc` through an
-opaque `struct sc88_device*` rather than through `Part`/`Note`/`Partial`.
+opaque `Xp::Device*` rather than through `Part`/`Note`/`Partial`.
 
 **Why it's SC-88-shaped today:** SC-88 is currently the only Class-X
 member with usable research in this project. That is a fact about where

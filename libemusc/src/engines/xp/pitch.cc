@@ -38,8 +38,8 @@ int16_t scale_target(int16_t target, uint16_t depth)
   return s16((uint16_t)floor16((int32_t)target * depth));
 }
 
-bool rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                 const struct sc88_component *component, uint8_t key,
+bool rate_scale(const struct xp_rom *rom, const struct xp_tone *tone,
+                 const struct xp_component *component, uint8_t key,
                  uint16_t pointerAt, uint8_t factorAt, uint8_t velocity,
                  int velocityFactor, bool useVelocity, uint16_t *scale)
 {
@@ -102,10 +102,10 @@ uint16_t velocity_depth(uint16_t input, uint8_t velocity, int factor)
 
 }  // namespace
 
-bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                             const struct sc88_component *component,
+bool pitch_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                             const struct xp_component *component,
                              uint8_t selectorKey, uint8_t velocity,
-                             struct sc88_pitch_envelope *envelope)
+                             struct xp_pitch_envelope *envelope)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !rom->bytes || !tone || !component || !component->bytes ||
@@ -139,7 +139,7 @@ bool pitch_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *
   return true;
 }
 
-bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
+bool pitch_envelope_advance(struct xp_pitch_envelope *envelope,
                              unsigned elapsedPeriods)
 {
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
@@ -179,10 +179,10 @@ bool pitch_envelope_advance(struct sc88_pitch_envelope *envelope,
   return true;
 }
 
-bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                            const struct sc88_component *component,
+bool pitch_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                            const struct xp_component *component,
                             uint8_t selectorKey, uint16_t envelopeDepth,
-                            struct sc88_pitch_release *release)
+                            struct xp_pitch_release *release)
 {
   if (!release || !component || !component->bytes)
     return false;
@@ -202,16 +202,16 @@ bool pitch_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *t
   /* `6559` and `58ce` write ONE word, `0x2a5a`: the destination at note on,
      and the distance left to it at note off. `delta` is that word and
      `destination` is kept beside it, so a note off that does not reach
-     `58ce` - the `+0x15` tones, `sc88_engine_start_release` - ramps toward
+     `58ce` - the `+0x15` tones, `startRelease` - ramps toward
      the destination exactly as the machine does. */
   release->delta = release->destination;
   return true;
 }
 
-bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
+bool pitch_release_activate(const struct xp_rom *rom, uint8_t hold1,
                              bool continuousHold, bool keepScaleAtZero,
                              bool sostenutoRetained,
-                             struct sc88_pitch_release *release)
+                             struct xp_pitch_release *release)
 {
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
@@ -236,7 +236,7 @@ bool pitch_release_activate(const struct sc88_rom *rom, uint8_t hold1,
   return true;
 }
 
-bool pitch_release_advance(struct sc88_pitch_release *release,
+bool pitch_release_advance(struct xp_pitch_release *release,
                             unsigned elapsedPeriods)
 {
   if (!release || !release->active || elapsedPeriods == 0)
@@ -257,8 +257,8 @@ bool pitch_release_advance(struct sc88_pitch_release *release,
   return true;
 }
 
-int16_t pitch_envelope_sum(const struct sc88_pitch_envelope *envelope,
-                            const struct sc88_pitch_release *release)
+int16_t pitch_envelope_sum(const struct xp_pitch_envelope *envelope,
+                            const struct xp_pitch_release *release)
 {
   if (!envelope || !release)
     return 0;
@@ -286,7 +286,7 @@ uint32_t pitch_current_word(uint32_t base, int32_t offset, int16_t envelopeSum)
   return value & ~UINT32_C(1);
 }
 
-uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time)
+uint32_t portamento_rate(const struct xp_rom *rom, uint8_t time)
 {
   if (!rom || !rom->bytes || time == 0 || time > 127)
     return 0;
@@ -296,7 +296,7 @@ uint32_t portamento_rate(const struct sc88_rom *rom, uint8_t time)
   return ((uint32_t)be16(rom->bytes + at) << 16) | be16(rom->bytes + at + 2);
 }
 
-void portamento_advance(struct sc88_portamento *portamento,
+void portamento_advance(struct xp_portamento *portamento,
                          unsigned elapsedPeriods)
 {
   if (!portamento || !portamento->active)

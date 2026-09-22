@@ -38,7 +38,7 @@ int32_t floor_div_pow2(int32_t value, unsigned shift)
     ((UINT32_C(1) << shift) - 1)) >> shift);
 }
 
-bool level_word(const struct sc88_rom *rom, uint8_t index, uint16_t *word)
+bool level_word(const struct xp_rom *rom, uint8_t index, uint16_t *word)
 {
   uint32_t offset = xp_profile(rom)->levelTable + (uint32_t)index * 2;
   if (!rom || !rom->bytes || !word || offset + 2 > rom->size)
@@ -47,9 +47,9 @@ bool level_word(const struct sc88_rom *rom, uint8_t index, uint16_t *word)
   return true;
 }
 
-bool component_attenuation(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                            const struct sc88_component *component,
-                            const struct sc88_zone_selection *zone,
+bool component_attenuation(const struct xp_rom *rom, const struct xp_tone *tone,
+                            const struct xp_component *component,
+                            const struct xp_zone_selection *zone,
                             uint8_t selectorKey, uint8_t velocity,
                             uint16_t *attenuation)
 {
@@ -121,7 +121,7 @@ bool component_attenuation(const struct sc88_rom *rom, const struct sc88_tone *t
  * with `tva_gain_from_headroom_q17`. Converting the stored word itself
  * inverts every envelope in the ROM: it made a piano swell from silence over
  * fourteen seconds and left every sustaining patch at -87 dB. */
-bool envelope_target_q17(const struct sc88_rom *rom, uint16_t attenuation,
+bool envelope_target_q17(const struct xp_rom *rom, uint16_t attenuation,
                           uint32_t *gainQ17)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
@@ -136,8 +136,8 @@ bool envelope_target_q17(const struct sc88_rom *rom, uint16_t attenuation,
   return true;
 }
 
-bool key_rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                     const struct sc88_component *component,
+bool key_rate_scale(const struct xp_rom *rom, const struct xp_tone *tone,
+                     const struct xp_component *component,
                      uint8_t selectorKey, uint16_t pointerAt,
                      uint8_t factorAt, uint16_t *scale)
 {
@@ -157,7 +157,7 @@ bool key_rate_scale(const struct sc88_rom *rom, const struct sc88_tone *tone,
   return true;
 }
 
-bool velocity_rate_scale(const struct sc88_rom *rom, uint8_t velocity,
+bool velocity_rate_scale(const struct xp_rom *rom, uint8_t velocity,
                           int factor, uint16_t *scale)
 {
   if (!rom || !rom->bytes || !scale || velocity > 127 ||
@@ -212,7 +212,7 @@ uint16_t curve_pack(uint16_t curveEntry, uint16_t scale)
 
 /* The component's own rate index shifted by the part's modifier for that
    stage pair: `clamp(index + 2 * (part + secondary - 128), 0, 127)`. */
-uint8_t adjusted_rate_index(uint8_t index, const struct sc88_tva_controls *controls,
+uint8_t adjusted_rate_index(uint8_t index, const struct xp_tva_controls *controls,
                             unsigned stage)
 {
   if (!controls)
@@ -245,7 +245,7 @@ uint8_t adjusted_rate_index(uint8_t index, const struct sc88_tva_controls *contr
    the separate gain-domain case that a stage rising out of digital silence
    needed: an exponential stage covers most of its gap early whichever
    direction it moves, so neither special case survives. */
-uint32_t stage_point(const struct sc88_tva_envelope *envelope, unsigned stage,
+uint32_t stage_point(const struct xp_tva_envelope *envelope, unsigned stage,
                       double periods)
 {
   double progress = tva_curve_progress(envelope->curves + stage, periods);
@@ -259,7 +259,7 @@ uint32_t stage_point(const struct sc88_tva_envelope *envelope, unsigned stage,
 
 }  // namespace
 
-void tva_curve_decode(uint16_t word, struct sc88_tva_curve *curve)
+void tva_curve_decode(uint16_t word, struct xp_tva_curve *curve)
 {
   /* The exponent's shifts, `0, 3, 5, 7`, read out of `78af..78bf`: stepping
      the exponent byte down by `0x40` shifts the product right by two, and
@@ -272,7 +272,7 @@ void tva_curve_decode(uint16_t word, struct sc88_tva_curve *curve)
     (double)(1u << shift[(word >> 12) & 3]) / 64.0;
 }
 
-double tva_curve_progress(const struct sc88_tva_curve *curve, double periods)
+double tva_curve_progress(const struct xp_tva_curve *curve, double periods)
 {
   if (!curve || periods <= 0.0 || curve->rate <= 0.0)
     return 0.0;
@@ -284,11 +284,11 @@ double tva_curve_progress(const struct sc88_tva_curve *curve, double periods)
   return q >= 40.0 ? 1.0 : 1.0 - std::exp(-q);
 }
 
-bool tva_static_gain_q17(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
-                          const struct sc88_zone_selection *zone,
+bool tva_static_gain_q17(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
+                          const struct xp_zone_selection *zone,
                           uint8_t selectorKey, uint8_t velocity,
-                          const struct sc88_tva_levels *levels,
+                          const struct xp_tva_levels *levels,
                           uint8_t drumLevel, uint16_t *staticAttenuation,
                           uint32_t *gainQ17)
 {
@@ -310,8 +310,8 @@ bool tva_static_gain_q17(const struct sc88_rom *rom, const struct sc88_tone *ton
  * is therefore in this loop and not a multiply on the way in: the table is
  * a log-domain attenuation, and applying the level as a linear ratio
  * delivered almost exactly half the attenuation in dB. */
-bool tva_gain_from_headroom_q17(const struct sc88_rom *rom, uint16_t headroom,
-                                 const struct sc88_tva_levels *levels,
+bool tva_gain_from_headroom_q17(const struct xp_rom *rom, uint16_t headroom,
+                                 const struct xp_tva_levels *levels,
                                  uint8_t drumLevel, uint16_t staticAttenuation,
                                  uint32_t *gainQ17)
 {
@@ -352,9 +352,9 @@ bool tva_gain_from_headroom_q17(const struct sc88_rom *rom, uint16_t headroom,
   return true;
 }
 
-bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                          const struct sc88_component *component,
-                          uint8_t selectorKey, struct sc88_tva_release *release)
+bool tva_release_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                          const struct xp_component *component,
+                          uint8_t selectorKey, struct xp_tva_release *release)
 {
   if (!rom || !rom->bytes || !tone || !tone->common || !component ||
       !component->bytes || !release || selectorKey > 127)
@@ -387,10 +387,10 @@ bool tva_release_prepare(const struct sc88_rom *rom, const struct sc88_tone *ton
   return true;
 }
 
-bool tva_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
+bool tva_release_set_pedal(const struct xp_rom *rom, uint8_t hold1,
                             bool continuousHold, bool keepScaleAtZero,
                             bool sostenutoRetained,
-                            struct sc88_tva_release *release)
+                            struct xp_tva_release *release)
 {
   if (!rom || !rom->bytes || !release || hold1 > 127)
     return false;
@@ -414,7 +414,7 @@ bool tva_release_set_pedal(const struct sc88_rom *rom, uint8_t hold1,
   return true;
 }
 
-bool tva_release_advance(struct sc88_tva_release *release, unsigned elapsedPeriods)
+bool tva_release_advance(struct xp_tva_release *release, unsigned elapsedPeriods)
 {
   if (!release || !release->active || elapsedPeriods == 0)
     return false;
@@ -432,11 +432,11 @@ bool tva_release_advance(struct sc88_tva_release *release, unsigned elapsedPerio
   return true;
 }
 
-bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *tone,
-                           const struct sc88_component *component,
+bool tva_envelope_prepare(const struct xp_rom *rom, const struct xp_tone *tone,
+                           const struct xp_component *component,
                            uint8_t selectorKey, uint8_t velocity,
-                           const struct sc88_tva_controls *controls,
-                           struct sc88_tva_envelope *envelope)
+                           const struct xp_tva_controls *controls,
+                           struct xp_tva_envelope *envelope)
 {
   uint16_t keyScale;
   const struct XpDeviceProfile *profile = xp_profile(rom);
@@ -509,8 +509,8 @@ bool tva_envelope_prepare(const struct sc88_rom *rom, const struct sc88_tone *to
   return true;
 }
 
-uint32_t tva_envelope_linear_q17(const struct sc88_rom *rom,
-  const struct sc88_tva_envelope *envelope, double periodFraction)
+uint32_t tva_envelope_linear_q17(const struct xp_rom *rom,
+  const struct xp_tva_envelope *envelope, double periodFraction)
 {
   if (!envelope)
     return 0;
@@ -525,8 +525,8 @@ uint32_t tva_envelope_linear_q17(const struct sc88_rom *rom,
                       envelope->stage_periods + periodFraction);
 }
 
-bool tva_envelope_advance(const struct sc88_rom *rom,
-                           struct sc88_tva_envelope *envelope,
+bool tva_envelope_advance(const struct xp_rom *rom,
+                           struct xp_tva_envelope *envelope,
                            unsigned elapsedPeriods)
 {
   if (!envelope || !envelope->active || envelope->stage >= 4 ||
@@ -569,8 +569,8 @@ bool tva_envelope_advance(const struct sc88_rom *rom,
   return true;
 }
 
-void tva_envelope_freeze(const struct sc88_rom *rom,
-                          struct sc88_tva_envelope *envelope,
+void tva_envelope_freeze(const struct xp_rom *rom,
+                          struct xp_tva_envelope *envelope,
                           double periodFraction)
 {
   if (!envelope)
