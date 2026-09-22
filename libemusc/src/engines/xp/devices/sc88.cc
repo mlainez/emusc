@@ -4,7 +4,7 @@
  *
  *  The single instance below is this device's DeviceProfile equivalent -
  *  see sc88.h for the struct and the injection mechanism (sc88_rom::profile,
- *  sc88_engine::profile, xp_profile()/xp_profile_e()).
+ *  sc88_engine::profile, xp_profile()).
  */
 #include "sc88.h"
 #include "../rom.h"

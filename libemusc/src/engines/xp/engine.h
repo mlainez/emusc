@@ -246,18 +246,11 @@ struct sc88_engine {
   sc88_control_service_fn control_service;
   struct sc88_engine_stage_taps stage_taps;
   void *control_user;
-  /* Set by engine_init(). Never read directly - use xp_profile_e()
-     (below), which falls back to SC88_PROFILE when this is null. */
+  /* Set by engine_init() from the already-identified renderer->rom's own
+     profile (xp_profile()), so every field on this struct always reads
+     one device's facts consistently. */
   const struct XpDeviceProfile *profile;
 };
-
-/* Never-null equivalent of xp_profile() (devices/sc88.h) for an engine
-   rather than a rom. */
-static inline const struct XpDeviceProfile *xp_profile_e(
-    const struct sc88_engine *engine)
-{
-  return (engine && engine->profile) ? engine->profile : &SC88_PROFILE;
-}
 
 #ifdef __cplusplus
 }
