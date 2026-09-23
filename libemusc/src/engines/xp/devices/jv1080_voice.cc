@@ -713,14 +713,18 @@ double time_key_follow_scale(unsigned enumValue, unsigned key)
   return std::pow(2.0, -kf * ((double)key - 60.0) / 12.0);
 }
 
-/* MEASURED (`M-070`): velocity-time sensitivity is the same shape 27x
-   weaker, pivoting on velocity 64 - `t = t_64 * 2^(-vs*0.39*(vel-64)/63)`
-   with vs from -1 to +1 - and the pitch and filter envelopes measure the
-   same 1.30x span from velocity 1 to 127 to within 0.4 %. */
+/* MEASURED (`M-070`): velocity-time sensitivity pivots on velocity 64 and,
+   at the enum's extremes, spans a factor of 1.30 in time from velocity 1
+   to 127 - on the pitch and filter envelopes alike, to within 0.4 %. That
+   is 0.39 of an octave across the WHOLE range, half of it each side of 64:
+   `t = t_64 * 2^(-vs * 0.39 * (vel - 64) / 126)` with vs from -1 to +1.
+   Read on `closeout/penv_vel_t1_i{00,14}` at 4.5 s into a time-96 ramp,
+   the hardware travels 846 to 641 cents from velocity 1 to 127 at index 0
+   and 644 to 838 at index 14 - spans of 1.32 and 1.30. */
 double velocity_time_scale(unsigned enumValue, unsigned velocity)
 {
   double vs = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
-  return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 63.0);
+  return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 126.0);
 }
 
 /* Resonance as the two-pole section's Q, in dB. The peak gain of a
@@ -895,9 +899,25 @@ void filter_env_advance(struct XpJv1080Voice *voice, double seconds)
                        holds level 3, and from the note-off moves to level 4
                        over time 4.
 
+     velocity          the depth scales linearly with the velocity the
+                       A-ENV's sensitivity law reads (sensed_velocity), as
+                       (v - 1) / 126: at sensitivity -50 velocities 1, 32,
+                       64, 96, 127 peak at 1187, 890, 588, 299 and 12 cents
+                       (the law: 1200, 905, 600, 295, 0), at +75 at 12, 12,
+                       29, 622, 1200 (0, 0, 0, 610, 1200), and at 0 flat at
+                       1203-1205 (`pitch/penv_vel_sens_*`). Between those
+                       settings the sensitivity is interpolated as the
+                       A-ENV's is, which is not measured.
+     time key follow   times 2 to 4 scale by 2^(-kf (key - 60)/12)
+                       (`M-069`, measured on time 2). Time 1 is left alone,
+                       as `M-066` measured for the A-ENV's attack; the
+                       P-ENV's own attack is not measured.
+     velocity time     time 1 by `M-070`'s law, measured on the P-ENV; time
+                       4 by the same law, which is not measured.
+
    Measured on the tone record. A rhythm record carries the same fields and
-   is taken to read them the same way, which is not measured. The velocity
-   sensitivities and the time key follow are not applied here. */
+   is taken to read them the same way, which is not measured; its one
+   velocity-time field is given to time 1, as the F-ENV's is. */
 const double kPitchEnvTimeValue[] = { 8.0, 16.0, 32.0, 48.0, 64.0, 96.0, 127.0 };
 const double kPitchEnvTimeMs[] = { 44.0, 107.0, 322.0, 767.0, 1681.0, 7447.0, 31183.0 };
 
@@ -1771,14 +1791,24 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->penv_ratio = 1.0;
   if (fields->pitchEnvDepth != XP_VOICE_FIELD_NONE) {
     double depth = (double)(int8_t)tone[fields->pitchEnvDepth];
+    double reach = (double)sensed_velocity(velocity,
+      (int)(int8_t)(uint8_t)field_or(fields, fields->pitchEnvVelSens, tone, 0u));
+    reach = reach <= 1.0 ? 0.0 : (reach - 1.0) / 126.0;
+    unsigned timeKf = field_or(fields, fields->pitchEnvTimeKeyFollow, tone, 7u);
     bool moves = false;
     for (unsigned i = 0; i < 4u; ++i) {
-      voice->penv_level[i] = depth * 100.0 *
+      voice->penv_level[i] = depth * 100.0 * reach *
         (double)(int8_t)tone[fields->pitchEnvLevel1 + i] / 63.0;
       voice->penv_time[i] = pitch_env_seconds(tone[fields->pitchEnvTime1 + i]);
+      if (i)
+        voice->penv_time[i] *= time_key_follow_scale(timeKf, soundedKey);
       if (voice->penv_level[i] != 0.0)
         moves = true;
     }
+    voice->penv_time[0] *= velocity_time_scale(
+      field_or(fields, fields->pitchEnvVelTime1, tone, 7u), velocity);
+    voice->penv_time[3] *= velocity_time_scale(
+      field_or(fields, fields->pitchEnvVelTime4, tone, 7u), velocity);
     if (moves) {
       voice->penv_active = true;
       voice->penv_value = 0.0;

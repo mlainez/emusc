@@ -220,6 +220,10 @@ struct XpVoiceFieldMap {
   /* The pitch envelope: its signed depth, then four times and four signed
      levels, each run from its first index. */
   uint16_t pitchEnvDepth;
+  uint16_t pitchEnvVelSens;
+  uint16_t pitchEnvVelTime1;
+  uint16_t pitchEnvVelTime4;
+  uint16_t pitchEnvTimeKeyFollow;
   uint16_t pitchEnvTime1;
   uint16_t pitchEnvLevel1;
   uint16_t ampTime1;             /* four times run from here */
