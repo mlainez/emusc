@@ -97,6 +97,9 @@ struct XpJv1080PartControls {
   uint32_t lfo_seed;
   /* The three matrix controllers' sources as they stand, 0..1. */
   double matrix_source[3];
+  /* Which way this note's alternate pan throws: +1 on the part's first
+     note, then flipping on each note after it. */
+  int alternate_phase;
 };
 
 /* One of a voice's two LFOs: its waveform, its rate, the offset its

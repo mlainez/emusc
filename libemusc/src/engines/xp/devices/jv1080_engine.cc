@@ -573,6 +573,8 @@ struct Part {
   uint8_t pressure;
   uint8_t cc[128];
   bool hold;
+  /* The sign the part's next note throws its alternate pan with. */
+  int alternate_next;
   /* The RPN latch, 127/127 when none is selected, and the bend range RPN
      0/0 set, -1 while it has set none. */
   uint8_t rpn_msb;
@@ -913,6 +915,7 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
   part->rpn_msb = 0x7fu;
   part->rpn_lsb = 0x7fu;
   part->rpn_bend = -1;
+  part->alternate_next = 1;
   /* NOT MEASURED: the controllers' values before any is received. Pan
      centred, volume and expression full, the rest zero - the usual
      reset state, and the one every corpus stimulus writes. */
@@ -1989,6 +1992,7 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
   out->clock_seconds = (double)engine->frames / engine->output_rate;
   out->lfo_seed = (uint32_t)engine->serial;
+  out->alternate_phase = p.alternate_next;
   matrix_sources(engine, p, out->matrix_source);
 }
 
@@ -2408,6 +2412,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       }
       started += start_record(engine, part, &profile->rhythmNoteFields, note,
                                key, velocity, key) ? 1u : 0u;
+      engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
       return;
     }
     /* MEASURED (`M-124`): the patch's octave shift moves the NOTE, not
@@ -2444,6 +2449,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       started += start_record(engine, part, &profile->toneFields, bytes, key,
                                velocity, sounded) ? 1u : 0u;
     }
+    engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
   });
   return started != 0u;
 }

@@ -161,6 +161,12 @@ struct XpVoiceFieldMap {
   uint16_t waveGain;
   uint16_t level;
   uint16_t pan;
+  /* The other per-note pan sources: pan key follow (an index 0..14, 7
+     neutral), random pan depth (0..63), alternate pan depth (1..127, 64
+     neutral). */
+  uint16_t panKeyFollow;
+  uint16_t randomPanDepth;
+  uint16_t alternatePanDepth;
   uint16_t coarseTune;
   uint16_t fineTune;
   /* Random pitch depth, an index into the displayed-cents list 0..30. */

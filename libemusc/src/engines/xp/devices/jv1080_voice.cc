@@ -80,6 +80,7 @@ const struct { uint8_t distance; double difference_db; } kPanTable[] = {
   { 48u, 15.60 }, { 56u, 23.22 }, { 60u, 30.57 }, { 64u, 65.00 },
 };
 
+
 double interpolate_points(const double *xs, const double *ys, unsigned count,
                            double x)
 {
@@ -92,6 +93,33 @@ double interpolate_points(const double *xs, const double *ys, unsigned count,
     }
   }
   return ys[count - 1];
+}
+
+/* THE LAST STEPS ARE NOT SYMMETRIC (`M-047`, `P-xxxx`): at a distance of
+   63 the right-hand side is already hard - tone pan 127 reads -65.4 dB, on
+   the recorder's floor - where the left-hand side is not: the alternate-pan
+   takes land a note at tone pan 1 at +44.5, 21 dB inside its own hard
+   corner (pan 0, +65.7). So a right-hand distance of 63 is the stand-in
+   "hard" value, and a left-hand one is 44.5 dB. */
+const double kPanLeft63Db = 44.5;
+
+double pan_difference_asymmetric(double offset)
+{
+  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
+  double xs[sizeof kPanTable / sizeof kPanTable[0] + 1];
+  double ys[sizeof kPanTable / sizeof kPanTable[0] + 1];
+  double d = offset < 0.0 ? -offset : offset;
+  unsigned n = 0;
+  for (unsigned i = 0; i < count; ++i) {
+    if (kPanTable[i].distance == 64u) {
+      xs[n] = 63.0;
+      ys[n++] = offset < 0.0 ? kPanLeft63Db : kPanTable[i].difference_db;
+    }
+    xs[n] = kPanTable[i].distance;
+    ys[n++] = kPanTable[i].difference_db;
+  }
+  double m = interpolate_points(xs, ys, n, d);
+  return offset < 0.0 ? -m : m;
 }
 
 /* A level in the record's own 0-127 units as linear amplitude, through
@@ -135,17 +163,7 @@ double amp_env_amplitude_units(double amplitude)
    that is positive to the right. */
 double pan_difference_db(int offset)
 {
-  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
-  double xs[sizeof kPanTable / sizeof kPanTable[0]];
-  double ys[sizeof kPanTable / sizeof kPanTable[0]];
-  for (unsigned i = 0; i < count; ++i) {
-    xs[i] = kPanTable[i].distance;
-    ys[i] = kPanTable[i].difference_db;
-  }
-  double magnitude = interpolate_points(xs, ys, count,
-                                         (double)(offset < 0 ? -offset
-                                                             : offset));
-  return offset < 0 ? -magnitude : magnitude;
+  return pan_difference_asymmetric((double)offset);
 }
 
 /* MEASURED (`M-009`, `M-019`, `M-048`): one square-law table, indexed by
@@ -1319,15 +1337,7 @@ void lfo_advance(struct XpJv1080Lfo *lfo, double seconds)
 /* The pan-table difference for a pan distance that need not be whole. */
 double pan_difference_db_at(double offset)
 {
-  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
-  double xs[sizeof kPanTable / sizeof kPanTable[0]];
-  double ys[sizeof kPanTable / sizeof kPanTable[0]];
-  for (unsigned i = 0; i < count; ++i) {
-    xs[i] = kPanTable[i].distance;
-    ys[i] = kPanTable[i].difference_db;
-  }
-  double m = interpolate_points(xs, ys, count, offset < 0.0 ? -offset : offset);
-  return offset < 0.0 ? -m : m;
+  return pan_difference_asymmetric(offset);
 }
 
 void set_pan(struct XpJv1080Voice *voice, double offset)
@@ -1373,6 +1383,53 @@ unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                    const uint8_t *record, unsigned absent)
 {
   return which == XP_VOICE_FIELD_NONE ? absent : record[which];
+}
+
+/* THE PER-NOTE PAN SOURCES, as offsets from centre in pan units added to
+   the tone, patch and part pans (`M-002`). MEASURED (`M-047`, `P-xxxx`, the
+   `tva/` takes read as left minus right per note, each placed on the
+   hardware's own `tone_pan_sweep`):
+
+     alternate pan   (value - 64) units, the sign flipping on each note of
+                     the part and positive on its first: value 1 lands its
+                     notes at pan 1 and 127 in turn (+44.5 / -65.4 dB), 127
+                     the reverse, 64 all at centre. Only the ends and the
+                     middle are measured; between them it is taken as
+                     linear. WHAT THE MACHINE COUNTS IS NOT RESOLVED: here
+                     one counter per part flips on each note. On the
+                     factory-patch takes, where each slot follows a program
+                     change, that counter's sign matches the hardware on
+                     some slots and not others, and a counter per tone
+                     started does worse; neither is the machine's.
+     random pan      a fresh draw uniform across twice the depth each way:
+                     depth 32 spreads its sixteen notes from 60 units left to
+                     60 right; depth 63 puts eleven of sixteen on a rail (9
+                     left, 2 right). Uniform is taken, not recovered.
+     pan key follow  kf x (key - 60) x 3.58 units, kf -1..+1 across the
+                     panel's list: at index 0 (-100 %) keys 48 and 72 sit 43
+                     and 42 units right and left of centre, keys 24, 36, 84
+                     and beyond on the rails, index 7 centred at every key;
+                     index 14 the mirror. The 3.58 is read at +-12 keys
+                     alone; the list between the ends is the panel's. */
+const double kPanKeyFollow[15] = { -1.0, -0.7, -0.5, -0.4, -0.3, -0.2, -0.1, 0.0,
+                                   0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0 };
+
+int note_pan_offset(const struct XpVoiceFieldMap *fields, const uint8_t *tone,
+                    unsigned key, const struct XpJv1080PartControls *controls)
+{
+  double offset = 0.0;
+  unsigned kf = field_or(fields, fields->panKeyFollow, tone, 7u);
+  offset += kPanKeyFollow[kf > 14u ? 14u : kf] * ((double)key - 60.0) * 3.58;
+  unsigned alt = field_or(fields, fields->alternatePanDepth, tone, 64u);
+  offset += (double)((int)alt - 64) * (double)(controls->alternate_phase < 0 ? -1 : 1);
+  unsigned depth = field_or(fields, fields->randomPanDepth, tone, 0u);
+  if (depth) {
+    uint32_t seed = controls->lfo_seed * 3266489917u + 0x85ebca6bu;
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    offset += 2.0 * (double)depth * (2.0 * ((double)(seed >> 8) / 16777216.0) - 1.0);
+  }
+  return (int)std::lround(offset);
 }
 
 /* Which key selects the zone, and which key the wave is played at. They are
@@ -1668,7 +1725,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* Pan: the tone's and the patch's index one table and sum as offsets from
      centre (`M-002`, `M-048`). */
   int panOffset = (int)tone[fields->pan] - 64 +
-    ((int)controls->patch_pan - 64) + ((int)controls->part_pan - 64);
+    ((int)controls->patch_pan - 64) + ((int)controls->part_pan - 64) +
+    note_pan_offset(fields, tone, soundedKey, controls);
   if (panOffset < -64)
     panOffset = -64;
   if (panOffset > 63)
