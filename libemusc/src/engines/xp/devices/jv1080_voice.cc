@@ -467,7 +467,13 @@ double wave_gain(unsigned raw)
    88. Outside 40-104 nothing is resolved - the interface's roll-off below,
    the fits' breakdown above - and the ends extend at 10 steps per octave,
    the -3 dB corners' own slope. Below cutoff about 20 the machine emits
-   digital silence, as the extension does.
+   digital silence, as the extension does. At cutoffs 24 and 32 the saw
+   take's harmonics, fitted the same way, read 22.1 and 38.6 Hz - 0.11 and
+   0.12 octave above the extension, which is the margin by which that
+   method reads above the noise fit at 40 (66.8 against 62 Hz), so the
+   extension is not moved on it. What the saw take shows beyond that at
+   low cutoffs sits within 15 dB of its own noise floor, 100 dB and more
+   under full scale.
 
    Measured on the low-pass; the other three types take the same frequency,
    which is not measured. */
