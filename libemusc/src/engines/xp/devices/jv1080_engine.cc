@@ -180,6 +180,41 @@ const unsigned kEfxTypeStereoDelay = 16u;
    (`M-067`). Low Gain and Hi Gain are read and ignored for the reason they
    are on type 17. */
 const unsigned kEfxTypeTripleTap = 18u;
+/* TIME-CONTROL-DELAY (display 21). One delay line, one tap - slot 28 carries
+   a single ERAM write and no static read, its tap being patched at runtime.
+
+   p1 IS THE DELAY AND p2 IS THE ACCEL, measured from the corpus's own
+   addressing rather than from the page: the four `closeout/efx21_accel_*`
+   stimuli sweep the delay by writing efx_p_1, and the only byte differing
+   between the `a000` and `a127` files of a pair is efx_p_2. `M-068` derived
+   its constant by watching the delay glide in those takes, which is only
+   possible if the swept byte is the delay.
+
+   THE REMAINING POSITIONS ARE THE LABEL PAGE'S AND ARE NOT INDIVIDUALLY
+   MEASURED - p3 Feedback, p4 Pan, p5 HF Damp, p6 Low Gain, p7 Hi Gain,
+   p8 Balance, p9 Level. The page is trusted here because its first two
+   entries are exactly where measurement found them, but it carries nine
+   labels for twelve slots, which is the same spare-slot condition that
+   makes type 17's page start at p2. Said plainly rather than presented as
+   measured.
+
+   THE DELAY IS THE SETTLED VALUE ONLY. Accel makes the delay time a TARGET
+   rather than a setting: the line glides to it over seconds, reading 680
+   then 476 then 389 then 386 ms across successive windows of one take
+   (`M-068`). WHAT IS NOT MODELLED HERE IS THAT GLIDE - the rate for a given
+   Accel value is not recovered, so this jumps to the settled value where
+   the machine slides to it. A transient, and a real difference for the
+   seconds it lasts.
+
+   THE 0.966 IS MEASURED AND UNEXPLAINED. Where every other delay table on
+   this device reads as raw samples at 32 kHz, `0x0391AE` settles at a
+   CONSTANT 0.966 of its entry across a 4.75x span, approached from above
+   and from below to within 0.1 ms (`M-068`). It is applied here as the
+   measured constant it is and NOT folded into a general scale, which is
+   TASK-342.02's own AC#4. */
+const unsigned kEfxTypeTimeControl = 20u;
+const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
+const double kEfxTimeControlScale = 0.966;
 const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
 const double kEfxFeedbackZero = 49.0;
 const double kEfxFeedbackStep = 50.0;
@@ -878,6 +913,50 @@ void efx_tap_process(struct Engine *engine, const float *inL,
   }
 }
 
+/* TIME-CONTROL: one line, one tap, settled value only. */
+void efx_time_control_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxAccelDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxAccelDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  engine->efx_taps = 1u;
+  uint16_t samples = 0;
+  efx_table_value(&engine->rom, kEfxAccelDelayTable, p[0], 0, &samples);
+  engine->efx_tap_delay[0] =
+    (double)samples * kEfxTimeControlScale * scale;
+  /* Pan places the single tap in the image; centre is the field's middle. */
+  double pan = (double)p[3] / 127.0;
+  engine->efx_tap_left[0] = (float)(1.0 - pan);
+  engine->efx_tap_right[0] = (float)pan;
+  engine->efx_feedback =
+    (float)(((double)p[2] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  {
+    unsigned row = p[4];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0) : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[7], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[7], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[8], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
@@ -885,6 +964,8 @@ void efx_algorithm_refresh(struct Engine *engine)
     efx_stereo_delay_refresh(engine);
   else if (engine->efx_type == kEfxTypeTripleTap)
     efx_triple_tap_refresh(engine);
+  else if (engine->efx_type == kEfxTypeTimeControl)
+    efx_time_control_refresh(engine);
 }
 
 /* The EFX output block: level, and the two sends the assign may mask out. */
@@ -1549,7 +1630,8 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      if (engine->efx_type == kEfxTypeTripleTap)
+      if (engine->efx_type == kEfxTypeTripleTap ||
+          engine->efx_type == kEfxTypeTimeControl)
         efx_tap_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else
         efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
