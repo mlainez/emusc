@@ -59,6 +59,8 @@ set(EMUSC_SOURCES
   engines/xp/devices/jv1080.cc
   engines/xp/devices/jv1080.h
   engines/xp/devices/jv1080_engine.cc
+  engines/xp/devices/jv1080_resample.cc
+  engines/xp/devices/jv1080_resample.h
   engines/xp/devices/jv1080_voice.cc
   engines/xp/devices/profile.h
   ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
@@ -155,6 +157,7 @@ endif()
 set(XP_JV1080_SOURCES
   engines/xp/devices/jv1080.cc
   engines/xp/devices/jv1080_engine.cc
+  engines/xp/devices/jv1080_resample.cc
   engines/xp/devices/jv1080_voice.cc
   engines/xp/chorus.cc
   engines/xp/efx.cc
