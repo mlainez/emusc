@@ -274,8 +274,8 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME device_test COMMAND device_test)
 
-  # Which patch a JV-1080 program change loads, checked by rendering the
-  # same note through two routes. Needs
+  # Which patch a JV-1080 program change loads, and what GM System On
+  # leaves, checked by rendering the same note through two routes. Needs
   # JV1080_CONTROL_ROM and JV1080_WAVE_ROMS; skipped without them.
   add_executable(xp_jv1080_program_test ../tests/xp_jv1080_program_test.cc
     engines/xp/device.cc engines/xp/chorus.cc engines/xp/delay.cc

@@ -1,4 +1,4 @@
-/* Where a JV-1080 program change lands.
+/* Where a JV-1080 program change lands, and what GM System On leaves.
  *
  * Every check compares two renders of the same note: a program change that
  * resolves to a patch through one route must sound exactly like the same
@@ -130,6 +130,8 @@ void bank(EmuSC::Xp::Device *d, uint8_t msb, uint8_t lsb, uint8_t program,
   midi(d, (uint8_t)(0xc0 | channel), program);
 }
 
+const uint8_t kGmOn[] = { 0xf0, 0x7e, 0x7f, 0x09, 0x01, 0xf7 };
+
 }  // namespace
 
 int main(void)
@@ -204,6 +206,51 @@ int main(void)
   }));
   assert(fresh3 != render(roms, [](EmuSC::Xp::Device *d) {
     bank(d, 81, 0, 3);
+  }));
+
+  /* GM System On: every part plays GM 001 on its own channel, whatever
+     bank is then selected; part 10 has the GM drum set; the host's GM
+     reset and the message do the same thing; and the part's CC7 is the
+     mode's own. */
+  Setup gm = [](EmuSC::Xp::Device *d) {
+    assert(EmuSC::Xp::device_sysex(d, 0, kGmOn, sizeof kGmOn));
+  };
+  std::vector<float> gm1 = render(roms, gm);
+  assert(energy(gm1) > 0.0);
+  assert(gm1 == render(roms, [](EmuSC::Xp::Device *d) {
+    assert(EmuSC::Xp::device_gm_system_on(d));
+  }));
+  assert(gm1 == render(roms, [&](EmuSC::Xp::Device *d) {
+    gm(d);
+    bank(d, 81, 0, 0);            /* forced to the GM bank */
+  }));
+  assert(gm1 != render(roms, [&](EmuSC::Xp::Device *d) {
+    gm(d);
+    midi(d, 0xc0, 1);             /* GM 002 is not GM 001 */
+  }));
+  assert(gm1 == render(roms, [&](EmuSC::Xp::Device *d) {
+    gm(d);
+    midi(d, 0xb0, 7, 100);
+  }));
+  assert(render(roms, gm, 5) == gm1);   /* part 6, on channel 6 */
+  assert(energy(render(roms, gm, 9, 36)) > 0.0);
+  assert(energy(render(roms, [](EmuSC::Xp::Device *) {}, 9, 36)) == 0.0);
+
+  /* Only the broadcast ID is received. */
+  {
+    const uint8_t unit[] = { 0xf0, 0x7e, 0x10, 0x09, 0x01, 0xf7 };
+    assert(energy(render(roms, [&](EmuSC::Xp::Device *d) {
+      assert(!EmuSC::Xp::device_sysex(d, 0, unit, sizeof unit));
+    })) == 0.0);
+  }
+
+  /* A reset leaves GM mode: a bank select reaches PR-A again. */
+  assert(render(roms, [&](EmuSC::Xp::Device *d) {
+    gm(d);
+    EmuSC::Xp::device_reset_controllers(d);
+    bank(d, 81, 0, 69);
+  }) == render(roms, [](EmuSC::Xp::Device *d) {
+    bank(d, 81, 0, 69);
   }));
 
   printf("ok\n");

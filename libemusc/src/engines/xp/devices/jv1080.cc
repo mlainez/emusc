@@ -391,6 +391,22 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .partGroupIdTable = 0x046C0Cu,
   .partGroupIdCount = 7u,
 
+  /* FW-EXACT. GM System On (`F0 7E 7F 09 01`, dispatched at `0x0A016F8C`)
+     runs `0x0A00E0A8`, which fills every part from the 20-byte record at
+     PRG `0x04575F` with its receive channel set to the part's number -
+     receive on, type 0 id 6 (GM) patch 0, level 127, pan 64, reverb send
+     100, chorus send 0, full key range - sets the mode byte to 2, and
+     loads each part from its record, so part 10 gets GM rhythm set 0. In
+     mode 2 every program change is forced to group 5 with its latch set
+     to 81/3 (`0x0A018AB6`). The CC7 volume is FW-STRUCT: the controller
+     reset `0x0A0137C0` skips volume in mode 2, and both mode-aware writers
+     of the volume table (`0x0A014818`, `0x0A0192BC`, the second directly
+     after it calls GM System On) write 100; which of the two a MIDI GM
+     System On leaves behind is not traced. */
+  .gmPartTemplate = 0x04575Fu,
+  .gmBankSelect = 3u,
+  .gmVolume = 100u,
+
   /* The two record types a voice can come from. Both index sets are the
      manual's own SysEx offsets, which is the same thing as the descriptor's
      index within its group on this device.

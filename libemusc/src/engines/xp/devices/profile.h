@@ -129,6 +129,8 @@ struct XpVoiceEngineOps {
   void (*render)(void *state, float *stereo, size_t frames);
   bool (*set_max_voices)(void *state, unsigned maxVoices);
   unsigned (*active_voices)(const void *state);
+  /* The universal GM System On. Null on a device with no GM mode. */
+  bool (*gm_system_on)(void *state);
 };
 
 /* Where a record type keeps each field a voice needs, by role. A device's
@@ -515,6 +517,15 @@ struct XpDeviceProfile {
      holds. An id past the end, or any other type, names a card or board. */
   uint32_t partGroupIdTable;
   uint8_t partGroupIdCount;
+
+  /* GM MODE. The 20-byte part record the device's GM System On copies
+     into every part, its only per-part change being the receive channel;
+     which packedBankSelect entry the mode forces every program change to;
+     and the CC7 volume the mode leaves on each part. gmPartTemplate is 0
+     on a device with no GM mode. */
+  uint32_t gmPartTemplate;
+  uint8_t gmBankSelect;
+  uint8_t gmVolume;
 
   /* Where the melodic tone record and the rhythm note record keep each
      field the voice path reads. Each index is the descriptor's own index
