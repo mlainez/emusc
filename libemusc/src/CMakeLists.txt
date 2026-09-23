@@ -89,6 +89,8 @@ set(EMUSC_SOURCES
   engines/xp/enhancer.h
   engines/xp/spectrum.cc
   engines/xp/spectrum.h
+  engines/xp/phaser.cc
+  engines/xp/phaser.h
   engines/xp/stereo_eq.cc
   engines/xp/stereo_eq.h
   engines/xp/efx.cc
@@ -173,6 +175,7 @@ set(XP_JV1080_SOURCES
   engines/xp/packed_rom.cc
   engines/xp/reverb.cc
   engines/xp/enhancer.cc
+  engines/xp/phaser.cc
   engines/xp/spectrum.cc
   engines/xp/stereo_eq.cc
   engines/xp/wave.cc)

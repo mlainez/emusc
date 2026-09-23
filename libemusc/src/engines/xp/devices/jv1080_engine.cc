@@ -32,6 +32,7 @@
 #include "../stereo_eq.h"
 #include "../spectrum.h"
 #include "../enhancer.h"
+#include "../phaser.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -177,6 +178,8 @@ const unsigned kEfxTypeStereoEq = 0u;
    engines/xp/spectrum.h and engines/xp/enhancer.h. */
 const unsigned kEfxTypeSpectrum = 4u;
 const unsigned kEfxTypeEnhancer = 5u;
+/* PHASER, type 4 (0-based 3): engines/xp/phaser.h. */
+const unsigned kEfxTypePhaser = 3u;
 const unsigned kEfxTypeOverdrive = 1u;
 const unsigned kEfxTypeDistortion = 2u;
 const unsigned kEfxDriveParameters = 6u;
@@ -853,6 +856,7 @@ struct Engine {
   struct xp_stereo_eq efx_eq;
   struct xp_spectrum efx_spectrum;
   struct xp_enhancer efx_enhancer;
+  struct xp_phaser efx_phaser;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -2063,9 +2067,35 @@ void efx_enhancer_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+void efx_phaser_refresh(struct Engine *engine)
+{
+  bool previous = engine->efx_phaser.ready;
+  uint8_t p[XP_PHASER_PARAMETERS];
+  for (unsigned i = 0; i < XP_PHASER_PARAMETERS; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!phaser_parameter_valid(i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_phaser.param[i];
+    }
+  }
+  if (!phaser_set(&engine->rom, &engine->efx_phaser, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
+  if (engine->efx_type != kEfxTypePhaser)
+    std::memset(&engine->efx_phaser, 0, sizeof engine->efx_phaser);
+  if (engine->efx_type == kEfxTypePhaser) {
+    efx_phaser_refresh(engine);
+    return;
+  }
   if (engine->efx_type != kEfxTypeSpectrum)
     std::memset(&engine->efx_spectrum, 0, sizeof engine->efx_spectrum);
   if (engine->efx_type != kEfxTypeEnhancer)
@@ -3358,6 +3388,8 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
       else if (engine->efx_type == kEfxTypeEnhancer)
         enhancer_process(&engine->efx_enhancer, efxL, efxR, efxWetL,
                          efxWetR, n);
+      else if (engine->efx_type == kEfxTypePhaser)
+        phaser_process(&engine->efx_phaser, efxL, efxR, efxWetL, efxWetR, n);
       else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))

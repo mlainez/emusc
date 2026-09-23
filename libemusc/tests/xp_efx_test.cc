@@ -20,9 +20,11 @@
 #include "engines/xp/stereo_eq.h"
 #include "engines/xp/spectrum.h"
 #include "engines/xp/enhancer.h"
+#include "engines/xp/phaser.h"
 #include "engines/xp/rom.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -414,6 +416,74 @@ int main(void)
     assert(!enhancer_parameter_valid(2u, 31u));
     assert(!enhancer_set(&rom, &e, bad));
     assert(e.param[1] == 0u);
+  }
+
+  /* PHASER: the Manual table is r = round(-512 a) for the owner's manual's
+     Manual list, a being the first-order allpass coefficient whose phase
+     lag at f is pi/8 - the first notch of eight stages. Every entry. */
+  {
+    unsigned n = 0;
+    for (unsigned m = 0; m <= 125u; ++m) {
+      double f = m < 20u ? 100.0 + 10.0 * m
+               : m < 55u ? 300.0 + 20.0 * (m - 20u)
+                         : 1000.0 + 100.0 * (m - 55u);
+      double w = 2.0 * M_PI * f / 32000.0;
+      double lo = -0.9999, hi = 0.9999;
+      for (int it = 0; it < 60; ++it) {
+        double a = 0.5 * (lo + hi);
+        double lag = -(atan2(-sin(w), a + cos(w)) -
+                       atan2(-a * sin(w), 1.0 + a * cos(w)));
+        if (lag > M_PI / 8.0)
+          lo = a;
+        else
+          hi = a;
+      }
+      uint16_t raw = 0;
+      assert(efx_table_value(&rom, 4u, m, 0u, &raw));
+      int r = raw & 0x3ff;
+      if (r & 0x200)
+        r -= 0x400;
+      assert(fabs(r + 512.0 * 0.5 * (lo + hi)) <= 1.0);
+      ++n;
+    }
+    assert(n == 126u);
+
+    const uint8_t factory[XP_PHASER_PARAMETERS] = {
+      55u, 5u, 107u, 79u, 127u, 97u, 127u
+    };
+    struct xp_phaser ph;
+    memset(&ph, 0, sizeof ph);
+    assert(phaser_set(&rom, &ph, factory));
+    assert(ph.ready && ph.manual == -173.0f / 512.0f && ph.lfo_step == 157u);
+    assert(ph.feedback == 3974.0f / 8192.0f && ph.mix == 8191.0f / 8192.0f);
+    assert(fabsf(phaser_coefficient(&ph, 0.0f) - 0.9f * -173.0f / 512.0f) <
+           1e-6f);
+
+    /* Manual 32 at Depth 127 parks at the clamp, a = -0.9 */
+    const uint8_t deep[XP_PHASER_PARAMETERS] = {
+      32u, 5u, 127u, 79u, 127u, 64u, 127u
+    };
+    assert(phaser_set(&rom, &ph, deep));
+    assert(phaser_coefficient(&ph, 1.0f) == -0.9f);
+
+    /* Mix 0 is the dry signal, panned and levelled */
+    const uint8_t dry[XP_PHASER_PARAMETERS] = {
+      55u, 5u, 0u, 79u, 0u, 64u, 127u
+    };
+    assert(phaser_set(&rom, &ph, dry));
+    float in[32], outL[32], outR[32];
+    for (unsigned k = 0; k < 32u; ++k)
+      in[k] = (k % 2u) ? 0.25f : -0.5f;
+    phaser_process(&ph, in, in, outL, outR, 32);
+    for (unsigned k = 0; k < 32u; ++k)
+      assert(fabsf(outL[k] - ph.level * ph.pan_left * in[k]) < 1e-6f &&
+             fabsf(outR[k] - ph.level * ph.pan_right * in[k]) < 1e-6f);
+
+    assert(!phaser_parameter_valid(0u, 126u) &&
+           phaser_parameter_valid(0u, 31u));
+    uint8_t bad[XP_PHASER_PARAMETERS] = { 126u, 5u, 0u, 79u, 0u, 64u, 127u };
+    assert(!phaser_set(&rom, &ph, bad));
+    assert(ph.param[0] == 55u);
   }
 
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "
