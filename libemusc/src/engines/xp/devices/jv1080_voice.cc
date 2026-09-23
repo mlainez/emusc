@@ -756,10 +756,17 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
     voice->b1 = -(1.0 + cs) / a0;
     voice->b2 = ((1.0 + cs) / 2.0) / a0;
     break;
-  case 4:                        /* PKG */
-    voice->b0 = (1.0 + alpha * q) / a0;
+  case 4:
+    /* PKG. MEASURED (`M-017`, `M-121`): a bump of TWICE the section's Q
+       at the natural frequency, on the same poles - +4.83 dB and 2.17
+       octaves wide at half height at resonance 0, +24.27 dB and 0.75
+       octave at 64 (white noise, cutoff 64), where a gain of 2Q predicts
+       4.51 dB / 2.05 octaves and 23.94 dB / 0.72, the widths unfitted.
+       Across cutoffs 48 to 104 at resonance 64 the bump stays 6.3 to 6.9
+       dB over Q; above 104 it grows further, which is not modelled. */
+    voice->b0 = (1.0 + 2.0 * alpha * q) / a0;
     voice->b1 = (-2.0 * cs) / a0;
-    voice->b2 = (1.0 - alpha * q) / a0;
+    voice->b2 = (1.0 - 2.0 * alpha * q) / a0;
     break;
   default:                       /* LPF */
     voice->b0 = ((1.0 - cs) / 2.0) / a0;
