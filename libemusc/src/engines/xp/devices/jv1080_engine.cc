@@ -292,7 +292,9 @@ struct EfxModSpec {
   unsigned shape;
   unsigned nominal[2];          /* the still delay each channel sweeps from */
   unsigned nominalTable;        /* which conversion table those slots read */
-  unsigned rate, depth, phase, balance, level;
+  unsigned rate, depth, balance, level;
+  int phase;                    /* -1 where the channels share one LFO */
+  bool invertRight;             /* the right channel is the left, negated */
   int feedback;                 /* -1 where none is identified */
   int damp;                     /* -1 where the type has none */
   double sweepMs;
@@ -304,7 +306,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
   /* 14 STEREO-CHORUS: one pre-delay for both channels; p7 has a ceiling of
      127 and a factory 0 and is not identified, so no feedback is applied. */
   { 13u, kEfxModTriangle, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 5u, 9u, 10u, -1, -1, 12.38, -1, -1 },
+    3u, 4u, 9u, 10u, 5, false, -1, -1, 12.38, -1, -1 },
   /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback - and a
      DIFFERENT modulator, which took three attempts to pin down. Its
      deviation's harmonic ratios at the rates where they resolve read
@@ -323,7 +325,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      last one also settles the direction: a sweep this wide that never
      clips at a 1.00 ms nominal is one-sided UPWARD, as the chorus's is. */
   { 14u, kEfxModParabola, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 5u, 9u, 10u,  6, -1, 12.32, -1, -1 },
+    3u, 4u, 9u, 10u, 5, false,  6, -1, 12.32, -1, -1 },
   /* 18 MODULATION-DELAY: a stereo delay with the same LFO on top. Its two
      delay slots read `0x038FC8` at `ms = table / 32`, measured with the
      depth at zero so the delay stands still - ratio 1.0000 at values 16,
@@ -331,7 +333,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      `0x038EC8` predicts 46, 74 and 101 ms where the machine gives 100, 260
      and 500, so it is not that table. */
   { 17u, kEfxModTriangle, { 1u, 2u }, kEfxDelayTable,
-    5u, 6u, 7u, 10u, 11u,  3,  4, 49.55, -1, -1 },
+    5u, 6u, 10u, 11u, 7, false,  3,  4, 49.55, -1, -1 },
   /* 12 TREMOLO-CHORUS: a chorus and an amplitude modulator, each with its
      own rate and depth, separated by driving one with the other at zero.
 
@@ -357,7 +359,29 @@ const struct EfxModSpec kEfxModSpecs[] = {
      family's shape and it ships at 0, where the table's own entry is one
      sample. If it is something else, nothing here depends on it. */
   { 11u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
-    1u, 2u, 5u, 6u, 7u, -1, -1, 12.23, 3, 4 },
+    1u, 2u, 6u, 7u, 5, false, -1, -1, 12.23, 3, 4 },
+  /* 13 SPACE-D: ONE delay in both channels, with the right one NEGATED.
+
+     Measured on the cross-correlation between the channels, which needs no
+     inference: its peak sits at lag 0.0000 ms and its sign is negative at
+     pre-delays of 3.19, 14.00 and 46.00 ms, at full depth, and at all
+     three settings of p4 - the only parameter this type accepts a ceiling
+     of 90 on, and therefore the family's phase slot, which moves the lag
+     not at all. So the two channels share one delay line and p4 is not an
+     inter-channel phase here, which is why this spec carries none.
+
+     Its sweep tops out at 3.04 ms - a quarter of the chorus family's
+     twelve, which is why every earlier instrument read this type as
+     static - following the level curve at 0.001, 0.191, 0.398, 0.687,
+     1.000 against 0.000, 0.191, 0.418, 0.689, 1.000. Its modulator is a
+     triangle, read by folding the delay trajectory itself rather than
+     through a carrier: one cycle descends linearly, turns, and ascends
+     linearly, with no bulge at the ends and no snap back.
+
+     p1 is the pre-delay, measured exactly: 3.19, 14.00, 46.00 and 100.00
+     ms at values 32, 64, 96 and 125 against `0x038EC8`'s own table/32. */
+  { 12u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
+    1u, 2u, 6u, 7u, -1, true, -1, -1, 3.04, -1, -1 },
 };
 const unsigned kEfxModSpecCount =
   (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
@@ -554,6 +578,7 @@ struct Engine {
   unsigned efx_shape;
   double efx_trem_phase, efx_trem_step;
   float efx_trem_depth;
+  bool efx_invert_right;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1225,7 +1250,9 @@ void efx_modulated_refresh(struct Engine *engine)
      over so short a window, and ours read 0.006 % until this was removed. */
 
   /* p6 PHASE, off the measured table (see above). */
-  engine->efx_lfo_offset = efx_chorus_phase(p[spec->phase]);
+  engine->efx_lfo_offset =
+    spec->phase < 0 ? 0.0 : efx_chorus_phase(p[(unsigned)spec->phase]);
+  engine->efx_invert_right = spec->invertRight;
 
   /* FEEDBACK, where the type has one. The bipolar zero of 49 and the 2 %
      a step are the pure-delay family's own measured law (`M-101`); that
@@ -1317,7 +1344,8 @@ void efx_mod_process(struct Engine *engine, const float *inL,
         engine->efx_trem_phase -= 1.0;
     }
     wetL[k] = l;
-    wetR[k] = r;
+    /* SPACE-D puts ONE delay in both channels and negates the right. */
+    wetR[k] = engine->efx_invert_right ? -l : r;
     engine->efx_lfo_phase += engine->efx_lfo_step;
     if (engine->efx_lfo_phase >= 1.0)
       engine->efx_lfo_phase -= 1.0;
