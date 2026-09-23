@@ -25,6 +25,7 @@
  *  wrongly.
  */
 #include "jv1080.h"
+#include "jv1080_resample.h"
 #include "../reverb.h"
 #include "../chorus.h"
 #include "../efx.h"
@@ -717,7 +718,12 @@ struct Engine {
   struct xp_rom rom;
   const uint8_t *banks[XP_WAVE_BANK_COUNT];
   size_t bank_sizes[XP_WAVE_BANK_COUNT];
+  /* The rate everything below runs at: the machine's own 32 kHz, whatever
+     the host asks for. `resampler` carries it to the host's rate; at a
+     32 kHz host there is none and the engine's frames are the host's. */
   double output_rate;
+  bool resampling;
+  struct JvResampler resampler;
   unsigned max_voices;
   uint64_t serial;
   /* Frames rendered since the engine was created: the clock a
@@ -2325,9 +2331,19 @@ bool engine_create(void **state, const struct xp_rom *rom,
     engine->banks[b] = banks[b];
     engine->bank_sizes[b] = bankSizes[b];
   }
-  engine->output_rate = outputRate;
-  dc_blocker_init(&engine->dc_left, outputRate);
-  dc_blocker_init(&engine->dc_right, outputRate);
+  /* THE ENGINE RUNS AT 32 kHz. The machine computes its audio at that rate,
+     and what its filters do in the top octave belongs to it: the hardware's
+     low-pass there is a two-pole section at 32 kHz, which no section at
+     another rate reproduces (`P-xxxx`, TASK-381). */
+  engine->output_rate = kXpNativeRate;
+  engine->resampling = outputRate != kXpNativeRate;
+  if (engine->resampling &&
+      !jv_resampler_init(&engine->resampler, kXpNativeRate, outputRate)) {
+    std::free(engine);
+    return false;
+  }
+  dc_blocker_init(&engine->dc_left, engine->output_rate);
+  dc_blocker_init(&engine->dc_right, engine->output_rate);
   engine->max_voices = xp_profile(rom)->defaultMaxVoices;
   if (!engine->max_voices || engine->max_voices > kMaxVoices)
     engine->max_voices = kMaxVoices;
@@ -2359,6 +2375,8 @@ void engine_free(void *state)
     std::free(engine->rv_comb[i]);
   std::free(engine->efx_buf[0]);
   std::free(engine->efx_buf[1]);
+  if (engine->resampling)
+    jv_resampler_free(&engine->resampler);
   std::free(engine);
 }
 
@@ -2384,6 +2402,8 @@ void engine_reset(void *state)
                 engine->delay_len * sizeof *engine->delay_buf);
   dc_blocker_init(&engine->dc_left, engine->output_rate);
   dc_blocker_init(&engine->dc_right, engine->output_rate);
+  if (engine->resampling)
+    jv_resampler_reset(&engine->resampler);
   engine->serial = 0;
 }
 
@@ -2982,11 +3002,9 @@ bool engine_sysex_block(void *state, const uint8_t *address,
   return false;                  /* a rhythm key, or a block not held */
 }
 
-void engine_render_jv(void *state, float *stereo, size_t frames)
+/* `frames` of the engine's own 32 kHz output, added into `stereo`. */
+void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
 {
-  struct Engine *engine = (struct Engine *)state;
-  if (!engine || !stereo || !frames)
-    return;
   engine->frames += frames;
   /* The caller's buffer is interleaved; the voice model writes into two
      planar spans, so the sum is built planar and interleaved once. A
@@ -3146,6 +3164,33 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
     else if (engine->delay_ready && engine->delay_buf)
       delay_process(engine, send, stereo + done * 2u, n);
     done += n;
+  }
+}
+
+/* The host's frames. Each one takes the engine forward only as far as it
+   needs, so a parameter or note arriving between two host frames reaches
+   the next 32 kHz sample. That sample sits half a kernel ahead of the one
+   the host frame is centred on: an event reaches the output
+   kJvResampleHalf / 32000 s - 1 ms - after the frame it arrived at. */
+void engine_render_jv(void *state, float *stereo, size_t frames)
+{
+  struct Engine *engine = (struct Engine *)state;
+  if (!engine || !stereo || !frames)
+    return;
+  if (!engine->resampling) {
+    jv_render_native(engine, stereo, frames);
+    return;
+  }
+  for (size_t f = 0; f < frames; ++f) {
+    while (jv_resampler_needs_input(&engine->resampler)) {
+      float native[2] = {0.0f, 0.0f};
+      jv_render_native(engine, native, 1u);
+      jv_resampler_push(&engine->resampler, native[0], native[1]);
+    }
+    float l, r;
+    jv_resampler_pull(&engine->resampler, &l, &r);
+    stereo[2u * f] += l;
+    stereo[2u * f + 1u] += r;
   }
 }
 
