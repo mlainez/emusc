@@ -516,6 +516,7 @@ int main(void)
                                         roms.control.size(), chips, sizes,
                                         kRate, XP_WRAP_FULL_CARRY));
       bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x69, 0);           /* curve 0, the level law */
       tone_field(d, 1, 0x6a, wire);
       midi(d, 0x90, 60, velocity);
       std::vector<float> x(2 * kFrames);
@@ -533,6 +534,40 @@ int main(void)
     double down = (at_velocity(0, 108) - at_velocity(0, 1)) -
                   (at_velocity(50, 108) - at_velocity(50, 1));
     assert(std::fabs(down + 32.1) < 0.3);
+  }
+
+  /* The A-ENV's velocity curves, tone field 0x69, at sensitivity +50: curve
+     2 reads velocity 64 48.4 dB under velocity 127 where curve 0 reads
+     11.9, and curve 4 only 2.2 (`M-029`). Each is taken against curve 0 at
+     the same two velocities, which cancels the patch's other velocity
+     terms. */
+  {
+    auto at_curve = [&](uint8_t curve, uint8_t velocity) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x6a, 100);         /* sensitivity +50 */
+      tone_field(d, 1, 0x69, curve);
+      midi(d, 0x90, 60, velocity);
+      std::vector<float> x(2 * kFrames);
+      EmuSC::Xp::device_render(d, x.data(), kFrames);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return 10.0 * std::log10(energy(x));
+    };
+    double c0 = at_curve(0, 64) - at_curve(0, 127);
+    assert(std::fabs((at_curve(2, 64) - at_curve(2, 127)) - c0 -
+                     (-48.4 + 11.9)) < 0.5);
+    assert(std::fabs((at_curve(4, 64) - at_curve(4, 127)) - c0 -
+                     (-2.2 + 11.9)) < 0.5);
   }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,
