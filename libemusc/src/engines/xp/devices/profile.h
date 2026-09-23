@@ -171,6 +171,10 @@ struct XpVoiceFieldMap {
   uint16_t fineTune;
   /* Random pitch depth, an index into the displayed-cents list 0..30. */
   uint16_t randomPitchDepth;
+  /* FXM: its switch, its colour 0..3 and its depth 0..15. */
+  uint16_t fxmSwitch;
+  uint16_t fxmColor;
+  uint16_t fxmDepth;
   /* Whether the record answers the bender and the hold pedal, and the
      bend range a record carries itself where it has no patch around it. */
   uint16_t benderSwitch;
