@@ -689,6 +689,110 @@ int main(void)
     assert(std::fabs(early) < 0.1);
   }
 
+  /* The controller matrix (`M-116`), on PR-A 001's one sounding tone with
+     its own slots and LFO depths cleared. */
+  {
+    auto common_field = [](EmuSC::Xp::Device *d, uint8_t field, uint8_t value) {
+      uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x02, 0x00, 0x00, field,
+                      value, 0, 0xf7 };
+      unsigned sum = 0;
+      for (size_t i = 5; i + 2 < sizeof m; ++i)
+        sum += m[i];
+      m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+      assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+    };
+    auto bench = [common_field](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      for (uint8_t f = 0x15; f <= 0x2c; f += 2) {
+        tone_field(d, 1, f, 0);
+        tone_field(d, 1, (uint8_t)(f + 1), 63);
+      }
+      for (uint8_t f : { 0x4e, 0x4f, 0x63, 0x64, 0x75, 0x76, 0x7b, 0x7c })
+        tone_field(d, 1, f, 63);
+      common_field(d, 0x3a, 3);          /* controller 2: MODULATION */
+      common_field(d, 0x3b, 2);          /* controller 3: SYS-CTRL2 */
+    };
+    /* LEV adds d/63 of full scale to the tone level's square law: at tone
+       level 32, depth +16 at full CC1 is (0.0635 + 0.254) / 0.0635 = +13.98
+       dB, and nothing without CC1. */
+    auto lev = [&](uint8_t cc1) {
+      return energy(render(roms, [&, cc1](EmuSC::Xp::Device *d) {
+        bench(d);
+        tone_field(d, 1, 0x65, 32);
+        tone_field(d, 1, 0x1d, 4);
+        tone_field(d, 1, 0x1e, 63 + 16);
+        midi(d, 0xb0, 1, cc1);
+      }));
+    };
+    assert(std::fabs(10.0 * std::log10(lev(127) / lev(0)) - 13.98) < 0.1);
+    /* Controller 1 is CC1, fixed: PCH +20 at full CC1 is 0.31 * 400 = 124
+       cents, and channel aftertouch does not move it. */
+    auto pitch = [&](uint8_t slot, uint8_t status, uint8_t a, uint8_t b) {
+      return strongest_hz(render(roms, [&, slot, status, a, b](EmuSC::Xp::Device *d) {
+        bench(d);
+        tone_field(d, 1, slot, 1);
+        tone_field(d, 1, (uint8_t)(slot + 1), 63 + 20);
+        midi(d, status, a, b);
+      }));
+    };
+    double still = pitch(0x15, 0xb0, 1, 0);
+    assert(std::fabs(1200.0 * std::log2(pitch(0x15, 0xb0, 1, 127) / still) - 124.0) < 5.0);
+    assert(std::fabs(1200.0 * std::log2(pitch(0x15, 0xd0, 127, 0) / still)) < 2.0);
+    /* SYS-CTRL2 reads CC11 by default; a System DT1 re-points it at CC1. */
+    assert(std::fabs(1200.0 * std::log2(pitch(0x25, 0xb0, 11, 127) /
+                                        pitch(0x25, 0xb0, 11, 0)) - 124.0) < 5.0);
+    double moved = strongest_hz(render(roms, [&](EmuSC::Xp::Device *d) {
+      bench(d);
+      uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x00, 0x00, 0x00, 0x13, 1,
+                      0, 0xf7 };
+      unsigned sum = 0;
+      for (size_t i = 5; i + 2 < sizeof m; ++i)
+        sum += m[i];
+      m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+      assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+      tone_field(d, 1, 0x25, 1);
+      tone_field(d, 1, 0x26, 63 + 20);
+      midi(d, 0xb0, 11, 0);
+      midi(d, 0xb0, 1, 127);
+    }));
+    assert(std::fabs(1200.0 * std::log2(moved / still) - 124.0) < 5.0);
+    /* A source moving under a sounding note: CC1 to full halfway through
+       lifts the second half by the LEV law, against the note left alone. */
+    Setup lev32 = [&](EmuSC::Xp::Device *d) {
+      bench(d);
+      tone_field(d, 1, 0x65, 32);
+      tone_field(d, 1, 0x1d, 4);
+      tone_field(d, 1, 0x1e, 63 + 16);
+    };
+    auto held = [&](const Setup &between) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      lev32(d);
+      midi(d, 0x90, 60, 100);
+      std::vector<float> x(2 * kFrames);
+      EmuSC::Xp::device_render(d, x.data(), kFrames / 2);
+      between(d);
+      EmuSC::Xp::device_render(d, x.data() + kFrames, kFrames / 2);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      double e = 0.0;
+      for (size_t i = kFrames + 2 * 256; i < x.size(); ++i)
+        e += (double)x[i] * x[i];
+      return e;
+    };
+    double alone = held([](EmuSC::Xp::Device *) {});
+    double lifted = held([](EmuSC::Xp::Device *d) { midi(d, 0xb0, 1, 127); });
+    assert(std::fabs(10.0 * std::log10(lifted / alone) - 13.98) < 0.1);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

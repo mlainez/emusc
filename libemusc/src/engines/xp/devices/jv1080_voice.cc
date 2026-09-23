@@ -717,7 +717,7 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
 double filter_env_cutoff(const struct XpJv1080Voice *voice)
 {
   double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value +
-    voice->lfo_cutoff;
+    voice->lfo_cutoff + voice->matrix_cutoff;
   if (cutoff < 0.0)
     return 0.0;
   return cutoff > 127.0 ? 127.0 : cutoff;
@@ -1395,10 +1395,10 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     sensed_velocity(velocity,
                     (int)(int8_t)(uint8_t)field_or(
                       fields, fields->ampVelocitySens, tone, 50u)));
-  voice->gain_levels =
-    square_law_gain(tone[fields->level]) *
-    square_law_gain(controls->patch_level) *
+  voice->tone_level_gain = square_law_gain(tone[fields->level]);
+  voice->outer_level_gain = square_law_gain(controls->patch_level) *
     square_law_gain(controls->part_level);
+  voice->gain_levels = voice->tone_level_gain * voice->outer_level_gain;
   voice->gain_velocity = velocityGain;
   voice->gain_wave = wave_gain(field_or(fields, fields->waveGain, tone, 1u));
   voice->gain_mix =
@@ -1472,7 +1472,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->cutoff_base = (double)tone[fields->cutoff] +
     10.0 * key_follow(rom, fields->cutoffKeyFollow, tone, 0.0) *
       ((double)soundedKey - kKeyFollowPivot) / 12.0;
-  voice->resonance_q = tvf_q(tone[fields->resonance]);
+  voice->resonance_base = tone[fields->resonance];
+  voice->resonance_q = tvf_q(voice->resonance_base);
+  voice->resonance_q_base = voice->resonance_q;
+  voice->matrix_cutoff = 0.0;
+  voice->matrix_pitch_ratio = 1.0;
 
   /* The filter envelope. It moves the cutoff PARAMETER, so its whole
      sweep is worked out in cutoff units here and the corner law is applied
@@ -1555,6 +1559,23 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       voice->lfo_period = 1u;
     voice->lfo_countdown = 0u;
   }
+  if (fields->lfoFirst[0] != XP_VOICE_FIELD_NONE)
+    for (unsigned i = 0; i < 2u; ++i) {
+      voice->lfo_base_cents[i] = voice->lfo_pitch_cents[i];
+      voice->lfo_base_frequency[i] = voice->lfo[i].frequency;
+    }
+
+  /* The controller matrix, at the sources as they stand at note-on. */
+  voice->matrix_used = false;
+  if (fields->matrixFirst != XP_VOICE_FIELD_NONE)
+    for (unsigned s = 0; s < 12u; ++s) {
+      voice->matrix_dest[s] = tone[fields->matrixFirst + 2u * s];
+      voice->matrix_depth[s] =
+        (double)(int8_t)tone[fields->matrixFirst + 2u * s + 1u];
+      if (voice->matrix_dest[s] && voice->matrix_depth[s] != 0.0)
+        voice->matrix_used = true;
+    }
+  jv1080_voice_set_matrix(voice, controls->matrix_source);
 
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
@@ -1577,8 +1598,97 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
 {
   if (!voice)
     return;
+  voice->volume = volume;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
     voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+}
+
+/* THE CONTROLLER MATRIX. Each slot's effective depth is its depth times its
+   controller's source, 0..1 - linear, MEASURED on LEV at four source values
+   and on CUT at two (`M-116`). Slots aiming at one destination are summed;
+   that summing is not measured. The laws, all `M-116`, at tone level 127
+   unless named:
+
+     PCH  0.31 * d^2 cents, signed. Three points, depths 8, 20, 40, fit to
+          4 %; above 40 the law is extrapolated.
+     LEV  adds d/63 of full-scale amplitude to the tone level's own square
+          law, the sum clamped to 0..1 - within 0.2 dB at tone levels 32, 64,
+          96 and 127, both signs. Measured with the tone level only: whether
+          velocity, patch and part level scale before or after the sum is
+          not, and here they scale after it.
+     CUT  2.3 cutoff units per step, from depths -16 to +16 read against the
+          cutoff field itself, +-2 units.
+     RES  about 2 resonance units per step: APPROXIMATE, the four readings
+          scatter +-14 units and none matches a resonance-field spectrum
+          well, so the matrix may not act on the field at all.
+     PL1  adds to the tone's own pitch LFO depth in cents, through the same
+          depth law. The matrix's own readings run 3-9 % above that law at
+          the same depth; that gap is not recovered and not fitted.
+     L1R  0.198 Hz per step, linear in hertz rather than in rate units, and
+          clamped at 0 Hz - three points 5, 20, 63 at rate 64.
+
+   PL2 and L2R are taken as PL1 and L1R on the second LFO, which is not
+   measured. MIX, CHO and REV (the sends), PAN, FL1/FL2, AL1/AL2 and
+   pL1/pL2 are NOT IMPLEMENTED: a slot routed to one does nothing. */
+const uint8_t kMatrixPch = 1u, kMatrixCut = 2u, kMatrixRes = 3u,
+  kMatrixLev = 4u, kMatrixPl1 = 9u, kMatrixPl2 = 10u, kMatrixL1r = 17u,
+  kMatrixL2r = 18u;
+
+void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
+                              const double source[3])
+{
+  if (!voice || !source || !voice->matrix_used)
+    return;
+  double cents = 0.0, level = 0.0, cutoff = 0.0, resonance = 0.0;
+  double lfoCents[2] = { 0.0, 0.0 }, lfoHz[2] = { 0.0, 0.0 };
+  bool moveLevel = false, moveResonance = false;
+  for (unsigned s = 0; s < 12u; ++s) {
+    double d = voice->matrix_depth[s] * source[s / 4u];
+    switch (voice->matrix_dest[s]) {
+    case kMatrixPch: cents += (d < 0.0 ? -0.31 : 0.31) * d * d; break;
+    case kMatrixLev: level += d / 63.0; moveLevel = true; break;
+    case kMatrixCut: cutoff += 2.3 * d; break;
+    case kMatrixRes: resonance += 2.0 * d; moveResonance = true; break;
+    case kMatrixPl1:
+    case kMatrixPl2:
+      lfoCents[voice->matrix_dest[s] - kMatrixPl1] +=
+        signed_law(d, pitch_depth_cents);
+      break;
+    case kMatrixL1r:
+    case kMatrixL2r:
+      lfoHz[voice->matrix_dest[s] - kMatrixL1r] += 0.198 * d;
+      break;
+    default: break;
+    }
+  }
+  voice->matrix_pitch_ratio = std::pow(2.0, cents / 1200.0);
+  double tone = voice->tone_level_gain;
+  if (moveLevel) {
+    tone += level;
+    tone = tone < 0.0 ? 0.0 : (tone > 1.0 ? 1.0 : tone);
+  }
+  voice->gain_levels = tone * voice->outer_level_gain;
+  jv1080_voice_set_volume(voice, voice->volume);
+  for (unsigned i = 0; i < 2u; ++i) {
+    voice->lfo_pitch_cents[i] = voice->lfo_base_cents[i] + lfoCents[i];
+    double hz = voice->lfo_base_frequency[i] + lfoHz[i];
+    voice->lfo[i].frequency = hz < 0.0 ? 0.0 : hz;
+    if (voice->lfo_pitch_cents[i] != 0.0)
+      voice->lfo_active = true;
+  }
+  if (voice->filter_type) {
+    voice->matrix_cutoff = cutoff;
+    if (moveResonance) {
+      double r = (double)voice->resonance_base + resonance;
+      r = r < 0.0 ? 0.0 : (r > 127.0 ? 127.0 : r);
+      voice->resonance_q = tvf_q((unsigned)std::lround(r));
+    } else {
+      voice->resonance_q = voice->resonance_q_base;
+    }
+    set_biquad(voice, voice->filter_type,
+                tvf_cutoff_hz(filter_env_cutoff(voice)),
+                voice->resonance_q, voice->output_rate);
+  }
 }
 
 void jv1080_voice_note_off(struct XpJv1080Voice *voice)
@@ -1787,7 +1897,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     r[n] += (float)(value * voice->gain_right);
 
     if (voice->reverse) {
-      double step = voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio *
+        voice->matrix_pitch_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position -= step;
@@ -1796,7 +1907,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         break;
       }
     } else {
-      double step = voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio *
+        voice->matrix_pitch_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position += step;
