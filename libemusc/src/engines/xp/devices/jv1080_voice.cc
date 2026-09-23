@@ -453,18 +453,46 @@ double wave_gain(unsigned raw)
   return std::pow(10.0, db[raw & 3u] / 20.0);
 }
 
-/* MEASURED (`M-012`, `M-076`): `fc = 341 Hz * 2^((cutoff - 64)/10)`, two
-   poles at -12.2 dB per octave. Ten measured points from 33 Hz at cutoff 32
-   to 5939 Hz at 104, worst error 1.12x, and white noise through the same law
-   predicts 0.301 dB of rms per cutoff step against a measured 0.308.
+/* MEASURED (`M-012`, `M-118`): the two-pole section's natural frequency
+   per cutoff value, which is where the resonant peak sits (`M-021`: 59, 293,
+   809 Hz at cutoffs 40, 64, 80) and not the -3 dB corner. At resonance 0 the
+   section's Q is 0.84 (see tvf_q), which puts the -3 dB corner 1.155x above
+   the natural frequency - and M-012's corners, 335 Hz at cutoff 64 to 5930
+   at 104, read exactly that far above these points. Two poles, -12.2 dB
+   per octave above the corner (`M-012`, `M-076`).
 
-   Below cutoff about 20 the machine emits digital silence - -99.9 dBFS
-   against a -99.96 floor - and so does extrapolating the law, because a
-   12 Hz corner attenuates everything audible by over 100 dB. The two cannot
-   be told apart, so the law is simply extrapolated there. */
+   Cutoffs 40, 48 and 56 are two-pole fits to the res-0 white-noise sweep
+   (`tvf/cutoff_lpf_res000`); 64 to 104 are M-012's saw-carrier corners
+   divided by 1.155, which the same noise fits reproduce to 1.5 % at 64 to
+   88. Outside 40-104 nothing is resolved - the interface's roll-off below,
+   the fits' breakdown above - and the ends extend at 10 steps per octave,
+   the -3 dB corners' own slope. Below cutoff about 20 the machine emits
+   digital silence, as the extension does.
+
+   Measured on the low-pass; the other three types take the same frequency,
+   which is not measured. */
+const double kTvfNaturalHz[][2] = {
+  { 40.0, 62.0 }, { 48.0, 104.0 }, { 56.0, 174.0 }, { 64.0, 290.0 },
+  { 72.0, 499.0 }, { 80.0, 842.0 }, { 88.0, 1457.0 }, { 96.0, 2589.0 },
+  { 104.0, 5134.0 } };
+
 double tvf_cutoff_hz(double cutoff)
 {
-  return 341.0 * std::pow(2.0, (cutoff - 64.0) / 10.0);
+  const unsigned n = sizeof kTvfNaturalHz / sizeof kTvfNaturalHz[0];
+  if (cutoff <= kTvfNaturalHz[0][0])
+    return kTvfNaturalHz[0][1] *
+      std::pow(2.0, (cutoff - kTvfNaturalHz[0][0]) / 10.0);
+  if (cutoff >= kTvfNaturalHz[n - 1][0])
+    return kTvfNaturalHz[n - 1][1] *
+      std::pow(2.0, (cutoff - kTvfNaturalHz[n - 1][0]) / 10.0);
+  unsigned i = 1;
+  while (kTvfNaturalHz[i][0] < cutoff)
+    ++i;
+  double t = (cutoff - kTvfNaturalHz[i - 1][0]) /
+    (kTvfNaturalHz[i][0] - kTvfNaturalHz[i - 1][0]);
+  return std::exp(std::log(kTvfNaturalHz[i - 1][1]) +
+                  t * (std::log(kTvfNaturalHz[i][1]) -
+                       std::log(kTvfNaturalHz[i - 1][1])));
 }
 
 /* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
@@ -650,14 +678,22 @@ double velocity_time_scale(unsigned enumValue, unsigned velocity)
    46.7 dB at 127, straight between them. The peak gain of a two-pole
    section is its Q for a Q well above unity, which is how the dB reaches
    the coefficients below; the chip's own coefficient form is unknown
-   (`L-05`) and is not what this reproduces. */
+   (`L-05`) and is not what this reproduces.
+
+   MEASURED (`M-118`): two-pole fits to the resonance sweeps on white noise
+   read Q within 0.6 dB of this law from value 8 to 96 at cutoffs 40, 64
+   and 80, and at value 0 a Q of 0.84 (-1.76, -1.36 and -1.56 dB), not
+   the law's 1. Between 0 and 8 nothing is measured and the dB is taken
+   straight between the two. */
 double tvf_q(unsigned resonance)
 {
-  double peakDb = resonance <= 96u
+  const double zeroDb = 20.0 * std::log10(0.84);
+  double peakDb = resonance < 8u
+    ? zeroDb + (0.28 * 8.0 - zeroDb) * (double)resonance / 8.0
+    : resonance <= 96u
     ? 0.28 * (double)resonance
     : 26.88 + (46.70 - 26.88) * ((double)resonance - 96.0) / (127.0 - 96.0);
-  double q = std::pow(10.0, peakDb / 20.0);
-  return q < 0.70710678 ? 0.70710678 : q;
+  return std::pow(10.0, peakDb / 20.0);
 }
 
 /* A two-pole section per filter type. MEASURED (`M-017`): all four types
