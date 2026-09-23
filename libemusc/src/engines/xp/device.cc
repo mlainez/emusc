@@ -718,6 +718,13 @@ bool device_gm_system_on(Device *device)
   return device->voice_ops->gm_system_on(device->voice_state);
 }
 
+bool device_host_reset_enters_gm(const Device *device)
+{
+  if (!device || !device->initialized)
+    return false;
+  return xp_profile(&device->renderer.rom)->hostResetEntersGm;
+}
+
 void device_reset_controllers(Device *device)
 {
   if (!device || !device->initialized)

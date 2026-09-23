@@ -407,6 +407,33 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .gmBankSelect = 3u,
   .gmVolume = 100u,
 
+  /* FW-EXACT, and confirmed by the owner on his own unit: a JV-1080 at
+     factory settings powers on in PATCH mode on USER:001 "Symphonique",
+     patch receive channel 1. The system-area image at PRG `0x0BE0DA`
+     stores USER:014, but its field 47 (Power Up Mode) is 0 = DEFAULT, and
+     the boot routine `0x0A0191AE` then rewrites the selection fields to
+     PATCH, USER (type 0, id 1), number 0, performance 0. The hardware's
+     own patch-selection readbacks read USER / id 1 / #0.
+
+     Also in that image and not modelled, because this engine has nothing
+     that reads them: control channel 16 (performance select), and the
+     EFX, chorus and reverb switches, all on. Nor is PATCH mode's gating:
+     every part here sounds whatever the mode, which is what a song that
+     configures a performance by DT1 needs. */
+  .powerOnMode = XP_POWER_ON_PATCH,
+  .powerOnPatchGroupId = 1u,
+  .powerOnPatchNumber = 0u,
+  .powerOnPatchChannel = 0u,
+
+  /* NOT A HARDWARE BEHAVIOUR: a choice for playback. Patch mode plays one
+     patch on one channel, and a MIDI file that sends no GM System On of
+     its own expects a multitimbral GM device. This device has no GS mode,
+     so its GM mode is the one multitimbral state it defines for a file it
+     knows nothing about (manual p.76). The factory demo songs were
+     recorded in Performance mode and configure it by DT1; they are
+     compared with no host reset. */
+  .hostResetEntersGm = true,
+
   /* The two record types a voice can come from. Both index sets are the
      manual's own SysEx offsets, which is the same thing as the descriptor's
      index within its group on this device.
