@@ -1014,6 +1014,25 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   for (unsigned i = 1; i < 4u; ++i)
     voice->time[i] =
       amp_env_fall_seconds_per_20db(tone[fields->ampTime1 + i]);
+  /* NO-SUSTAIN, the rhythm note's envelope mode 0 and 619 of the 640
+     factory drum keys: the note-off does not cut the first three segments
+     short, and waits for them. Read off the six factory-kit takes
+     (`rhythm/kit_pr_*`, `kit_gm_1`: 64 keys each, 350 ms gates), against
+     three other readings of the mode:
+
+       level 360-430 ms after the onset, mean |ours - hardware| over keys
+                          PR-A1  PR-A2  PR-B1  PR-C1  PR-C2  GM1
+       release at note-off 21.7   21.6   21.4   10.2   11.6  10.8
+       deferred (this)     10.6    9.1    8.1    8.0   10.5  10.8
+
+     Releasing at the end of time 3 whatever the key is doing runs 9 to 15
+     dB low before the note-off on PR-C and GM, whose keys sustain at level
+     3 while held, and never releasing leaves them ringing. `M-004`'s one
+     record - mode 0 with times 1 to 3 at zero, silent on hardware - is NOT
+     reproduced by this law and stays unexplained; its own bisection calls
+     the result context-dependent. */
+  voice->one_shot = fields->envelopeMode != XP_VOICE_FIELD_NONE &&
+    tone[fields->envelopeMode] == 0u;
   voice->segment = 0u;
   voice->envelope = 0.0;
   voice->segment_start = 0.0;
@@ -1078,6 +1097,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
 /* Time 4 names a rate, so the release's duration is how far the envelope
    has to travel at it. Sixty dB is taken as silent: the level table's own
    floor is the machine's noise floor and no field can ask for less. */
+void jv1080_voice_note_off(struct XpJv1080Voice *voice)
+{
+  if (voice && voice->one_shot && voice->segment < 4u && !voice->releasing) {
+    voice->pending_release = true;
+    return;
+  }
+  jv1080_voice_release(voice);
+}
+
 void jv1080_voice_release(struct XpJv1080Voice *voice)
 {
   if (!voice || !voice->active || voice->releasing)
@@ -1221,6 +1249,13 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
           voice->segment_remaining = voice->segment_total;
         } else {
           voice->segment = 4u;   /* holding the sustain level */
+          if (voice->pending_release) {
+            jv1080_voice_release(voice);
+          } else if (voice->one_shot && voice->envelope < 1e-5) {
+            /* Holding at a level-3 of zero, with nothing left to come. */
+            voice->active = false;
+            break;
+          }
         }
       } else {
         double done = voice->segment_total > 0.0

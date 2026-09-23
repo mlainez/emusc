@@ -96,6 +96,9 @@ struct XpJv1080PartControls {
 struct XpJv1080Voice {
   bool active;
   bool releasing;
+  /* A NO-SUSTAIN rhythm note, and a note-off it has deferred. */
+  bool one_shot;
+  bool pending_release;
 
   /* The decoded element, and where in it the read head is. */
   const int32_t *pcm;
@@ -209,6 +212,9 @@ bool jv1080_voice_span(const struct xp_rom *rom,
                         size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
+/* The key coming up: a release, or on a NO-SUSTAIN voice still in its
+   first three segments, a release deferred to their end. */
+void jv1080_voice_note_off(struct XpJv1080Voice *voice);
 
 /* The filter envelope's two measured pieces, exposed so a test can check
  * them against the takes they come from without a ROM.

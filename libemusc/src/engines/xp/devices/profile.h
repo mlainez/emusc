@@ -159,6 +159,8 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
+  /* The rhythm note's envelope mode: 0 NO-SUSTAIN, 1 SUSTAIN. */
+  uint16_t envelopeMode;
   /* The tone delay: which mode it runs in, and its time. */
   uint16_t toneDelayMode;
   uint16_t toneDelayTime;

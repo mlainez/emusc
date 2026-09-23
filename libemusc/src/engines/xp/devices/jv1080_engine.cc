@@ -2011,7 +2011,7 @@ bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
     if (!jv1080_voice_render(&voice->voice, l + start, r + start,
                              release - start))
       return false;
-    jv1080_voice_release(&voice->voice);
+    jv1080_voice_note_off(&voice->voice);
     return release == n ||
       jv1080_voice_render(&voice->voice, l + release, r + release,
                           n - release);
@@ -2256,7 +2256,7 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
         if (voice->delay)
           voice->release_in = voice->delay;
         else
-          jv1080_voice_release(&voice->voice);
+          jv1080_voice_note_off(&voice->voice);
         break;
       case kDelayHold:
         /* HOLD releases at the key, and a key that comes up before the
@@ -2266,10 +2266,10 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
         if (voice->wait)
           free_voice(voice);
         else
-          jv1080_voice_release(&voice->voice);
+          jv1080_voice_note_off(&voice->voice);
         break;
       default:
-        jv1080_voice_release(&voice->voice);
+        jv1080_voice_note_off(&voice->voice);
         break;
       }
       ++released;
