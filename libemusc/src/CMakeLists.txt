@@ -273,6 +273,25 @@ if(BUILD_TESTING)
     target_compile_options(device_test PRIVATE -UNDEBUG)
   endif()
   add_test(NAME device_test COMMAND device_test)
+
+  # Which patch a JV-1080 program change loads, checked by rendering the
+  # same note through two routes. Needs
+  # JV1080_CONTROL_ROM and JV1080_WAVE_ROMS; skipped without them.
+  add_executable(xp_jv1080_program_test ../tests/xp_jv1080_program_test.cc
+    engines/xp/device.cc engines/xp/chorus.cc engines/xp/delay.cc
+    engines/xp/eq.cc engines/xp/output.cc ${XP_VOICE_SOURCES})
+  target_include_directories(xp_jv1080_program_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(NOT MSVC)
+    target_link_libraries(xp_jv1080_program_test PRIVATE m)
+  endif()
+  if(MSVC)
+    target_compile_options(xp_jv1080_program_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(xp_jv1080_program_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME xp_jv1080_program_test COMMAND xp_jv1080_program_test)
+  set_property(TEST xp_jv1080_program_test PROPERTY SKIP_RETURN_CODE 77)
   set_property(TEST device_test PROPERTY SKIP_RETURN_CODE 77)
 
   # Synth::reset() is reached through the public C++ API, so this one links the

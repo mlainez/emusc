@@ -345,15 +345,51 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      The same caveat belongs on .selectors above, whose bytes stand in for
      a register encoding this project has not recovered. */
   .packedBankSelect = {
-    /* msb, lsb, patch source, RHYTHM source - one group, two sources, and
-       the part's own rhythm flag picks between them. */
-    { 0x51u, 0x00u, 3u, 11u },   /* PR-A */
-    { 0x51u, 0x01u, 4u, 12u },   /* PR-B */
-    { 0x51u, 0x02u, 5u, 13u },   /* PR-C */
-    { 0x51u, 0x03u, 6u, 14u },   /* GM */
-    { 0x50u, 0x00u, 7u, 15u },   /* USER, factory contents */
+    /* msb, lsb, patch source, RHYTHM source, group - one group, two
+       sources, and the part's own rhythm flag picks between them. The
+       pairs are also what the reverse map `0x0A014EBE` (PRG `0x046C1B` /
+       `0x046C27`) gives back for each group, which is how a part's latch
+       is seeded from its record. */
+    { 0x51u, 0x00u, 3u, 11u, 2u },   /* PR-A */
+    { 0x51u, 0x01u, 4u, 12u, 3u },   /* PR-B */
+    { 0x51u, 0x02u, 5u, 13u, 4u },   /* PR-C */
+    { 0x51u, 0x03u, 6u, 14u, 5u },   /* GM */
+    { 0x50u, 0x00u, 7u, 15u, 0u },   /* USER, factory contents */
+    /* The rest of `0x0A014EF6`'s tree: groups with no image here. They are
+       listed because a pair that names an unheld group is REJECTED, where
+       a pair that names no group at all falls back to the part record.
+       The odd XP LSBs are the same board's second 128. */
+    { 0x52u, 0x00u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 1u },  /* CARD */
+    { 0x53u, 0x00u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 6u },  /* PCM-A */
+    { 0x53u, 0x01u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 7u },  /* PCM-B */
+    { 0x54u, 0x00u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 8u },  /* XP-A */
+    { 0x54u, 0x01u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 8u },
+    { 0x54u, 0x02u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 9u },  /* XP-B */
+    { 0x54u, 0x03u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 9u },
+    { 0x54u, 0x04u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 10u }, /* XP-C */
+    { 0x54u, 0x05u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 10u },
+    { 0x54u, 0x06u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 11u }, /* XP-D */
+    { 0x54u, 0x07u, XP_PACKED_BANK_NONE, XP_PACKED_BANK_NONE, 11u },
   },
-  .packedBankSelectCount = 5u,
+  .packedBankSelectCount = 16u,
+
+  /* FW-EXACT. The per-part program change `0x0A018A0C` resolves the
+     part's latched CC0/CC32 through `0x0A014EF6`; when that pair names no
+     group it takes the group from the part record's own type (+2) and id
+     (+3) through `0x0A014984`, keeping the program number, and after
+     loading writes type, id and number back. For type 0 the id indexes
+     PRG `0x046C0C` = `00 00 01 02 03 04 05`, so ids 0 and 1 are USER and
+     2..6 are CARD, PR-A, PR-B, PR-C, GM; the reverse, `0x0A014ACE`,
+     writes group + 1. Types 1 and 2 name installed PCM cards and
+     expansion boards. The three demo songs agree: fifteen of the eighteen
+     parts they set to ids 3, 4 or 5 are then sent a patch whose name is
+     that bank's record at that number, and the other three carry the
+     song's own edits. */
+  .partFieldPatchGroupType = 2u,
+  .partFieldPatchGroupId = 3u,
+  .partFieldPatchNumber = 4u,
+  .partGroupIdTable = 0x046C0Cu,
+  .partGroupIdCount = 7u,
 
   /* The two record types a voice can come from. Both index sets are the
      manual's own SysEx offsets, which is the same thing as the descriptor's
