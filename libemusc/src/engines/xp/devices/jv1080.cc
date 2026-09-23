@@ -133,12 +133,35 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      wet gap at 103.00 ms against the 103.000 that is at 32 kHz, so there is
      no further fixed delay to add.
 
-     RATE: the table entry is a per-control-period increment on a 15-bit
-     accumulator, so the modulation is `table[rate] / 32768` cycles per
-     control period. Measured at four rates: 8, 24, 48 and 96 give 0.916,
-     2.563, 4.944 and 9.705 Hz against the law's 0.896, 2.499, 4.898 and
-     9.697 - within 2.6 % over a tenfold range, and within 0.9 % at the two
-     fastest, where the measurement has the most cycles to work with.
+     RATE: the table entry is a per-control-period increment on a 16-bit
+     accumulator, so the modulation is `table[rate] / 65536` cycles per
+     control period - `table * 32000 / 2^24` hertz, the control period
+     being 256 samples at 32 kHz.
+
+     Measured on the system chorus at values 32, 64, 96 and 127: 1.6191,
+     3.2842, 4.8658 and 11.0000 Hz against the law's 1.6498, 3.2482,
+     4.8485 and 10.998. Every deviation is inside that point's own
+     counting resolution, which is half a cycle in the 9.5, 19.5, 29 and
+     66 cycles the take contains: 1.9 % against 5.3, 1.1 against 2.6,
+     0.36 against 1.7, and 0.02 against 0.76.
+
+     The same constant is measured independently on the EFX chorus, whose
+     rate reads the same table through a different DSP program: values 20
+     and 45 give 1.0490 and 2.2983 Hz against 1.0490 and 2.2984.
+
+     The rate is read by COUNTING the delay's own reversals, because the
+     instantaneous frequency of a carrier through this chorus cannot be
+     peak-picked. A dry-plus-wet comb notches at delays of 1.911, 5.734
+     and 9.556 ms for a 261.63 Hz carrier, the triangle crosses every
+     notch inside its excursion twice per period, and the resulting
+     glitches put a strong component at (2 x crossings) times the rate.
+     The excursion is set by the depth, so the multiple is too: depth 32
+     spans one notch and reads 2x, depth 80 spans two and reads 4x, depth
+     127 spans three and reads 6x.
+
+     The law also reproduces the field's published range. Table entry 0 is
+     26 and entry 127 is 5766, so the parameter spans 0.0496 to 10.998 Hz
+     against the specified 0.05 to 10.0.
 
      DEPTH: the peak-to-peak sweep, 12.1 ms at the top of the field from a
      direct cepstral reading of the delay, scaled by the table's own shape.
@@ -165,7 +188,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP,
   .chorusPreDelayTable = 0x038EC8u,
   .chorusRateTable = 0x038B2Eu,
-  .chorusRateAccumulator = 32768.0,
+  .chorusRateAccumulator = 65536.0,
   .chorusDepthTable = 0x03856Cu,
   .chorusDepthMaxMs = 12.1,
   .chorusLevelTable = 0x03856Cu,
