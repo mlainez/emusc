@@ -218,6 +218,23 @@ int main(void)
     assert(std::fabs(1200.0 * std::log2(full / half) - 600.0) < 5.0);
   }
 
+  /* Cutoff key follow, tone field 0x52, on the same tone, whose filter is
+     a low-pass at cutoff 58, its F-ENV depth zeroed (wire 63) so that the
+     envelope does not carry the corner to the top of its range: index 5
+     (0 %) and 12 (+100 %) meet at key 60, and two octaves up, where the
+     note's fundamental sits above both corners, +100 %'s corner is two
+     octaves higher and passes far more of it. */
+  auto ckf = [](uint8_t index) {
+    return [index](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x55, 63);
+      tone_field(d, 1, 0x52, index);
+    };
+  };
+  assert(render(roms, ckf(5)) == render(roms, ckf(12)));
+  assert(energy(render(roms, ckf(12), 0, 84)) >
+         10.0 * energy(render(roms, ckf(5), 0, 84)));
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

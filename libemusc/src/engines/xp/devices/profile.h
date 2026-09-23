@@ -159,8 +159,9 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
-  /* An index into XpDeviceProfile::pitchKeyFollowTable. */
+  /* Indices into XpDeviceProfile::keyFollowTable. */
   uint16_t pitchKeyFollow;
+  uint16_t cutoffKeyFollow;
   /* The key the wave is played at, where the record names one instead of
      transposing by the key that triggered it - which is what makes a drum
      a drum rather than a sample pitched to whatever key struck it. */
@@ -578,13 +579,14 @@ struct XpDeviceProfile {
   struct XpVoiceFieldMap toneFields;
   struct XpVoiceFieldMap rhythmNoteFields;
 
-  /* The pitch key follow value list: `pitchKeyFollowCount` fixed-width
-     ASCII entries of `pitchKeyFollowWidth` characters, each a signed
-     percentage of one semitone per key. Zero where a device has none,
-     and then every record tracks the key at 100 %. */
-  uint32_t pitchKeyFollowTable;
-  uint8_t pitchKeyFollowCount;
-  uint8_t pitchKeyFollowWidth;
+  /* The value list pitch and cutoff key follow index: `keyFollowCount`
+     fixed-width ASCII entries of `keyFollowWidth` characters, each a
+     signed percentage - of one semitone per key for pitch, of one octave
+     of corner per octave of key for cutoff. Zero where a device has none,
+     and then pitch tracks the key at 100 % and cutoff not at all. */
+  uint32_t keyFollowTable;
+  uint8_t keyFollowCount;
+  uint8_t keyFollowWidth;
 
   /* The rhythm set: which packed groups its common and per-key records
      are, which part index addresses it, and the first key it holds. */
