@@ -174,6 +174,24 @@ int main(void)
      its own switch off, so it never reaches this loop. */
   assert(resolved == enabled);
 
+  /* A row's zones past the twelfth have element references too, stored in
+     the eight bytes that open the next row. Synth Saw 2 (bank 0 row 182)
+     splits at ..95, 100, 107, 114, 127 and its references run 665..676 and
+     on into 677, 678; a reader limited to twelve references finds no zone
+     above key 100 and the note plays nothing, where the hardware sounds. */
+  {
+    char wave[16];
+    assert(multisample_name(&rom, 0u, 182u, wave, sizeof wave));
+    assert(strcmp(wave, "Synth Saw 2 ") == 0);
+    struct xp_wave_zone zone;
+    assert(multisample_select(&rom, 0u, 182u, 100u, &zone));
+    assert(zone.zone == 11u && zone.element == 676u);
+    assert(multisample_select(&rom, 0u, 182u, 101u, &zone));
+    assert(zone.zone == 12u && zone.element == 677u);
+    assert(multisample_select(&rom, 0u, 182u, 127u, &zone));
+    assert(zone.zone == 14u);
+  }
+
   /* A PARAMETER WRITE IS NOT A MEMCPY, AND THIS IS THE CHECK THAT SAYS SO.
      A write carries the raw value and the decoded array holds the biased
      one, so for every field of the tone and patch-common groups, applying

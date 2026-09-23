@@ -703,7 +703,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      bank 0 says 326 rows / 957 elements / directory 0x0A075C70 and bank 1
      says 132 / 430 / 0x0A07C6F8 - and the firmware reads those three words
      back through the XP's metadata protocol, so they are source metadata
-     rather than a parse assumption. */
+     rather than a parse assumption.
+
+     A row holds sixteen split points and SIXTEEN element references, not
+     twelve: references 12-15 are the eight bytes at the next row's +0x00,
+     contiguous with the first twelve (record + 0x24 + 2*zone runs straight
+     on), which is why only row 0 has room for the geometry words above.
+     Synth Saw 2's references 665..676 continue as 677, 678 there, and 455
+     of the 458 rows hold exactly as many references past the twelfth as
+     they have zones past the twelfth (the other three carry an unused
+     spare). On the hardware `key_scaling/key_sweep_saw2` sounds at keys
+     101-127, level with key 100, where a twelve-reference reading finds no
+     zone and plays nothing. */
   .multisampleBanks = {
     { 0x071000u, 326u, 0x3cu },
     { 0x07a800u, 132u, 0x3cu },
@@ -712,7 +723,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .multisampleLayout = {
     .name = 0x08u, .nameLength = 12u,
     .splitPoints = 0x14u, .splitCount = 16u,
-    .elementRefs = 0x24u, .refCount = 12u,
+    .elementRefs = 0x24u, .refCount = 16u,
   },
 
   /* The two wave-element directories. The lookup
