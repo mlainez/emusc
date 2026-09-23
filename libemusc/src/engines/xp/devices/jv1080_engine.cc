@@ -227,6 +227,23 @@ const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
    channels, a spread of 0.3 %. Independent of rate, as an excursion must
    be, which is a check on the whole chain and not just a number. */
 const double kEfxChorusSweepMs = 12.36;
+/* The second channel's LFO offset, in cycles per step of p6.
+
+   MEASURED AT ONE POINT. At the factory p6 of 50 the two delay lines run
+   0.2686 and 0.2689 cycles apart - 96.7 and 96.8 degrees - read at two
+   different rates by cross-correlating the two channels' frequency
+   deviations, which at full wet ARE the two delay trajectories. Both
+   readings peak at a correlation of +1.000, and the method is good to a
+   tenth of a degree - a render whose offset is known by construction
+   reads back within 0.1.
+
+   LINEARITY IS ASSUMED, NOT MEASURED: one point cannot give a law, and no
+   stimulus here sweeps p6. What the panel shows - 0 to 90 accepted, 0 to
+   180 displayed, so two degrees a step - would put the factory value at
+   100.0 degrees, and the machine says 96.75. That is 3.4 % apart, well
+   outside the measurement. So the slope below is the measured point
+   divided by 50 and nothing more; a p6 sweep would settle the shape. */
+const double kEfxChorusPhaseStep = 0.2687 / 50.0;
 const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
 const double kEfxTimeControlScale = 0.966;
 const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
@@ -1064,12 +1081,8 @@ void efx_modulated_refresh(struct Engine *engine)
      it. Restarting the sweep at each write makes the deviation constant
      over so short a window, and ours read 0.006 % until this was removed. */
 
-  /* p6 PHASE. The field accepts 0..90 and the panel shows 0..180 degrees,
-     so two degrees a step. NOT MEASURED: only the consequence of the
-     factory 50 is, in the two correlations above. The ORDER is right - it
-     is a fraction of a cycle between the channels - and the exact law is
-     not recovered. */
-  engine->efx_lfo_offset = (double)p[5] / 180.0;
+  /* p6 PHASE, anchored on the one measured point (see the constant). */
+  engine->efx_lfo_offset = (double)p[5] * kEfxChorusPhaseStep;
 
   /* p10 BALANCE, measured end to end: 0 is fully DRY (envelope flat to
      1.01 dB, L/R correlation +1.0000), 100 is fully WET, and the comb is
