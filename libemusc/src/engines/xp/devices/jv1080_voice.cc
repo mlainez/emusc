@@ -475,6 +475,12 @@ double wave_gain(unsigned raw)
    low cutoffs sits within 15 dB of its own noise floor, 100 dB and more
    under full scale.
 
+   NOT RESOLVED above cutoff 88: with resonance, the hardware's peak sits
+   0.22 octave under these points at cutoff 96 and 0.5 under at 112, and
+   at 112 it falls as the resonance rises - 7992 Hz at value 8 to 6129 at
+   112 (`M-118`). A two-pole section with a fixed natural frequency cannot
+   meet both that and M-012's resonance-0 corners; this keeps the corners.
+
    Measured on the low-pass; the other three types take the same frequency,
    which is not measured. */
 const double kTvfNaturalHz[][2] = {
@@ -674,23 +680,36 @@ double velocity_time_scale(unsigned enumValue, unsigned velocity)
   return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 63.0);
 }
 
-/* MEASURED (`M-021`): resonance does not saturate. It is roughly 0.28 dB
-   per step to value 96 and then climbs steeply - +46.7 dB of peak at cutoff
-   64 and +67.4 dB at cutoff 112 - so how steep the top is depends on the
-   cutoff.
+/* Resonance as the two-pole section's Q, in dB. The peak gain of a
+   two-pole section is its Q for a Q well above unity; the chip's own
+   coefficient form is unknown (`L-05`) and is not what this reproduces.
 
-   THE CUTOFF DEPENDENCE ABOVE VALUE 96 IS NOT MODELLED. This reads the
-   0.28 dB per step below 96 and then the measured cutoff-64 endpoint,
-   46.7 dB at 127, straight between them. The peak gain of a two-pole
-   section is its Q for a Q well above unity, which is how the dB reaches
-   the coefficients below; the chip's own coefficient form is unknown
-   (`L-05`) and is not what this reproduces.
+   MEASURED (`M-021`, `M-118`): from value 8 to 96 about 0.28 dB per step -
+   two-pole fits to the white-noise resonance sweeps read within 0.6 dB of
+   it at cutoffs 40, 64 and 80 - and at value 0 a Q of 0.84 (-1.76, -1.36
+   and -1.56 dB there), not 1. Between 0 and 8 nothing is measured and the
+   dB runs straight between the two.
 
-   MEASURED (`M-118`): two-pole fits to the resonance sweeps on white noise
-   read Q within 0.6 dB of this law from value 8 to 96 at cutoffs 40, 64
-   and 80, and at value 0 a Q of 0.84 (-1.76, -1.36 and -1.56 dB), not
-   the law's 1. Between 0 and 8 nothing is measured and the dB is taken
-   straight between the two. */
+   Above 96 the peak is narrower than those takes' spectra resolve, and
+   M-021's peak readings there (46.7 dB at 127 on cutoff 64, 67.4 on 112)
+   are resolution-limited. It is read instead from each note's ENERGY: our
+   render of the same file with the filter off, passed through this section
+   from the note-on over the same window, gives the energy any Q produces
+   against Q 0.84, and the Q that matches the take's own ratio is the
+   take's. The method reads our engine's own Q back to 0.25 dB. On the
+   hardware it reads the same increments over value 96 at cutoffs 64, 80,
+   96 and 112, within 0.5 dB: +3.5 at 104, +6.0 at 112, +12.4 at 120, and at
+   127 at least +42 - the method's own ceiling, the machine at the edge of
+   self-oscillation. Cutoff 40 reads lower and is not used: its peak, at
+   59 Hz, is inside the interface's roll-off. The increments are added to
+   the law's value at 96; between the measured values the dB runs straight.
+
+   On the absolute level at 88 and 96 the two methods part by up to 2.5 dB
+   (energy below the law, the fits above it at cutoff 64), which says the
+   machine's peak is not exactly a two-pole's shape; that is not resolved. */
+const double kTvfTopResonance[] = { 96.0, 104.0, 112.0, 120.0, 127.0 };
+const double kTvfTopDb[] = { 26.88, 30.38, 32.88, 39.28, 68.88 };
+
 double tvf_q(unsigned resonance)
 {
   const double zeroDb = 20.0 * std::log10(0.84);
@@ -698,7 +717,8 @@ double tvf_q(unsigned resonance)
     ? zeroDb + (0.28 * 8.0 - zeroDb) * (double)resonance / 8.0
     : resonance <= 96u
     ? 0.28 * (double)resonance
-    : 26.88 + (46.70 - 26.88) * ((double)resonance - 96.0) / (127.0 - 96.0);
+    : interpolate_points(kTvfTopResonance, kTvfTopDb, 5u,
+                         (double)(resonance > 127u ? 127u : resonance));
   return std::pow(10.0, peakDb / 20.0);
 }
 
