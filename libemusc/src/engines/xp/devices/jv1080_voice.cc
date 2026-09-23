@@ -1884,6 +1884,39 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       voice->lfo_base_frequency[i] = voice->lfo[i].frequency;
     }
 
+  /* FXM. MEASURED (`P-xxxx`, `structure/fxm_off`, `fxm_color_c0..c3`,
+     `fxm_depth_sweep`: a `Sine` at key 60). The switch on puts sidebands
+     at exactly f +- n * 250 / (colour + 1) Hz - 250, 125, 83.3 and 62.5 Hz
+     for colours 0 to 3 - odd orders strong and even ones some 45 dB under,
+     so the rate is switched in a square of that frequency. Read as an
+     instantaneous frequency on colour 3, the note holds two rates in turn,
+     205 and 316.5 Hz, whose arithmetic mean is the unmodulated 261.6: the
+     pair straddles the pitch, 2 / (1 + k) and 2 k / (1 + k). Fitting k to
+     the upper first sideband on the four colour takes, all at depth 8,
+     gives 2^(-g/16) with g 9.20, 9.25, 8.80 and 9.20 - the 2^(-(d + 1)/16)
+     the sibling engine reads off its own ROM, with depth 0 still
+     modulating; the depth sweep's shorter notes read g about d, a spread
+     the line fit's window has not been separated from. Against our own
+     render of the same files through the same analysis, colours 1 and 3
+     agree within 0.3 dB and colour 2 within 1 dB; at colour 0 our upper
+     first sideband runs 1.1 to 1.3 dB over the machine's at every depth,
+     and the machine carries a line at f - 250 Hz (11.6 Hz here) some 6 dB
+     over ours, present on every FXM take and absent from `fxm_off`. Our
+     output's DC blocker takes part of that line; the rest, and the colour
+     0 excess, are not resolved. Which rate comes first after note-on is
+     not measured. With the switch off the depth does nothing. */
+  voice->fxm_active = false;
+  voice->fxm_clock = 0.0;
+  if (fields->fxmSwitch != XP_VOICE_FIELD_NONE && tone[fields->fxmSwitch]) {
+    unsigned colour = field_or(fields, fields->fxmColor, tone, 0u) & 3u;
+    unsigned depth = field_or(fields, fields->fxmDepth, tone, 0u) & 15u;
+    double k = std::pow(2.0, -(double)(depth + 1u) / 16.0);
+    voice->fxm_ratio[0] = 2.0 / (1.0 + k);
+    voice->fxm_ratio[1] = 2.0 * k / (1.0 + k);
+    voice->fxm_half = 0.5 * (double)(colour + 1u) / 250.0;
+    voice->fxm_active = true;
+  }
+
   /* The pitch envelope. */
   voice->penv_active = false;
   voice->penv_ratio = 1.0;
@@ -2281,11 +2314,23 @@ double voice_tvf(struct XpJv1080Voice *voice, double value)
   return value;
 }
 
+double fxm_step(struct XpJv1080Voice *voice)
+{
+  if (!voice->fxm_active)
+    return 1.0;
+  double ratio = voice->fxm_ratio[voice->fxm_clock < voice->fxm_half ? 0 : 1];
+  voice->fxm_clock += voice->sample_period;
+  if (voice->fxm_clock >= 2.0 * voice->fxm_half)
+    voice->fxm_clock -= 2.0 * voice->fxm_half;
+  return ratio;
+}
+
 bool voice_advance(struct XpJv1080Voice *voice)
 {
+  const double fxm = fxm_step(voice);
   if (voice->reverse) {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio;
+      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
     voice->position -= step;
@@ -2295,7 +2340,7 @@ bool voice_advance(struct XpJv1080Voice *voice)
     }
   } else {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio;
+      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
     voice->position += step;

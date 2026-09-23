@@ -263,6 +263,13 @@ struct XpJv1080Voice {
   bool envelope_done;
   double tone_gain;
 
+  /* FXM: the read rate alternates between fxm_ratio[0] and fxm_ratio[1],
+     each held for fxm_half seconds; fxm_clock is the time into the pair. */
+  bool fxm_active;
+  double fxm_ratio[2];
+  double fxm_half;
+  double fxm_clock;
+
   bool penv_active;
   double penv_level[4];
   double penv_time[4];
