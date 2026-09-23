@@ -301,12 +301,20 @@ struct EfxModSpec {
   /* A second modulator on the AMPLITUDE, where the type carries one.
      -1 on both where it does not. */
   int tremRate, tremDepth;
+  /* Several voices on one line, evenly spread and unevenly weighted.
+     `spread` names the parameter that sets the gap and `spreadMs` what a
+     step of it is worth. `voices` is 1 and `spread` -1 for a type with
+     one, and `weight` is then unused. */
+  unsigned voices;
+  int spread;
+  double spreadMs;
+  double weight[4];
 };
 const struct EfxModSpec kEfxModSpecs[] = {
   /* 14 STEREO-CHORUS: one pre-delay for both channels; p7 has a ceiling of
      127 and a factory 0 and is not identified, so no feedback is applied. */
   { 13u, kEfxModTriangle, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 9u, 10u, 5, false, -1, -1, 12.38, -1, -1 },
+    3u, 4u, 9u, 10u, 5, false, -1, -1, 12.38, -1, -1, 1u, -1, 0.0, { 1.0, 0.0, 0.0, 0.0 } },
   /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback - and a
      DIFFERENT modulator, which took three attempts to pin down. Its
      deviation's harmonic ratios at the rates where they resolve read
@@ -325,7 +333,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      last one also settles the direction: a sweep this wide that never
      clips at a 1.00 ms nominal is one-sided UPWARD, as the chorus's is. */
   { 14u, kEfxModParabola, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 9u, 10u, 5, false,  6, -1, 12.32, -1, -1 },
+    3u, 4u, 9u, 10u, 5, false,  6, -1, 12.32, -1, -1, 1u, -1, 0.0, { 1.0, 0.0, 0.0, 0.0 } },
   /* 18 MODULATION-DELAY: a stereo delay with the same LFO on top. Its two
      delay slots read `0x038FC8` at `ms = table / 32`, measured with the
      depth at zero so the delay stands still - ratio 1.0000 at values 16,
@@ -333,7 +341,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      `0x038EC8` predicts 46, 74 and 101 ms where the machine gives 100, 260
      and 500, so it is not that table. */
   { 17u, kEfxModTriangle, { 1u, 2u }, kEfxDelayTable,
-    5u, 6u, 10u, 11u, 7, false,  3,  4, 49.55, -1, -1 },
+    5u, 6u, 10u, 11u, 7, false,  3,  4, 49.55, -1, -1, 1u, -1, 0.0, { 1.0, 0.0, 0.0, 0.0 } },
   /* 12 TREMOLO-CHORUS: a chorus and an amplitude modulator, each with its
      own rate and depth, separated by driving one with the other at zero.
 
@@ -359,7 +367,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      family's shape and it ships at 0, where the table's own entry is one
      sample. If it is something else, nothing here depends on it. */
   { 11u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
-    1u, 2u, 6u, 7u, 5, false, -1, -1, 12.23, 3, 4 },
+    1u, 2u, 6u, 7u, 5, false, -1, -1, 12.23, 3, 4, 1u, -1, 0.0, { 1.0, 0.0, 0.0, 0.0 } },
   /* 13 SPACE-D: ONE delay in both channels, with the right one NEGATED.
 
      Measured on the cross-correlation between the channels, which needs no
@@ -381,7 +389,40 @@ const struct EfxModSpec kEfxModSpecs[] = {
      p1 is the pre-delay, measured exactly: 3.19, 14.00, 46.00 and 100.00
      ms at values 32, 64, 96 and 125 against `0x038EC8`'s own table/32. */
   { 12u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
-    1u, 2u, 6u, 7u, -1, true, -1, -1, 3.04, -1, -1 },
+    1u, 2u, 6u, 7u, -1, true, -1, -1, 3.04, -1, -1, 1u, -1, 0.0, { 1.0, 0.0, 0.0, 0.0 } },
+  /* 11 HEXA-CHORUS: THREE voices on one line, evenly spread and tapered.
+
+     Three, not six, and that is measured rather than read off the name.
+     With p4 at 20 the taps sit 40.4 ms apart - far enough that the
+     inter-tap differences cannot be confused with them - and the
+     autocorrelation at the first six tap positions reads 0.3224, 0.2634,
+     0.2121, 0.0002, 0.0002, 0.0002. The last three are the noise floor:
+     there is nothing there. p4 at 15 gives the same picture.
+
+     THE TAPER is those first three normalised: 1.000, 0.817, 0.658. Taken
+     at p4 = 20 because its taps are the best separated; p4 = 15 agrees on
+     the second at 0.824 and gives 0.542 on the third, so the third is
+     measured to about a tenth and not better. Equal levels are ruled out
+     by a stronger argument than the numbers: with them the inter-tap
+     correlations are as large as the dry-to-tap ones, and the machine's
+     are half the size.
+
+     p4 SETS THE SPREAD, LINEARLY: 0, 5, 10, 15 and 20 give 0, 10.1, 20.2,
+     30.1 and 40.6 ms, about 2.02 ms a step, consistent with 64 samples at
+     32 kHz to within one percent. At p4 = 0 all three coincide.
+
+     Sweep 11.96 ms at depth 127 following the level curve at 0.000, 0.190,
+     0.429, 0.685, 1.000 against 0.000, 0.191, 0.418, 0.689, 1.000;
+     modulator a triangle, folded out of the tracked trajectory.
+
+     NOT MODELLED: p6 moves the spacing not at all, which fits a PAN
+     deviation a mono autocorrelation cannot see, so all three voices are
+     summed to both channels and this renders narrower than the machine.
+     p5 does nothing with the depth at zero and is presumably a depth
+     deviation; the three sweep together here. */
+  { 10u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
+    1u, 2u, 6u, 7u, -1, false, -1, -1, 11.96, -1, -1,
+    3u, 3, 2.02, { 1.000, 0.817, 0.658, 0.0 } },
 };
 const unsigned kEfxModSpecCount =
   (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
@@ -579,6 +620,9 @@ struct Engine {
   double efx_trem_phase, efx_trem_step;
   float efx_trem_depth;
   bool efx_invert_right;
+  unsigned efx_voices;
+  double efx_spread;
+  float efx_weight[4];
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1197,8 +1241,13 @@ void efx_modulated_refresh(struct Engine *engine)
     uint16_t top = 0;
     if (n)
       efx_table_value(&engine->rom, spec->nominalTable, n - 1u, 0, &top);
+    /* long enough for the furthest voice at the field's own ceiling, not
+       for whatever it is set to now */
+    double spread = spec->spread < 0 ? 0.0 :
+      127.0 * spec->spreadMs * engine->output_rate / 1000.0;
     if (!efx_buf_ensure(engine,
-                         (size_t)((double)top * scale + sweep_max) + 8u))
+                         (size_t)((double)top * scale + sweep_max +
+                                   spread * (double)(spec->voices - 1u)) + 8u))
       return;
   }
 
@@ -1253,6 +1302,18 @@ void efx_modulated_refresh(struct Engine *engine)
   engine->efx_lfo_offset =
     spec->phase < 0 ? 0.0 : efx_chorus_phase(p[(unsigned)spec->phase]);
   engine->efx_invert_right = spec->invertRight;
+  engine->efx_voices = spec->voices;
+  engine->efx_spread = spec->spread < 0 ? 0.0 :
+    (double)p[(unsigned)spec->spread] * spec->spreadMs *
+    engine->output_rate / 1000.0;
+  {
+    double sum = 0.0;
+    for (unsigned v = 0; v < spec->voices && v < 4u; ++v)
+      sum += spec->weight[v];
+    for (unsigned v = 0; v < 4u; ++v)
+      engine->efx_weight[v] = (float)
+        (v < spec->voices && sum > 0.0 ? spec->weight[v] / sum : 0.0);
+  }
 
   /* FEEDBACK, where the type has one. The bipolar zero of 49 and the 2 %
      a step are the pure-delay family's own measured law (`M-101`); that
@@ -1311,15 +1372,19 @@ void efx_mod_process(struct Engine *engine, const float *inL,
   for (size_t k = 0; k < frames; ++k) {
     /* Read before write, the same order the pure-delay family uses, so the
        two agree about what a delay of one sample means. */
-    float l = efx_tap(engine, 0, engine->efx_nominal[0] +
-                       engine->efx_sweep *
-                       efx_mod_shape(engine->efx_shape,
-                                      engine->efx_lfo_phase));
-    float r = efx_tap(engine, 1, engine->efx_nominal[1] +
-                       engine->efx_sweep *
-                       efx_mod_shape(engine->efx_shape,
-                                      engine->efx_lfo_phase +
-                                      engine->efx_lfo_offset));
+    double ml = engine->efx_sweep *
+      efx_mod_shape(engine->efx_shape, engine->efx_lfo_phase);
+    double mr = engine->efx_sweep *
+      efx_mod_shape(engine->efx_shape,
+                     engine->efx_lfo_phase + engine->efx_lfo_offset);
+    float l = 0.0f, r = 0.0f;
+    for (unsigned v = 0; v < engine->efx_voices; ++v) {
+      double off = (double)v * engine->efx_spread;
+      l += engine->efx_weight[v] *
+        efx_tap(engine, 0, engine->efx_nominal[0] + off + ml);
+      r += engine->efx_weight[v] *
+        efx_tap(engine, 1, engine->efx_nominal[1] + off + mr);
+    }
     /* the damping one-pole, on the way round the loop; at damp 0 it is the
        identity and the two feedback-less types are unaffected */
     for (unsigned c = 0; c < 2u; ++c) {
