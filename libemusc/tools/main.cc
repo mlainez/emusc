@@ -98,7 +98,10 @@ ROM selection (either --device with --rom-dir, or the three explicit options):
   --wave-rom FILE        PCM/wave ROM; repeat in bank order (each a multiple of 1 MB)
 
 Rendering:
-  --rate HZ              Output sample rate (required; e.g. 66207, 64000, 44100)
+  --rate HZ              Output sample rate (e.g. 44100, 48000). Defaults to
+                         the device's own rate where that is established -
+                         32000 for sc88 and jv1080 - and is required for
+                         sc55, sc55mkii and jv880, whose rates are not
   --reset gm|gs|none     Initial sound-map / reset state (default: gs).
                          none skips the power-on reset call entirely.
                          The JV-1080 has no GS mode: gs and gm both put it
@@ -215,7 +218,6 @@ Options parse_args(int argc, char **argv) {
     die(1, std::string("expected <input.mid> <output.wav>, or --midi and --out; "
                         "--out may be omitted only with --play\n") + USAGE);
 
-  if (o.rate == 0) die(1, "--rate is required");
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
     die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
@@ -349,6 +351,25 @@ int main(int argc, char **argv) {
   } catch (const std::exception &e) {
     restore_cout();
     die(2, std::string("wave ROM load failed: ") + e.what());
+  }
+
+  // The default output rate is the device's own, where the device's rate is
+  // established: the SC-88's DAC images mirror 32.000 kHz (scdb sc88
+  // `M-166`, and its 24.576 MHz crystal divides to it by 768), and the
+  // JV-1080 carries the same sound-generator part on the same crystal. The
+  // SC-55, SC-55mkII and JV-880 run three different engine clocks and none
+  // of their rates is settled (scdb `01_hardware/hardware.md` for each), so
+  // a default there would be a guess.
+  if (o.rate == 0) {
+    auto gen = ctrl->generation();
+    if (gen == EmuSC::ControlRom::SynthGen::SC88 ||
+        gen == EmuSC::ControlRom::SynthGen::JV1080) {
+      o.rate = 32000;
+    } else {
+      restore_cout();
+      die(1, "--rate is required for the " + ctrl->model() +
+             ": its own sample rate is not established");
+    }
   }
 
   std::fprintf(stderr, "emusc-render: control ROM %s v%s (%s), wave ROM v%s (%s)\n",
