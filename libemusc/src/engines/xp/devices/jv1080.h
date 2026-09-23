@@ -275,11 +275,13 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
 
 /* How many decoded samples this tone needs at this key, so a caller can
  * size the buffer jv1080_voice_start decodes into. False where the tone
- * does not sound, the same cases jv1080_voice_start refuses. */
+ * does not sound, the same cases jv1080_voice_start refuses. `keyShift`
+ * is the part's key shift, which jv1080_voice_start reads from its
+ * controls: both move the zone the key selects. */
 bool jv1080_voice_span(const struct xp_rom *rom,
                         const struct XpVoiceFieldMap *fields,
                         const uint8_t *tone, unsigned key, unsigned velocity,
-                        size_t *samples);
+                        int keyShift, size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
 /* A CC7 value reaching a voice that is already sounding. */

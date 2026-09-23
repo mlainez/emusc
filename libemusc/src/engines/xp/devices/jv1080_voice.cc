@@ -1268,9 +1268,30 @@ unsigned playback_key(const struct XpVoiceFieldMap *fields,
 /* The five links from a record's three wave fields to a wave-element
    record, shared by the span query and the note-on below so the two cannot
    drift. */
+/* The key a record's multisample zone is chosen by. MEASURED (`P-xxxx`,
+   `pitch/coarse_semitones`, `coarse_octaves`, `part_coarse`): a tone's
+   coarse tune and the part's key shift move it with the transposition. On
+   the INT-B `Sine`, whose elements carry their own second-harmonic level,
+   the take's h2 steps at coarse tune -9, -3, +5 and +10 - exactly where
+   the transposed key crosses the multisample's splits at 50, 56, 64 and 69
+   - and reads within 0.9 dB of the element that key selects at every step;
+   the part key shift's takes step the same way. With the key alone the
+   element never changes and h2 sits at -32.1 dB throughout. A record that
+   names its own source key - a drum - keeps it: how its coarse tune bears
+   on its zone is not measured. */
+unsigned zone_key(const struct XpVoiceFieldMap *fields, const uint8_t *record,
+                  unsigned key, int keyShift)
+{
+  if (fields->sourceKey != XP_VOICE_FIELD_NONE)
+    return playback_key(fields, record, key);
+  int shifted = (int)key + keyShift +
+    (int)(int8_t)(uint8_t)field_or(fields, fields->coarseTune, record, 0);
+  return shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
+}
+
 bool resolve_element(const struct xp_rom *rom,
                       const struct XpVoiceFieldMap *fields,
-                      const uint8_t *record, unsigned key,
+                      const uint8_t *record, unsigned key, int keyShift,
                       struct xp_wave_element *element)
 {
   unsigned source = 0;
@@ -1283,7 +1304,7 @@ bool resolve_element(const struct xp_rom *rom,
     wave_number_resolve(rom, source, (unsigned)record[fields->waveNumber],
                          &msBank, &msRow) &&
     multisample_select(rom, msBank, msRow,
-                        playback_key(fields, record, key), &zone) &&
+                        zone_key(fields, record, key, keyShift), &zone) &&
     wave_element_open(rom, zone.directory, zone.element, element);
 }
 
@@ -1331,12 +1352,12 @@ double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
 bool jv1080_voice_span(const struct xp_rom *rom,
                         const struct XpVoiceFieldMap *fields,
                         const uint8_t *tone, unsigned key, unsigned velocity,
-                        size_t *samples)
+                        int keyShift, size_t *samples)
 {
   struct xp_wave_element element;
   if (!rom || !fields || !tone || !samples || key > 127u || velocity == 0u ||
       velocity > 127u || !record_sounds(fields, tone, key, velocity) ||
-      !resolve_element(rom, fields, tone, key, &element))
+      !resolve_element(rom, fields, tone, key, keyShift, &element))
     return false;
   *samples = (size_t)(element.bank_end - (element.bank_start & ~0x0fu)) + 1u;
   return true;
@@ -1389,7 +1410,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
 
   struct xp_wave_element element;
   if (!record_sounds(fields, tone, key, velocity) ||
-      !resolve_element(rom, fields, tone, key, &element))
+      !resolve_element(rom, fields, tone, key, controls->key_shift, &element))
     return false;
   if (element.bank >= XP_WAVE_BANK_COUNT || !banks[element.bank])
     return false;
@@ -1441,8 +1462,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      on every note rather than on none. */
   int coarse = (int8_t)(uint8_t)field_or(fields, fields->coarseTune, tone, 0);
   int fine = (int8_t)(uint8_t)field_or(fields, fields->fineTune, tone, 0);
-  /* The part's key shift moves the pitch rather than the note number, so
-     the zone the key chose is left alone. */
+  /* The part's key shift and the coarse tune are pitch terms below; the
+     zone they move is zone_key's. */
   const unsigned soundedKey = playback_key(fields, tone, key);
   /* The patch's octave shift arrives in `key` itself (the engine shifts the
      note it starts), so it is not a pitch term here. MEASURED on the
