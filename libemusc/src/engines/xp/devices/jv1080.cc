@@ -453,6 +453,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x77u,
     .coarseTune = 0x3du,
     .fineTune = 0x3eu,
+    .pitchKeyFollow = 0x40u,
     .sourceKey = XP_VOICE_FIELD_NONE,
     /* MIX / EFX / OUTPUT1 / OUTPUT2 (`05_data_model/partial_schema.md`,
        PRG 0x057158). A tone has no PATCH value - only a part does. */
@@ -486,6 +487,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x33u,
     .coarseTune = XP_VOICE_FIELD_NONE,
     .fineTune = 0x0du,
+    .pitchKeyFollow = XP_VOICE_FIELD_NONE,
     .sourceKey = 0x0cu,
     .outputAssign = 0x36u,       /* the rhythm note's own, same four values */
     .cutoff = 0x1bu,
@@ -511,6 +513,20 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .velocityRangeHigh = XP_VOICE_FIELD_NONE,
     .muteGroup = 0x07u,
   },
+
+  /* PITCH KEY FOLLOW. The tone's field 0x40 indexes the sixteen-entry list
+     at PRG `0x057541` - `-100-70 -50 -30 -10 0   +10 ... +200`, four
+     characters each, the panel's own strings - and the displayed
+     percentage is the law: MEASURED (`M-014`) exact at indices 0, 5, 12
+     and 15 as -100, 0, +100 and +200 cents per key, and at index 10 (+50)
+     on the first factory song's part 6, whose tone 1 sounds 5 semitones
+     under its unison at key 70 on the hardware take (TASK-356). That
+     reading also puts the pivot at key 60, as `M-077` has it for every
+     key-scaling field on this machine. The rhythm note has no such
+     field. */
+  .pitchKeyFollowTable = 0x057541u,
+  .pitchKeyFollowCount = 16u,
+  .pitchKeyFollowWidth = 4u,
 
   /* The rhythm set is groups 8 and 9, addressed as part index 9 - which is
      MIDI part 10 - and holds the 64 keys 35 to 98. */

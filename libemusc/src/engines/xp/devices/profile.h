@@ -159,6 +159,8 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
+  /* An index into XpDeviceProfile::pitchKeyFollowTable. */
+  uint16_t pitchKeyFollow;
   /* The key the wave is played at, where the record names one instead of
      transposing by the key that triggered it - which is what makes a drum
      a drum rather than a sample pitched to whatever key struck it. */
@@ -575,6 +577,14 @@ struct XpDeviceProfile {
      its SysEx address map is also the parameter's SysEx offset. */
   struct XpVoiceFieldMap toneFields;
   struct XpVoiceFieldMap rhythmNoteFields;
+
+  /* The pitch key follow value list: `pitchKeyFollowCount` fixed-width
+     ASCII entries of `pitchKeyFollowWidth` characters, each a signed
+     percentage of one semitone per key. Zero where a device has none,
+     and then every record tracks the key at 100 %. */
+  uint32_t pitchKeyFollowTable;
+  uint8_t pitchKeyFollowCount;
+  uint8_t pitchKeyFollowWidth;
 
   /* The rhythm set: which packed groups its common and per-key records
      are, which part index addresses it, and the first key it holds. */
