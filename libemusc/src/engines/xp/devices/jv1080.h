@@ -105,6 +105,7 @@ struct XpJv1080Voice {
   size_t pcm_count;
   double position;               /* fractional index into pcm */
   double increment;              /* wave samples per output sample */
+  double bend_ratio;             /* the bender's share, 1 at centre */
   size_t loop_first;
   size_t loop_last;
   bool looping;

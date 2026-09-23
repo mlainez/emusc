@@ -994,6 +994,14 @@ bool midiToVoiceEngine(Device *device, uint8_t part, uint8_t status,
   case 0xb0:
     ops->control_change(voices, part, data1, data2);
     return true;
+  case 0xe0:
+    if (ops->pitch_bend)
+      ops->pitch_bend(voices, part, (unsigned)data1 | ((unsigned)data2 << 7));
+    return true;
+  case 0xd0:
+    if (ops->channel_pressure)
+      ops->channel_pressure(voices, part, data1);
+    return true;
   default:
     return true;
   }
