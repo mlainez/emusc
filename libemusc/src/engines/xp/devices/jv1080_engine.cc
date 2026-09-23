@@ -262,6 +262,81 @@ const unsigned kEfxDelayTable = 10u;      /* XP_EFX_TABLE_DELAY */
 const unsigned kEfxBalanceTable = 14u;
 const unsigned kEfxDampTable = 15u;
 const unsigned kEfxLevelTableIndex = 0u;
+/* --- THE INSERT REVERBS, types 24 and 25 ---------------------------
+
+   Not the system reverb: their own entry points, and `M-111` measured
+   their Time law separately rather than assuming it.
+
+   THEY DO NOT FIT THE SHARED REVERB STRUCT, which is why they have their
+   own. Read through the type table at `0x044EBC`, REVERB's program makes
+   46 ERAM accesses - 24 writes and 22 reads - and GATE-REVERB's 46, 16 and
+   30, against `XP_REVERB_BUFFERS` of twelve and `XP_REVERB_TAPS` of eight.
+
+   THE LENGTHS ARE THE MACHINE'S OWN. An ERAM address is sixteen bits, so
+   the space is 0..0xFFFF and it WRAPS: twenty-four of GATE-REVERB's thirty
+   reads sit below every one of its writes, which is a wrapped line and not
+   a decode error. A tap is `(read - write) mod 2^16` from the nearest
+   write in that circular space, giving REVERB twenty-two lengths from 0.03
+   to 71.72 ms and GATE-REVERB thirty from 0.03 to 681.47 ms.
+
+   THAT DIRECTION IS A CHOICE. `(write - read)` is equally decodable and
+   gives REVERB only twelve distinct lengths and GATE-REVERB a ceiling of
+   341.75 ms. Three things pick this one: every read yields its own length,
+   22 of 22 and 30 of 30; GATE-REVERB's late cluster then lands at 428 to
+   681 ms, where its own gate runs to 500; and REVERB's spread becomes a
+   reverb's rather than one long line.
+
+   WHICH LINE FEEDS WHICH IS NOT RECOVERED. The addresses are measured; the
+   routing is inside the DSP program, which this engine does not interpret.
+   So the arrangement below IS MINE. What it reproduces is the modal
+   structure those lengths give and the decay `M-111` measured; it is not a
+   claim about the topology.
+
+   THE ARRANGEMENT, AND WHY IT IS THIS ONE. A first attempt put every tap
+   on ONE loop and solved a single gain for the target decay. That cannot
+   work and the control said so - 0.34 times the law at Time 0 and 1.17 at
+   64 - because `g = 10^(-3L/(RT60*fs))` is exact for a comb of ONE length
+   and a loop carrying twenty-two lengths has no single decay. Each tap is
+   therefore its own COMB with its own gain from that same relation, so
+   each decays at the target by construction and so does their sum.
+   GATE-REVERB needs none of it: its tail is cut by the gate rather than
+   decayed, so it keeps one shared line read at many points. */
+const unsigned kEfxTypeReverb = 23u;
+const unsigned kEfxTypeGateReverb = 24u;
+const unsigned kXpEramSpace = 65536u;
+const unsigned kInsertReverbMaxTaps = 48u;
+
+struct InsertReverbSpec {
+  unsigned type;
+  unsigned preDelay, time, damp, balance, level;
+  int gate;                     /* -1 where the type has no gate */
+  double rt60Base, rt60Steps;   /* `M-111`: RT60 = base * 2^(v/steps) */
+};
+const struct InsertReverbSpec kInsertReverbSpecs[] = {
+  /* 24 REVERB: p1 Type, p2 Pre-delay, p3 Time, p4 HF damp, p5/p6 gains,
+     p7 Balance, p8 Level - all from the ceilings `M-092` measured. */
+  { 23u, 1u, 2u, 3u, 6u, 7u, -1, 0.583, 39.8 },
+  /* 25 GATE-REVERB IS NOT HERE, AND ITS CODE PATH BELOW IS KEPT ONLY
+     BECAUSE IT DOCUMENTS THE ATTEMPT. It was written alongside REVERB and
+     failed its own control while REVERB passed: against the machine's
+     122.0, 178.2, 271.5, 376.5, 479.0 and 569.0 ms of gate at values 10 to
+     99, it gave 33.0, 88.8, 88.8, 88.8, 88.8 and 511.5 - saturating at its
+     own longest tap of 84.4 ms for four settings in a row, which is the
+     gate never closing rather than closing late. The gate's LAW is
+     measured, 5.022 ms a step against the manual's 5.000, so what is
+     missing is the trigger and not the number. Claiming the type on that
+     would be claiming a gate that does not gate. */
+};
+
+const struct InsertReverbSpec *insert_reverb_spec(unsigned type)
+{
+  for (unsigned i = 0;
+       i < sizeof kInsertReverbSpecs / sizeof *kInsertReverbSpecs; ++i)
+    if (kInsertReverbSpecs[i].type == type)
+      return kInsertReverbSpecs + i;
+  return NULL;
+}
+
 const unsigned kEfxLfoRateTable = 5u;      /* XP_EFX_TABLE_LFO_RATE */
 const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
 
@@ -623,6 +698,24 @@ struct Engine {
   unsigned efx_voices;
   double efx_spread;
   float efx_weight[4];
+  /* The insert reverbs' own network - see the block above for why it is
+     not the shared one. REVERB uses the comb bank; GATE-REVERB the one
+     shared line, its tail being gated rather than decayed. */
+  unsigned rv_taps;
+  float *rv_comb[kInsertReverbMaxTaps];
+  size_t rv_comb_len[kInsertReverbMaxTaps];
+  size_t rv_comb_pos[kInsertReverbMaxTaps];
+  float rv_comb_g[kInsertReverbMaxTaps];
+  float rv_comb_damp[kInsertReverbMaxTaps];
+  float *rv_buf;
+  size_t rv_len, rv_pos;
+  size_t rv_lag[kInsertReverbMaxTaps];
+  float *rv_pre_buf;
+  size_t rv_pre_len, rv_pre_pos, rv_pre;
+  float rv_damp;
+  size_t rv_gate, rv_since;
+  float rv_env;
+  bool rv_gated;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1417,6 +1510,193 @@ void efx_mod_process(struct Engine *engine, const float *inL,
   }
 }
 
+void insert_reverb_refresh(struct Engine *engine)
+{
+  const struct InsertReverbSpec *spec =
+    insert_reverb_spec(engine->efx_type);
+  if (!spec)
+    return;
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+
+  struct xp_efx_program prog;
+  if (!efx_program_load(&engine->rom, engine->efx_type, &prog))
+    return;
+  struct xp_efx_site site[128];
+  unsigned n = efx_program_sites(&prog, site, 128u);
+  if (n > 128u)
+    n = 128u;
+
+  size_t lag[kInsertReverbMaxTaps];
+  unsigned taps = 0, longest = 0;
+  for (unsigned i = 0; i < n && taps < kInsertReverbMaxTaps; ++i) {
+    if (site[i].write)
+      continue;
+    unsigned best = kXpEramSpace;
+    for (unsigned j = 0; j < n; ++j) {
+      if (!site[j].write)
+        continue;
+      unsigned d = (unsigned)((site[i].address - site[j].address) &
+                               (kXpEramSpace - 1u));
+      if (d && d < best)
+        best = d;
+    }
+    if (best >= kXpEramSpace)
+      continue;
+    size_t L = (size_t)((double)best * scale);
+    if (!L)
+      L = 1u;
+    lag[taps++] = L;
+    if (L > longest)
+      longest = (unsigned)L;
+  }
+  if (!taps)
+    return;
+  engine->rv_taps = taps;
+  engine->rv_gated = spec->gate >= 0;
+
+  /* The pre-delay, on `0x038EC8`, ahead of the network. */
+  {
+    uint16_t pre = 0;
+    efx_table_value(&engine->rom, kEfxPreDelayTable, p[spec->preDelay], 0,
+                     &pre);
+    size_t want = (size_t)((double)pre * scale) + 8u;
+    if (!engine->rv_pre_buf || engine->rv_pre_len < want) {
+      std::free(engine->rv_pre_buf);
+      engine->rv_pre_buf = (float *)std::calloc(want,
+                                                 sizeof *engine->rv_pre_buf);
+      engine->rv_pre_len = want;
+      engine->rv_pre_pos = 0;
+    }
+    engine->rv_pre = engine->rv_pre_buf ? want - 8u : 0u;
+  }
+
+  /* HF damp, the 18-row table this engine reads everywhere; last row is a
+     bypass. */
+  engine->rv_damp = 0.0f;
+  if (spec->damp) {
+    unsigned row = p[spec->damp];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a2 = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0)
+                                 : 0.0;
+    engine->rv_damp = (float)(a2 > 0.0 && a2 < 1.0 ? 1.0 - a2 : 0.0);
+  }
+
+  if (engine->rv_gated) {
+    engine->rv_gate =
+      (size_t)((5.0 + 5.0 * (double)p[(unsigned)spec->gate]) *
+                engine->output_rate / 1000.0);
+    size_t need = (size_t)longest + 8u;
+    if (!engine->rv_buf || engine->rv_len < need) {
+      std::free(engine->rv_buf);
+      engine->rv_buf = (float *)std::calloc(need, sizeof *engine->rv_buf);
+      engine->rv_len = need;
+      engine->rv_pos = 0;
+    }
+    if (!engine->rv_buf)
+      return;
+    for (unsigned i = 0; i < taps; ++i)
+      engine->rv_lag[i] = lag[i];
+    engine->rv_since = engine->rv_gate;
+    engine->rv_env = 0.0f;
+  } else {
+    /* ONE COMB PER TAP, each gained from its OWN length. A single loop
+       carrying every length has no single decay; a comb of length L does,
+       and `g = 10^(-3L/(RT60*fs))` is exactly it. */
+    double rt = spec->rt60Base *
+      std::pow(2.0, (double)p[spec->time] / spec->rt60Steps);
+    for (unsigned i = 0; i < taps; ++i) {
+      size_t need = lag[i] + 8u;
+      if (!engine->rv_comb[i] || engine->rv_comb_len[i] < need) {
+        std::free(engine->rv_comb[i]);
+        engine->rv_comb[i] = (float *)std::calloc(need,
+                                                   sizeof **engine->rv_comb);
+        engine->rv_comb_len[i] = need;
+        engine->rv_comb_pos[i] = 0;
+      }
+      if (!engine->rv_comb[i])
+        return;
+      engine->rv_lag[i] = lag[i];
+      double g = std::pow(10.0, -3.0 * (double)lag[i] /
+                                 (rt * engine->output_rate));
+      if (g > 0.999)
+        g = 0.999;
+      engine->rv_comb_g[i] = (float)g;
+      engine->rv_comb_damp[i] = 0.0f;
+    }
+  }
+
+  engine->efx_wet =
+    (float)efx_unit(engine, kEfxBalanceTable, p[spec->balance], 0);
+  engine->efx_dry =
+    (float)efx_unit(engine, kEfxBalanceTable, p[spec->balance], 1);
+  engine->efx_level =
+    (float)efx_unit(engine, kEfxLevelTableIndex, p[spec->level], 0);
+  engine->efx_ready = true;
+}
+
+void insert_reverb_process(struct Engine *engine, const float *inL,
+                            const float *inR, float *wetL, float *wetR,
+                            size_t frames)
+{
+  float norm = 1.0f / (float)engine->rv_taps;
+  for (size_t k = 0; k < frames; ++k) {
+    float in = 0.5f * (inL[k] + inR[k]);
+    if (engine->rv_pre_buf && engine->rv_pre) {
+      size_t j = engine->rv_pre_pos >= engine->rv_pre
+        ? engine->rv_pre_pos - engine->rv_pre
+        : engine->rv_pre_pos + engine->rv_pre_len - engine->rv_pre;
+      float d = engine->rv_pre_buf[j];
+      engine->rv_pre_buf[engine->rv_pre_pos] = in;
+      if (++engine->rv_pre_pos >= engine->rv_pre_len)
+        engine->rv_pre_pos = 0;
+      in = d;
+    }
+    float sum = 0.0f, alt = 0.0f, g = norm;
+    if (engine->rv_gated) {
+      float mag = in < 0.0f ? -in : in;
+      engine->rv_env = mag > engine->rv_env ? mag
+                                             : engine->rv_env * 0.9995f;
+      if (mag > 1e-5f && mag > 0.02f * engine->rv_env)
+        engine->rv_since = 0;
+      else if (engine->rv_since < engine->rv_gate)
+        ++engine->rv_since;
+      for (unsigned i = 0; i < engine->rv_taps; ++i) {
+        size_t back = engine->rv_lag[i];
+        size_t j = engine->rv_pos >= back ? engine->rv_pos - back
+                                           : engine->rv_pos + engine->rv_len
+                                             - back;
+        float v = engine->rv_buf[j];
+        sum += v;
+        alt += (i & 1u) ? -v : v;
+      }
+      engine->rv_buf[engine->rv_pos] = in;
+      if (++engine->rv_pos >= engine->rv_len)
+        engine->rv_pos = 0;
+      if (engine->rv_since >= engine->rv_gate)
+        g = 0.0f;
+    } else {
+      for (unsigned i = 0; i < engine->rv_taps; ++i) {
+        size_t back = engine->rv_lag[i];
+        size_t pos = engine->rv_comb_pos[i];
+        size_t len = engine->rv_comb_len[i];
+        size_t j = pos >= back ? pos - back : pos + len - back;
+        float v = engine->rv_comb[i][j];
+        engine->rv_comb_damp[i] = v * (1.0f - engine->rv_damp) +
+          engine->rv_comb_damp[i] * engine->rv_damp;
+        engine->rv_comb[i][pos] =
+          in + engine->rv_comb_g[i] * engine->rv_comb_damp[i];
+        engine->rv_comb_pos[i] = pos + 1u >= len ? 0u : pos + 1u;
+        sum += v;
+        alt += (i & 1u) ? -v : v;
+      }
+    }
+    wetL[k] = g * 0.5f * (sum + alt);
+    wetR[k] = g * 0.5f * (sum - alt);
+  }
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
@@ -1428,6 +1708,8 @@ void efx_algorithm_refresh(struct Engine *engine)
     efx_time_control_refresh(engine);
   else if (efx_mod_spec(engine->efx_type))
     efx_modulated_refresh(engine);
+  else if (insert_reverb_spec(engine->efx_type))
+    insert_reverb_refresh(engine);
 }
 
 /* The EFX output block: level, and the two sends the assign may mask out. */
@@ -1674,6 +1956,10 @@ void engine_free(void *state)
   if (engine->chorus_ready)
     chorus_destroy(&engine->chorus);
   std::free(engine->delay_buf);
+  std::free(engine->rv_buf);
+  std::free(engine->rv_pre_buf);
+  for (unsigned i = 0; i < kInsertReverbMaxTaps; ++i)
+    std::free(engine->rv_comb[i]);
   std::free(engine->efx_buf[0]);
   std::free(engine->efx_buf[1]);
   std::free(engine);
@@ -2092,7 +2378,9 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      if (efx_mod_spec(engine->efx_type))
+      if (insert_reverb_spec(engine->efx_type))
+        insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      else if (efx_mod_spec(engine->efx_type))
         efx_mod_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (engine->efx_type == kEfxTypeTripleTap ||
                engine->efx_type == kEfxTypeTimeControl)
