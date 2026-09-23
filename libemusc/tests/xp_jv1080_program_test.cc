@@ -13,6 +13,7 @@
 #include "engines/xp/device.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -131,6 +132,42 @@ void bank(EmuSC::Xp::Device *d, uint8_t msb, uint8_t lsb, uint8_t program,
   midi(d, (uint8_t)(0xc0 | channel), program);
 }
 
+/* A DT1 of one byte to tone `tone`'s record on part 1, at `field` of its
+   first block. */
+void tone_field(EmuSC::Xp::Device *d, unsigned tone, uint8_t field,
+                uint8_t value)
+{
+  uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x02, 0x00,
+                  (uint8_t)(0x10 + 2 * tone), field, value, 0, 0xf7 };
+  unsigned sum = 0;
+  for (size_t i = 5; i + 2 < sizeof m; ++i)
+    sum += m[i];
+  m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+  assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+}
+
+/* The strongest frequency between 150 Hz and 3 kHz in the left channel,
+   scanned in one-cent steps. */
+double strongest_hz(const std::vector<float> &x)
+{
+  double best = 0.0, bestHz = 0.0;
+  for (double cents = 0.0; cents < 1200.0 * std::log2(3000.0 / 150.0);
+       cents += 1.0) {
+    double hz = 150.0 * std::pow(2.0, cents / 1200.0);
+    double w = 2.0 * M_PI * hz / kRate, re = 0.0, im = 0.0;
+    for (size_t i = 0; i < kFrames; ++i) {
+      double win = 0.5 - 0.5 * std::cos(2.0 * M_PI * (double)i / kFrames);
+      re += win * x[2 * i] * std::cos(w * (double)i);
+      im += win * x[2 * i] * std::sin(w * (double)i);
+    }
+    if (re * re + im * im > best) {
+      best = re * re + im * im;
+      bestHz = hz;
+    }
+  }
+  return bestHz;
+}
+
 const uint8_t kGmOn[] = { 0xf0, 0x7e, 0x7f, 0x09, 0x01, 0xf7 };
 
 }  // namespace
@@ -163,6 +200,23 @@ int main(void)
     bank(d, 81, 0, 69);
     EmuSC::Xp::device_reset_controllers(d);
   }));
+
+  /* Pitch key follow, tone field 0x40, on PR-A 001's one sounding tone
+     (tone 2): index 10 is +50 %, so key 72 sounds six semitones under
+     index 12's +100 %, and the two meet at the pivot, key 60. */
+  auto kf = [](uint8_t index) {
+    return [index](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x40, index);
+    };
+  };
+  assert(render(roms, kf(10)) == render(roms, kf(12)));
+  {
+    double full = strongest_hz(render(roms, kf(12), 0, 72));
+    double half = strongest_hz(render(roms, kf(10), 0, 72));
+    assert(full > 0.0 && half > 0.0);
+    assert(std::fabs(1200.0 * std::log2(full / half) - 600.0) < 5.0);
+  }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */

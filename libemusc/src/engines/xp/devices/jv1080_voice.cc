@@ -23,6 +23,7 @@
 
 #include "../common/constants.h"
 #include "../packed_rom.h"
+#include "../rom.h"
 
 #include <cmath>
 #include <cstring>
@@ -691,6 +692,37 @@ int tone_field(const struct xp_rom *rom, const uint8_t *tone, unsigned index)
   return tone[index];
 }
 
+/* The key every key-scaling field pivots on (`M-066`, `M-069`, `M-077`). */
+const double kKeyFollowPivot = 60.0;
+
+/* The record's pitch key follow as a fraction of one semitone per key:
+   the device's own value string, parsed. 1 where the record has no such
+   field or the device no list. */
+double pitch_key_follow(const struct xp_rom *rom,
+                        const struct XpVoiceFieldMap *fields,
+                        const uint8_t *record)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (fields->pitchKeyFollow == XP_VOICE_FIELD_NONE ||
+      !profile->pitchKeyFollowTable || !profile->pitchKeyFollowWidth)
+    return 1.0;
+  unsigned index = record[fields->pitchKeyFollow];
+  uint32_t at = profile->pitchKeyFollowTable +
+    (uint32_t)index * profile->pitchKeyFollowWidth;
+  if (index >= profile->pitchKeyFollowCount ||
+      at + profile->pitchKeyFollowWidth > rom->size)
+    return 1.0;
+  int sign = 1, value = 0;
+  for (unsigned c = 0; c < profile->pitchKeyFollowWidth; ++c) {
+    char ch = (char)rom->bytes[at + c];
+    if (ch == '-')
+      sign = -1;
+    else if (ch >= '0' && ch <= '9')
+      value = value * 10 + (ch - '0');
+  }
+  return sign * value / 100.0;
+}
+
 /* A field this record type has, or `absent` where it does not have one. */
 unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                    const uint8_t *record, unsigned absent)
@@ -891,7 +923,13 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      both coarse tunes rather than replacing either. Leaving it out is an
      octave error on every patch that uses it - nine of the fourteen
      sounding parts of the first factory song do. */
-  double keyHz = 440.0 * std::pow(2.0, ((double)soundedKey - 69.0) / 12.0) *
+  /* Key follow scales the key's distance from the pivot. The part's key
+     shift below stays outside it: whether the machine scales a shift by
+     key follow is not measured. */
+  const double trackedKey =
+    kKeyFollowPivot + pitch_key_follow(rom, fields, tone) *
+                        ((double)soundedKey - kKeyFollowPivot);
+  double keyHz = 440.0 * std::pow(2.0, (trackedKey - 69.0) / 12.0) *
     std::pow(2.0, (double)coarse / 12.0) *
     std::pow(2.0, (double)controls->key_shift / 12.0) *
     std::pow(2.0, (double)controls->patch_octave) *
