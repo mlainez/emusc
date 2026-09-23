@@ -213,37 +213,87 @@ const unsigned kEfxTypeTripleTap = 18u;
    measured constant it is and NOT folded into a general scale, which is
    TASK-342.02's own AC#4. */
 const unsigned kEfxTypeTimeControl = 20u;
-/* STEREO-CHORUS, the one member of the modulated-delay family whose
-   parameter bindings are MEASURED rather than read off a label page this
-   repository has caught wrong on this very family. The other six - 11, 12,
-   13, 15, 16 and 18 - are deliberately absent: `efx_wet` exists to settle
-   each one's Rate and Depth slot, and until it has, building them would be
-   guessing which byte is which. */
-const unsigned kEfxTypeStereoChorus = 13u;
+/* The modulated-delay types this engine renders, and where each one keeps
+   its parameters. Every slot here is MEASURED on that type's own take, not
+   read off a label page this repository has caught wrong on this family.
+
+   `sweepMs` is the peak-to-peak delay sweep at depth 127, measured wet-only
+   with the feedback at its own zero. The two agree to 0.5 %, which is the
+   spread of the reading rather than a difference between the types.
+
+   The other four of the family are absent, each for a reason its own take
+   gave: HEXA-CHORUS and SPACE-D put more than one tap in each channel, so
+   the deviation reading that settles a modulator does not apply to them;
+   TREMOLO-CHORUS modulates amplitude as well, which corrupts a frequency
+   reading; and STEP-FLANGER has two rates and a staircase modulator.
+   MODULATION-DELAY is absent for a different reason - everything about its
+   LFO is measured and matches these two exactly, but its delay times are
+   not, and a delay whose time is guessed is not the effect. */
+struct EfxModSpec {
+  unsigned type;
+  unsigned preDelay, rate, depth, phase, balance, level;
+  int feedback;                 /* -1 where none is identified */
+  double sweepMs;
+};
+const struct EfxModSpec kEfxModSpecs[] = {
+  /* 14 STEREO-CHORUS: p7 has a ceiling of 127 and a factory 0 and is not
+     identified, so no feedback is applied. */
+  { 13u, 2u, 3u, 4u, 5u, 9u, 10u, -1, 12.38 },
+  /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback. */
+  { 14u, 2u, 3u, 4u, 5u, 9u, 10u,  6, 12.32 },
+};
+const unsigned kEfxModSpecCount =
+  (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
 const unsigned kEfxLfoRateTable = 5u;      /* XP_EFX_TABLE_LFO_RATE */
 const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
-/* The peak-to-peak sweep at depth 127, measured wet-only on the rig:
-   12.380, 12.378, 12.355 and 12.343 ms across two different rates and both
-   channels, a spread of 0.3 %. Independent of rate, as an excursion must
-   be, which is a check on the whole chain and not just a number. */
-const double kEfxChorusSweepMs = 12.36;
-/* The second channel's LFO offset, in cycles per step of p6.
 
-   MEASURED AT ONE POINT. At the factory p6 of 50 the two delay lines run
-   0.2686 and 0.2689 cycles apart - 96.7 and 96.8 degrees - read at two
-   different rates by cross-correlating the two channels' frequency
-   deviations, which at full wet ARE the two delay trajectories. Both
-   readings peak at a correlation of +1.000, and the method is good to a
-   tenth of a degree - a render whose offset is known by construction
-   reads back within 0.1.
+const struct EfxModSpec *efx_mod_spec(unsigned type)
+{
+  for (unsigned i = 0; i < kEfxModSpecCount; ++i)
+    if (kEfxModSpecs[i].type == type)
+      return kEfxModSpecs + i;
+  return NULL;
+}
+/* The second channel's LFO offset, in cycles, against p6.
 
-   LINEARITY IS ASSUMED, NOT MEASURED: one point cannot give a law, and no
-   stimulus here sweeps p6. What the panel shows - 0 to 90 accepted, 0 to
-   180 displayed, so two degrees a step - would put the factory value at
-   100.0 degrees, and the machine says 96.75. That is 3.4 % apart, well
-   outside the measurement. So the slope below is the measured point
-   divided by 50 and nothing more; a p6 sweep would settle the shape. */
-const double kEfxChorusPhaseStep = 0.2687 / 50.0;
+   MEASURED, seven points, and it is a table rather than a formula. Read at
+   full wet by cross-correlating the two channels' frequency deviations,
+   which at full wet ARE the two delay trajectories; every point peaks at a
+   correlation of +1.000.
+
+     p6      0     15     30     45     60     75     90
+     cycles  0  .0808  .1610  .2418  .3221  .4028  .4999
+     degrees 0  29.08  57.97  87.05 115.94 145.02 179.95
+
+   p6 = 0 puts the two channels exactly together, which is what says the
+   parameter is the phase at all. The six points to 75 lie on one line at
+   **1.9335 degrees a step**, not the 2.0 the panel implies by accepting
+   0..90 and displaying 0..180 - and the top of the field then breaks that
+   line, landing on 180.0 where the line would put it at 174.0.
+
+   That break is not the instrument: a render built with a flat 1.9346
+   degrees a step reads back 174.10 at p6 = 90 through the same code, so
+   six degrees is well within reach.
+
+   WHERE THE LINE TURNS, BETWEEN 75 AND 90, IS NOT RESOLVED - the sweep
+   steps by 15. So the values between the measured points are drawn as
+   straight lines between them and nothing is extrapolated. */
+const unsigned kEfxChorusPhasePoints = 7u;
+const unsigned kEfxChorusPhaseSpacing = 15u;
+const double kEfxChorusPhaseCycles[kEfxChorusPhasePoints] =
+  { 0.0, 0.0808, 0.1610, 0.2418, 0.3221, 0.4028, 0.4999 };
+
+double efx_chorus_phase(unsigned v)
+{
+  unsigned top = kEfxChorusPhaseSpacing * (kEfxChorusPhasePoints - 1u);
+  if (v >= top)
+    return kEfxChorusPhaseCycles[kEfxChorusPhasePoints - 1u];
+  unsigned i = v / kEfxChorusPhaseSpacing;
+  double f = (double)(v - i * kEfxChorusPhaseSpacing) /
+    (double)kEfxChorusPhaseSpacing;
+  return kEfxChorusPhaseCycles[i] +
+    f * (kEfxChorusPhaseCycles[i + 1u] - kEfxChorusPhaseCycles[i]);
+}
 const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
 const double kEfxTimeControlScale = 0.966;
 const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
@@ -1032,8 +1082,11 @@ float efx_triangle(double phase)
 void efx_modulated_refresh(struct Engine *engine)
 {
   const uint8_t *p = engine->efx_parameter;
+  const struct EfxModSpec *spec = efx_mod_spec(engine->efx_type);
+  if (!spec)
+    return;
   double scale = engine->output_rate / kXpNativeRate;
-  double sweep_max = kEfxChorusSweepMs * engine->output_rate / 1000.0;
+  double sweep_max = spec->sweepMs * engine->output_rate / 1000.0;
   {
     unsigned n = 0;
     efx_table_shape(&engine->rom, kEfxPreDelayTable, &n, NULL);
@@ -1050,18 +1103,25 @@ void efx_modulated_refresh(struct Engine *engine)
      comb, and entry 10 of `0x038EC8` is 32 samples, which is 1.00 ms at
      the 32 kHz wave rate. */
   uint16_t pre = 0;
-  efx_table_value(&engine->rom, kEfxPreDelayTable, p[2], 0, &pre);
+  efx_table_value(&engine->rom, kEfxPreDelayTable, p[spec->preDelay], 0,
+                   &pre);
   engine->efx_nominal = (double)pre * scale;
 
-  /* p5 DEPTH, the sweep, ONE-SIDED UPWARD from the nominal - which is what
+  /* DEPTH, the sweep, ONE-SIDED UPWARD from the nominal - which is what
      the depth-zero reading shows, sitting exactly on the pre-delay's own
-     value rather than half a sweep above it. The TOP of the sweep is
-     measured; its SHAPE across the field is the master level curve's, the
-     same shape the system chorus uses, and THAT IS NOT PINNED - it is a
-     shape borrowed from a table of the right form, not a claim about which
-     table the firmware reads. */
+     value rather than half a sweep above it.
+
+     THE SHAPE IS THE MASTER LEVEL CURVE `0x03856C`, AND THAT IS NOW
+     MEASURED RATHER THAN BORROWED. Swept at seven depths on three types -
+     14, 15 and 18 - the sweep normalised to its own top reads 0.000,
+     0.121, 0.258, 0.418, 0.590, 0.783, 1.000 on all three, against the
+     table's own 0.000, 0.121, 0.258, 0.418, 0.590, 0.783, 1.000. Worst
+     difference 0.0005 over seven points and three types. Depth 0 gives a
+     STATIC delay on every one of them, 0.003 to 0.004 % of the carrier,
+     which is the analysis floor and the control that says the slot is the
+     depth at all. */
   engine->efx_sweep =
-    sweep_max * efx_unit(engine, kEfxLevelTableIndex, p[4], 0);
+    sweep_max * efx_unit(engine, kEfxLevelTableIndex, p[spec->depth], 0);
 
   /* p4 RATE: `table * 32000 / 2^24`, measured here at values 20 and 45 -
      1.0490 and 2.2983 Hz against 1.0490 and 2.2984 - and independently on
@@ -1069,7 +1129,8 @@ void efx_modulated_refresh(struct Engine *engine)
      program and gives the same constant (`M-110`). */
   {
     uint16_t raw = 0;
-    efx_table_value(&engine->rom, kEfxLfoRateTable, p[3], 0, &raw);
+    efx_table_value(&engine->rom, kEfxLfoRateTable, p[spec->rate], 0,
+                     &raw);
     double hz = (double)raw * kXpNativeRate / 16777216.0;
     engine->efx_lfo_step = hz / engine->output_rate;
   }
@@ -1081,17 +1142,28 @@ void efx_modulated_refresh(struct Engine *engine)
      it. Restarting the sweep at each write makes the deviation constant
      over so short a window, and ours read 0.006 % until this was removed. */
 
-  /* p6 PHASE, anchored on the one measured point (see the constant). */
-  engine->efx_lfo_offset = (double)p[5] * kEfxChorusPhaseStep;
+  /* p6 PHASE, off the measured table (see above). */
+  engine->efx_lfo_offset = efx_chorus_phase(p[spec->phase]);
+
+  /* FEEDBACK, where the type has one. The bipolar zero of 49 and the 2 %
+     a step are the pure-delay family's own measured law (`M-101`); that
+     this family's field reads the same way is the structural parallel and
+     not a separate measurement, which is why the depth and phase sweeps
+     put it AT that zero rather than trusting it. */
+  engine->efx_feedback = spec->feedback < 0 ? 0.0f : (float)
+    (((double)p[spec->feedback] - kEfxFeedbackZero) / kEfxFeedbackStep);
 
   /* p10 BALANCE, measured end to end: 0 is fully DRY (envelope flat to
      1.01 dB, L/R correlation +1.0000), 100 is fully WET, and the comb is
      deepest and symmetric at 50, which is what makes it a balance rather
      than a wet level. p11 LEVEL, measured: driving it to 0 silences the
      effect. */
-  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[9], 0);
-  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[9], 1);
-  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[10], 0);
+  engine->efx_wet =
+    (float)efx_unit(engine, kEfxBalanceTable, p[spec->balance], 0);
+  engine->efx_dry =
+    (float)efx_unit(engine, kEfxBalanceTable, p[spec->balance], 1);
+  engine->efx_level =
+    (float)efx_unit(engine, kEfxLevelTableIndex, p[spec->level], 0);
   engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
 }
 
@@ -1109,8 +1181,8 @@ void efx_mod_process(struct Engine *engine, const float *inL,
                        engine->efx_sweep *
                        efx_triangle(engine->efx_lfo_phase +
                                      engine->efx_lfo_offset));
-    engine->efx_buf[0][engine->efx_pos] = inL[k];
-    engine->efx_buf[1][engine->efx_pos] = inR[k];
+    engine->efx_buf[0][engine->efx_pos] = inL[k] + engine->efx_feedback * l;
+    engine->efx_buf[1][engine->efx_pos] = inR[k] + engine->efx_feedback * r;
     if (++engine->efx_pos >= engine->efx_len)
       engine->efx_pos = 0;
     wetL[k] = l;
@@ -1130,7 +1202,7 @@ void efx_algorithm_refresh(struct Engine *engine)
     efx_triple_tap_refresh(engine);
   else if (engine->efx_type == kEfxTypeTimeControl)
     efx_time_control_refresh(engine);
-  else if (engine->efx_type == kEfxTypeStereoChorus)
+  else if (efx_mod_spec(engine->efx_type))
     efx_modulated_refresh(engine);
 }
 
@@ -1796,7 +1868,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      if (engine->efx_type == kEfxTypeStereoChorus)
+      if (efx_mod_spec(engine->efx_type))
         efx_mod_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (engine->efx_type == kEfxTypeTripleTap ||
                engine->efx_type == kEfxTypeTimeControl)
