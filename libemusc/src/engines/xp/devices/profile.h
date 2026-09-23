@@ -562,6 +562,13 @@ struct XpDeviceProfile {
   uint8_t powerOnPatchNumber;
   uint8_t powerOnPatchChannel;
 
+  /* WHAT A HOST RESET LEAVES BEHIND, as distinct from power-on. True puts
+     the device in its GM mode through its own GM System On, whatever
+     sound map the host asked for, so a MIDI file that assumes sixteen
+     GM parts finds them; the power-on state above is what a host that
+     sends no reset gets. False leaves a host reset at the device reset. */
+  bool hostResetEntersGm;
+
   /* Where the melodic tone record and the rhythm note record keep each
      field the voice path reads. Each index is the descriptor's own index
      within its group, which on a device whose descriptor table doubles as

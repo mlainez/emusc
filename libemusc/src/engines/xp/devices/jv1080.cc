@@ -425,6 +425,15 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .powerOnPatchNumber = 0u,
   .powerOnPatchChannel = 0u,
 
+  /* NOT A HARDWARE BEHAVIOUR: a choice for playback. Patch mode plays one
+     patch on one channel, and a MIDI file that sends no GM System On of
+     its own expects a multitimbral GM device. This device has no GS mode,
+     so its GM mode is the one multitimbral state it defines for a file it
+     knows nothing about (manual p.76). The factory demo songs were
+     recorded in Performance mode and configure it by DT1; they are
+     compared with no host reset. */
+  .hostResetEntersGm = true,
+
   /* The two record types a voice can come from. Both index sets are the
      manual's own SysEx offsets, which is the same thing as the descriptor's
      index within its group on this device.
