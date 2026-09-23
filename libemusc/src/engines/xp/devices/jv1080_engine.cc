@@ -213,6 +213,20 @@ const unsigned kEfxTypeTripleTap = 18u;
    measured constant it is and NOT folded into a general scale, which is
    TASK-342.02's own AC#4. */
 const unsigned kEfxTypeTimeControl = 20u;
+/* STEREO-CHORUS, the one member of the modulated-delay family whose
+   parameter bindings are MEASURED rather than read off a label page this
+   repository has caught wrong on this very family. The other six - 11, 12,
+   13, 15, 16 and 18 - are deliberately absent: `efx_wet` exists to settle
+   each one's Rate and Depth slot, and until it has, building them would be
+   guessing which byte is which. */
+const unsigned kEfxTypeStereoChorus = 13u;
+const unsigned kEfxLfoRateTable = 5u;      /* XP_EFX_TABLE_LFO_RATE */
+const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
+/* The peak-to-peak sweep at depth 127, measured wet-only on the rig:
+   12.380, 12.378, 12.355 and 12.343 ms across two different rates and both
+   channels, a spread of 0.3 %. Independent of rate, as an excursion must
+   be, which is a check on the whole chain and not just a number. */
+const double kEfxChorusSweepMs = 12.36;
 const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
 const double kEfxTimeControlScale = 0.966;
 const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
@@ -397,6 +411,13 @@ struct Engine {
   float efx_tap_left[4];
   float efx_tap_right[4];
   unsigned efx_taps;
+  /* The modulated-delay family's LFO: a phase in cycles, its per-sample
+     step, the second channel's offset, and the sweep the depth allows. */
+  double efx_lfo_phase;
+  double efx_lfo_step;
+  double efx_lfo_offset;
+  double efx_sweep;
+  double efx_nominal;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -744,26 +765,44 @@ double efx_unit(const struct Engine *engine, unsigned table, unsigned index,
   return (double)v / 8192.0;
 }
 
+/* Both delay lines, at least `need` samples long.
+
+   The three earlier types each allocated once and only when the pointer
+   was null, which silently kept a SHORTER line when the patch changed to a
+   type that needs a longer one - STEREO-DELAY tops out at 16000 samples
+   and TRIPLE-TAP at 32000, and `efx_tap` clamps rather than complains, so
+   the taps would have come back quietly wrong. Growing is free here: a
+   type change discards the line's contents anyway. */
+bool efx_buf_ensure(struct Engine *engine, size_t need)
+{
+  if (engine->efx_buf[0] && engine->efx_buf[1] && engine->efx_len >= need)
+    return true;
+  for (unsigned c = 0; c < 2u; ++c) {
+    std::free(engine->efx_buf[c]);
+    engine->efx_buf[c] =
+      (float *)std::calloc(need, sizeof **engine->efx_buf);
+  }
+  engine->efx_len = need;
+  engine->efx_pos = 0;
+  engine->efx_damp_state[0] = 0.0f;
+  engine->efx_damp_state[1] = 0.0f;
+  return engine->efx_buf[0] && engine->efx_buf[1];
+}
+
 /* STEREO-DELAY. Two lines, each fed by the input plus the feedback from
    the other - or from itself where Mode says NORMAL. */
 void efx_stereo_delay_refresh(struct Engine *engine)
 {
   const uint8_t *p = engine->efx_parameter;
   double scale = engine->output_rate / kXpNativeRate;
-  if (!engine->efx_buf[0]) {
+  {
     unsigned n = 0;
     efx_table_shape(&engine->rom, kEfxDelayTable, &n, NULL);
     uint16_t top = 0;
     if (n)
       efx_table_value(&engine->rom, kEfxDelayTable, n - 1u, 0, &top);
-    engine->efx_len = (size_t)((double)top * scale) + 8u;
-    for (unsigned c = 0; c < 2u; ++c) {
-      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
-                                                 sizeof **engine->efx_buf);
-      if (!engine->efx_buf[c])
-        return;
-    }
-    engine->efx_pos = 0;
+    if (!efx_buf_ensure(engine, (size_t)((double)top * scale) + 8u))
+      return;
   }
   for (unsigned c = 0; c < 2u; ++c) {
     uint16_t samples = 0;
@@ -845,20 +884,14 @@ void efx_triple_tap_refresh(struct Engine *engine)
 {
   const uint8_t *p = engine->efx_parameter;
   double scale = engine->output_rate / kXpNativeRate;
-  if (!engine->efx_buf[0]) {
+  {
     unsigned n = 0;
     efx_table_shape(&engine->rom, kEfxLongDelayTable, &n, NULL);
     uint16_t top = 0;
     if (n)
       efx_table_value(&engine->rom, kEfxLongDelayTable, n - 1u, 0, &top);
-    engine->efx_len = (size_t)((double)top * scale) + 8u;
-    for (unsigned c = 0; c < 2u; ++c) {
-      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
-                                                 sizeof **engine->efx_buf);
-      if (!engine->efx_buf[c])
-        return;
-    }
-    engine->efx_pos = 0;
+    if (!efx_buf_ensure(engine, (size_t)((double)top * scale) + 8u))
+      return;
   }
   engine->efx_taps = 3u;
   /* centre, left, right - the label order, which for this type IS the
@@ -918,20 +951,14 @@ void efx_time_control_refresh(struct Engine *engine)
 {
   const uint8_t *p = engine->efx_parameter;
   double scale = engine->output_rate / kXpNativeRate;
-  if (!engine->efx_buf[0]) {
+  {
     unsigned n = 0;
     efx_table_shape(&engine->rom, kEfxAccelDelayTable, &n, NULL);
     uint16_t top = 0;
     if (n)
       efx_table_value(&engine->rom, kEfxAccelDelayTable, n - 1u, 0, &top);
-    engine->efx_len = (size_t)((double)top * scale) + 8u;
-    for (unsigned c = 0; c < 2u; ++c) {
-      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
-                                                 sizeof **engine->efx_buf);
-      if (!engine->efx_buf[c])
-        return;
-    }
-    engine->efx_pos = 0;
+    if (!efx_buf_ensure(engine, (size_t)((double)top * scale) + 8u))
+      return;
   }
   engine->efx_taps = 1u;
   uint16_t samples = 0;
@@ -957,6 +984,130 @@ void efx_time_control_refresh(struct Engine *engine)
   engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
 }
 
+/* A SYMMETRIC triangle: 0 at the bottom, 1 at the top, equal slopes.
+
+   The symmetry is measured, not assumed. Wet-only, this modulator makes the
+   carrier's frequency deviation a SQUARE wave - peak/rms 1.030 to 1.055
+   against 1.000 for an ideal square and 1.414 for a sinusoid, third
+   harmonic 0.26 to 0.37 against 1/3 and fifth 0.18 to 0.24 against 1/5 -
+   with a duty of 0.484 to 0.502. A sawtooth would put the duty far from a
+   half and a strong second harmonic in the deviation; neither is there. */
+float efx_triangle(double phase)
+{
+  phase -= std::floor(phase);
+  return (float)(phase < 0.5 ? 2.0 * phase : 2.0 * (1.0 - phase));
+}
+
+/* MODULATED DELAY, for type 14 STEREO-CHORUS.
+
+   One tap per channel and no feedback, which is measured: at full wet the
+   per-channel envelope is flat to 0.52 dB, so nothing in the wet signal
+   combs with anything else. The two channels sit near antiphase - an L/R
+   correlation of -0.4487 at 523 Hz and -0.1405 at 262 Hz - so the stereo
+   width of this effect IS its modulation, and at depth zero it collapses
+   to a mono 1.00 ms comb at correlation +1.000.
+
+   WHAT IS NOT BUILT, and why rather than silently: p1 FILTER TYPE and p2
+   CUTOFF are unmeasured, and the factory patch has the filter off; p7,
+   whose ceiling is 127 and whose factory value is 0, is unidentified; p8
+   and p9 are the low and high gains, inert at their factory 15. None of
+   them is guessed at here. */
+void efx_modulated_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  double sweep_max = kEfxChorusSweepMs * engine->output_rate / 1000.0;
+  {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxPreDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxPreDelayTable, n - 1u, 0, &top);
+    if (!efx_buf_ensure(engine,
+                         (size_t)((double)top * scale + sweep_max) + 8u))
+      return;
+  }
+
+  /* p3 PRE-DELAY, the nominal length, measured at one point EXACTLY: with
+     the depth driven to zero the factory p3 of 10 gives a static 1.00 ms
+     comb, and entry 10 of `0x038EC8` is 32 samples, which is 1.00 ms at
+     the 32 kHz wave rate. */
+  uint16_t pre = 0;
+  efx_table_value(&engine->rom, kEfxPreDelayTable, p[2], 0, &pre);
+  engine->efx_nominal = (double)pre * scale;
+
+  /* p5 DEPTH, the sweep, ONE-SIDED UPWARD from the nominal - which is what
+     the depth-zero reading shows, sitting exactly on the pre-delay's own
+     value rather than half a sweep above it. The TOP of the sweep is
+     measured; its SHAPE across the field is the master level curve's, the
+     same shape the system chorus uses, and THAT IS NOT PINNED - it is a
+     shape borrowed from a table of the right form, not a claim about which
+     table the firmware reads. */
+  engine->efx_sweep =
+    sweep_max * efx_unit(engine, kEfxLevelTableIndex, p[4], 0);
+
+  /* p4 RATE: `table * 32000 / 2^24`, measured here at values 20 and 45 -
+     1.0490 and 2.2983 Hz against 1.0490 and 2.2984 - and independently on
+     the system chorus, which reads the same table through a different DSP
+     program and gives the same constant (`M-110`). */
+  {
+    uint16_t raw = 0;
+    efx_table_value(&engine->rom, kEfxLfoRateTable, p[3], 0, &raw);
+    double hz = (double)raw * kXpNativeRate / 16777216.0;
+    engine->efx_lfo_step = hz / engine->output_rate;
+  }
+  /* The LFO FREE-RUNS across parameter writes; it is deliberately not reset
+     here. Measured: on a slot that rewrites all twelve parameters and then
+     holds a note for 1.2 s at the factory rate of 0.1487 Hz - a fifth of a
+     cycle - the hardware's frequency deviation still VARIES across the
+     window, 0.352 % of the carrier, because a turning point falls inside
+     it. Restarting the sweep at each write makes the deviation constant
+     over so short a window, and ours read 0.006 % until this was removed. */
+
+  /* p6 PHASE. The field accepts 0..90 and the panel shows 0..180 degrees,
+     so two degrees a step. NOT MEASURED: only the consequence of the
+     factory 50 is, in the two correlations above. The ORDER is right - it
+     is a fraction of a cycle between the channels - and the exact law is
+     not recovered. */
+  engine->efx_lfo_offset = (double)p[5] / 180.0;
+
+  /* p10 BALANCE, measured end to end: 0 is fully DRY (envelope flat to
+     1.01 dB, L/R correlation +1.0000), 100 is fully WET, and the comb is
+     deepest and symmetric at 50, which is what makes it a balance rather
+     than a wet level. p11 LEVEL, measured: driving it to 0 silences the
+     effect. */
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[9], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[9], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[10], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+void efx_mod_process(struct Engine *engine, const float *inL,
+                      const float *inR, float *wetL, float *wetR,
+                      size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    /* Read before write, the same order the pure-delay family uses, so the
+       two agree about what a delay of one sample means. */
+    float l = efx_tap(engine, 0, engine->efx_nominal +
+                       engine->efx_sweep *
+                       efx_triangle(engine->efx_lfo_phase));
+    float r = efx_tap(engine, 1, engine->efx_nominal +
+                       engine->efx_sweep *
+                       efx_triangle(engine->efx_lfo_phase +
+                                     engine->efx_lfo_offset));
+    engine->efx_buf[0][engine->efx_pos] = inL[k];
+    engine->efx_buf[1][engine->efx_pos] = inR[k];
+    if (++engine->efx_pos >= engine->efx_len)
+      engine->efx_pos = 0;
+    wetL[k] = l;
+    wetR[k] = r;
+    engine->efx_lfo_phase += engine->efx_lfo_step;
+    if (engine->efx_lfo_phase >= 1.0)
+      engine->efx_lfo_phase -= 1.0;
+  }
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
@@ -966,6 +1117,8 @@ void efx_algorithm_refresh(struct Engine *engine)
     efx_triple_tap_refresh(engine);
   else if (engine->efx_type == kEfxTypeTimeControl)
     efx_time_control_refresh(engine);
+  else if (engine->efx_type == kEfxTypeStereoChorus)
+    efx_modulated_refresh(engine);
 }
 
 /* The EFX output block: level, and the two sends the assign may mask out. */
@@ -1630,8 +1783,10 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      if (engine->efx_type == kEfxTypeTripleTap ||
-          engine->efx_type == kEfxTypeTimeControl)
+      if (engine->efx_type == kEfxTypeStereoChorus)
+        efx_mod_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      else if (engine->efx_type == kEfxTypeTripleTap ||
+               engine->efx_type == kEfxTypeTimeControl)
         efx_tap_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else
         efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
