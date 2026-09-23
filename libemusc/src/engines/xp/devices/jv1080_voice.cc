@@ -94,6 +94,33 @@ double interpolate_points(const double *xs, const double *ys, unsigned count,
   return ys[count - 1];
 }
 
+/* THE LAST STEPS ARE NOT SYMMETRIC (`M-047`, `P-xxxx`): at a distance of
+   63 the right-hand side is already hard - tone pan 127 reads -65.4 dB, on
+   the recorder's floor - where the left-hand side is not: the alternate-pan
+   takes land a note at tone pan 1 at +44.5, 21 dB inside its own hard
+   corner (pan 0, +65.7). So a right-hand distance of 63 is the stand-in
+   "hard" value, and a left-hand one is 44.5 dB. */
+const double kPanLeft63Db = 44.5;
+
+double pan_difference_asymmetric(double offset)
+{
+  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
+  double xs[sizeof kPanTable / sizeof kPanTable[0] + 1];
+  double ys[sizeof kPanTable / sizeof kPanTable[0] + 1];
+  double d = offset < 0.0 ? -offset : offset;
+  unsigned n = 0;
+  for (unsigned i = 0; i < count; ++i) {
+    if (kPanTable[i].distance == 64u) {
+      xs[n] = 63.0;
+      ys[n++] = offset < 0.0 ? kPanLeft63Db : kPanTable[i].difference_db;
+    }
+    xs[n] = kPanTable[i].distance;
+    ys[n++] = kPanTable[i].difference_db;
+  }
+  double m = interpolate_points(xs, ys, n, d);
+  return offset < 0.0 ? -m : m;
+}
+
 /* A level in the record's own 0-127 units as linear amplitude, through
    the level table, for any point between two values. Below the table's
    first entry, 8, the amplitude is taken as linear down to zero: that
@@ -135,17 +162,7 @@ double amp_env_amplitude_units(double amplitude)
    that is positive to the right. */
 double pan_difference_db(int offset)
 {
-  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
-  double xs[sizeof kPanTable / sizeof kPanTable[0]];
-  double ys[sizeof kPanTable / sizeof kPanTable[0]];
-  for (unsigned i = 0; i < count; ++i) {
-    xs[i] = kPanTable[i].distance;
-    ys[i] = kPanTable[i].difference_db;
-  }
-  double magnitude = interpolate_points(xs, ys, count,
-                                         (double)(offset < 0 ? -offset
-                                                             : offset));
-  return offset < 0 ? -magnitude : magnitude;
+  return pan_difference_asymmetric((double)offset);
 }
 
 /* MEASURED (`M-009`, `M-019`, `M-048`): one square-law table, indexed by
@@ -1319,15 +1336,7 @@ void lfo_advance(struct XpJv1080Lfo *lfo, double seconds)
 /* The pan-table difference for a pan distance that need not be whole. */
 double pan_difference_db_at(double offset)
 {
-  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
-  double xs[sizeof kPanTable / sizeof kPanTable[0]];
-  double ys[sizeof kPanTable / sizeof kPanTable[0]];
-  for (unsigned i = 0; i < count; ++i) {
-    xs[i] = kPanTable[i].distance;
-    ys[i] = kPanTable[i].difference_db;
-  }
-  double m = interpolate_points(xs, ys, count, offset < 0.0 ? -offset : offset);
-  return offset < 0.0 ? -m : m;
+  return pan_difference_asymmetric(offset);
 }
 
 void set_pan(struct XpJv1080Voice *voice, double offset)
