@@ -161,6 +161,26 @@ const unsigned kEfxPatchBlockShift = 1u;
    one would be a fit, not a recovery. They are read and ignored, which is
    said here rather than left to be discovered. */
 const unsigned kEfxTypeStereoDelay = 16u;
+/* TRIPLE-TAP-DELAY (display 19). One delay line read at three taps, which is
+   what its program carries: slot 8 has three ERAM reads and one write.
+
+   ITS STORED BYTE ORDER IS THE LABEL PAGE'S, which is measured rather than
+   assumed - an isolated audio probe puts its delay times at p1, p2 and p3
+   (`M-065`), and correlating the tick template at the expected 850 ms
+   against the 400 ms baseline separates those three from the other nine by
+   an order of magnitude. Type 17 is the family's exception, having eleven
+   labels for twelve slots and so starting at p2; 19, 20 and 21 do not.
+
+     p1 Delay C  p2 Delay L  p3 Delay R  p4 Fbk
+     p5 Level C  p6 Level L  p7 Level R  p8 HF Damp
+     p9 Low Gain p10 Hi Gain p11 Balance p12 Level
+
+   The delays read `0x0390C6`, whose entries are raw sample counts at
+   32 kHz and which measures 1.0000 at all eight values over 200 to 1000 ms
+   (`M-067`). Low Gain and Hi Gain are read and ignored for the reason they
+   are on type 17. */
+const unsigned kEfxTypeTripleTap = 18u;
+const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
 const double kEfxFeedbackZero = 49.0;
 const double kEfxFeedbackStep = 50.0;
 const unsigned kEfxDelayTable = 10u;      /* XP_EFX_TABLE_DELAY */
@@ -336,6 +356,12 @@ struct Engine {
   float efx_phase[2];
   float efx_damp;
   float efx_damp_state[2];
+  /* The tap-delay family's taps: one line read at up to four points, each
+     with its own level and its own place in the image. */
+  double efx_tap_delay[4];
+  float efx_tap_left[4];
+  float efx_tap_right[4];
+  unsigned efx_taps;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -777,11 +803,88 @@ void efx_process(struct Engine *engine, const float *inL, const float *inR,
   }
 }
 
+/* TRIPLE-TAP: one line, three taps. The centre tap is shared between the
+   two sides and the other two take one side each, which is what the labels
+   name them - a tap called L is on the left. */
+void efx_triple_tap_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxLongDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxLongDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  engine->efx_taps = 3u;
+  /* centre, left, right - the label order, which for this type IS the
+     stored order */
+  static const float kLeft[3] = { 0.5f, 1.0f, 0.0f };
+  static const float kRight[3] = { 0.5f, 0.0f, 1.0f };
+  for (unsigned t = 0; t < 3u; ++t) {
+    uint16_t samples = 0;
+    efx_table_value(&engine->rom, kEfxLongDelayTable, p[t], 0, &samples);
+    engine->efx_tap_delay[t] = (double)samples * scale;
+    double lvl = efx_unit(engine, kEfxLevelTableIndex, p[4u + t], 0);
+    engine->efx_tap_left[t] = (float)(lvl * kLeft[t]);
+    engine->efx_tap_right[t] = (float)(lvl * kRight[t]);
+  }
+  engine->efx_feedback =
+    (float)(((double)p[3] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  {
+    unsigned row = p[7];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0) : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[10], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[10], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[11], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+void efx_tap_process(struct Engine *engine, const float *inL,
+                      const float *inR, float *wetL, float *wetR,
+                      size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    float l = 0.0f, r = 0.0f, fb = 0.0f;
+    for (unsigned t = 0; t < engine->efx_taps; ++t) {
+      float v = efx_tap(engine, 0, engine->efx_tap_delay[t]);
+      l += engine->efx_tap_left[t] * v;
+      r += engine->efx_tap_right[t] * v;
+      fb += v;
+    }
+    fb /= (float)engine->efx_taps;
+    engine->efx_damp_state[0] = fb * (1.0f - engine->efx_damp) +
+      engine->efx_damp_state[0] * engine->efx_damp;
+    float in = 0.5f * (inL[k] + inR[k]);
+    engine->efx_buf[0][engine->efx_pos] =
+      in + engine->efx_feedback * engine->efx_damp_state[0];
+    if (++engine->efx_pos >= engine->efx_len)
+      engine->efx_pos = 0;
+    wetL[k] = l;
+    wetR[k] = r;
+  }
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
   if (engine->efx_type == kEfxTypeStereoDelay)
     efx_stereo_delay_refresh(engine);
+  else if (engine->efx_type == kEfxTypeTripleTap)
+    efx_triple_tap_refresh(engine);
 }
 
 /* The EFX output block: level, and the two sends the assign may mask out. */
@@ -1446,7 +1549,10 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      if (engine->efx_type == kEfxTypeTripleTap)
+        efx_tap_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      else
+        efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       for (size_t k = 0; k < n; ++k) {
         float l = engine->efx_level *
           (engine->efx_wet * efxWetL[k] + engine->efx_dry * efxL[k]);
