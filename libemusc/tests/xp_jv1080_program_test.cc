@@ -393,12 +393,14 @@ int main(void)
   }
 
   /* The release, on PR-A 001's tone with its envelope squared to full
-     sustain and time 4 = 64: M-011's law is 675 ms per 20 dB, so the
-     level falls about 8.9 dB between 0.1-0.2 s and 0.4-0.5 s after the
-     note-off, on top of whatever the held note does over the same
-     stretch. */
+     sustain. At time 4 = 64 the table reads 667 ms per 20 dB, so the level
+     falls about 9.0 dB between 0.1-0.2 s and 0.4-0.5 s after the note-off;
+     at time 4 = 8 it reads 19.7 ms, about 20 dB between the first 5 ms
+     and the 5 ms from 20 ms on, where the old fitted law gave 11. Each is
+     taken over the same stretch of the held note. */
   {
-    auto drop = [&](bool release) {
+    auto drop = [&](uint8_t t4, bool release, size_t a0, size_t a1,
+                    size_t b0, size_t b1) {
       const uint8_t *chips[XP_WAVE_CHIP_COUNT];
       size_t sizes[XP_WAVE_CHIP_COUNT];
       for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
@@ -414,7 +416,7 @@ int main(void)
         tone_field(d, 1, f, 0);            /* times 1-3: straight to sustain */
       for (uint8_t f = 0x72; f <= 0x74; ++f)
         tone_field(d, 1, f, 127);          /* levels 1-3 */
-      tone_field(d, 1, 0x71, 64);          /* time 4 */
+      tone_field(d, 1, 0x71, t4);          /* time 4 */
       midi(d, 0x90, 60, 100);
       std::vector<float> x(2 * 16000);
       EmuSC::Xp::device_render(d, x.data(), 3200);        /* 0.1 s */
@@ -423,16 +425,20 @@ int main(void)
       EmuSC::Xp::device_render(d, x.data(), 16000);       /* 0.5 s */
       EmuSC::Xp::device_destroy(d);
       delete d;
-      auto level = [&](size_t a, size_t b) {
+      auto level = [&](size_t from, size_t to) {
         double e = 0.0;
-        for (size_t i = 2 * a; i < 2 * b; ++i)
+        for (size_t i = 2 * from; i < 2 * to; ++i)
           e += (double)x[i] * x[i];
         return 10.0 * std::log10(e);
       };
-      return level(3200, 6400) - level(12800, 16000);
+      return level(a0, a1) - level(b0, b1);
     };
-    double envelope = drop(true) - drop(false);
-    assert(std::fabs(envelope - 8.9) < 2.0);
+    double slow = drop(64, true, 3200, 6400, 12800, 16000) -
+                  drop(64, false, 3200, 6400, 12800, 16000);
+    assert(std::fabs(slow - 9.0) < 2.0);
+    double fast = drop(8, true, 0, 160, 640, 800) -
+                  drop(8, false, 0, 160, 640, 800);
+    assert(std::fabs(fast - 20.3) < 3.0);
   }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,

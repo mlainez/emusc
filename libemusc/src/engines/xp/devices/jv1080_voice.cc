@@ -151,12 +151,56 @@ double cc7_gain(unsigned value)
    So the field is a RATE in dB per second, and a segment's duration is how
    far it has to travel at that rate.
 
-   The doubling interval is a fit over 24 points with a worst ratio error of
-   1.42x, concentrated below value 24 where a 5 ms measurement grid and the
-   note's own decay dominate. The exact table is not recovered. */
-double amp_env_fall_seconds_per_20db(unsigned value)
+   That doubling interval is a fit, and the filter envelope's scale
+   (`kFilterEnvTimeScale`) was measured against it, so the filter envelope
+   keeps reading it. */
+double amp_env_fitted_seconds_per_20db(unsigned value)
 {
   return 0.675 * std::pow(2.0, ((double)value - 64.0) / 13.2);
+}
+
+/* MEASURED, the table the fit above stands for: the time for a 20 dB fall
+   read off every take on disk that holds one segment, `aenv_t2_short`,
+   `aenv_t3_short` and `aenv_t4_*` for values 0 to 64 in eights and
+   `aenv_t2_080/104/127` and `aenv_t4_096/127` above, on an envelope
+   smoothed over one period of the note. Where two or three segments were
+   read at one value they agree to 5 % - 18.0 to 21.0 ms at 8, 656 to
+   674 ms at 64, 12.2 to 12.5 s at 127 - and the mean is what is listed.
+
+   The fit is off at both ends: 0 is instant here (within the smoothing's
+   4 ms) where it asks for 23 ms, 8 is 19.7 ms against 36, and 127 is
+   12.3 s against 18.5; the table doubles every 7 to 11 steps below 32 and
+   every 14 to 15 above 64. Between the listed values the time is
+   interpolated in its logarithm, and from 0 to 8 in the time itself; that
+   is not recovered, and the machine's own table is in its internal ROM. */
+struct FallPoint {
+  unsigned value;
+  double ms;
+};
+const struct FallPoint kAmpEnvFallTable[] = {
+  { 0u, 0.0 },      { 8u, 19.7 },     { 16u, 43.5 },    { 24u, 76.7 },
+  { 32u, 128.2 },   { 40u, 201.3 },   { 48u, 303.7 },   { 56u, 456.3 },
+  { 64u, 667.2 },   { 80u, 1424.0 },  { 96u, 2906.0 },  { 104u, 4290.0 },
+  { 127u, 12317.0 },
+};
+
+double amp_env_fall_seconds_per_20db(unsigned value)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvFallTable / sizeof kAmpEnvFallTable[0]);
+  if (value >= kAmpEnvFallTable[count - 1].value)
+    return kAmpEnvFallTable[count - 1].ms / 1000.0;
+  for (unsigned i = 1; i < count; ++i) {
+    const FallPoint &b = kAmpEnvFallTable[i];
+    if (value > b.value)
+      continue;
+    const FallPoint &a = kAmpEnvFallTable[i - 1];
+    double t = (double)(value - a.value) / (double)(b.value - a.value);
+    double ms = a.ms > 0.0 ? a.ms * std::pow(b.ms / a.ms, t)
+                           : a.ms + t * (b.ms - a.ms);
+    return ms / 1000.0;
+  }
+  return 0.0;
 }
 
 /* MEASURED ON THE DEVICE, fourteen points across the field, with the wave's
@@ -540,7 +584,7 @@ inline constexpr double kFilterEnvTimeScale = 1.75;
 
 double filter_env_full_traverse_seconds(unsigned value)
 {
-  return kFilterEnvTimeScale * amp_env_fall_seconds_per_20db(value);
+  return kFilterEnvTimeScale * amp_env_fitted_seconds_per_20db(value);
 }
 
 /* MEASURED (`M-069`): time key follow is one law on all three envelopes -
