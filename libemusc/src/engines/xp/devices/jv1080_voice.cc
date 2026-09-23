@@ -954,9 +954,14 @@ const LawPoint kLfoFade[] = {
    PITCH, cents: quadratic in depth - 0.455 d^2 to 1-2 % from depth 8 up.
    Below 8 the take is under its own noise, so there the quadratic is
    extrapolated and not measured.
-   AMPLITUDE, dB: an ATTENUATION only - the take's top sits on the
-   unmodulated level at every depth - of twice the listed peak at the
-   waveform's bottom.
+   AMPLITUDE, dB: an ATTENUATION only, and only while the waveform is
+   negative - the sweep's top sits on the unmodulated level at every depth,
+   and with key trigger on a triangle holds the full level for its whole
+   first, positive half cycle before falling to twice the listed peak at
+   its bottom (the phase takes of 2026-09-23). The listed peak is the
+   fundamental the sweep's lock-in reads, which this law and a plain
+   triangle share. With a level offset other than 0 the law is not
+   measured; it is applied to the offset waveform here.
    FILTER, octaves of the corner: read on two base cutoffs (60 and 86)
    whose clean halves agree to 3 % from depth 12 to 48; above 48 each take
    clips one half against the analysis floor or the 7891 Hz resonant
@@ -1014,9 +1019,9 @@ uint32_t lfo_random(uint32_t *seed)
    cycle): TRI, SIN and SAW are the ideal waveforms, SAW rising; SQR is a
    symmetric +-1 square at half duty; TRP is a trapezoid - a quarter of the
    cycle at each extreme and a quarter on each ramp, which is a triangle
-   doubled and clipped. Key trigger starts a cycle at zero and rising
-   (`M-071`); where SAW and SQR stand at that point is not measured, and
-   here SAW starts at zero and SQR on its top.
+   doubled and clipped. MEASURED with key trigger on (`M-071`, and the
+   phase takes of 2026-09-23): TRI starts at zero and rising, SQR on its
+   top half, and SAW at its bottom, rising.
 
    S&H, RND and CHS DRAW rather than follow a curve. They are not
    recovered: S&H and RND hold a new random value for each LFO period here,
@@ -1032,7 +1037,7 @@ double lfo_wave(const struct XpJv1080Lfo *lfo)
   switch (lfo->form) {
   case 0: return lfo_triangle(ph);
   case 1: return std::sin(2.0 * 3.14159265358979323846 * ph);
-  case 2: return ph < 0.5 ? 2.0 * ph : 2.0 * ph - 2.0;
+  case 2: return 2.0 * ph - 1.0;
   case 3: return ph < 0.5 ? 1.0 : -1.0;
   case 4: {
     double t = 2.0 * lfo_triangle(ph);
@@ -1119,10 +1124,11 @@ void lfo_update(struct XpJv1080Voice *voice, double seconds)
     cents += voice->lfo_pitch_cents[i] * v * k;
     cutoff += voice->lfo_cutoff_units[i] * v * k;
     pan += voice->lfo_pan_units[i] * v * k;
-    /* Attenuation only, from the waveform's own top. */
+    /* Attenuation only, while the waveform is below zero. */
     double a = voice->lfo_amp_db[i];
-    double top = a >= 0.0 ? 1.0 + lfo->offset : 1.0 - lfo->offset;
-    db += std::fabs(a) * ((a >= 0.0 ? v : -v) - top) * k;
+    double signedV = a >= 0.0 ? v : -v;
+    if (signedV < 0.0)
+      db += 2.0 * std::fabs(a) * signedV * k;
   }
   voice->lfo_pitch_ratio = std::pow(2.0, cents / 1200.0);
   voice->lfo_gain = std::pow(10.0, db / 20.0);

@@ -645,8 +645,9 @@ int main(void)
 
   /* LFO 1 on the amplitude (`M-114`): triangle, key trigger on, rate 64
      (1.1415 Hz), depth +32, whose law is an attenuation of up to twice
-     1.253 dB. A quarter cycle in, at the waveform's top, the level is the
-     unmodulated one; three quarters in, at its bottom, it is 2.51 dB down.
+     1.253 dB while the waveform is negative. A quarter cycle in, at the
+     waveform's top, the level is the unmodulated one; three quarters in,
+     at its bottom, it is 2.51 dB down.
      Each against the same note with depth 0. */
   {
     auto lfo_level = [&](uint8_t wire_depth, double at) {
@@ -681,6 +682,11 @@ int main(void)
     double bottom = lfo_level(63 + 32, 0.75 * period) - lfo_level(63, 0.75 * period);
     assert(std::fabs(top) < 0.1);
     assert(std::fabs(bottom + 2.51) < 0.1);
+    /* The whole positive half is left alone (the phase takes of
+       2026-09-23): a tenth of a cycle in, the waveform at +0.4, the level
+       is still the unmodulated one. */
+    double early = lfo_level(63 + 32, 0.1 * period) - lfo_level(63, 0.1 * period);
+    assert(std::fabs(early) < 0.1);
   }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,
