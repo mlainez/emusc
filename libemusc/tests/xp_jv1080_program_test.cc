@@ -287,6 +287,16 @@ int main(void)
     };
     assert(early_release(1) == 0.0);    /* HOLD: cancelled */
     assert(early_release(0) > 0.0);     /* NORMAL: sounds, postponed */
+    /* KEY-OFF-NORMAL and KEY-OFF-DECAY (`M-113`) sound after the note-off
+       and its delay, and not before: the first 170 ms after it are
+       silent. */
+    for (uint8_t mode : { (uint8_t)5, (uint8_t)6 }) {
+      assert(early_release(mode) > 0.0);
+      double early = 0.0;
+      for (size_t i = 0; i < 2 * (1024 + 5440); ++i)
+        early += (double)out[i] * out[i];
+      assert(early == 0.0);
+    }
   }
 
   /* The rhythm note's envelope mode, field 0x08. PR-A's kit is mode 0,

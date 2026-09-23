@@ -99,6 +99,8 @@ struct XpJv1080Voice {
   /* A NO-SUSTAIN rhythm note, and a note-off it has deferred. */
   bool one_shot;
   bool pending_release;
+  /* Release on reaching the sustain level, with no key to wait for. */
+  bool release_at_sustain;
 
   /* The decoded element, and where in it the read head is. */
   const int32_t *pcm;

@@ -1298,7 +1298,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
           voice->segment_remaining = voice->segment_total;
         } else {
           voice->segment = 4u;   /* holding the sustain level */
-          if (voice->pending_release) {
+          if (voice->pending_release || voice->release_at_sustain) {
             jv1080_voice_release(voice);
           } else if (voice->one_shot && voice->envelope < 1e-5) {
             /* Holding at a level-3 of zero, with nothing left to come. */
