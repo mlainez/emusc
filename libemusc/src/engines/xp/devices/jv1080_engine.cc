@@ -1986,9 +1986,6 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->fine_tune = profile->partFieldFineTune == XP_VOICE_FIELD_NONE
     ? 0
     : (int)(int8_t)p.part[profile->partFieldFineTune];
-  out->patch_octave = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE
-    ? 0
-    : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
   out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
   out->clock_seconds = (double)engine->frames / engine->output_rate;
   out->lfo_seed = (uint32_t)engine->serial;
@@ -2012,12 +2009,15 @@ unsigned voice_destination(const struct Engine *engine, unsigned part,
   return own > kOutputTwo ? kOutputMix : own;
 }
 
+/* `key` is the note as received, which a note-off matches; `sounded` is
+   the note the record plays, which is the same key but for the patch's
+   octave shift. */
 bool start_record(struct Engine *engine, unsigned part,
                    const struct XpVoiceFieldMap *fields, const uint8_t *bytes,
-                   unsigned key, unsigned velocity)
+                   unsigned key, unsigned velocity, unsigned sounded)
 {
   size_t samples = 0;
-  if (!jv1080_voice_span(&engine->rom, fields, bytes, key, velocity,
+  if (!jv1080_voice_span(&engine->rom, fields, bytes, sounded, velocity,
                          &samples) || !samples)
     return false;
 
@@ -2033,7 +2033,7 @@ bool start_record(struct Engine *engine, unsigned part,
     return false;
   struct XpJv1080PartControls controls;
   part_controls(engine, part, &controls);
-  if (!jv1080_voice_start(&engine->rom, fields, bytes, &controls, key,
+  if (!jv1080_voice_start(&engine->rom, fields, bytes, &controls, sounded,
                           velocity, engine->banks, engine->bank_sizes, pcm,
                           samples, engine->output_rate, &voice->voice)) {
     std::free(pcm);
@@ -2405,13 +2405,24 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
         }
       }
       started += start_record(engine, part, &profile->rhythmNoteFields, note,
-                               key, velocity) ? 1u : 0u;
+                               key, velocity, key) ? 1u : 0u;
       return;
     }
+    /* MEASURED (`M-124`): the patch's octave shift moves the NOTE, not
+       just the pitch - the zone a key selects is the shifted key's. PR-A
+       057 at key 60 with its octave shift of +1 reads harmonics 1-8 within
+       1.6 dB of our key 72 with no shift, and 14.6 dB off at harmonic 2
+       with the pitch doubled on key 60's zone. What the machine does with
+       a shift that carries a note past 0 or 127 is not measured; it is
+       clamped here. */
+    int shift = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE ? 0
+      : 12 * (int)(int8_t)engine->parts[part].common[profile->patchFieldOctaveShift];
+    int shifted = (int)key + shift;
+    unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
     for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t)
       started += start_record(engine, part, &profile->toneFields,
                                engine->parts[part].tone[t], key,
-                               velocity) ? 1u : 0u;
+                               velocity, sounded) ? 1u : 0u;
   });
   return started != 0u;
 }

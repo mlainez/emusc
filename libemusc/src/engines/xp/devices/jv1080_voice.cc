@@ -1444,11 +1444,9 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* The part's key shift moves the pitch rather than the note number, so
      the zone the key chose is left alone. */
   const unsigned soundedKey = playback_key(fields, tone, key);
-  /* MEASURED on the device: the patch's octave shift is a third, independent
-     transposition term, exactly twelve semitones per unit, and it adds to
-     both coarse tunes rather than replacing either. Leaving it out is an
-     octave error on every patch that uses it - nine of the fourteen
-     sounding parts of the first factory song do. */
+  /* The patch's octave shift arrives in `key` itself (the engine shifts the
+     note it starts), so it is not a pitch term here. MEASURED on the
+     device: twelve semitones per unit, adding to both coarse tunes. */
   /* Key follow scales the key's distance from the pivot. The part's key
      shift below stays outside it: whether the machine scales a shift by
      key follow is not measured. */
@@ -1458,7 +1456,6 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   double keyHz = 440.0 * std::pow(2.0, (trackedKey - 69.0) / 12.0) *
     std::pow(2.0, (double)coarse / 12.0) *
     std::pow(2.0, (double)controls->key_shift / 12.0) *
-    std::pow(2.0, (double)controls->patch_octave) *
     std::pow(2.0, (double)controls->fine_tune / 1200.0) *
     std::pow(2.0, (double)fine / 1200.0) *
     std::pow(2.0, controls->tune_cents / 1200.0);

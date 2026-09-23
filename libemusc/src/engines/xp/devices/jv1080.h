@@ -90,7 +90,6 @@ struct XpJv1080PartControls {
   unsigned volume;
   int key_shift;
   int fine_tune;                 /* the part's own detune, in cents */
-  int patch_octave;              /* whole-patch transposition, in octaves */
   double tune_cents;             /* the RPN master coarse and fine tune */
   /* The engine's own running clock at note-on, which a free-running LFO
      takes its phase from, and a seed for the drawn LFO waveforms. */
