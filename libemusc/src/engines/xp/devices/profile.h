@@ -163,6 +163,8 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
+  /* Random pitch depth, an index into the displayed-cents list 0..30. */
+  uint16_t randomPitchDepth;
   /* Whether the record answers the bender and the hold pedal, and the
      bend range a record carries itself where it has no patch around it. */
   uint16_t benderSwitch;
