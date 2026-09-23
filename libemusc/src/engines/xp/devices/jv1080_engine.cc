@@ -213,47 +213,6 @@ const unsigned kEfxTypeTripleTap = 18u;
    measured constant it is and NOT folded into a general scale, which is
    TASK-342.02's own AC#4. */
 const unsigned kEfxTypeTimeControl = 20u;
-/* The modulated-delay types this engine renders, and where each one keeps
-   its parameters. Every slot here is MEASURED on that type's own take, not
-   read off a label page this repository has caught wrong on this family.
-
-   `sweepMs` is the peak-to-peak delay sweep at depth 127, measured wet-only
-   with the feedback at its own zero. The two agree to 0.5 %, which is the
-   spread of the reading rather than a difference between the types.
-
-   The other four of the family are absent, each for a reason its own take
-   gave: HEXA-CHORUS and SPACE-D put more than one tap in each channel, so
-   the deviation reading that settles a modulator does not apply to them;
-   TREMOLO-CHORUS modulates amplitude as well, which corrupts a frequency
-   reading; and STEP-FLANGER has two rates and a staircase modulator.
-   MODULATION-DELAY is absent for a different reason - everything about its
-   LFO is measured and matches these two exactly, but its delay times are
-   not, and a delay whose time is guessed is not the effect. */
-struct EfxModSpec {
-  unsigned type;
-  unsigned preDelay, rate, depth, phase, balance, level;
-  int feedback;                 /* -1 where none is identified */
-  double sweepMs;
-};
-const struct EfxModSpec kEfxModSpecs[] = {
-  /* 14 STEREO-CHORUS: p7 has a ceiling of 127 and a factory 0 and is not
-     identified, so no feedback is applied. */
-  { 13u, 2u, 3u, 4u, 5u, 9u, 10u, -1, 12.38 },
-  /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback. */
-  { 14u, 2u, 3u, 4u, 5u, 9u, 10u,  6, 12.32 },
-};
-const unsigned kEfxModSpecCount =
-  (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
-const unsigned kEfxLfoRateTable = 5u;      /* XP_EFX_TABLE_LFO_RATE */
-const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
-
-const struct EfxModSpec *efx_mod_spec(unsigned type)
-{
-  for (unsigned i = 0; i < kEfxModSpecCount; ++i)
-    if (kEfxModSpecs[i].type == type)
-      return kEfxModSpecs + i;
-  return NULL;
-}
 /* The second channel's LFO offset, in cycles, against p6.
 
    MEASURED, seven points, and it is a table rather than a formula. Read at
@@ -303,6 +262,58 @@ const unsigned kEfxDelayTable = 10u;      /* XP_EFX_TABLE_DELAY */
 const unsigned kEfxBalanceTable = 14u;
 const unsigned kEfxDampTable = 15u;
 const unsigned kEfxLevelTableIndex = 0u;
+const unsigned kEfxLfoRateTable = 5u;      /* XP_EFX_TABLE_LFO_RATE */
+const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
+
+/* The modulated-delay types this engine renders, and where each one keeps
+   its parameters. Every slot here is MEASURED on that type's own take, not
+   read off a label page this repository has caught wrong on this family.
+
+   `sweepMs` is the peak-to-peak delay sweep at depth 127, measured wet-only
+   with the feedback at its own zero. The two agree to 0.5 %, which is the
+   spread of the reading rather than a difference between the types.
+
+   The other four of the family are absent, each for a reason its own take
+   gave: HEXA-CHORUS and SPACE-D put more than one tap in each channel, so
+   the deviation reading that settles a modulator does not apply to them;
+   TREMOLO-CHORUS modulates amplitude as well, which corrupts a frequency
+   reading; and STEP-FLANGER has two rates and a staircase modulator.
+   MODULATION-DELAY is absent for a different reason - everything about its
+   LFO is measured and matches these two exactly, but its delay times are
+   not, and a delay whose time is guessed is not the effect. */
+struct EfxModSpec {
+  unsigned type;
+  unsigned nominal[2];          /* the still delay each channel sweeps from */
+  unsigned nominalTable;        /* which conversion table those slots read */
+  unsigned rate, depth, phase, balance, level;
+  int feedback;                 /* -1 where none is identified */
+  int damp;                     /* -1 where the type has none */
+  double sweepMs;
+};
+const struct EfxModSpec kEfxModSpecs[] = {
+  /* 14 STEREO-CHORUS: one pre-delay for both channels; p7 has a ceiling of
+     127 and a factory 0 and is not identified, so no feedback is applied. */
+  { 13u, { 2u, 2u }, kEfxPreDelayTable, 3u, 4u, 5u, 9u, 10u, -1, -1, 12.38 },
+  /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback. */
+  { 14u, { 2u, 2u }, kEfxPreDelayTable, 3u, 4u, 5u, 9u, 10u,  6, -1, 12.32 },
+  /* 18 MODULATION-DELAY: a stereo delay with the same LFO on top. Its two
+     delay slots read `0x038FC8` at `ms = table / 32`, measured with the
+     depth at zero so the delay stands still - ratio 1.0000 at values 16,
+     32, 64, 96, 112 and 126, which is 1.59 ms to 500.01 ms, a 314x range.
+     `0x038EC8` predicts 46, 74 and 101 ms where the machine gives 100, 260
+     and 500, so it is not that table. */
+  { 17u, { 1u, 2u }, kEfxDelayTable, 5u, 6u, 7u, 10u, 11u,  3,  4, 49.55 },
+};
+const unsigned kEfxModSpecCount =
+  (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
+const struct EfxModSpec *efx_mod_spec(unsigned type)
+{
+  for (unsigned i = 0; i < kEfxModSpecCount; ++i)
+    if (kEfxModSpecs[i].type == type)
+      return kEfxModSpecs + i;
+  return NULL;
+}
+
 
 const unsigned kEfxOutputAssignField = 0x1au;
 const unsigned kEfxOutputLevelField = 0x1bu;
@@ -484,7 +495,7 @@ struct Engine {
   double efx_lfo_step;
   double efx_lfo_offset;
   double efx_sweep;
-  double efx_nominal;
+  double efx_nominal[2];
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1089,23 +1100,26 @@ void efx_modulated_refresh(struct Engine *engine)
   double sweep_max = spec->sweepMs * engine->output_rate / 1000.0;
   {
     unsigned n = 0;
-    efx_table_shape(&engine->rom, kEfxPreDelayTable, &n, NULL);
+    efx_table_shape(&engine->rom, spec->nominalTable, &n, NULL);
     uint16_t top = 0;
     if (n)
-      efx_table_value(&engine->rom, kEfxPreDelayTable, n - 1u, 0, &top);
+      efx_table_value(&engine->rom, spec->nominalTable, n - 1u, 0, &top);
     if (!efx_buf_ensure(engine,
                          (size_t)((double)top * scale + sweep_max) + 8u))
       return;
   }
 
-  /* p3 PRE-DELAY, the nominal length, measured at one point EXACTLY: with
-     the depth driven to zero the factory p3 of 10 gives a static 1.00 ms
-     comb, and entry 10 of `0x038EC8` is 32 samples, which is 1.00 ms at
-     the 32 kHz wave rate. */
-  uint16_t pre = 0;
-  efx_table_value(&engine->rom, kEfxPreDelayTable, p[spec->preDelay], 0,
-                   &pre);
-  engine->efx_nominal = (double)pre * scale;
+  /* The still delay each channel sweeps from. On the chorus and the flanger
+     that is one PRE-DELAY for both, measured at one point exactly: with the
+     depth driven to zero the factory p3 of 10 gives a static 1.00 ms comb,
+     and entry 10 of `0x038EC8` is 32 samples, 1.00 ms at the 32 kHz wave
+     rate. On MODULATION-DELAY it is two independent delay slots. */
+  for (unsigned c = 0; c < 2u; ++c) {
+    uint16_t pre = 0;
+    efx_table_value(&engine->rom, spec->nominalTable, p[spec->nominal[c]], 0,
+                     &pre);
+    engine->efx_nominal[c] = (double)pre * scale;
+  }
 
   /* DEPTH, the sweep, ONE-SIDED UPWARD from the nominal - which is what
      the depth-zero reading shows, sitting exactly on the pre-delay's own
@@ -1153,6 +1167,20 @@ void efx_modulated_refresh(struct Engine *engine)
   engine->efx_feedback = spec->feedback < 0 ? 0.0f : (float)
     (((double)p[spec->feedback] - kEfxFeedbackZero) / kEfxFeedbackStep);
 
+  /* HF damp in the feedback path, the same 18-row table the pure-delay
+     family and the reverb read; its last row is a bypass rather than a
+     pair. A type without the field damps nothing, and a damp of 0 makes
+     the one-pole below the identity. */
+  engine->efx_damp = 0.0f;
+  if (spec->damp >= 0) {
+    unsigned row = p[spec->damp];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0)
+                                : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+
   /* p10 BALANCE, measured end to end: 0 is fully DRY (envelope flat to
      1.01 dB, L/R correlation +1.0000), 100 is fully WET, and the comb is
      deepest and symmetric at 50, which is what makes it a balance rather
@@ -1174,15 +1202,24 @@ void efx_mod_process(struct Engine *engine, const float *inL,
   for (size_t k = 0; k < frames; ++k) {
     /* Read before write, the same order the pure-delay family uses, so the
        two agree about what a delay of one sample means. */
-    float l = efx_tap(engine, 0, engine->efx_nominal +
+    float l = efx_tap(engine, 0, engine->efx_nominal[0] +
                        engine->efx_sweep *
                        efx_triangle(engine->efx_lfo_phase));
-    float r = efx_tap(engine, 1, engine->efx_nominal +
+    float r = efx_tap(engine, 1, engine->efx_nominal[1] +
                        engine->efx_sweep *
                        efx_triangle(engine->efx_lfo_phase +
                                      engine->efx_lfo_offset));
-    engine->efx_buf[0][engine->efx_pos] = inL[k] + engine->efx_feedback * l;
-    engine->efx_buf[1][engine->efx_pos] = inR[k] + engine->efx_feedback * r;
+    /* the damping one-pole, on the way round the loop; at damp 0 it is the
+       identity and the two feedback-less types are unaffected */
+    for (unsigned c = 0; c < 2u; ++c) {
+      float y = c ? r : l;
+      engine->efx_damp_state[c] = y * (1.0f - engine->efx_damp) +
+        engine->efx_damp_state[c] * engine->efx_damp;
+    }
+    engine->efx_buf[0][engine->efx_pos] =
+      inL[k] + engine->efx_feedback * engine->efx_damp_state[0];
+    engine->efx_buf[1][engine->efx_pos] =
+      inR[k] + engine->efx_feedback * engine->efx_damp_state[1];
     if (++engine->efx_pos >= engine->efx_len)
       engine->efx_pos = 0;
     wetL[k] = l;
