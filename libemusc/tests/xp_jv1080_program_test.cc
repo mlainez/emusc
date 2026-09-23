@@ -689,6 +689,24 @@ int main(void)
     assert(std::fabs(early) < 0.1);
   }
 
+  /* The pitch envelope: depth +12 at level +63 is exactly +1200 cents, and
+     depth -6 at level +63 is -600; time 0 reaches the level at once. */
+  {
+    auto penv = [&](uint8_t depthWire) {
+      return strongest_hz(render(roms, [depthWire](EmuSC::Xp::Device *d) {
+        bank(d, 81, 0, 0);
+        tone_field(d, 1, 0x41, depthWire);
+        for (uint8_t f = 0x46; f <= 0x49; ++f)
+          tone_field(d, 1, f, 0);
+        for (uint8_t f = 0x4a; f <= 0x4d; ++f)
+          tone_field(d, 1, f, 63 + 63);
+      }));
+    };
+    double still = penv(12);
+    assert(std::fabs(1200.0 * std::log2(penv(24) / still) - 1200.0) < 5.0);
+    assert(std::fabs(1200.0 * std::log2(penv(6) / still) + 600.0) < 5.0);
+  }
+
   /* The controller matrix (`M-116`), on PR-A 001's one sounding tone with
      its own slots and LFO depths cleared. */
   {

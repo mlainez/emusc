@@ -217,6 +217,11 @@ struct XpVoiceFieldMap {
   uint16_t filterEnvTimeKeyFollow;
   uint16_t filterEnvTime1;       /* four times run from here */
   uint16_t filterEnvLevel1;      /* four levels run from here */
+  /* The pitch envelope: its signed depth, then four times and four signed
+     levels, each run from its first index. */
+  uint16_t pitchEnvDepth;
+  uint16_t pitchEnvTime1;
+  uint16_t pitchEnvLevel1;
   uint16_t ampTime1;             /* four times run from here */
   uint16_t ampLevel1;            /* three levels run from here */
   uint16_t keyRangeLow;

@@ -239,6 +239,22 @@ struct XpJv1080Voice {
   size_t control_period;
   size_t control_countdown;
   double output_rate;
+
+  /* The pitch envelope, in cents: penv_level[] is each segment's target,
+     penv_time[] its duration, and penv_ratio the pitch factor it currently
+     stands at. penv_active is false when the depth is zero or every level
+     is centre, and then none of this is read. */
+  bool penv_active;
+  double penv_level[4];
+  double penv_time[4];
+  unsigned penv_segment;
+  double penv_value;
+  double penv_start;
+  double penv_remaining;
+  double penv_total;
+  double penv_ratio;
+  size_t penv_period;
+  size_t penv_countdown;
 };
 
 #ifdef __cplusplus

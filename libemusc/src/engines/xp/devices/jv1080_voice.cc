@@ -874,6 +874,76 @@ void filter_env_advance(struct XpJv1080Voice *voice, double seconds)
   }
 }
 
+/* THE PITCH ENVELOPE. MEASURED (`P-xxxx`, the `pitch/penv_*` takes on
+   `Sine`, read as the instantaneous frequency in cents):
+
+     depth and levels  a level's offset is depth x 100 cents x level/63:
+                       depth +-6 and +-12 peak at +603/-600 and +1202/-1223
+                       at level +63, and level -63, -42, -21, 0, +21, +42,
+                       +63 at depth +12 hold -1222, -798, -400, 0, +402,
+                       +799, +1201.
+     times             each segment moves linearly in cents over a duration
+                       its time field names, however far it goes: time 1 at
+                       8, 16, 32, 48, 64, 96, 127 takes 44, 107, 322, 767,
+                       1681, 7447 and 31183 ms from 0 to +1200 cents (to
+                       within 7 cents rms of a straight line), and time 2
+                       at 96 carries -1200 to +1200 at twice that rate, in
+                       7.5 s. Between the measured values the milliseconds
+                       are interpolated in log; under 8 they run straight
+                       to 0, which is not measured.
+     shape             it starts at centre, moves through levels 1 to 3,
+                       holds level 3, and from the note-off moves to level 4
+                       over time 4.
+
+   Measured on the tone record. A rhythm record carries the same fields and
+   is taken to read them the same way, which is not measured. The velocity
+   sensitivities and the time key follow are not applied here. */
+const double kPitchEnvTimeValue[] = { 8.0, 16.0, 32.0, 48.0, 64.0, 96.0, 127.0 };
+const double kPitchEnvTimeMs[] = { 44.0, 107.0, 322.0, 767.0, 1681.0, 7447.0, 31183.0 };
+
+double pitch_env_seconds(unsigned value)
+{
+  double v = (double)(value > 127u ? 127u : value);
+  if (v < kPitchEnvTimeValue[0])
+    return kPitchEnvTimeMs[0] * v / kPitchEnvTimeValue[0] / 1000.0;
+  unsigned i = 1;
+  while (i < 6u && kPitchEnvTimeValue[i] < v)
+    ++i;
+  double t = (v - kPitchEnvTimeValue[i - 1]) /
+    (kPitchEnvTimeValue[i] - kPitchEnvTimeValue[i - 1]);
+  return std::exp(std::log(kPitchEnvTimeMs[i - 1]) +
+                  t * (std::log(kPitchEnvTimeMs[i]) -
+                       std::log(kPitchEnvTimeMs[i - 1]))) / 1000.0;
+}
+
+void pitch_env_enter(struct XpJv1080Voice *voice, unsigned segment)
+{
+  voice->penv_segment = segment;
+  voice->penv_start = voice->penv_value;
+  voice->penv_total = voice->penv_time[segment];
+  voice->penv_remaining = voice->penv_total;
+}
+
+void pitch_env_advance(struct XpJv1080Voice *voice, double seconds)
+{
+  while (voice->penv_segment < 4u) {
+    if (voice->penv_remaining > seconds) {
+      voice->penv_remaining -= seconds;
+      double done = 1.0 - voice->penv_remaining / voice->penv_total;
+      voice->penv_value = voice->penv_start +
+        (voice->penv_level[voice->penv_segment] - voice->penv_start) * done;
+      return;
+    }
+    seconds -= voice->penv_remaining;
+    voice->penv_value = voice->penv_level[voice->penv_segment];
+    if (voice->releasing || voice->penv_segment >= 2u) {
+      voice->penv_segment = 4u;    /* holding level 3, or released to 4 */
+      return;
+    }
+    pitch_env_enter(voice, voice->penv_segment + 1u);
+  }
+}
+
 int tone_field(const struct xp_rom *rom, const uint8_t *tone, unsigned index)
 {
   (void)rom;
@@ -1696,6 +1766,30 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       voice->lfo_base_frequency[i] = voice->lfo[i].frequency;
     }
 
+  /* The pitch envelope. */
+  voice->penv_active = false;
+  voice->penv_ratio = 1.0;
+  if (fields->pitchEnvDepth != XP_VOICE_FIELD_NONE) {
+    double depth = (double)(int8_t)tone[fields->pitchEnvDepth];
+    bool moves = false;
+    for (unsigned i = 0; i < 4u; ++i) {
+      voice->penv_level[i] = depth * 100.0 *
+        (double)(int8_t)tone[fields->pitchEnvLevel1 + i] / 63.0;
+      voice->penv_time[i] = pitch_env_seconds(tone[fields->pitchEnvTime1 + i]);
+      if (voice->penv_level[i] != 0.0)
+        moves = true;
+    }
+    if (moves) {
+      voice->penv_active = true;
+      voice->penv_value = 0.0;
+      pitch_env_enter(voice, 0u);
+      voice->penv_period = (size_t)(outputRate / 1000.0);
+      if (!voice->penv_period)
+        voice->penv_period = 1u;
+      voice->penv_countdown = 0u;
+    }
+  }
+
   /* The controller matrix, at the sources as they stand at note-on. */
   voice->matrix_used = false;
   if (fields->matrixFirst != XP_VOICE_FIELD_NONE)
@@ -1840,6 +1934,8 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
   voice->releasing = true;
   voice->lfo[0].since_off = 0.0;
   voice->lfo[1].since_off = 0.0;
+  if (voice->penv_active)
+    pitch_env_enter(voice, 3u);
   voice->segment = 3u;
   voice->segment_start = amp_env_amplitude_units(voice->envelope);
   voice->segment_total = amp_env_segment_seconds(voice->time[3]);
@@ -1873,6 +1969,16 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         voice->lfo_countdown = voice->lfo_period;
       }
       --voice->lfo_countdown;
+    }
+    /* The pitch envelope, once per control block as the others are. */
+    if (voice->penv_active) {
+      if (!voice->penv_countdown) {
+        pitch_env_advance(voice, (double)voice->penv_period *
+                                   voice->sample_period);
+        voice->penv_ratio = std::pow(2.0, voice->penv_value / 1200.0);
+        voice->penv_countdown = voice->penv_period;
+      }
+      --voice->penv_countdown;
     }
     /* The filter envelope, once per control block rather than per sample
        (`M-074`). A voice whose envelope cannot move the corner - no filter
@@ -2031,7 +2137,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
 
     if (voice->reverse) {
       double step = voice->increment * voice->bend_ratio *
-        voice->matrix_pitch_ratio;
+        voice->matrix_pitch_ratio * voice->penv_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position -= step;
@@ -2041,7 +2147,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
       }
     } else {
       double step = voice->increment * voice->bend_ratio *
-        voice->matrix_pitch_ratio;
+        voice->matrix_pitch_ratio * voice->penv_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position += step;
