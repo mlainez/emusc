@@ -15,6 +15,7 @@
  * Needs the device's own control ROM and reports skipped without it.
  */
 #include "engines/xp/devices/jv1080.h"
+#include "engines/xp/drive.h"
 #include "engines/xp/efx.h"
 #include "engines/xp/rom.h"
 
@@ -144,7 +145,10 @@ int main(void)
     for (unsigned t = 0; t < profile->efxTableCount; ++t) {
       unsigned n = 0, cols = 0;
       assert(efx_table_shape(&rom, t, &n, &cols));
-      assert(n && (cols == 1u || cols == 2u));
+      /* one word or a pair per value, except the drive family's
+         coefficient rows: a shelf triple, 20 AmpType words, 21 row words */
+      assert(n && (cols == 1u || cols == 2u || cols == 3u || cols == 20u ||
+                   cols == 21u));
       uint16_t v = 0;
       assert(efx_table_value(&rom, t, n - 1u, cols - 1u, &v));
       assert(!efx_table_value(&rom, t, n, 0, &v));
@@ -227,6 +231,46 @@ int main(void)
     for (unsigned i = 10u; i < 16u; ++i)
       assert(reached[i]);
     assert(!efx_resolve_source(16u, &own, &image));
+  }
+
+  /* THE DRIVE FAMILY. OVERDRIVE and DISTORTION are one program told apart
+     by the value row alone, so every section but the ones the row writes
+     comes out the same, and the row words are the ROM's
+     (`08_effects/coefficient_tables.md`: CRAM[0x1A] +4 against -16). */
+  {
+    uint16_t w = 0;
+    assert(efx_table_value(&rom, 19u, 0u, 18u, &w) && w == 0xC800u);
+    assert(efx_table_value(&rom, 19u, 1u, 18u, &w) && w == 0xE000u);
+    assert(efx_table_value(&rom, 19u, 0u, 19u, &w) && w == 0x0100u);
+    assert(efx_table_value(&rom, 20u, 2u, 0u, &w) && w == 0x1000u);
+    assert(!efx_table_value(&rom, 19u, 2u, 0u, &w));
+    /* both shelves are an identity at 15: b0 = 1 (0x5000) */
+    assert(efx_table_value(&rom, 21u, 15u, 0u, &w) && w == 0x5000u);
+    assert(efx_table_value(&rom, 22u, 15u, 0u, &w) && w == 0x5000u);
+
+    const uint8_t od[6] = { 127u, 64u, 2u, 15u, 15u, 60u };
+    struct xp_drive a, b;
+    assert(drive_set(&rom, &a, 0u, od));
+    assert(drive_set(&rom, &b, 1u, od));
+    assert(a.ready && b.ready && a.row == 0u && b.row == 1u);
+    /* what the row does not touch is identical */
+    assert(a.drive == b.drive && a.pan_left == b.pan_left &&
+           a.trim == b.trim && a.amp_high.b0 == b.amp_high.b0 &&
+           a.low_shelf.b0 == b.low_shelf.b0);
+    /* the row gain is 12 dB apart and of opposite sign */
+    assert(a.gain > 0.0f && b.gain < 0.0f && -b.gain == 4.0f * a.gain);
+    /* the stage: identity inside full scale, clamped outside, odd */
+    assert(drive_curve(&a, 0.0f) == 0.0f);
+    assert(drive_curve(&a, 0.5f) == 0.5f);
+    assert(drive_curve(&a, 3.0f) == 1.0f);
+    assert(drive_curve(&a, -3.0f) == -1.0f);
+    /* a byte past its table is refused, and leaves the sections alone */
+    const uint8_t bad[6] = { 127u, 64u, 127u, 15u, 15u, 60u };
+    assert(!drive_parameter_valid(&rom, 2u, 127u));
+    assert(drive_parameter_valid(&rom, 2u, 3u));
+    assert(!drive_parameter_valid(&rom, 3u, 31u));
+    assert(!drive_set(&rom, &a, 0u, bad));
+    assert(a.ready && a.param[2] == 2u);
   }
 
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "

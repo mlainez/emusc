@@ -834,8 +834,16 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     { 0x03D014u, 129u, 1u },     /* 16 auto-wah family */
     { 0x03EBB8u, 128u, 1u },     /* 17 compressor family */
     { 0x03ECD8u, 113u, 1u },     /* 18 compressor family */
+    /* The nonlinear-drive family's own words, read by `0x0A0020EC` and the
+       shared updater `0x0A002704` (engines/xp/drive.h). Not part of the
+       conversion-table extraction: these are coefficient rows, one row per
+       setting, not one word per parameter value. */
+    { 0x0384C6u,   2u, 21u },    /* 19 OD/DIST value rows */
+    { 0x03EF30u,   4u, 20u },    /* 20 OD/DIST AmpType sections */
+    { 0x039802u,  31u,  3u },    /* 21 low shelf, the 400 Hz block */
+    { 0x0398BCu,  31u,  3u },    /* 22 high shelf */
   },
-  .efxTableCount = 19u,
+  .efxTableCount = 23u,
 
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };

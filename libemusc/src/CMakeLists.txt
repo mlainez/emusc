@@ -83,6 +83,8 @@ set(EMUSC_SOURCES
   engines/xp/chorus.h
   engines/xp/delay.cc
   engines/xp/delay.h
+  engines/xp/drive.cc
+  engines/xp/drive.h
   engines/xp/efx.cc
   engines/xp/efx.h
   engines/xp/eq.cc
@@ -160,6 +162,7 @@ set(XP_JV1080_SOURCES
   engines/xp/devices/jv1080_resample.cc
   engines/xp/devices/jv1080_voice.cc
   engines/xp/chorus.cc
+  engines/xp/drive.cc
   engines/xp/efx.cc
   engines/xp/packed_rom.cc
   engines/xp/reverb.cc

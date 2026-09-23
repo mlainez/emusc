@@ -28,6 +28,7 @@
 #include "jv1080_resample.h"
 #include "../reverb.h"
 #include "../chorus.h"
+#include "../drive.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -162,6 +163,22 @@ const unsigned kEfxPatchBlockShift = 1u;
    one would be a fit, not a recovery. They are read and ignored, which is
    said here rather than left to be discovered. */
 const unsigned kEfxTypeStereoDelay = 16u;
+/* THE NONLINEAR DRIVE FAMILY, types 2 OVERDRIVE and 3 DISTORTION (0-based
+   1 and 2): one program, and the only difference between the two is the
+   value row the firmware's stubs pass to `0x0A0020EC` - 0 and 1 - which is
+   the whole of what `efx_drive_type` below hands on. Everything else is
+   engines/xp/drive.h. */
+const unsigned kEfxTypeOverdrive = 1u;
+const unsigned kEfxTypeDistortion = 2u;
+const unsigned kEfxDriveParameters = 6u;
+bool efx_drive_type(unsigned type, unsigned *row)
+{
+  if (type != kEfxTypeOverdrive && type != kEfxTypeDistortion)
+    return false;
+  if (row)
+    *row = type - kEfxTypeOverdrive;
+  return true;
+}
 /* TRIPLE-TAP-DELAY (display 19). One delay line read at three taps, which is
    what its program carries: slot 8 has three ERAM reads and one write.
 
@@ -823,6 +840,7 @@ struct Engine {
   size_t rv_gate, rv_since;
   float rv_env;
   bool rv_gated;
+  struct xp_drive efx_drive;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1937,9 +1955,47 @@ void insert_reverb_process(struct Engine *engine, const float *inL,
   }
 }
 
+/* OVERDRIVE and DISTORTION. Level and Pan are applied inside the effect,
+   as the firmware applies them in its own registers, so the return is
+   passed through at unity.
+
+   A PARAMETER PAST ITS RANGE KEEPS ITS PREVIOUS VALUE. The machine
+   discards such a write (`M-091`), and discards it per parameter:
+   `efx_params/efx02_overdrive` rewrites all twelve bytes per slot with one
+   driven to 127, and AmpType, LowGain and HiGain at 127 change nothing in
+   the take while the same write's Pan, back at 64, does return to centre.
+   A byte with no previous value to keep leaves the effect unbuilt. */
+void efx_drive_refresh(struct Engine *engine)
+{
+  unsigned row = 0;
+  if (!efx_drive_type(engine->efx_type, &row))
+    return;
+  bool previous = engine->efx_drive.ready && engine->efx_drive.row == row;
+  uint8_t p[kEfxDriveParameters];
+  for (unsigned i = 0; i < kEfxDriveParameters; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!drive_parameter_valid(&engine->rom, i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_drive.param[i];
+    }
+  }
+  if (!drive_set(&engine->rom, &engine->efx_drive, row, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
+  if (efx_drive_type(engine->efx_type, NULL)) {
+    efx_drive_refresh(engine);
+    return;
+  }
+  engine->efx_drive.ready = false;
   if (engine->efx_type == kEfxTypeStereoDelay)
     efx_stereo_delay_refresh(engine);
   else if (engine->efx_type == kEfxTypeTripleTap)
@@ -3139,7 +3195,9 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
        the effect was fed, which is why the bus is kept rather than summed
        into the mix on the way in. */
     if (engine->efx_ready) {
-      if (insert_reverb_spec(engine->efx_type))
+      if (efx_drive_type(engine->efx_type, NULL))
+        drive_process(&engine->efx_drive, efxL, efxR, efxWetL, efxWetR, n);
+      else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))
         efx_mod_process(engine, efxL, efxR, efxWetL, efxWetR, n);
