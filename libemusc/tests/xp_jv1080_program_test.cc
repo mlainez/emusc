@@ -1077,6 +1077,62 @@ int main(void)
     assert(render(roms, setup(true, 1)) == rewritten);
   }
 
+  /* The voice reserve decides the steal victim (`M-072`'s three takes).
+     Part 2 takes 32 keys first, part 1 then 32 more filling the pool, and
+     part 1 asks for `extra` beyond it; PR-A 001 sounds one tone a key
+     over this range.
+     Part 1 is turned down by CC7 0, over 80 dB, so the render is part 2
+     to within that: whatever part 2 keeps is what is heard. */
+  {
+    auto steal = [&roms](uint8_t reserve1, uint8_t reserve2, int extra) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      part_record(d, 0, 0, 3, 0);
+      part_record(d, 1, 0, 3, 0);
+      bank(d, 81, 0, 0, 0);
+      bank(d, 81, 0, 0, 1);
+      const uint8_t reserves[] = { 0x01, 0x00, 0x00, 0x30 };
+      dt1(d, reserves, { reserve1, reserve2, 0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0, 0, 0 });
+      midi(d, 0xb0, 7, 0);
+      for (uint8_t k = 40; k < 72; ++k)
+        midi(d, 0x91, k, 100);
+      for (int k = 36; k < 68 + extra; ++k)
+        midi(d, 0x90, (uint8_t)k, 100);
+      std::vector<float> out(2 * kFrames);
+      EmuSC::Xp::device_render(d, out.data(), kFrames);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return out;
+    };
+    std::vector<float> alone = steal(0, 32, 0);
+    assert(energy(alone) > 0.0);
+    /* Reserves 0/32: part 2 holds exactly its reserve and is exempt, so
+       part 1 loses its own oldest and part 2 is untouched. */
+    auto residue = [](const std::vector<float> &a,
+                      const std::vector<float> &b) {
+      double e = 0.0;
+      for (size_t i = 0; i < a.size(); ++i)
+        e += ((double)a[i] - b[i]) * ((double)a[i] - b[i]);
+      return e / energy(b);
+    };
+    assert(residue(steal(0, 32, 8), alone) < 1e-6);
+    /* Reserves 0/0: part 2's are the oldest voices and go. */
+    std::vector<float> stolen = steal(0, 0, 8);
+    assert(residue(stolen, alone) > 0.05);
+    /* Reserves 32/0: part 1 holds 40 against 32, over its floor and
+       unprotected, so part 2 loses the same eight as at 0/0. */
+    assert(steal(32, 0, 8) == stolen);
+  }
+
   printf("ok\n");
   return 0;
 }

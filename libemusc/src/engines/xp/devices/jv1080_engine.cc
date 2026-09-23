@@ -16,13 +16,11 @@
  *  those values is measured behaviour, and jv1080_voice.cc carries each
  *  law's own measurement id and says where the measurement runs out.
  *
- *  Allocation is oldest-first with no reserve. The device's own law is
- *  measured - the victim is the oldest voice among the parts at or over
- *  their voice reserve, a part inside its reserve being exempt (`M-031`,
- *  `M-072`) - but the reserve is a performance-part field and no
- *  performance is loaded here, so the exemption has nothing to test. The
- *  ordering is the measured one; the exemption is absent, not modelled
- *  wrongly.
+ *  Allocation steals the oldest voice among the parts holding more voices
+ *  than their Voice Reserve, a part within its reserve being exempt
+ *  (`M-031`, `M-072`; take_voice). The reserves are the performance
+ *  common's own bytes, so they bind only once a song writes them; until
+ *  then every reserve is 0 and the steal is plain oldest-first.
  */
 #include "jv1080.h"
 #include "jv1080_resample.h"
@@ -60,6 +58,9 @@ const unsigned kReverbLevelField = 0x29u;
 const unsigned kReverbTimeField = 0x2au;
 const unsigned kReverbDampField = 0x2bu;
 const unsigned kReverbFeedbackField = 0x2cu;
+/* The sixteen Voice Reserve bytes, one per part, 0-64 each
+   (`04_protocol/sysex.md` `01 00 00 30-3F`). */
+const unsigned kVoiceReserveField = 0x30u;
 /* REVERB TYPES 6 AND 7 ARE NOT TANKS. For them Reverb:Time is the DELAY
    LENGTH rather than the decay, and it is patched straight into nine PRAM
    ERAM address fields as `112*v + 0x2016` - the eight output taps plus
@@ -1028,18 +1029,54 @@ void matrix_sources(const struct Engine *engine, const struct Part &p,
     out[c] = matrix_source(engine, p, c);
 }
 
-/* The oldest voice, or a free one if there is a free one. Returns null
-   only when the pool is empty, which cannot happen with max_voices >= 1. */
+/* A free voice if there is one; otherwise the voice stolen for the new
+   note, freed. Returns null only when the pool is empty, which cannot
+   happen with max_voices >= 1.
+
+   THE VICTIM IS THE OLDEST VOICE AMONG THE PARTS OVER THEIR RESERVE.
+   Measured (`M-031`: oldest-first; `M-072`: the reserve decides the
+   victim). The two passes are the victim scan at PRG `0x0A0014EE`
+   (FW-EXACT): pass 1 skips every voice whose part satisfies
+   `count - reserve <= threshold[part]`, pass 2 runs only when pass 1 found
+   nothing and ignores the reserve.
+
+   The threshold array (`0x09013A3F + part`) has no recovered value and is
+   taken as 0. `M-072` bounds it to 0..7: at reserves 0/32 the part holding
+   exactly its 32 kept every voice (so not negative), and at 32/0 the part
+   holding 40 against 32 lost voices (so below 8). So a part holding no
+   more voices than its reserve is exempt, which is the measured outcome.
+
+   What `count` counts is the ROM's per-part counter `0x09000A34`, whose
+   increment and decrement sit in the undumped internal ROM. Here it is the
+   part's allocated voices, releasing ones included, since those hold a
+   slot. With every reserve 0 - no performance common written - pass 1
+   admits every voice and the choice is plain oldest-first. */
 struct Voice *take_voice(struct Engine *engine)
 {
-  struct Voice *oldest = nullptr;
+  unsigned count[kParts] = {};
   for (unsigned i = 0; i < engine->max_voices; ++i) {
     struct Voice *voice = engine->voices + i;
     if (!voice->allocated)
       return voice;
+    if (voice->part < kParts)
+      ++count[voice->part];
+  }
+  struct Voice *oldest = nullptr;
+  for (unsigned i = 0; i < engine->max_voices; ++i) {
+    struct Voice *voice = engine->voices + i;
+    unsigned p = voice->part;
+    if (p < kParts &&
+        count[p] <= (unsigned)engine->common[kVoiceReserveField + p])
+      continue;
     if (!oldest || voice->serial < oldest->serial)
       oldest = voice;
   }
+  if (!oldest)
+    for (unsigned i = 0; i < engine->max_voices; ++i) {
+      struct Voice *voice = engine->voices + i;
+      if (!oldest || voice->serial < oldest->serial)
+        oldest = voice;
+    }
   if (oldest)
     free_voice(oldest);
   return oldest;
