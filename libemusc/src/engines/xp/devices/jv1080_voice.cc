@@ -878,6 +878,35 @@ void filter_env_advance(struct XpJv1080Voice *voice, double seconds)
   }
 }
 
+/* MEASURED (`P-xxxx`, `pitch/random_pitch_i{00,10,20,30}`: sixteen notes
+   each, the steady pitch in cents): random pitch depth offsets each note by
+   a draw spread across the depth's displayed cents, centred on the key's
+   pitch. Around the index-0 notes' own pitch (flat to 0.5 cents), index 20
+   (displayed 200) spreads -93 to +89 and index 30 (displayed 1200) -567 to
+   +544 - half the displayed figure each way; their spreads' standard
+   deviations, 60.1 and 356.9 cents, are a uniform draw's (57.7 and 346.4).
+   The draw is taken as uniform and fresh per note; sixteen hits do not pin
+   its shape, and the machine's own sequence is not reproduced. Index 10
+   (displayed 10) reads as a cluster at 0 with notes at +15 to +16 on the
+   hardware - and our render, drawing within +-5, reads the same way
+   through the same analysis, so that is the reading, not the machine. The
+   index to cents list is the panel's (1 to 10 in ones, 20 to 100 in tens,
+   200 to 1200 in hundreds). */
+const double kRandomPitchCents[31] = {
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+  200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200 };
+
+double random_pitch_cents(unsigned index, uint32_t serial)
+{
+  if (!index)
+    return 0.0;
+  double width = kRandomPitchCents[index > 30u ? 30u : index];
+  uint32_t seed = serial * 2246822519u + 0x9e3779b9u;
+  seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+  seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+  return width * ((double)(seed >> 8) / 16777216.0 - 0.5);
+}
+
 /* THE PITCH ENVELOPE. MEASURED (`P-xxxx`, the `pitch/penv_*` takes on
    `Sine`, read as the instantaneous frequency in cents):
 
@@ -1569,7 +1598,10 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     std::pow(2.0, (double)controls->key_shift / 12.0) *
     std::pow(2.0, (double)controls->fine_tune / 1200.0) *
     std::pow(2.0, (double)fine / 1200.0) *
-    std::pow(2.0, controls->tune_cents / 1200.0);
+    std::pow(2.0, controls->tune_cents / 1200.0) *
+    std::pow(2.0, random_pitch_cents(
+      field_or(fields, fields->randomPitchDepth, tone, 0u),
+      controls->lfo_seed) / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);
   /* MEASURED, from the ROM against itself: the wave-element record's
