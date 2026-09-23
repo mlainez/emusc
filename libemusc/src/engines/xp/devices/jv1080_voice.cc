@@ -158,15 +158,21 @@ double square_law_gain(unsigned value)
   return v * v;
 }
 
-/* MEASURED (`M-081`): CC7 indexes the same square law, with a floor - the
-   values 0, 1 and 2 all read -81.7 dB, which is what the law gives for
-   1.15. Worst deviation 0.41 dB. */
+/* MEASURED (`M-081`, `closeout/cc7_residual`): CC7 indexes the same
+   square law from value 9 up, and below it the machine's own points: 0, 1
+   and 2 all read -81.7 dB, the floor, and 3, 4, 6 and 8 read -70.7, -62.8,
+   -54.2 and -48.7 dB, running 5.6, 2.8, 1.2 and 0.7 dB under the law as
+   they converge on it. Between those points the level is interpolated in
+   dB, which is not recovered. */
 double cc7_gain(unsigned value)
 {
-  double v = (double)(value > 127u ? 127u : value);
-  if (v < 1.15)
-    v = 1.15;
-  v /= 127.0;
+  static const double xs[] = { 2.0, 3.0, 4.0, 6.0, 8.0 };
+  static const double ys[] = { -81.7, -70.7, -62.8, -54.2, -48.7 };
+  if (value > 127u)
+    value = 127u;
+  if (value <= 8u)
+    return std::pow(10.0, interpolate_points(xs, ys, 5u, (double)value) / 20.0);
+  double v = (double)value / 127.0;
   return v * v;
 }
 

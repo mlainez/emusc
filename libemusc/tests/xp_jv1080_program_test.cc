@@ -614,6 +614,13 @@ int main(void)
       e1 += (double)ridden[i] * ridden[i];
     }
     assert(std::fabs(10.0 * std::log10(e1 / e0) + 11.9) < 0.1);
+    /* CC7 0, 1 and 2 are one floor (`M-081`). */
+    auto at = [&](uint8_t v) {
+      return two_halves(nothing, [v](EmuSC::Xp::Device *d) {
+        midi(d, 0xb0, 7, v);
+      });
+    };
+    assert(at(0) == at(2) && at(1) == at(2) && at(2) != at(3));
   }
 
   /* RPN 0/2 and 0/1 (`M-084`): coarse tune msb - 64 semitones, fine tune
