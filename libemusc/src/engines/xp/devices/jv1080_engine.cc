@@ -2277,12 +2277,17 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       const uint8_t *note = engine->rhythm.note[index];
       unsigned group = note[profile->rhythmNoteFields.muteGroup];
       /* A mute group stops every other rhythm voice in it - one hi-hat
-         closing the other. Group zero is "no group" and mutes nothing. */
+         closing the other. Group zero is "no group" and mutes nothing.
+         The stop is a kill, not a release: on `rhythm/mute_group_hats`
+         the take is at its -97 dB floor 0.22 s after a closed hat chokes
+         the open one, where releasing the open hat at its own time 4
+         leaves -76 dB there, and -84 with this kill. The rest is the
+         closed hat's own decay. */
       if (group) {
         for (unsigned i = 0; i < kMaxVoices; ++i) {
           struct Voice *other = engine->voices + i;
           if (other->allocated && other->mute_group == group)
-            jv1080_voice_release(&other->voice);
+            free_voice(other);
         }
       }
       started += start_record(engine, part, &profile->rhythmNoteFields, note,
