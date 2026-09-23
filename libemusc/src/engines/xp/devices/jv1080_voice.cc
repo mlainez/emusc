@@ -556,16 +556,42 @@ const double kDrift[5][6] = {
   { 1.0, 0.773, 0.732, 0.724, 0.722, 0.721 },
   { 1.0, 0.797, 0.713, 0.697, 0.693, 0.691 } };
 
+/* THE TOP OF THE RANGE, MEASURED (`P-xxxx`, TASK-381, the same takes as
+   set_biquad's). The cutoff saturates: at resonance 0 every type reads the
+   same at 112, 120 and 127, band for band; at resonance 64 and 127, 120
+   and 127 are identical and 112 is not. Between 0 and 64 nothing is
+   measured, and every resonance above 0 takes 120. With resonance the
+   peak then stops at 7781 Hz, on `Synth Saw 2` and on White Noise alike -
+   `M-077`'s 7809 Hz and `M-078`'s 7891, which read it as a property of the
+   wave; it is the filter's - and the natural frequency is held at 7809.
+   The low-pass at resonance 0 from 112 up is the filter OFF, to 0.0 dB
+   (tvf_bypassed). The other three types there are not reproduced by these
+   sections at any natural frequency: at the extension's 8440 Hz the HPF
+   reads within 2.7 dB from 350 Hz up, the BPF 5 to 10 dB and the PKG up to
+   13 dB under the machine; that regime is not resolved. */
+const double kTvfPeakCeilingHz = 7809.0;
+
 double tvf_natural_hz(double cutoff, unsigned resonance)
 {
+  double top = resonance ? 120.0 : 112.0;
+  if (cutoff > top)
+    cutoff = top;
   double hz = tvf_cutoff_hz(cutoff);
-  if (cutoff <= kDriftCutoff[0] || !resonance)
+  if (!resonance)
     return hz;
-  double r = (double)(resonance > 120u ? 120u : resonance);
-  double at[5];
-  for (unsigned c = 0; c < 5u; ++c)
-    at[c] = interpolate_points(kDriftResonance, kDrift[c], 6u, r);
-  return hz * interpolate_points(kDriftCutoff, at, 5u, cutoff);
+  if (cutoff > kDriftCutoff[0]) {
+    double r = (double)(resonance > 120u ? 120u : resonance);
+    double at[5];
+    for (unsigned c = 0; c < 5u; ++c)
+      at[c] = interpolate_points(kDriftResonance, kDrift[c], 6u, r);
+    hz *= interpolate_points(kDriftCutoff, at, 5u, cutoff);
+  }
+  return hz > kTvfPeakCeilingHz ? kTvfPeakCeilingHz : hz;
+}
+
+bool tvf_bypassed(int type, double cutoff, unsigned resonance)
+{
+  return (type == 1 || type > 4) && !resonance && cutoff >= 112.0;
 }
 
 /* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
@@ -790,14 +816,49 @@ double tvf_q(unsigned resonance)
 /* A two-pole section per filter type. MEASURED (`M-017`): all four types
    are active and each has the response its name says - the type register
    reading zero says the type is carried elsewhere, not that the types are
-   unused. The realisation is this model's own: the chip's is silicon.
+   unused.
+
+   THE REALISATION, MEASURED at the machine's 32 kHz (`P-xxxx`, TASK-381,
+   `tvf/cutoff_{lpf,hpf,bpf,pkg}_res000` and `_res064`, White Noise, each
+   slot against `filter_type_all_res000`'s filter-OFF note - the two
+   sessions agree to 0.0 dB where a slot is transparent). Candidate
+   sections share these poles and differ only in their zeros; on cutoffs
+   64 to 104, in third-octave bands to 14 kHz:
+     LPF  no zeros, unity at DC. Within 0.6 dB at 80, 88 and 96, where a
+          bilinear section (a double zero at Nyquist) is 26 dB under at
+          14 kHz; up to 2.7 dB bright between 5 and 9 kHz at 104.
+     HPF  a double zero at DC and no scaling, so the passband rises over
+          0 dB toward Nyquist as the machine's does (+5.6 dB at 9 kHz at
+          104): 1.06 and 0.82 dB rms at resonance 0 and 64, against 2.61
+          and 1.04 for a section scaled to unity at Nyquist.
+     BPF  one zero, at DC, with the section's Q at the natural frequency:
+          0.50 dB rms at resonance 64, where a peak held at 0 dB is 18 dB
+          off; 1.36 at resonance 0, where its level runs 0.3 dB under at 64
+          and 5 dB under at 104. Up to resonance 96 the peak of Q stands
+          on the band-pass's own take at 64 and on the section's peak law,
+          which the low-pass's resonance-96 take confirms to 0.0 to 1.3 dB
+          rms. Above 96 the peak is held at 0 dB, on two poles and zeros at
+          DC and Nyquist. What that boundary rests on is patches, not a
+          take: a peak of Q is right for `Bassoon` (resonance 70) and
+          `Velo Tekno 1` (90) and puts `Dissimilate` and `Tortured` (100)
+          and `Biosphere` (127) over theirs, `Biosphere` by 19 dB, so the
+          transition lies between 90 and 100. 96 is the nearest resonance
+          with a measured law, not a measurement of the transition.
+     PKG  as below; the one-zero variant reads 0.82 and 0.72 against this
+          form's 1.23 and 0.49, so neither is preferred and this one stays.
+          Both stay under the machine above its peak at 96 and 104, by up
+          to 6.6 dB at 14 kHz.
+   These are the outputs of a state-variable section, the topology the
+   sibling engine's own chip runs (tvf.cc). The poles are the cookbook
+   biquad's at the natural frequency and Q below, which is this model's
+   choice; the chip's own coefficient form is internal (`L-05`).
 
    This writes the coefficients and leaves the delay line alone, because
    the filter envelope re-solves it while the note is sounding and
    restarting the section every millisecond would put a step in the output
    at every control block. */
 void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
-                 double q, double rate)
+                 double q, double rate, unsigned resonance)
 {
   double nyquist = rate * 0.5;
   if (fc > nyquist * 0.99)
@@ -810,16 +871,31 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
   double alpha = sn / (2.0 * q);
   double a0 = 1.0 + alpha;
 
+  const double a1 = (-2.0 * cs) / a0;
+  const double a2 = (1.0 - alpha) / a0;
   switch (type) {
-  case 2:                        /* BPF */
-    voice->b0 = alpha / a0;
-    voice->b1 = 0.0;
-    voice->b2 = -alpha / a0;
+  case 2: {                      /* BPF */
+    if (resonance > 96u) {
+      /* Past the measured resonances the peak is held at 0 dB. */
+      voice->b0 = alpha / a0;
+      voice->b1 = 0.0;
+      voice->b2 = -alpha / a0;
+      break;
+    }
+    /* One zero, at DC, and the section's Q at the natural frequency: the
+       numerator's scale is what puts |H| there at q. */
+    double re = 1.0 + a1 * cs + a2 * std::cos(2.0 * w);
+    double im = a1 * sn + a2 * std::sin(2.0 * w);
+    double k = q * std::sqrt(re * re + im * im) / (2.0 * std::sin(0.5 * w));
+    voice->b0 = k;
+    voice->b1 = -k;
+    voice->b2 = 0.0;
     break;
+  }
   case 3:                        /* HPF */
-    voice->b0 = ((1.0 + cs) / 2.0) / a0;
-    voice->b1 = -(1.0 + cs) / a0;
-    voice->b2 = ((1.0 + cs) / 2.0) / a0;
+    voice->b0 = 1.0;
+    voice->b1 = -2.0;
+    voice->b2 = 1.0;
     break;
   case 4:
     /* PKG. MEASURED (`M-017`, `M-121`): a bump of TWICE the section's Q
@@ -834,20 +910,18 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
     voice->b2 = (1.0 - 2.0 * alpha * q) / a0;
     break;
   default:                       /* LPF */
-    voice->b0 = ((1.0 - cs) / 2.0) / a0;
-    voice->b1 = (1.0 - cs) / a0;
-    voice->b2 = ((1.0 - cs) / 2.0) / a0;
+    voice->b0 = 1.0 + a1 + a2;
+    voice->b1 = 0.0;
+    voice->b2 = 0.0;
     break;
   }
-  voice->a1 = (-2.0 * cs) / a0;
-  voice->a2 = (1.0 - alpha) / a0;
+  voice->a1 = a1;
+  voice->a2 = a2;
 }
 
 /* Where the filter envelope currently puts the cutoff parameter, clamped
-   to the field's own 0..127 range. The machine's further ceiling - a
-   resonant peak that stops climbing around 7891 Hz whatever the cutoff
-   asks for (`M-077`, `M-078`) - is a property of the wave rather than of
-   this law and is NOT modelled here. */
+   to the field's own 0..127 range. The top of that range saturates
+   further, in tvf_natural_hz. */
 double filter_env_cutoff(const struct XpJv1080Voice *voice)
 {
   double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value +
@@ -855,6 +929,20 @@ double filter_env_cutoff(const struct XpJv1080Voice *voice)
   if (cutoff < 0.0)
     return 0.0;
   return cutoff > 127.0 ? 127.0 : cutoff;
+}
+
+/* The section for where the voice's cutoff and resonance now stand. */
+void set_filter(struct XpJv1080Voice *voice, double rate)
+{
+  double cutoff = filter_env_cutoff(voice);
+  if (tvf_bypassed(voice->filter_type, cutoff, voice->resonance_value)) {
+    voice->b0 = 1.0;
+    voice->b1 = voice->b2 = voice->a1 = voice->a2 = 0.0;
+    return;
+  }
+  set_biquad(voice, voice->filter_type,
+             tvf_natural_hz(cutoff, voice->resonance_value),
+             voice->resonance_q, rate, voice->resonance_value);
 }
 
 /* Enter a segment, from wherever the envelope currently stands. The time
@@ -1964,9 +2052,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   jv1080_voice_set_matrix(voice, controls->matrix_source);
 
   if (voice->filter_type)
-    set_biquad(voice, voice->filter_type,
-                tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                voice->resonance_q, outputRate);
+    set_filter(voice, outputRate);
 
   voice->active = true;
   return true;
@@ -2076,9 +2162,7 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
       voice->resonance_value = voice->resonance_base;
       voice->resonance_q = voice->resonance_q_base;
     }
-    set_biquad(voice, voice->filter_type,
-                tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                voice->resonance_q, voice->output_rate);
+    set_filter(voice, voice->output_rate);
   }
 }
 
@@ -2124,9 +2208,7 @@ void voice_controls(struct XpJv1080Voice *voice, bool sweeping, bool lfoFilter)
     if (!voice->lfo_countdown) {
       lfo_update(voice, (double)voice->lfo_period * voice->sample_period);
       if (lfoFilter && !sweeping)
-        set_biquad(voice, voice->filter_type,
-                    tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                    voice->resonance_q, voice->output_rate);
+        set_filter(voice, voice->output_rate);
       voice->lfo_countdown = voice->lfo_period;
     }
     --voice->lfo_countdown;
@@ -2149,9 +2231,7 @@ void voice_controls(struct XpJv1080Voice *voice, bool sweeping, bool lfoFilter)
     if (!voice->control_countdown) {
       filter_env_advance(voice, (double)voice->control_period *
                                   voice->sample_period);
-      set_biquad(voice, voice->filter_type,
-                  tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                  voice->resonance_q, voice->output_rate);
+      set_filter(voice, voice->output_rate);
       voice->control_countdown = voice->control_period;
     }
     --voice->control_countdown;
