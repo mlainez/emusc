@@ -1840,9 +1840,17 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->level_units[3] = 0.0;
   voice->level[3] = 0.0;
   voice->time[0] = amp_env_attack_seconds(tone[fields->ampTime1]);
+  /* MEASURED (`M-066`): time key follow scales times 2-4 by a factor of
+     two per octave of the key about key 60, and leaves the attack alone -
+     the same law the filter and pitch envelopes take (`M-069`). The key is
+     the sounded one, as theirs is; whether the patch's octave shift counts
+     toward it is not measured - `M-066`'s takes have none, and the factory
+     patches that carry one do not separate the two readings. */
+  unsigned ampTimeKf = field_or(fields, fields->ampEnvTimeKeyFollow, tone, 7u);
   for (unsigned i = 1; i < 4u; ++i)
     voice->time[i] =
-      amp_env_fall_seconds_per_20db(tone[fields->ampTime1 + i]);
+      amp_env_fall_seconds_per_20db(tone[fields->ampTime1 + i]) *
+      time_key_follow_scale(ampTimeKf, soundedKey);
   /* NO-SUSTAIN, the rhythm note's envelope mode 0 and 619 of the 640
      factory drum keys: the note-off does not cut the first three segments
      short, and waits for them. Read off the six factory-kit takes
