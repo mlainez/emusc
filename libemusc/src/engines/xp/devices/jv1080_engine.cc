@@ -227,23 +227,46 @@ const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
    channels, a spread of 0.3 %. Independent of rate, as an excursion must
    be, which is a check on the whole chain and not just a number. */
 const double kEfxChorusSweepMs = 12.36;
-/* The second channel's LFO offset, in cycles per step of p6.
+/* The second channel's LFO offset, in cycles, against p6.
 
-   MEASURED AT ONE POINT. At the factory p6 of 50 the two delay lines run
-   0.2686 and 0.2689 cycles apart - 96.7 and 96.8 degrees - read at two
-   different rates by cross-correlating the two channels' frequency
-   deviations, which at full wet ARE the two delay trajectories. Both
-   readings peak at a correlation of +1.000, and the method is good to a
-   tenth of a degree - a render whose offset is known by construction
-   reads back within 0.1.
+   MEASURED, seven points, and it is a table rather than a formula. Read at
+   full wet by cross-correlating the two channels' frequency deviations,
+   which at full wet ARE the two delay trajectories; every point peaks at a
+   correlation of +1.000.
 
-   LINEARITY IS ASSUMED, NOT MEASURED: one point cannot give a law, and no
-   stimulus here sweeps p6. What the panel shows - 0 to 90 accepted, 0 to
-   180 displayed, so two degrees a step - would put the factory value at
-   100.0 degrees, and the machine says 96.75. That is 3.4 % apart, well
-   outside the measurement. So the slope below is the measured point
-   divided by 50 and nothing more; a p6 sweep would settle the shape. */
-const double kEfxChorusPhaseStep = 0.2687 / 50.0;
+     p6      0     15     30     45     60     75     90
+     cycles  0  .0808  .1610  .2418  .3221  .4028  .4999
+     degrees 0  29.08  57.97  87.05 115.94 145.02 179.95
+
+   p6 = 0 puts the two channels exactly together, which is what says the
+   parameter is the phase at all. The six points to 75 lie on one line at
+   **1.9335 degrees a step**, not the 2.0 the panel implies by accepting
+   0..90 and displaying 0..180 - and the top of the field then breaks that
+   line, landing on 180.0 where the line would put it at 174.0.
+
+   That break is not the instrument: a render built with a flat 1.9346
+   degrees a step reads back 174.10 at p6 = 90 through the same code, so
+   six degrees is well within reach.
+
+   WHERE THE LINE TURNS, BETWEEN 75 AND 90, IS NOT RESOLVED - the sweep
+   steps by 15. So the values between the measured points are drawn as
+   straight lines between them and nothing is extrapolated. */
+const unsigned kEfxChorusPhasePoints = 7u;
+const unsigned kEfxChorusPhaseSpacing = 15u;
+const double kEfxChorusPhaseCycles[kEfxChorusPhasePoints] =
+  { 0.0, 0.0808, 0.1610, 0.2418, 0.3221, 0.4028, 0.4999 };
+
+double efx_chorus_phase(unsigned v)
+{
+  unsigned top = kEfxChorusPhaseSpacing * (kEfxChorusPhasePoints - 1u);
+  if (v >= top)
+    return kEfxChorusPhaseCycles[kEfxChorusPhasePoints - 1u];
+  unsigned i = v / kEfxChorusPhaseSpacing;
+  double f = (double)(v - i * kEfxChorusPhaseSpacing) /
+    (double)kEfxChorusPhaseSpacing;
+  return kEfxChorusPhaseCycles[i] +
+    f * (kEfxChorusPhaseCycles[i + 1u] - kEfxChorusPhaseCycles[i]);
+}
 const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
 const double kEfxTimeControlScale = 0.966;
 const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
@@ -1081,8 +1104,8 @@ void efx_modulated_refresh(struct Engine *engine)
      it. Restarting the sweep at each write makes the deviation constant
      over so short a window, and ours read 0.006 % until this was removed. */
 
-  /* p6 PHASE, anchored on the one measured point (see the constant). */
-  engine->efx_lfo_offset = (double)p[5] * kEfxChorusPhaseStep;
+  /* p6 PHASE, off the measured table (see above). */
+  engine->efx_lfo_offset = efx_chorus_phase(p[5]);
 
   /* p10 BALANCE, measured end to end: 0 is fully DRY (envelope flat to
      1.01 dB, L/R correlation +1.0000), 100 is fully WET, and the comb is
