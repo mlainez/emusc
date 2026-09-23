@@ -138,5 +138,48 @@ int main()
       chorus_destroy(&ch);
     }
   }
+
+  /* The loop high-pass is the profile's, and only the JV-1080 has one. Its
+     gain is unity at the top of the band, so a loop at unity feedback holds
+     a Nyquist-rate tone where a gain above one would grow it; and it is
+     below unity at the bottom, so a DC offset fed back dies away where the
+     same loop without it holds the offset forever. */
+  assert(SC88_PROFILE.chorusLoopHighpassHz == 0.0);
+  assert(JV1080_PROFILE.chorusLoopHighpassHz > 0.0);
+  {
+    static float out[100 * 2];
+    static float in[100];
+    for (unsigned hp = 0; hp < 2; ++hp) {
+      for (unsigned dc = 0; dc < 2; ++dc) {
+        struct XpDeviceProfile p = SC88_PROFILE;
+        p.chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP;
+        p.chorusFeedbackTap = XP_CHORUS_FB_TAP_LEFT;
+        p.chorusLoopHighpassHz = hp ? JV1080_PROFILE.chorusLoopHighpassHz : 0.0;
+        assert(chorus_init(&ch, 32000.0, &p));
+        chorus_set_params(NULL, &ch, 0, 0, 0, 0, 0, 0);
+        chorus_set_runtime(&ch, 100.0, 0.0, 0.0, 1.0f, 1.0f);
+        chorus_reset(&ch);
+        double peak = 0.0, mean = 0.0;
+        /* one loop's worth of input, then 300 passes of the loop alone */
+        for (unsigned pass = 0; pass <= 300; ++pass) {
+          for (i = 0; i < 100; ++i)
+            in[i] = pass ? 0.0f : dc ? 1.0f : (i & 1u) ? -1.0f : 1.0f;
+          memset(out, 0, sizeof out);
+          chorus_process(&ch, in, out, 100);
+        }
+        for (i = 0; i < 100; ++i) {
+          peak = fmax(peak, fabs(out[i * 2]));
+          mean += out[i * 2] / 100.0;
+        }
+        if (!dc)
+          assert(peak <= 1.0 + 1e-3 && peak > 0.9);
+        else if (hp)
+          assert(fabs(mean) < 1e-2);
+        else
+          assert(fabs(mean - 1.0) < 1e-3);
+        chorus_destroy(&ch);
+      }
+    }
+  }
   return 0;
 }

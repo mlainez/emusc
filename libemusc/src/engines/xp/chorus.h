@@ -56,6 +56,11 @@ struct xp_chorus {
   uint8_t modulator;
   /* Which tap feeds back, from the device's profile (`chorusFeedbackTap`). */
   uint8_t feedback_tap;
+  /* The one-pole high-pass on the fed-back signal (`chorusLoopHighpassHz`);
+     `fb_hp_on` false when the device has none. */
+  bool fb_hp_on;
+  double fb_hp_coefficient;
+  double fb_hp_x1, fb_hp_y1;
   bool active;
 };
 

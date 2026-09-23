@@ -180,12 +180,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
 
      FEEDBACK: the level table read unshifted (jv1080_engine.cc), taken
      from the left tap alone and written back ahead of the pre-delay
-     (`M-112`). What is not recovered is an extra loss of about 0.0017 dB
-     per pass that hardware shows at feedback 127 beyond the table's own
-     8191/8192; it is left out rather than fitted. */
+     (`M-112`).
+
+     LOOP HIGH-PASS: a one-pole at 19.97 Hz inside the loop, read off the
+     static feedback-127 ring's per-tooth decay (see profile.h). What is
+     still not recovered is a loss of 0.00149 dB per pass, flat in
+     frequency from 1 to 4 kHz, on top of the table's own 8191/8192; it is
+     not a filter, its cause is unknown, and it is left out rather than
+     fitted. */
   .chorusMaxMs = 128.0,
   .chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP,
   .chorusFeedbackTap = XP_CHORUS_FB_TAP_LEFT,   /* M-112 */
+  .chorusLoopHighpassHz = 19.97,               /* P-xxxx */
   .chorusPreDelayTable = 0x038EC8u,
   .chorusRateTable = 0x038B2Eu,
   .chorusRateAccumulator = 65536.0,

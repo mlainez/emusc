@@ -499,6 +499,24 @@ struct XpDeviceProfile {
      pass, which is what the mean cannot reproduce here: a modulated
      feedback-127 ring that decays at -2.3 to -2.4 dB/s on hardware. */
   uint8_t chorusFeedbackTap;
+  /* THE HIGH-PASS INSIDE THE CHORUS'S FEEDBACK LOOP, as the corner of a
+     one-pole section in hertz; zero for none.
+
+     Measured on the JV-1080 (`P-xxxx`): the static feedback-127 ring's
+     comb teeth each lose a fixed amount per pass, and that loss falls as
+     1/f^2 from 0.085 dB at 142 Hz to a flat floor above about 1.5 kHz.
+     Fitted over 54 teeth from 142 Hz to 3.9 kHz, a one-pole high-pass
+     reads 19.68 +- 0.04 Hz with 0.0003 dB per pass left over; the same
+     analysis reads a known 19.96 Hz section, simulated at the same loop
+     length and loss, as 19.67 Hz, so the corner is 19.97 +- 0.04 Hz.
+     The DSP coefficient behind it is not decoded. A filter outside the loop
+     would scale a tooth, not change how fast it decays, so this one is in
+     the loop. Whether it sits on the fed-back signal or on the whole line
+     input the measurement cannot tell; at 20 Hz the difference to the
+     first pass is nil, and it is applied to the fed-back signal so a
+     feedback of zero leaves the chorus exactly as it was. The SC-88 has
+     never been measured and keeps none. */
+  double chorusLoopHighpassHz;
   /* The tables a device drives its chorus from, zero where it has none.
      `chorusRateAccumulator` is the modulus the rate table's entry is a
      per-control-period increment on, so the modulation is

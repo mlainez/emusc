@@ -69,6 +69,12 @@ bool chorus_init(struct xp_chorus *ch, double outputRate,
   ch->pre_in = 1.0f;
   ch->modulator = profile->chorusModulator;
   ch->feedback_tap = profile->chorusFeedbackTap;
+  if (profile->chorusLoopHighpassHz > 0.0) {
+    ch->fb_hp_on = true;
+    ch->fb_hp_coefficient = std::exp(-2.0 * 3.14159265358979323846 *
+                                     profile->chorusLoopHighpassHz /
+                                     outputRate);
+  }
   /* GS's own defaults: level 0x40, feedback 0x08, delay 0x50, rate 0x03,
      depth 0x13, pre-LPF 0 (`04_protocol/sysex.md`). */
   chorus_set_params(nullptr, ch, 0x40, 0x08, 0x50, 0x03, 0x13, 0);
@@ -90,10 +96,17 @@ void chorus_reset(struct xp_chorus *ch)
     return;
   std::memset(ch->buf, 0, ch->len * sizeof *ch->buf);
   ch->pos = 0;
+  /* Phase 0 at reset is a choice, not a reading. The JV-1080's chorus LFO
+     runs freely from power-on: two captures of one stimulus taken 349.75 s
+     apart read phases 0.3451 cycles apart against the 0.3445 the rate
+     predicts, so nothing the stimulus sends resets it (`P-xxxx`). The phase
+     a song starts at is therefore set by how long the unit has been on. */
   ch->phase = 0.0;
   ch->pre_state = 0.0f;
   ch->fb_state_l = 0.0f;
   ch->fb_state_r = 0.0f;
+  ch->fb_hp_x1 = 0.0;
+  ch->fb_hp_y1 = 0.0;
 }
 
 bool chorus_macro(const struct xp_rom *rom, uint8_t macro, uint8_t out[8])
@@ -195,6 +208,18 @@ void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
     float right = tap(ch, ch->delay_samples + other * ch->depth_samples);
     float back = ch->feedback_tap == XP_CHORUS_FB_TAP_LEFT
       ? left : 0.5f * (left + right);
+    if (ch->fb_hp_on) {
+      /* Scaled by (1+c)/2 so the gain is unity at the top of the band. The
+         plain difference form peaks at 2/(1+c) there, which at feedback
+         127 is a loop gain above one; hardware's static ring decays at
+         the same rate from 1.6 to 16 kHz instead. */
+      double y = 0.5 * (1.0 + ch->fb_hp_coefficient) *
+          ((double)back - ch->fb_hp_x1) +
+        ch->fb_hp_coefficient * ch->fb_hp_y1;
+      ch->fb_hp_x1 = back;
+      ch->fb_hp_y1 = y;
+      back = (float)y;
+    }
     ch->buf[ch->pos] = x + ch->feedback * back;
     if (++ch->pos >= ch->len)
       ch->pos = 0;
