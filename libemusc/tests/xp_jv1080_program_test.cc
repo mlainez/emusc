@@ -195,6 +195,21 @@ double strongest_hz(const std::vector<float> &x)
   return bestHz;
 }
 
+/* A DT1 of `data` at the four-byte address `a`. */
+void dt1(EmuSC::Xp::Device *d, const uint8_t a[4],
+         const std::vector<uint8_t> &data)
+{
+  std::vector<uint8_t> m = { 0xf0, 0x41, 0x10, 0x6a, 0x12,
+                             a[0], a[1], a[2], a[3] };
+  m.insert(m.end(), data.begin(), data.end());
+  unsigned sum = 0;
+  for (size_t i = 5; i < m.size(); ++i)
+    sum += m[i];
+  m.push_back((uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu));
+  m.push_back(0xf7);
+  assert(EmuSC::Xp::device_sysex(d, 0, m.data(), m.size()));
+}
+
 const uint8_t kGmOn[] = { 0xf0, 0x7e, 0x7f, 0x09, 0x01, 0xf7 };
 
 }  // namespace
@@ -980,6 +995,32 @@ int main(void)
     assert(re > 0.0);
     assert(fe > fl);
     assert(rl > 4.0 * re);
+  }
+
+  /* With a part as the effect source, the effect's output block - assign,
+     level and the two sends - is that part's patch's, as its type and
+     parameters are (`0x0A00931C`). The performance's own sends then do
+     nothing, and the patch's do. Part 1 on PR-A 001, assigned to the
+     insert, which runs DISTORTION; chorus and reverb returns full. */
+  auto efxSends = [](uint8_t performance, uint8_t patch) {
+    return [performance, patch](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      const uint8_t record[] = { 0x01, 0x00, 0x10, 0x0a };
+      dt1(d, record, { 1 });
+      const uint8_t common[] = { 0x01, 0x00, 0x00, 0x0c };
+      dt1(d, common, { 1, 2, 127, 64, 2, 15, 15, 127, 0, 0, 0, 0, 0, 0,
+                       0, 127, performance, performance, 0, 64, 0, 64,
+                       127, 3, 97, 0, 0, 0, 2, 127, 41, 15, 0 });
+      const uint8_t own[] = { 0x02, 0x00, 0x00, 0x0c };
+      dt1(d, own, { 2, 127, 64, 2, 15, 15, 127, 0, 0, 0, 0, 0, 0,
+                    0, 127, patch, patch });
+    };
+  };
+  {
+    std::vector<float> dry = render(roms, efxSends(0, 0));
+    assert(energy(dry) > 0.0);
+    assert(render(roms, efxSends(127, 0)) == dry);
+    assert(render(roms, efxSends(0, 127)) != dry);
   }
 
   printf("ok\n");

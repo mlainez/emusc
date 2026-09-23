@@ -2008,6 +2008,44 @@ void efx_algorithm_refresh(struct Engine *engine)
     insert_reverb_refresh(engine);
 }
 
+/* The EFX output block: level, and the two sends the assign may mask out.
+
+   THE BLOCK FOLLOWS THE EFFECT SOURCE, as the type and parameters do. The
+   output-block fetcher `0x0A00931C` resolves the selector with the same
+   arithmetic as the type/parameter reader `0x0A0094D0` - source 0 reads
+   the performance common at `+0x1A`, any other source the selected part's
+   patch image at `+0x19`, one byte lower as the rest of a patch's effect
+   block is - and hands that pointer to the updater `0x0A00716C`; the
+   working-copy fill at `0x0A0097C6` takes the same `+0x19` from the same
+   image (FW-EXACT). So with a part as the source, the performance's own
+   assign, level and sends are not the ones in force. */
+void efx_refresh(struct Engine *engine)
+{
+  bool performance = true;
+  unsigned image = 0;
+  if (!efx_resolve_source(engine->common[kEfxSourceField], &performance,
+                           &image))
+    return;                      /* past the selector's range: leave it */
+  const uint8_t *block = engine->common;
+  unsigned shift = 0;
+  if (!performance) {
+    if (image >= kParts)
+      return;
+    block = engine->parts[image].common;
+    shift = kEfxPatchBlockShift;
+  }
+  unsigned assign = block[kEfxOutputAssignField - shift];
+  engine->efx_output_level = (float)
+    (efx_output_level(&engine->rom,
+                       block[kEfxOutputLevelField - shift]) / 8192.0);
+  engine->efx_chorus_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     block[kEfxChorusSendField - shift]) / 8192.0);
+  engine->efx_reverb_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     block[kEfxReverbSendField - shift]) / 8192.0);
+}
+
 /* THE EFFECT FOLLOWS A SYSEX WRITE TO ITS SOURCE PATCH. When the selector
    names a part, the type and parameters are that part's patch's, and a
    SysEx write reloads the effect as a performance edit does
@@ -2027,25 +2065,11 @@ void efx_algorithm_refresh(struct Engine *engine)
    force alone. */
 void efx_follow_source(struct Engine *engine)
 {
+  efx_refresh(engine);
   engine->efx_dirty = false;
   efx_block_refresh(engine);
   if (engine->efx_dirty)
     efx_algorithm_refresh(engine);
-}
-
-/* The EFX output block: level, and the two sends the assign may mask out. */
-void efx_refresh(struct Engine *engine)
-{
-  unsigned assign = engine->common[kEfxOutputAssignField];
-  engine->efx_output_level = (float)
-    (efx_output_level(&engine->rom,
-                       engine->common[kEfxOutputLevelField]) / 8192.0);
-  engine->efx_chorus_send = (float)
-    (efx_send_level(&engine->rom, assign,
-                     engine->common[kEfxChorusSendField]) / 8192.0);
-  engine->efx_reverb_send = (float)
-    (efx_send_level(&engine->rom, assign,
-                     engine->common[kEfxReverbSendField]) / 8192.0);
 }
 
 void reverb_refresh(struct Engine *engine)
