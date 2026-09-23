@@ -710,6 +710,14 @@ void device_destroy(Device *device)
   std::memset(device, 0, sizeof *device);
 }
 
+bool device_gm_system_on(Device *device)
+{
+  if (!device || !device->initialized || !device->voice_ops ||
+      !device->voice_ops->gm_system_on)
+    return false;
+  return device->voice_ops->gm_system_on(device->voice_state);
+}
+
 void device_reset_controllers(Device *device)
 {
   if (!device || !device->initialized)
@@ -893,6 +901,12 @@ bool device_sysex(Device *device, uint8_t port,
   }
   if (size && data[size - 1] == 0xf7)
     --size;
+  /* The universal GM System On, 7E 7F 09 01, on a device whose own voice
+     path has a GM mode. Only the broadcast ID is compared: the JV-1080's
+     dispatcher at `0x0A016F8C` accepts 7F and nothing else. */
+  if (device->voice_ops && size == 4u && data[0] == 0x7e &&
+      data[1] == 0x7f && data[2] == 0x09 && data[3] == 0x01)
+    return device_gm_system_on(device);
   /* 41 dev <model> 12, the device's own address bytes, at least one data
      byte, checksum. The model id and the address width are the device's,
      so they come from its profile: three bytes on a GS device, four on

@@ -549,9 +549,11 @@ struct Part {
   uint8_t common[XP_JV1080_PATCH_COMMON_FIELDS];
   uint8_t tone[XP_JV1080_TONES_PER_PATCH][XP_JV1080_TONE_FIELDS];
   uint8_t part[kPartFields];
-  /* The bank-select pair as received, resolved to a packed bank only when
-     a program change arrives - which is the order the device resolves them
-     in, since either may come first. */
+  /* The part's CC0/CC32 latch, resolved to a packed bank only when a
+     program change arrives - which is the order the device resolves them
+     in, since either may come first. Each byte is written on its own, so a
+     CC0 alone leaves the old LSB in place. Seeded from the part record
+     whenever that names a new patch. */
   uint8_t bank_msb;
   uint8_t bank_lsb;
   /* MEASURED (`M-081`): CC7 indexes the same square law with a floor -
@@ -628,6 +630,8 @@ struct Engine {
   unsigned max_voices;
   uint64_t serial;
   struct Part parts[kParts];
+  /* GM mode: entered by GM System On, left only by a reset. */
+  bool gm_mode;
   struct Rhythm rhythm;
   struct Voice voices[kMaxVoices];
   struct DcBlocker dc_left;
@@ -734,6 +738,57 @@ void free_voice(struct Voice *voice)
   std::memset(&voice->voice, 0, sizeof voice->voice);
 }
 
+/* Which packedBankSelect entry a latched pair names, or the table's count
+   when it names no group at all. An entry whose bank is
+   XP_PACKED_BANK_NONE is a group that exists and is not held. */
+unsigned select_by_pair(const struct XpDeviceProfile *profile, uint8_t msb,
+                        uint8_t lsb)
+{
+  for (unsigned i = 0; i < profile->packedBankSelectCount; ++i)
+    if (profile->packedBankSelect[i].msb == msb &&
+        profile->packedBankSelect[i].lsb == lsb)
+      return i;
+  return profile->packedBankSelectCount;
+}
+
+/* Which packedBankSelect entry the part record's own group names, or the
+   table's count when it names none this implementation lists. Only type 0
+   is resolved: types 1 and 2 match installed cards and boards, and none
+   is installed. */
+unsigned select_by_record(const struct xp_rom *rom, const struct Part *part)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  unsigned none = profile->packedBankSelectCount;
+  if (profile->partFieldPatchGroupType == XP_VOICE_FIELD_NONE ||
+      !profile->partGroupIdTable ||
+      part->part[profile->partFieldPatchGroupType] != 0u)
+    return none;
+  unsigned id = part->part[profile->partFieldPatchGroupId];
+  if (id >= profile->partGroupIdCount ||
+      profile->partGroupIdTable + id >= rom->size)
+    return none;
+  uint8_t group = rom->bytes[profile->partGroupIdTable + id];
+  for (unsigned i = 0; i < none; ++i)
+    if (profile->packedBankSelect[i].group == group)
+      return i;
+  return none;
+}
+
+/* Point the part's latch at the group its record names, which is what the
+   device does when a performance loads (`0x0A018E1C`) and when a part's
+   patch selection is written (`0x0A0140FA`): both pass the record's group
+   through the reverse map `0x0A014EBE`. A record naming no listed group
+   leaves the latch alone. */
+void seed_latch(const struct xp_rom *rom, struct Part *part)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  unsigned i = select_by_record(rom, part);
+  if (i == profile->packedBankSelectCount)
+    return;
+  part->bank_msb = profile->packedBankSelect[i].msb;
+  part->bank_lsb = profile->packedBankSelect[i].lsb;
+}
+
 /* A part's power-on patch: silent, centred, at full level. Every tone
    switch is zero, so a part nothing has written to sounds nothing rather
    than sounding whatever an all-zero tone record would resolve to. */
@@ -749,8 +804,11 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
      its own number, which is the state a caller with no performance to
      load - a bank select and a program change - needs. */
   part->part[profile->partFieldReceiveChannel] = (uint8_t)index;
+  /* An all-zero record names type 0 id 0, which the device's own table
+     resolves to USER, so that is where the latch starts. */
   part->bank_msb = 0xffu;
   part->bank_lsb = 0xffu;
+  seed_latch(rom, part);
   part->volume = 127u;
 }
 
@@ -1974,6 +2032,7 @@ void engine_reset(void *state)
     free_voice(engine->voices + i);
   for (unsigned p = 0; p < kParts; ++p)
     reset_part(&engine->rom, engine->parts + p, p);
+  engine->gm_mode = false;
   std::memset(&engine->rhythm, 0, sizeof engine->rhythm);
   /* A reset silences the effects too, or a tail outlives the notes that
      made it. The settings are kept: they belong to the performance
@@ -2116,26 +2175,73 @@ bool engine_program_change_one(struct Engine *engine, unsigned part,
                                 unsigned program)
 {
   const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
-  uint8_t msb = engine->parts[part].bank_msb;
-  uint8_t lsb = engine->parts[part].bank_lsb;
+  struct Part &p = engine->parts[part];
   bool rhythm = part == profile->rhythmPartIndex;
-  /* Absent a bank select, the device's own reset state applies; here the
-     first listed pair stands in for it, which is this device's PR-A. The
-     machine's own answer for an arbitrary external file is GM mode, which
-     latches CC0 81 / CC32 3 itself; that is TASK-344's to build. */
-  for (unsigned i = 0; i < profile->packedBankSelectCount; ++i) {
-    const struct XpBankSelect &select = profile->packedBankSelect[i];
-    bool wildcard = msb == 0xffu;
-    if ((wildcard && i) || (!wildcard && (select.msb != msb ||
-                                          select.lsb != lsb)))
-      continue;
-    if (!rhythm)
-      return load_patch(engine, part, select.bank, program);
-    if (select.rhythmBank == XP_PACKED_BANK_NONE)
-      return false;              /* the group has no rhythm image here */
-    return load_rhythm_set(engine, select.rhythmBank, program);
+  const unsigned none = profile->packedBankSelectCount;
+  /* The group comes from the part's latch, not from whether a bank select
+     preceded this message. GM mode overrides the latch and rewrites it; a
+     latch that names no group defers to the part record's own group. See
+     the profile for the firmware. */
+  unsigned i;
+  if (engine->gm_mode && profile->gmPartTemplate) {
+    i = profile->gmBankSelect;
+    p.bank_msb = profile->packedBankSelect[i].msb;
+    p.bank_lsb = profile->packedBankSelect[i].lsb;
+  } else {
+    i = select_by_pair(profile, p.bank_msb, p.bank_lsb);
+    if (i == none)
+      i = select_by_record(&engine->rom, &p);
   }
-  return false;                  /* a card or expansion group, unheld */
+  if (i == none)
+    return false;
+  const struct XpBankSelect &select = profile->packedBankSelect[i];
+  unsigned bank = rhythm ? select.rhythmBank : select.bank;
+  if (bank == XP_PACKED_BANK_NONE)
+    return false;                /* a group with no image here */
+  bool loaded = rhythm ? load_rhythm_set(engine, bank, program)
+                       : load_patch(engine, part, bank, program);
+  /* The record then says what was loaded, as `0x0A018A0C` writes it:
+     type 0, id = group + 1 (`0x0A014ACE`), and the number with its
+     alias. */
+  if (loaded && profile->partFieldPatchGroupType != XP_VOICE_FIELD_NONE) {
+    p.part[profile->partFieldPatchGroupType] = 0u;
+    p.part[profile->partFieldPatchGroupId] = (uint8_t)(select.group + 1u);
+    p.part[profile->partFieldPatchNumber] = (uint8_t)program;
+    p.part[profile->partFieldPatchNumber + 1u] = (uint8_t)program;
+  }
+  return loaded;
+}
+
+/* GM System On, as `0x0A00E0A8` runs it; the profile has the firmware.
+   What it does NOT model: the performance common, whose effect settings
+   the device takes from a record in its own system memory
+   (`0x023800CF`) that this implementation does not hold, so the effects
+   stay as they were; the system-area bytes the same routine stages; and
+   the receive switch in system memory that gates the message. */
+bool engine_gm_system_on(void *state)
+{
+  struct Engine *engine = (struct Engine *)state;
+  if (!engine)
+    return false;
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  if (!profile->gmPartTemplate ||
+      profile->gmPartTemplate + kPartFields > engine->rom.size)
+    return false;
+  /* `0x0A010F94` clears every part's notes on the way into the mode, the
+     same call All Sound Off makes. */
+  for (unsigned v = 0; v < kMaxVoices; ++v)
+    free_voice(engine->voices + v);
+  engine->gm_mode = true;
+  for (unsigned n = 0; n < kParts; ++n) {
+    struct Part &p = engine->parts[n];
+    std::memcpy(p.part, engine->rom.bytes + profile->gmPartTemplate,
+                kPartFields);
+    p.part[profile->partFieldReceiveChannel] = (uint8_t)n;
+    p.volume = profile->gmVolume;
+    engine_program_change_one(engine, n,
+                              p.part[profile->partFieldPatchNumber]);
+  }
+  return true;
 }
 
 bool engine_program_change(void *state, unsigned channel, unsigned program)
@@ -2190,6 +2296,16 @@ bool engine_sysex_block(void *state, const uint8_t *address,
                                ->packedPerformancePartGroup,
                              within, data, count, engine->parts[index].part,
                              kPartFields);
+    /* A write that completes the patch number re-points the part's latch
+       at the record's group: the two DT1 sites that assemble the number
+       from its nibbles both call `0x0A0140FA`, which seeds the latch
+       through `0x0A014EBE`. That routine also LOADS the named patch; that
+       half is not modelled, so a song must still send the patch data it
+       plays. Whether a write of the group alone re-seeds is not traced. */
+    unsigned number = profile->partFieldPatchNumber;
+    if (number != XP_VOICE_FIELD_NONE && within <= number + 1u &&
+        within + count > number)
+      seed_latch(&engine->rom, engine->parts + index);
     return true;
   }
   /* The temporary performance's common block, `01 00 00 xx`: this device
@@ -2470,6 +2586,7 @@ const struct XpVoiceEngineOps JV1080_VOICE_ENGINE = {
   EmuSC::Xp::engine_render_jv,
   EmuSC::Xp::engine_set_max_voices_jv,
   EmuSC::Xp::engine_active_voices,
+  EmuSC::Xp::engine_gm_system_on,
 };
 
 }  // extern "C"

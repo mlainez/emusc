@@ -129,6 +129,8 @@ struct XpVoiceEngineOps {
   void (*render)(void *state, float *stereo, size_t frames);
   bool (*set_max_voices)(void *state, unsigned maxVoices);
   unsigned (*active_voices)(const void *state);
+  /* The universal GM System On. Null on a device with no GM mode. */
+  bool (*gm_system_on)(void *state);
 };
 
 /* Where a record type keeps each field a voice needs, by role. A device's
@@ -196,6 +198,11 @@ struct XpBankSelect {
      (`04_protocol/program_bank.md`, FW-EXACT). XP_PACKED_BANK_NONE where a
      group has no rhythm source this implementation holds an image for. */
   uint8_t rhythmBank;
+  /* The device's own number for this group - on the JV-1080 the twelve-
+     group enum of `0x0A014EF6` (USER 0, CARD 1, PR-A 2, PR-B 3, PR-C 4,
+     GM 5, ...). A performance part record names its patch by group, and
+     this is what the record's group id resolves to. */
+  uint8_t group;
 };
 
 /* One group of a descriptor-packed record schema: a run of field
@@ -498,6 +505,27 @@ struct XpDeviceProfile {
      image for, and selects nothing. */
   struct XpBankSelect packedBankSelect[XP_PACKED_BANK_MAX];
   unsigned packedBankSelectCount;
+
+  /* Where the performance part record names its patch: a group type, a
+     group id within that type, and a patch number followed by its alias.
+     A program change whose latched bank pair does not resolve falls back
+     to the group these name, and a successful one writes them back. */
+  uint16_t partFieldPatchGroupType;
+  uint16_t partFieldPatchGroupId;
+  uint16_t partFieldPatchNumber;
+  /* PRG table turning a type-0 group id into a group, and how many ids it
+     holds. An id past the end, or any other type, names a card or board. */
+  uint32_t partGroupIdTable;
+  uint8_t partGroupIdCount;
+
+  /* GM MODE. The 20-byte part record the device's GM System On copies
+     into every part, its only per-part change being the receive channel;
+     which packedBankSelect entry the mode forces every program change to;
+     and the CC7 volume the mode leaves on each part. gmPartTemplate is 0
+     on a device with no GM mode. */
+  uint32_t gmPartTemplate;
+  uint8_t gmBankSelect;
+  uint8_t gmVolume;
 
   /* Where the melodic tone record and the rhythm note record keep each
      field the voice path reads. Each index is the descriptor's own index

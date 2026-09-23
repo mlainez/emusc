@@ -230,6 +230,10 @@ bool device_init_decoded(
   enum xp_fractional_wrap wrap);
 void device_destroy(Device *device);
 void device_reset_controllers(Device *device);
+/* The GM System On a device with its own voice path acts on, as if the
+ * message had arrived. False, with nothing changed, on a device that has
+ * no GM mode - which includes every device on the shared firmware port. */
+bool device_gm_system_on(Device *device);
 /* Caps simultaneous voices below the device's own polyphony. Dispatches
  * to whichever voice path the loaded device uses, so a caller does not
  * have to know which one that is. */

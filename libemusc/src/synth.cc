@@ -183,6 +183,10 @@ void Synth::reset(SoundMap sm, bool resetParts)
   if (_xpDevice) {
     midiMutex.lock();
     Xp::device_reset_controllers(_xpDevice);
+    /* A GM reset on a device with a GM mode enters it, as a GM System On
+       would; the call does nothing on one without. */
+    if (sm == SoundMap::GS_GM)
+      Xp::device_gm_system_on(_xpDevice);
     midiMutex.unlock();
   }
 
