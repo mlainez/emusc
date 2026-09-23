@@ -130,13 +130,16 @@ struct XpJv1080Voice {
   double gain_left;
   double gain_right;
 
-  /* The four-segment amplitude envelope. level[] is linear amplitude,
-     time[] is seconds for that segment. */
+  /* The four-segment amplitude envelope. level[] is linear amplitude and
+     level_units[] the same levels as the record's own 0-127 values;
+     time[0] is the attack's duration and time[1..3] each segment's time
+     for a 20 dB fall on a full traverse. */
   double level[4];
+  double level_units[4];
   double time[4];
   unsigned segment;
   double envelope;               /* current linear amplitude */
-  double segment_start;
+  double segment_start;          /* in level units, from segment 1 on */
   double segment_total;          /* this segment's own duration, seconds */
   double segment_remaining;      /* seconds left in this segment */
   double sample_period;

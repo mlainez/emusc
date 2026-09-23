@@ -2039,7 +2039,8 @@ bool start_record(struct Engine *engine, unsigned part,
        does to them - here it postpones their note-off as it does any
        other - what a new note-on does mid-envelope, and any dependence on
        velocity. An envelope whose times are all zero sounds here for the
-       few samples its segments take to step through, where the hardware's
+       2 ms the attack table holds at value 0 - its measurement floor -
+       before the zero-length release ends it, where the hardware's
        all-zero bench take is silent. */
     voice->wait = kWaitForKeyOff;
     voice->voice.release_at_sustain = true;

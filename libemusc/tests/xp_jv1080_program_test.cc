@@ -451,6 +451,53 @@ int main(void)
     assert(std::fabs(fast - 20.3) < 3.0);
   }
 
+  /* A fall lasts one duration whatever it falls to, and moves linearly in
+     level units. T2 = 60 from 127 to 64, taken over the same note held at
+     127 so the wave's own decay drops out: the table's 551.8 ms for 20 dB
+     over the 40 % of a full traverse gives 1.38 s, so halfway, at 0.69 s,
+     the level stands at 95.5 units - -12.3 dB - and by 1.5 s it has
+     arrived at 64's -24.9. Timed by its span in dB it would have arrived by
+     0.66 s. */
+  {
+    auto env_db = [&](uint8_t l2) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0);
+      const uint8_t times[4] = { 0, 60, 0, 0 };
+      const uint8_t levels[3] = { 127, l2, l2 };
+      for (unsigned i = 0; i < 4; ++i)
+        tone_field(d, 1, (uint8_t)(0x6e + i), times[i]);
+      for (unsigned i = 0; i < 3; ++i)
+        tone_field(d, 1, (uint8_t)(0x72 + i), levels[i]);
+      midi(d, 0x90, 60, 100);
+      std::vector<float> x(2 * 51200);
+      EmuSC::Xp::device_render(d, x.data(), 51200);     /* 1.6 s */
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return x;
+    };
+    std::vector<float> fall = env_db(64), flat = env_db(127);
+    auto ratio_db = [&](double at) {
+      size_t a = (size_t)(at * kRate), b = a + 320;     /* 10 ms */
+      double e0 = 0.0, e1 = 0.0;
+      for (size_t i = 2 * a; i < 2 * b; ++i) {
+        e0 += (double)fall[i] * fall[i];
+        e1 += (double)flat[i] * flat[i];
+      }
+      return 10.0 * std::log10(e0 / e1);
+    };
+    assert(std::fabs(ratio_db(0.69) + 12.3) < 1.0);
+    assert(std::fabs(ratio_db(1.50) + 24.9) < 0.5);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

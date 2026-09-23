@@ -94,16 +94,41 @@ double interpolate_points(const double *xs, const double *ys, unsigned count,
   return ys[count - 1];
 }
 
-double amp_env_level_db(unsigned value)
+/* A level in the record's own 0-127 units as linear amplitude, through
+   the level table, for any point between two values. Below the table's
+   first entry, 8, the amplitude is taken as linear down to zero: that
+   stretch is not measured. */
+double amp_env_units_amplitude(double units)
 {
-  if (!value)
-    return -120.0;               /* the field's own floor is the noise floor */
+  if (units <= 0.0)
+    return 0.0;
+  const double first = kAmpEnvLevelTable[0].value;
+  if (units < first)
+    return std::pow(10.0, kAmpEnvLevelTable[0].db / 20.0) * units / first;
   double xs[10], ys[10];
   for (unsigned i = 0; i < 10; ++i) {
     xs[i] = kAmpEnvLevelTable[i].value;
     ys[i] = kAmpEnvLevelTable[i].db;
   }
-  return interpolate_points(xs, ys, 10u, (double)value);
+  return std::pow(10.0, interpolate_points(xs, ys, 10u, units) / 20.0);
+}
+
+/* The inverse: where between 0 and 127 a linear amplitude stands. */
+double amp_env_amplitude_units(double amplitude)
+{
+  if (amplitude <= 0.0)
+    return 0.0;
+  const double first = kAmpEnvLevelTable[0].value;
+  const double floor = std::pow(10.0, kAmpEnvLevelTable[0].db / 20.0);
+  if (amplitude < floor)
+    return first * amplitude / floor;
+  double db = 20.0 * std::log10(amplitude);
+  double xs[10], ys[10];
+  for (unsigned i = 0; i < 10; ++i) {
+    xs[i] = kAmpEnvLevelTable[i].db;
+    ys[i] = kAmpEnvLevelTable[i].value;
+  }
+  return interpolate_points(xs, ys, 10u, db);
 }
 
 /* The RIGHT channel's level minus the LEFT channel's, in dB, for an offset
@@ -767,9 +792,30 @@ double key_follow(const struct xp_rom *rom, uint16_t which,
   return sign * value / 100.0;
 }
 
-/* How far a release falls before the voice ends: the 60 dB
-   jv1080_voice_release sizes its duration for. */
-const double kReleaseSpan = 1e-3;
+/* MEASURED: a fall, a decay or a release lasts ONE DURATION for its time
+   value, whatever levels it runs between, and moves linearly in the
+   record's level units - the level table turning that into dB.
+
+   `aenv_l2_sweep` and `aenv_l3_sweep` hold T2 or T3 at 60 and sweep the
+   level they fall to: fitting that whole shape to every one of the twelve
+   falls gives 1.385 to 1.395 s at every target from 0 to 96, at 0.01 to
+   0.12 dB rms over the fall, where a fall timed by its span in dB would
+   have run 0.30 s to 12 dB and 1.32 s to 49. Releases from a sustain of
+   64 and of 48 at T4 = 64 (`structure/tone_delay_key_off_release`, `_t3`)
+   last 1.645 and 1.640 s, where a rate in level units would have given
+   0.84 and 0.63.
+
+   The same model is what the fall table above was read through: on a full
+   127-to-0 traverse the level table reaches -20 dB 40.0 % of the way, so
+   a segment's duration is its time for 20 dB over that fraction - 1.380 s
+   at 60, against the 1.39 fitted directly. It also puts -40 dB at 1.90
+   times the -20 dB time, which the T4 takes read as 1.91 and 1.92. */
+double amp_env_segment_seconds(double seconds_per_20db)
+{
+  static const double fraction =
+    (127.0 - amp_env_amplitude_units(0.1)) / 127.0;
+  return seconds_per_20db / fraction;
+}
 
 /* A field this record type has, or `absent` where it does not have one. */
 unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
@@ -1054,10 +1100,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->gain_right = ratio * left;
 
   /* The envelope's three level fields plus its implicit final zero. */
-  for (unsigned i = 0; i < 3u; ++i)
-    voice->level[i] =
-      std::pow(10.0,
-                amp_env_level_db(tone[fields->ampLevel1 + i]) / 20.0);
+  for (unsigned i = 0; i < 3u; ++i) {
+    voice->level_units[i] = (double)tone[fields->ampLevel1 + i];
+    voice->level[i] = amp_env_units_amplitude(voice->level_units[i]);
+  }
+  voice->level_units[3] = 0.0;
   voice->level[3] = 0.0;
   voice->time[0] = amp_env_attack_seconds(tone[fields->ampTime1]);
   for (unsigned i = 1; i < 4u; ++i)
@@ -1161,8 +1208,8 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
     return;
   voice->releasing = true;
   voice->segment = 3u;
-  voice->segment_start = voice->envelope;
-  voice->segment_total = (60.0 / 20.0) * voice->time[3];
+  voice->segment_start = amp_env_amplitude_units(voice->envelope);
+  voice->segment_total = amp_env_segment_seconds(voice->time[3]);
   voice->segment_remaining = voice->segment_total;
   /* The filter envelope releases on the same note-off, from wherever it
      had reached, to its own level 4. */
@@ -1270,31 +1317,25 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
                       (2.0 / 3.0 - rest * rest * (1.0 - rest * 0.5)) * v1 +
                       frac * frac * frac / 6.0 * vFwd) / 8388608.0;
 
-    /* The envelope, one segment at a time. The attack follows the measured
-       front-loaded shape over its measured duration; the three falls are
-       straight in dB, which is what a time-per-20-dB describes. Neither is
-       the chip's segment stepper - that is internal (`M-011`'s own
+    /* The envelope, one segment at a time. The attack follows its measured
+       shape over its measured duration; every later segment moves linearly
+       in level units over its one duration (see amp_env_segment_seconds).
+       Every segment that has run out is resolved before this sample's
+       value, so a chain of zero-length ones takes no time at all. Neither
+       is the chip's own segment stepper - that is internal (`M-011`'s own
        caveat). */
     if (voice->segment < 4u) {
-      double target = voice->level[voice->segment];
-      if (voice->segment_remaining <= 0.0) {
-        voice->envelope = target;
+      while (voice->segment < 4u && voice->segment_remaining <= 0.0) {
+        voice->envelope = voice->level[voice->segment];
         if (voice->releasing) {
           voice->active = false;
           break;
         }
         if (voice->segment < 2u) {
           ++voice->segment;
-          voice->segment_start = voice->envelope;
-          /* Times 2, 3 and 4 name a RATE - seconds per 20 dB - so a
-             segment's own duration is how far it has to travel at it. */
-          double from = voice->segment_start > 1e-9 ? voice->segment_start
-                                                     : 1e-9;
-          double to = voice->level[voice->segment] > 1e-9
-            ? voice->level[voice->segment] : 1e-9;
-          double span = 20.0 * std::fabs(std::log10(to / from));
+          voice->segment_start = voice->level_units[voice->segment - 1u];
           voice->segment_total =
-            (span / 20.0) * voice->time[voice->segment];
+            amp_env_segment_seconds(voice->time[voice->segment]);
           voice->segment_remaining = voice->segment_total;
         } else {
           voice->segment = 4u;   /* holding the sustain level */
@@ -1306,19 +1347,18 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
             break;
           }
         }
-      } else {
+      }
+      if (!voice->active)
+        break;
+      if (voice->segment < 4u) {
         double done = voice->segment_total > 0.0
           ? 1.0 - voice->segment_remaining / voice->segment_total : 1.0;
         if (!voice->segment) {
-          voice->envelope = target * amp_env_attack_shape(done);
+          voice->envelope = voice->level[0] * amp_env_attack_shape(done);
         } else {
-          double from = voice->segment_start > 1e-9 ? voice->segment_start
-                                                     : 1e-9;
-          /* The release covers the 60 dB its duration was sized for,
-             from wherever it began, and the voice ends there. */
-          double to = voice->releasing ? from * kReleaseSpan
-                                       : (target > 1e-9 ? target : 1e-9);
-          voice->envelope = from * std::pow(to / from, done);
+          double units = voice->segment_start +
+            (voice->level_units[voice->segment] - voice->segment_start) * done;
+          voice->envelope = amp_env_units_amplitude(units);
         }
         voice->segment_remaining -= voice->sample_period;
       }
