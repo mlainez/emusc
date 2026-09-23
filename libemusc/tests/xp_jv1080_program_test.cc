@@ -1,4 +1,5 @@
-/* Where a JV-1080 program change lands, and what GM System On leaves.
+/* Where a JV-1080 program change lands, what GM System On leaves, and
+ * what the device powers on in.
  *
  * Every check compares two renders of the same note: a program change that
  * resolves to a patch through one route must sound exactly like the same
@@ -142,6 +143,27 @@ int main(void)
     return SKIP;
   }
 
+  /* Power-on: USER:001 on part 1, receiving on channel 1 - the patch a
+     program change on a USER latch reaches at number 0, and not USER:014,
+     which is what the system image stores before the boot routine
+     overrides it. Nothing listens on channel 2. */
+  Setup none = [](EmuSC::Xp::Device *) {};
+  std::vector<float> boot = render(roms, none);
+  assert(energy(boot) > 0.0);
+  assert(boot == render(roms, [](EmuSC::Xp::Device *d) {
+    bank(d, 80, 0, 0);
+  }));
+  assert(boot != render(roms, [](EmuSC::Xp::Device *d) {
+    bank(d, 80, 0, 13);
+  }));
+  assert(energy(render(roms, none, 1)) == 0.0);
+
+  /* A host reset puts it back. */
+  assert(boot == render(roms, [](EmuSC::Xp::Device *d) {
+    bank(d, 81, 0, 69);
+    EmuSC::Xp::device_reset_controllers(d);
+  }));
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {
@@ -190,11 +212,11 @@ int main(void)
 
   /* A record whose type names an expansion board resolves to nothing, so
      once the latch names no group either, the program change loads
-     nothing and the part stays silent. */
-  assert(energy(render(roms, [](EmuSC::Xp::Device *d) {
+     nothing and the part keeps its power-on patch. */
+  assert(boot == render(roms, [](EmuSC::Xp::Device *d) {
     part_record(d, 0, 2, 1, 0);
     bank(d, 0, 0, 69);
-  })) == 0.0);
+  }));
 
   /* With no performance written, every record is zero: type 0 id 0, which
      the device's own table resolves to USER. */
@@ -234,14 +256,14 @@ int main(void)
   }));
   assert(render(roms, gm, 5) == gm1);   /* part 6, on channel 6 */
   assert(energy(render(roms, gm, 9, 36)) > 0.0);
-  assert(energy(render(roms, [](EmuSC::Xp::Device *) {}, 9, 36)) == 0.0);
+  assert(energy(render(roms, none, 9, 36)) == 0.0);
 
   /* Only the broadcast ID is received. */
   {
     const uint8_t unit[] = { 0xf0, 0x7e, 0x10, 0x09, 0x01, 0xf7 };
-    assert(energy(render(roms, [&](EmuSC::Xp::Device *d) {
+    assert(boot == render(roms, [&](EmuSC::Xp::Device *d) {
       assert(!EmuSC::Xp::device_sysex(d, 0, unit, sizeof unit));
-    })) == 0.0);
+    }));
   }
 
   /* A reset leaves GM mode: a bank select reaches PR-A again. */

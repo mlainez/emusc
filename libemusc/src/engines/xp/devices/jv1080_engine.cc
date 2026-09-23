@@ -523,6 +523,10 @@ const unsigned kChorusOutMix = 0u;
 const unsigned kChorusOutReverb = 1u;
 
 const unsigned kParts = 16u;
+/* The part the patch-mode temporary area `03 00 bb xx` writes, and so the
+   one a power-on patch selection loads. This engine's arrangement, not the
+   firmware's own buffer index. */
+const unsigned kPatchModePart = 0u;
 const unsigned kMaxVoices = XP_ENGINE_SLOT_COUNT;
 
 /* Which block of a temporary-patch address names what. The tone blocks are
@@ -1969,6 +1973,32 @@ bool load_patch(struct Engine *engine, unsigned part, unsigned bank,
 
 }  // namespace
 
+bool engine_program_change_one(struct Engine *engine, unsigned part,
+                                unsigned program);
+
+/* Every part as a reset leaves it, then the device's power-on selection.
+   The patch is loaded through the program change's own resolution, so the
+   record, the latch and the loaded patch agree the way the firmware's
+   write-back leaves them. */
+static void power_on_parts(struct Engine *engine)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  for (unsigned p = 0; p < kParts; ++p)
+    reset_part(&engine->rom, engine->parts + p, p);
+  if (profile->powerOnMode != XP_POWER_ON_PATCH ||
+      profile->partFieldPatchGroupType == XP_VOICE_FIELD_NONE)
+    return;
+  struct Part &part = engine->parts[kPatchModePart];
+  part.part[profile->partFieldPatchGroupType] = 0u;
+  part.part[profile->partFieldPatchGroupId] = profile->powerOnPatchGroupId;
+  part.part[profile->partFieldPatchNumber] = profile->powerOnPatchNumber;
+  part.part[profile->partFieldPatchNumber + 1u] = profile->powerOnPatchNumber;
+  part.part[profile->partFieldReceiveChannel] = profile->powerOnPatchChannel;
+  seed_latch(&engine->rom, &part);
+  (void)engine_program_change_one(engine, kPatchModePart,
+                                  profile->powerOnPatchNumber);
+}
+
 /* ---- the injected table's own functions ---------------------------- */
 
 bool engine_create(void **state, const struct xp_rom *rom,
@@ -1996,8 +2026,7 @@ bool engine_create(void **state, const struct xp_rom *rom,
   engine->max_voices = xp_profile(rom)->defaultMaxVoices;
   if (!engine->max_voices || engine->max_voices > kMaxVoices)
     engine->max_voices = kMaxVoices;
-  for (unsigned p = 0; p < kParts; ++p)
-    reset_part(rom, engine->parts + p, p);
+  power_on_parts(engine);
   *state = engine;
   return true;
 }
@@ -2030,10 +2059,9 @@ void engine_reset(void *state)
     return;
   for (unsigned i = 0; i < kMaxVoices; ++i)
     free_voice(engine->voices + i);
-  for (unsigned p = 0; p < kParts; ++p)
-    reset_part(&engine->rom, engine->parts + p, p);
   engine->gm_mode = false;
   std::memset(&engine->rhythm, 0, sizeof engine->rhythm);
+  power_on_parts(engine);
   /* A reset silences the effects too, or a tail outlives the notes that
      made it. The settings are kept: they belong to the performance
      common, which a reset does not rewrite. */
@@ -2325,7 +2353,7 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     return true;
   }
   if (a1 == 0x03u)
-    part = 0u;
+    part = kPatchModePart;
   else if (a1 != 0x02u)
     return false;                /* system or performance common: unheld */
 

@@ -57,6 +57,11 @@ inline constexpr uint8_t XP_CHORUS_MOD_TRIANGLE_UP = 1u;
 inline constexpr uint8_t XP_CHORUS_FB_TAP_MEAN = 0u;
 inline constexpr uint8_t XP_CHORUS_FB_TAP_LEFT = 1u;
 
+/* What a device selects at power-on and on a host reset; see
+   `powerOnMode`. */
+inline constexpr uint8_t XP_POWER_ON_NONE = 0u;
+inline constexpr uint8_t XP_POWER_ON_PATCH = 1u;
+
 inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
 inline constexpr unsigned XP_REVERB_TAPS = 8u;
 inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
@@ -545,6 +550,17 @@ struct XpDeviceProfile {
   uint32_t gmPartTemplate;
   uint8_t gmBankSelect;
   uint8_t gmVolume;
+
+  /* THE POWER-ON SELECTION, which a host reset also leaves behind.
+     `XP_POWER_ON_PATCH` puts one patch on the patch-mode part, receiving
+     on `powerOnPatchChannel` (0-based), named the way a part record names
+     one: a type-0 group id resolved through `partGroupIdTable`, and a
+     number within that group. `XP_POWER_ON_NONE` leaves every part as
+     `reset` makes it. */
+  uint8_t powerOnMode;
+  uint8_t powerOnPatchGroupId;
+  uint8_t powerOnPatchNumber;
+  uint8_t powerOnPatchChannel;
 
   /* Where the melodic tone record and the rhythm note record keep each
      field the voice path reads. Each index is the descriptor's own index
