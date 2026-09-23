@@ -153,6 +153,7 @@ struct XpJv1080Voice {
   double outer_level_gain;       /* the patch and part levels' */
   unsigned volume;               /* CC7, as the voice last received it */
   unsigned resonance_base;
+  unsigned resonance_value;      /* with the matrix's RES applied */
   double resonance_q_base;
   double lfo_base_cents[2];
   double lfo_base_frequency[2];
