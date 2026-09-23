@@ -100,6 +100,9 @@ Rendering:
   --rate HZ              Output sample rate (required; e.g. 66207, 64000, 44100)
   --reset gm|gs|none     Initial sound-map / reset state (default: gs).
                          none skips the power-on reset call entirely.
+                         The JV-1080 has no GS mode: gs and gm both put it
+                         in GM mode, and none leaves it in its own power-on
+                         patch mode (one patch on channel 1).
   --tail SECONDS         Silence rendered after the last MIDI event (default: 2)
   --seed N               Seed for libEmuSC's use of std::rand() (default: 1)
   --bits 16|32           16-bit PCM or IEEE float32 samples (default: 16).
@@ -379,6 +382,12 @@ int main(int argc, char **argv) {
   if (o.reset != "none")
     synth.reset(map, true);
 
+  // What the reset left the device in, where the flag's name would say
+  // something else.
+  std::string resetLabel = o.reset;
+  if (ctrl->generation() == EmuSC::ControlRom::SynthGen::JV1080)
+    resetLabel += o.reset == "none" ? " (patch mode)" : " (GM mode)";
+
   // ---- Schedule -------------------------------------------------------------
   struct Sched { uint64_t frame; const smf::Event *ev; };
   std::vector<Sched> sched;
@@ -412,7 +421,7 @@ int main(int argc, char **argv) {
                (double) last_event_frame / o.rate,
                (double) midi.end_of_track_num / midi.time_den,
                (unsigned long long) total_frames, o.rate,
-               (double) total_frames / o.rate, o.reset.c_str(), o.seed);
+               (double) total_frames / o.rate, resetLabel.c_str(), o.seed);
 
   // ---- Render ---------------------------------------------------------------
   try {
