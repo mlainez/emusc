@@ -855,6 +855,44 @@ unsigned sensed_velocity(unsigned velocity, int sensitivity)
   return v >= 127.0 ? 127u : (unsigned)std::lround(v);
 }
 
+/* MEASURED (`M-029`; `envelopes/aenv_vel_curve_c0..c6`, re-read for all
+   ten points): the A-ENV's seven velocity curves, as dB below each
+   curve's own velocity-127 level at velocity sensitivity +50, rms 50 to
+   300 ms after each onset at key 60. Curve 0 is the level law itself
+   (`square_law_gain`, within 1.4 dB of the take at every point above its
+   floor) and is not tabled. Points listed as -64.6 are the take's noise
+   floor, 64.6 dB under velocity 127: the level there is at or below it and
+   is not recovered. Between the ten velocities the level is interpolated
+   in dB, which is not recovered either.
+
+   A record whose sensitivity is not +50 reads its curve at the velocity
+   that sensitivity maps it to (sensed_velocity). The curves were measured
+   at +50 only, so how a curve and another sensitivity compose on the
+   machine is NOT measured; this is the composition that leaves curve 0 as
+   it was measured. */
+const double kVelocityCurveVelocities[10] = {
+  1, 8, 16, 32, 48, 64, 80, 96, 112, 127 };
+const double kVelocityCurveDb[6][10] = {
+  { -64.6, -64.0, -56.7, -42.0, -32.3, -24.6, -17.6, -11.4,  -5.4, 0.0 },
+  { -64.6, -64.6, -64.6, -64.4, -59.9, -48.4, -36.2, -23.8, -11.5, 0.0 },
+  { -58.4, -27.7, -19.0, -11.3,  -7.5,  -5.1,  -3.3,  -1.9,  -0.8, 0.0 },
+  { -27.4, -11.4,  -7.9,  -4.8,  -3.3,  -2.2,  -1.5,  -0.9,  -0.4, 0.0 },
+  { -64.6, -64.6, -62.8, -49.5, -32.7, -11.4,  -2.6,  -0.9,  -0.3, 0.0 },
+  { -47.3, -22.3, -17.6, -14.4, -13.0, -11.9, -11.0,  -9.8,  -7.5, 0.0 },
+};
+
+double velocity_curve_gain(unsigned curve, unsigned velocity)
+{
+  if (!curve || curve > 6u)
+    return square_law_gain(velocity);
+  if (!velocity)
+    return 0.0;
+  double db = interpolate_points(kVelocityCurveVelocities,
+                                 kVelocityCurveDb[curve - 1u], 10u,
+                                 (double)velocity);
+  return std::pow(10.0, db / 20.0);
+}
+
 /* A field this record type has, or `absent` where it does not have one. */
 unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                    const uint8_t *record, unsigned absent)
@@ -1107,9 +1145,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      yet, so a tone selecting one of them is rendered on curve 0 and is
      WRONG BY UP TO 36 dB at velocity 64 (curve 2 reads -48.4 dB there
      against curve 0's -11.8). */
-  double velocityGain = square_law_gain(sensed_velocity(
-    velocity, (int)(int8_t)(uint8_t)field_or(fields, fields->ampVelocitySens,
-                                             tone, 50u)));
+  double velocityGain = velocity_curve_gain(
+    field_or(fields, fields->ampVelocityCurve, tone, 0u),
+    sensed_velocity(velocity,
+                    (int)(int8_t)(uint8_t)field_or(
+                      fields, fields->ampVelocitySens, tone, 50u)));
   voice->static_gain =
     square_law_gain(tone[fields->level]) *
     square_law_gain(controls->patch_level) *

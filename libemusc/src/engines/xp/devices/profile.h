@@ -168,8 +168,10 @@ struct XpVoiceFieldMap {
   uint16_t benderSwitch;
   uint16_t holdSwitch;
   uint16_t benderRange;
-  /* The A-ENV's velocity sensitivity, signed, 0 insensitive. */
+  /* The A-ENV's velocity sensitivity, signed, 0 insensitive, and which of
+     the device's velocity curves it reads through. */
   uint16_t ampVelocitySens;
+  uint16_t ampVelocityCurve;
   /* The rhythm note's envelope mode: 0 NO-SUSTAIN, 1 SUSTAIN. */
   uint16_t envelopeMode;
   /* The tone delay: which mode it runs in, and its time. */
