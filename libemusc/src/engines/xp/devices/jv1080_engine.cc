@@ -1952,6 +1952,31 @@ void efx_algorithm_refresh(struct Engine *engine)
     insert_reverb_refresh(engine);
 }
 
+/* THE EFFECT FOLLOWS A SYSEX WRITE TO ITS SOURCE PATCH. When the selector
+   names a part, the type and parameters are that part's patch's, and a
+   SysEx write reloads the effect as a performance edit does
+   (`08_effects/dsp_program.md`, "Loading sequence"). A song that writes the
+   performance common before the patch it names - `1_rise` sends
+   `01 00 00 00` with source 12 and only then `02 0C 00 00`, whose type is
+   DISTORTION - would otherwise keep whatever that part held when the
+   common arrived. Rebuilt only when the block in force actually moved, so
+   a write to any other part costs nothing and restarts nothing.
+
+   A PROGRAM CHANGE ON THE SOURCE PART DOES NOT CALL THIS. Whether the
+   machine reloads the effect when a performance part that is the effect
+   source takes a program change is not traced - `0x0A00980A` has no direct
+   caller in the disassembly - and it decides what `1_rise`'s 24.63 s
+   cluster goes through: part 13 is program-changed at 22.92 s to PR-B 055,
+   whose own effect is PHASER. So a program change leaves the effect in
+   force alone. */
+void efx_follow_source(struct Engine *engine)
+{
+  engine->efx_dirty = false;
+  efx_block_refresh(engine);
+  if (engine->efx_dirty)
+    efx_algorithm_refresh(engine);
+}
+
 /* The EFX output block: level, and the two sends the assign may mask out. */
 void efx_refresh(struct Engine *engine)
 {
@@ -2980,6 +3005,7 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     packed_apply_wire_block(&engine->rom, commonGroup, within, data, count,
                              engine->parts[part].common,
                              XP_JV1080_PATCH_COMMON_FIELDS);
+    efx_follow_source(engine);
     return true;
   }
   /* A tone's 130 parameters span two blocks, so the block index carries
