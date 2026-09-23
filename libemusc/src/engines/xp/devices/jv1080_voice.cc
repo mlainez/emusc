@@ -1620,7 +1620,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     square_law_gain(controls->part_level);
   voice->gain_levels = voice->tone_level_gain * voice->outer_level_gain;
   voice->gain_velocity = velocityGain;
-  voice->gain_wave = wave_gain(field_or(fields, fields->waveGain, tone, 1u));
+  /* MEASURED (`P-xxxx`, `basic/wave_number_map_g2` and `_g3`: 142 waves,
+     one note each at key 60 against our render of the same files): the
+     element record's first byte is a level, read through the same square
+     law as the level fields. Against the byte-127 elements, 11 notes at
+     117 read -1.49 dB (the law: -1.42), 4 at 112 -2.45 (-2.18), 5 at 120
+     -0.74 (-0.98), 3 at 107 -3.71 (-2.98); the few below 107 scatter and
+     do not pin the law there. */
+  voice->gain_wave = wave_gain(field_or(fields, fields->waveGain, tone, 1u)) *
+    square_law_gain(element.attenuation);
   voice->gain_mix =
     profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0;
   jv1080_voice_set_volume(voice, controls->volume);
