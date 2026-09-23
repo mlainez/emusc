@@ -81,7 +81,7 @@ inline constexpr unsigned XP_WAVE_ADDRESS_LINES_MAX = 21u;
 inline constexpr unsigned XP_PACKED_GROUP_MAX = 12u;
 inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
 inline constexpr uint8_t XP_PACKED_BANK_NONE = 0xffu;
-inline constexpr unsigned XP_EFX_TABLE_MAX = 24u;
+inline constexpr unsigned XP_EFX_TABLE_MAX = 32u;
 
 /* One parameter-conversion table: a run of big-endian words a parameter
    value indexes. `columns` is 2 where an entry is a pair - a pan table's

@@ -841,9 +841,19 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     { 0x0384C6u,   2u, 21u },    /* 19 OD/DIST value rows */
     { 0x03EF30u,   4u, 20u },    /* 20 OD/DIST AmpType sections */
     { 0x039802u,  31u,  3u },    /* 21 low shelf, the 400 Hz block */
-    { 0x0398BCu,  31u,  3u },    /* 22 high shelf */
+    { 0x0398BCu,  31u,  3u },    /* 22 high shelf, the 4 kHz block */
+    /* STEREO-EQ's own words (engines/xp/stereo_eq.h): the other two shelf
+       blocks the shared shelf writers `0x0A0022CE` / `0x0A002372` select
+       between, and the peaking writer `0x0A0023F8`'s four tables, whose
+       row arithmetic is that writer's (5 Q values, 15 gains a side). */
+    { 0x039748u,  31u,  3u },    /* 23 low shelf, the 200 Hz block */
+    { 0x039976u,  31u,  3u },    /* 24 high shelf, the 8 kHz block */
+    { 0x039A30u,  17u,  1u },    /* 25 peaking frequency, 2 sin(pi f/fs) */
+    { 0x039A52u,  85u,  3u },    /* 26 peaking boost (t1, t3, t4) */
+    { 0x039C50u, 1275u, 1u },    /* 27 peaking boost gain word t6 */
+    { 0x03A646u, 1275u, 4u },    /* 28 peaking cut (w0, w1, w2, w3) */
   },
-  .efxTableCount = 23u,
+  .efxTableCount = 29u,
 
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };

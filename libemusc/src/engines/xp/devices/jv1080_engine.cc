@@ -29,6 +29,7 @@
 #include "../reverb.h"
 #include "../chorus.h"
 #include "../drive.h"
+#include "../stereo_eq.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -168,6 +169,8 @@ const unsigned kEfxTypeStereoDelay = 16u;
    value row the firmware's stubs pass to `0x0A0020EC` - 0 and 1 - which is
    the whole of what `efx_drive_type` below hands on. Everything else is
    engines/xp/drive.h. */
+/* STEREO-EQ, type 1 (0-based 0): engines/xp/stereo_eq.h. */
+const unsigned kEfxTypeStereoEq = 0u;
 const unsigned kEfxTypeOverdrive = 1u;
 const unsigned kEfxTypeDistortion = 2u;
 const unsigned kEfxDriveParameters = 6u;
@@ -841,6 +844,7 @@ struct Engine {
   float rv_env;
   bool rv_gated;
   struct xp_drive efx_drive;
+  struct xp_stereo_eq efx_eq;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1988,9 +1992,37 @@ void efx_drive_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+/* STEREO-EQ, with the drive family's per-byte discard: a byte past its
+   range keeps its previous value, and with none to keep the effect stays
+   unbuilt. Level is applied inside, in the firmware's register. */
+void efx_stereo_eq_refresh(struct Engine *engine)
+{
+  bool previous = engine->efx_eq.ready;
+  uint8_t p[XP_STEREO_EQ_PARAMETERS];
+  for (unsigned i = 0; i < XP_STEREO_EQ_PARAMETERS; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!stereo_eq_parameter_valid(i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_eq.param[i];
+    }
+  }
+  if (!stereo_eq_set(&engine->rom, &engine->efx_eq, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
+  if (engine->efx_type == kEfxTypeStereoEq) {
+    efx_stereo_eq_refresh(engine);
+    return;
+  }
+  std::memset(&engine->efx_eq, 0, sizeof engine->efx_eq);
   if (efx_drive_type(engine->efx_type, NULL)) {
     efx_drive_refresh(engine);
     return;
@@ -3221,6 +3253,8 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
     if (engine->efx_ready) {
       if (efx_drive_type(engine->efx_type, NULL))
         drive_process(&engine->efx_drive, efxL, efxR, efxWetL, efxWetR, n);
+      else if (engine->efx_type == kEfxTypeStereoEq)
+        stereo_eq_process(&engine->efx_eq, efxL, efxR, efxWetL, efxWetR, n);
       else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))

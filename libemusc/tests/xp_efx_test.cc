@@ -17,11 +17,13 @@
 #include "engines/xp/devices/jv1080.h"
 #include "engines/xp/drive.h"
 #include "engines/xp/efx.h"
+#include "engines/xp/stereo_eq.h"
 #include "engines/xp/rom.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <vector>
 
@@ -145,10 +147,11 @@ int main(void)
     for (unsigned t = 0; t < profile->efxTableCount; ++t) {
       unsigned n = 0, cols = 0;
       assert(efx_table_shape(&rom, t, &n, &cols));
-      /* one word or a pair per value, except the drive family's
-         coefficient rows: a shelf triple, 20 AmpType words, 21 row words */
-      assert(n && (cols == 1u || cols == 2u || cols == 3u || cols == 20u ||
-                   cols == 21u));
+      /* one word or a pair per value, except the coefficient rows: a
+         shelf or peaking triple, STEREO-EQ's cut quad, 20 AmpType words,
+         21 drive row words */
+      assert(n && (cols == 1u || cols == 2u || cols == 3u || cols == 4u ||
+                   cols == 20u || cols == 21u));
       uint16_t v = 0;
       assert(efx_table_value(&rom, t, n - 1u, cols - 1u, &v));
       assert(!efx_table_value(&rom, t, n, 0, &v));
@@ -271,6 +274,54 @@ int main(void)
     assert(!drive_parameter_valid(&rom, 3u, 31u));
     assert(!drive_set(&rom, &a, 0u, bad));
     assert(a.ready && a.param[2] == 2u);
+  }
+
+  /* STEREO-EQ. The peaking frequency word is 2 sin(pi f / 32000) for the
+     manual's 200 and 8000 Hz to the LSB; every shelf block is an identity
+     at 15; the cut table ends exactly where the band index lists begin,
+     which is what 1275 rows of four words at 0x03A646 imply. */
+  {
+    uint16_t w = 0;
+    assert(efx_table_value(&rom, 25u, 0u, 0u, &w) && w == 0x0141u);
+    assert(efx_table_value(&rom, 25u, 16u, 0u, &w) && w == 0x56A0u);
+    for (unsigned t = 21u; t <= 24u; ++t)
+      assert(efx_table_value(&rom, t, 15u, 0u, &w) && w == 0x5000u);
+    assert(0x03A646u + 2u * 4u * 1275u == 0x03CE1Eu);
+
+    const uint8_t factory[XP_STEREO_EQ_PARAMETERS] = {
+      0u, 22u, 1u, 19u, 7u, 0u, 17u, 16u, 0u, 16u, 127u
+    };
+    struct xp_stereo_eq eq;
+    memset(&eq, 0, sizeof eq);
+    assert(stereo_eq_set(&rom, &eq, factory));
+    assert(eq.ready && !eq.peak[0].flat && eq.peak[0].tap_current == 0.0f);
+    /* level 127 is the full table word, 0x1FFF >> 4 = 511 of 512 */
+    assert(eq.level == 511.0f / 512.0f);
+
+    /* a flat band is an exact identity; a cut writes t0 and a boost not */
+    uint8_t p[XP_STEREO_EQ_PARAMETERS];
+    memcpy(p, factory, sizeof p);
+    p[6] = 15u;
+    p[9] = 0u;
+    assert(stereo_eq_set(&rom, &eq, p));
+    assert(eq.peak[0].flat && !eq.peak[1].flat);
+    assert(eq.peak[1].tap_current != 0.0f);
+    float in[64] = { 1.0f }, outL[64], outR[64];
+    struct xp_stereo_eq one = eq;
+    one.low_shelf.b0 = one.high_shelf.b0 = 1.0f;
+    one.low_shelf.b1 = one.high_shelf.b1 = 0.0f;
+    one.low_shelf.a1 = one.high_shelf.a1 = 0.0f;
+    one.peak[1].flat = true;
+    one.level = 1.0f;
+    stereo_eq_process(&one, in, in, outL, outR, 64);
+    for (unsigned k = 0; k < 64u; ++k)
+      assert(outL[k] == in[k] && outR[k] == in[k]);
+
+    /* out of range refused, the effect left as it was */
+    p[5] = 5u;
+    assert(!stereo_eq_parameter_valid(5u, 5u));
+    assert(!stereo_eq_set(&rom, &eq, p));
+    assert(eq.param[5] == 0u);
   }
 
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "
