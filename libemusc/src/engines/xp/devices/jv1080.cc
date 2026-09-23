@@ -463,6 +463,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .filterLfoDepth = 0x63u,
     .ampLfoDepth = 0x75u,
     .panLfoDepth = 0x7bu,
+    .matrixFirst = 0x15u,
     .envelopeMode = XP_VOICE_FIELD_NONE,
     .toneDelayMode = 0x09u,
     .toneDelayTime = 0x0au,
@@ -511,6 +512,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .filterLfoDepth = XP_VOICE_FIELD_NONE,
     .ampLfoDepth = XP_VOICE_FIELD_NONE,
     .panLfoDepth = XP_VOICE_FIELD_NONE,
+    .matrixFirst = XP_VOICE_FIELD_NONE,
     .envelopeMode = 0x08u,
     .toneDelayMode = XP_VOICE_FIELD_NONE,
     .toneDelayTime = XP_VOICE_FIELD_NONE,
@@ -594,6 +596,8 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      half of an asymmetric down range of 48. */
   .patchFieldBendUp = 0x31u,
   .patchFieldBendDown = 0x32u,
+  .patchFieldControlSource2 = 0x3au,
+  .patchFieldControlSource3 = 0x3bu,
 
   /* The performance-part group is index 5, and these four fields are the
      ones the voice path needs. Level and pan are measured: both index the

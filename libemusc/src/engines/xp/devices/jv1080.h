@@ -96,6 +96,8 @@ struct XpJv1080PartControls {
      takes its phase from, and a seed for the drawn LFO waveforms. */
   double clock_seconds;
   uint32_t lfo_seed;
+  /* The three matrix controllers' sources as they stand, 0..1. */
+  double matrix_source[3];
 };
 
 /* One of a voice's two LFOs: its waveform, its rate, the offset its
@@ -139,6 +141,23 @@ struct XpJv1080Voice {
   double lfo_cutoff;
   size_t lfo_period;
   size_t lfo_countdown;
+
+  /* The controller matrix: each slot's destination and signed depth,
+     controller c owning slots 4c..4c+3, and the values its destinations
+     act on before it. matrix_used is false when no slot is routed, and
+     then none of this is read. */
+  bool matrix_used;
+  uint8_t matrix_dest[12];
+  double matrix_depth[12];
+  double tone_level_gain;        /* the tone level's own square law */
+  double outer_level_gain;       /* the patch and part levels' */
+  unsigned volume;               /* CC7, as the voice last received it */
+  unsigned resonance_base;
+  double resonance_q_base;
+  double lfo_base_cents[2];
+  double lfo_base_frequency[2];
+  double matrix_pitch_ratio;
+  double matrix_cutoff;
 
   /* The decoded element, and where in it the read head is. */
   const int32_t *pcm;
@@ -265,6 +284,9 @@ bool jv1080_voice_span(const struct xp_rom *rom,
 void jv1080_voice_release(struct XpJv1080Voice *voice);
 /* A CC7 value reaching a voice that is already sounding. */
 void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume);
+/* The matrix controllers' sources moving under a sounding voice. */
+void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
+                              const double source[3]);
 /* The key coming up: a release, or on a NO-SUSTAIN voice still in its
    first three segments, a release deferred to their end. */
 void jv1080_voice_note_off(struct XpJv1080Voice *voice);

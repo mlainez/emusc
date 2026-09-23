@@ -180,6 +180,9 @@ struct XpVoiceFieldMap {
   uint16_t filterLfoDepth;
   uint16_t ampLfoDepth;
   uint16_t panLfoDepth;
+  /* The controller matrix: three controllers of four destination/depth
+     pairs each, twenty-four fields from this index on. */
+  uint16_t matrixFirst;
   /* The rhythm note's envelope mode: 0 NO-SUSTAIN, 1 SUSTAIN. */
   uint16_t envelopeMode;
   /* The tone delay: which mode it runs in, and its time. */
@@ -633,6 +636,9 @@ struct XpDeviceProfile {
   /* The patch's bend range, up and down, in semitones. */
   uint16_t patchFieldBendUp;
   uint16_t patchFieldBendDown;
+  /* The sources of matrix controllers 2 and 3; controller 1's is fixed. */
+  uint16_t patchFieldControlSource2;
+  uint16_t patchFieldControlSource3;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive

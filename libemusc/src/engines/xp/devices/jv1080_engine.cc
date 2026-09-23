@@ -565,12 +565,13 @@ struct Part {
      because it is received per channel. */
   uint8_t volume;
   /* The performance controllers as received: the bender re-centred to
-     -8192..8191, modulation, channel aftertouch, and the hold pedal. The
-     modulation and aftertouch values are sources for the controller
-     matrix, which this engine does not run yet, so nothing reads them. */
+     -8192..8191, modulation, channel aftertouch, and the hold pedal.
+     `cc` holds every controller's last value, which is what a matrix
+     source that names a controller reads. */
   int bend;
   uint8_t modulation;
   uint8_t pressure;
+  uint8_t cc[128];
   bool hold;
   /* The RPN latch, 127/127 when none is selected, and the bend range RPN
      0/0 set, -1 while it has set none. */
@@ -719,6 +720,9 @@ struct Engine {
   struct Part parts[kParts];
   /* GM mode: entered by GM System On, left only by a reset. */
   bool gm_mode;
+  /* System Control Source 1 and 2 (System common `00 12`, `00 13`): 0-95
+     a controller number, 96 BENDER, 97 AFTERTOUCH. */
+  uint8_t sys_ctrl[2];
   struct Rhythm rhythm;
   struct Voice voices[kMaxVoices];
   struct DcBlocker dc_left;
@@ -909,6 +913,63 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
   part->rpn_msb = 0x7fu;
   part->rpn_lsb = 0x7fu;
   part->rpn_bend = -1;
+  /* NOT MEASURED: the controllers' values before any is received. Pan
+     centred, volume and expression full, the rest zero - the usual
+     reset state, and the one every corpus stimulus writes. */
+  part->cc[7] = 127u;
+  part->cc[10] = 64u;
+  part->cc[11] = 127u;
+}
+
+/* A controller's value as a source, 0..1. CC7 is read from the part's
+   volume, which a GM reset sets without a CC7 arriving. */
+double controller_value(const struct Part &p, unsigned cc)
+{
+  return (double)(cc == 7u ? p.volume : p.cc[cc]) / 127.0;
+}
+
+/* One matrix source, 0..1. Patch Control Source is the ROM's list at PRG
+   `0x057280`: OFF, SYS-CTRL1, SYS-CTRL2, MODULATION, BREATH, FOOT, VOLUME,
+   PAN, EXPRESSION, BENDER, AFTERTOUCH, LFO1, LFO2, VELOCITY, KEYFOLLOW,
+   PLAY-MATE. MEASURED (`M-116`): controller 1 answers CC1 alone, and with
+   the System sources at their readback values 97 and 11, SYS-CTRL1
+   answers channel aftertouch and SYS-CTRL2 CC11; MODULATION answers CC1.
+   BREATH, FOOT, VOLUME, PAN and EXPRESSION read CC2, 4, 7, 10 and 11 by the
+   ROM's names, not measured through the matrix. BENDER, LFO1, LFO2,
+   VELOCITY, KEYFOLLOW and PLAY-MATE are NOT IMPLEMENTED and read zero - a
+   bipolar source's scaling is not measured. */
+double matrix_source(const struct Engine *engine, const struct Part &p,
+                     unsigned controller)
+{
+  static const int kNamed[16] = { -1, -1, -1, 1, 2, 4, 7, 10, 11,
+                                  -1, -2, -1, -1, -1, -1, -1 };
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  if (!controller)
+    return controller_value(p, 1u);
+  uint16_t field = controller == 1u ? profile->patchFieldControlSource2
+                                    : profile->patchFieldControlSource3;
+  if (field == XP_VOICE_FIELD_NONE)
+    return 0.0;
+  unsigned index = p.common[field];
+  if (index == 1u || index == 2u) {
+    unsigned sys = engine->sys_ctrl[index - 1u];
+    if (sys < 96u)
+      return controller_value(p, sys);
+    return sys == 97u ? (double)p.pressure / 127.0 : 0.0;
+  }
+  if (index >= 16u)
+    return 0.0;
+  int named = kNamed[index];
+  if (named == -2)
+    return (double)p.pressure / 127.0;
+  return named < 0 ? 0.0 : controller_value(p, (unsigned)named);
+}
+
+void matrix_sources(const struct Engine *engine, const struct Part &p,
+                    double out[3])
+{
+  for (unsigned c = 0; c < 3u; ++c)
+    out[c] = matrix_source(engine, p, c);
 }
 
 /* The oldest voice, or a free one if there is a free one. Returns null
@@ -1931,6 +1992,7 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
   out->clock_seconds = (double)engine->frames / engine->output_rate;
   out->lfo_seed = (uint32_t)engine->serial;
+  matrix_sources(engine, p, out->matrix_source);
 }
 
 /* The part's assign, or the record's where the part defers to it. */
@@ -2250,6 +2312,11 @@ bool engine_create(void **state, const struct xp_rom *rom,
   engine->max_voices = xp_profile(rom)->defaultMaxVoices;
   if (!engine->max_voices || engine->max_voices > kMaxVoices)
     engine->max_voices = kMaxVoices;
+  /* The System Control Sources as the owner's unit reads them back, twice
+     (`M-116`); the factory image's own bytes for them do not decode to a
+     value in range, so what a factory reset leaves is not established. */
+  engine->sys_ctrl[0] = 97u;
+  engine->sys_ctrl[1] = 11u;
   power_on_parts(engine);
   *state = engine;
   return true;
@@ -2422,10 +2489,26 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
   return released != 0u;
 }
 
+/* A matrix source moved: every sounding voice of the part follows at once,
+   as the bender's do. Whether the machine eases the change is not
+   measured. */
+void matrix_refresh(struct Engine *engine, unsigned part)
+{
+  double source[3];
+  matrix_sources(engine, engine->parts[part], source);
+  for (unsigned i = 0; i < kMaxVoices; ++i) {
+    struct Voice *voice = engine->voices + i;
+    if (voice->allocated && voice->part == part && voice->voice.matrix_used)
+      jv1080_voice_set_matrix(&voice->voice, source);
+  }
+}
+
 /* The controllers this device acts on. CC7 is measured (`M-081`); the bank
    pair is held until a program change resolves it, since either may arrive
-   first. CC11 expression is received and ignored on purpose: it is measured
-   INERT on this machine, under 0.1 dB across seventeen values (`M-048`). */
+   first. CC11 expression has no level of its own: it is measured INERT on
+   this machine, under 0.1 dB across seventeen values (`M-048`), with the
+   System Volume control source at VOLUME (`M-116`'s readback). Every
+   controller below 96 is also a matrix source. */
 bool engine_control_change(void *state, unsigned channel, unsigned controller,
                             unsigned value)
 {
@@ -2434,6 +2517,8 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
     return false;
   return for_each_part_on(engine, channel, [&](unsigned part) {
     struct Part &p = engine->parts[part];
+    if (controller < 128u)
+      p.cc[controller] = (uint8_t)value;
     switch (controller) {
     case 0: p.bank_msb = (uint8_t)value; break;
     case 32: p.bank_lsb = (uint8_t)value; break;
@@ -2514,6 +2599,8 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
       break;
     default: break;
     }
+    if (controller < 96u)
+      matrix_refresh(engine, part);
   }) != 0u;
 }
 
@@ -2544,6 +2631,7 @@ bool engine_channel_pressure(void *state, unsigned channel, unsigned value)
     return false;
   return for_each_part_on(engine, channel, [&](unsigned part) {
     engine->parts[part].pressure = (uint8_t)value;
+    matrix_refresh(engine, part);
   }) != 0u;
 }
 
@@ -2739,10 +2827,26 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     efx_algorithm_refresh(engine);
     return true;
   }
+  /* System common, `00 00 00 xx`: only the two System Control Sources are
+     held, one byte each on the wire as the readback shows them. */
+  if (a1 == 0x00u && part == 0x00u && block == 0x00u) {
+    bool held = false;
+    for (size_t i = 0; i < count; ++i) {
+      unsigned at = within + (unsigned)i;
+      if ((at == 0x12u || at == 0x13u) && data[i] <= 97u) {
+        engine->sys_ctrl[at - 0x12u] = data[i];
+        held = true;
+      }
+    }
+    if (held)
+      for (unsigned p = 0; p < kParts; ++p)
+        matrix_refresh(engine, p);
+    return held;
+  }
   if (a1 == 0x03u)
     part = kPatchModePart;
   else if (a1 != 0x02u)
-    return false;                /* system or performance common: unheld */
+    return false;                /* the rest of those areas: unheld */
 
   /* The rhythm set has its own part index: `02 09 00 xx` is its common
      block and `02 09 kk xx` its record for key kk. */

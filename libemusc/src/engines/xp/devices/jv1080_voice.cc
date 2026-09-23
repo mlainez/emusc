@@ -453,18 +453,58 @@ double wave_gain(unsigned raw)
   return std::pow(10.0, db[raw & 3u] / 20.0);
 }
 
-/* MEASURED (`M-012`, `M-076`): `fc = 341 Hz * 2^((cutoff - 64)/10)`, two
-   poles at -12.2 dB per octave. Ten measured points from 33 Hz at cutoff 32
-   to 5939 Hz at 104, worst error 1.12x, and white noise through the same law
-   predicts 0.301 dB of rms per cutoff step against a measured 0.308.
+/* MEASURED (`M-012`, `M-118`): the two-pole section's natural frequency
+   per cutoff value, which is where the resonant peak sits (`M-021`: 59, 293,
+   809 Hz at cutoffs 40, 64, 80) and not the -3 dB corner. At resonance 0 the
+   section's Q is 0.84 (see tvf_q), which puts the -3 dB corner 1.155x above
+   the natural frequency - and M-012's corners, 335 Hz at cutoff 64 to 5930
+   at 104, read exactly that far above these points. Two poles, -12.2 dB
+   per octave above the corner (`M-012`, `M-076`).
 
-   Below cutoff about 20 the machine emits digital silence - -99.9 dBFS
-   against a -99.96 floor - and so does extrapolating the law, because a
-   12 Hz corner attenuates everything audible by over 100 dB. The two cannot
-   be told apart, so the law is simply extrapolated there. */
+   Cutoffs 40, 48 and 56 are two-pole fits to the res-0 white-noise sweep
+   (`tvf/cutoff_lpf_res000`); 64 to 104 are M-012's saw-carrier corners
+   divided by 1.155, which the same noise fits reproduce to 1.5 % at 64 to
+   88. Outside 40-104 nothing is resolved - the interface's roll-off below,
+   the fits' breakdown above - and the ends extend at 10 steps per octave,
+   the -3 dB corners' own slope. Below cutoff about 20 the machine emits
+   digital silence, as the extension does. At cutoffs 24 and 32 the saw
+   take's harmonics, fitted the same way, read 22.1 and 38.6 Hz - 0.11 and
+   0.12 octave above the extension, which is the margin by which that
+   method reads above the noise fit at 40 (66.8 against 62 Hz), so the
+   extension is not moved on it. What the saw take shows beyond that at
+   low cutoffs sits within 15 dB of its own noise floor, 100 dB and more
+   under full scale.
+
+   NOT RESOLVED above cutoff 88: with resonance, the hardware's peak sits
+   0.22 octave under these points at cutoff 96 and 0.5 under at 112, and
+   at 112 it falls as the resonance rises - 7992 Hz at value 8 to 6129 at
+   112 (`M-118`). A two-pole section with a fixed natural frequency cannot
+   meet both that and M-012's resonance-0 corners; this keeps the corners.
+
+   Measured on the low-pass; the other three types take the same frequency,
+   which is not measured. */
+const double kTvfNaturalHz[][2] = {
+  { 40.0, 62.0 }, { 48.0, 104.0 }, { 56.0, 174.0 }, { 64.0, 290.0 },
+  { 72.0, 499.0 }, { 80.0, 842.0 }, { 88.0, 1457.0 }, { 96.0, 2589.0 },
+  { 104.0, 5134.0 } };
+
 double tvf_cutoff_hz(double cutoff)
 {
-  return 341.0 * std::pow(2.0, (cutoff - 64.0) / 10.0);
+  const unsigned n = sizeof kTvfNaturalHz / sizeof kTvfNaturalHz[0];
+  if (cutoff <= kTvfNaturalHz[0][0])
+    return kTvfNaturalHz[0][1] *
+      std::pow(2.0, (cutoff - kTvfNaturalHz[0][0]) / 10.0);
+  if (cutoff >= kTvfNaturalHz[n - 1][0])
+    return kTvfNaturalHz[n - 1][1] *
+      std::pow(2.0, (cutoff - kTvfNaturalHz[n - 1][0]) / 10.0);
+  unsigned i = 1;
+  while (kTvfNaturalHz[i][0] < cutoff)
+    ++i;
+  double t = (cutoff - kTvfNaturalHz[i - 1][0]) /
+    (kTvfNaturalHz[i][0] - kTvfNaturalHz[i - 1][0]);
+  return std::exp(std::log(kTvfNaturalHz[i - 1][1]) +
+                  t * (std::log(kTvfNaturalHz[i][1]) -
+                       std::log(kTvfNaturalHz[i - 1][1])));
 }
 
 /* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
@@ -640,24 +680,46 @@ double velocity_time_scale(unsigned enumValue, unsigned velocity)
   return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 63.0);
 }
 
-/* MEASURED (`M-021`): resonance does not saturate. It is roughly 0.28 dB
-   per step to value 96 and then climbs steeply - +46.7 dB of peak at cutoff
-   64 and +67.4 dB at cutoff 112 - so how steep the top is depends on the
-   cutoff.
+/* Resonance as the two-pole section's Q, in dB. The peak gain of a
+   two-pole section is its Q for a Q well above unity; the chip's own
+   coefficient form is unknown (`L-05`) and is not what this reproduces.
 
-   THE CUTOFF DEPENDENCE ABOVE VALUE 96 IS NOT MODELLED. This reads the
-   0.28 dB per step below 96 and then the measured cutoff-64 endpoint,
-   46.7 dB at 127, straight between them. The peak gain of a two-pole
-   section is its Q for a Q well above unity, which is how the dB reaches
-   the coefficients below; the chip's own coefficient form is unknown
-   (`L-05`) and is not what this reproduces. */
+   MEASURED (`M-021`, `M-118`): from value 8 to 96 about 0.28 dB per step -
+   two-pole fits to the white-noise resonance sweeps read within 0.6 dB of
+   it at cutoffs 40, 64 and 80 - and at value 0 a Q of 0.84 (-1.76, -1.36
+   and -1.56 dB there), not 1. Between 0 and 8 nothing is measured and the
+   dB runs straight between the two.
+
+   Above 96 the peak is narrower than those takes' spectra resolve, and
+   M-021's peak readings there (46.7 dB at 127 on cutoff 64, 67.4 on 112)
+   are resolution-limited. It is read instead from each note's ENERGY: our
+   render of the same file with the filter off, passed through this section
+   from the note-on over the same window, gives the energy any Q produces
+   against Q 0.84, and the Q that matches the take's own ratio is the
+   take's. The method reads our engine's own Q back to 0.25 dB. On the
+   hardware it reads the same increments over value 96 at cutoffs 64, 80,
+   96 and 112, within 0.5 dB: +3.5 at 104, +6.0 at 112, +12.4 at 120, and at
+   127 at least +42 - the method's own ceiling, the machine at the edge of
+   self-oscillation. Cutoff 40 reads lower and is not used: its peak, at
+   59 Hz, is inside the interface's roll-off. The increments are added to
+   the law's value at 96; between the measured values the dB runs straight.
+
+   On the absolute level at 88 and 96 the two methods part by up to 2.5 dB
+   (energy below the law, the fits above it at cutoff 64), which says the
+   machine's peak is not exactly a two-pole's shape; that is not resolved. */
+const double kTvfTopResonance[] = { 96.0, 104.0, 112.0, 120.0, 127.0 };
+const double kTvfTopDb[] = { 26.88, 30.38, 32.88, 39.28, 68.88 };
+
 double tvf_q(unsigned resonance)
 {
-  double peakDb = resonance <= 96u
+  const double zeroDb = 20.0 * std::log10(0.84);
+  double peakDb = resonance < 8u
+    ? zeroDb + (0.28 * 8.0 - zeroDb) * (double)resonance / 8.0
+    : resonance <= 96u
     ? 0.28 * (double)resonance
-    : 26.88 + (46.70 - 26.88) * ((double)resonance - 96.0) / (127.0 - 96.0);
-  double q = std::pow(10.0, peakDb / 20.0);
-  return q < 0.70710678 ? 0.70710678 : q;
+    : interpolate_points(kTvfTopResonance, kTvfTopDb, 5u,
+                         (double)(resonance > 127u ? 127u : resonance));
+  return std::pow(10.0, peakDb / 20.0);
 }
 
 /* A two-pole section per filter type. MEASURED (`M-017`): all four types
@@ -717,7 +779,7 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
 double filter_env_cutoff(const struct XpJv1080Voice *voice)
 {
   double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value +
-    voice->lfo_cutoff;
+    voice->lfo_cutoff + voice->matrix_cutoff;
   if (cutoff < 0.0)
     return 0.0;
   return cutoff > 127.0 ? 127.0 : cutoff;
@@ -1395,10 +1457,10 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     sensed_velocity(velocity,
                     (int)(int8_t)(uint8_t)field_or(
                       fields, fields->ampVelocitySens, tone, 50u)));
-  voice->gain_levels =
-    square_law_gain(tone[fields->level]) *
-    square_law_gain(controls->patch_level) *
+  voice->tone_level_gain = square_law_gain(tone[fields->level]);
+  voice->outer_level_gain = square_law_gain(controls->patch_level) *
     square_law_gain(controls->part_level);
+  voice->gain_levels = voice->tone_level_gain * voice->outer_level_gain;
   voice->gain_velocity = velocityGain;
   voice->gain_wave = wave_gain(field_or(fields, fields->waveGain, tone, 1u));
   voice->gain_mix =
@@ -1472,7 +1534,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->cutoff_base = (double)tone[fields->cutoff] +
     10.0 * key_follow(rom, fields->cutoffKeyFollow, tone, 0.0) *
       ((double)soundedKey - kKeyFollowPivot) / 12.0;
-  voice->resonance_q = tvf_q(tone[fields->resonance]);
+  voice->resonance_base = tone[fields->resonance];
+  voice->resonance_q = tvf_q(voice->resonance_base);
+  voice->resonance_q_base = voice->resonance_q;
+  voice->matrix_cutoff = 0.0;
+  voice->matrix_pitch_ratio = 1.0;
 
   /* The filter envelope. It moves the cutoff PARAMETER, so its whole
      sweep is worked out in cutoff units here and the corner law is applied
@@ -1555,6 +1621,23 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       voice->lfo_period = 1u;
     voice->lfo_countdown = 0u;
   }
+  if (fields->lfoFirst[0] != XP_VOICE_FIELD_NONE)
+    for (unsigned i = 0; i < 2u; ++i) {
+      voice->lfo_base_cents[i] = voice->lfo_pitch_cents[i];
+      voice->lfo_base_frequency[i] = voice->lfo[i].frequency;
+    }
+
+  /* The controller matrix, at the sources as they stand at note-on. */
+  voice->matrix_used = false;
+  if (fields->matrixFirst != XP_VOICE_FIELD_NONE)
+    for (unsigned s = 0; s < 12u; ++s) {
+      voice->matrix_dest[s] = tone[fields->matrixFirst + 2u * s];
+      voice->matrix_depth[s] =
+        (double)(int8_t)tone[fields->matrixFirst + 2u * s + 1u];
+      if (voice->matrix_dest[s] && voice->matrix_depth[s] != 0.0)
+        voice->matrix_used = true;
+    }
+  jv1080_voice_set_matrix(voice, controls->matrix_source);
 
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
@@ -1577,8 +1660,97 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
 {
   if (!voice)
     return;
+  voice->volume = volume;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
     voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+}
+
+/* THE CONTROLLER MATRIX. Each slot's effective depth is its depth times its
+   controller's source, 0..1 - linear, MEASURED on LEV at four source values
+   and on CUT at two (`M-116`). Slots aiming at one destination are summed;
+   that summing is not measured. The laws, all `M-116`, at tone level 127
+   unless named:
+
+     PCH  0.31 * d^2 cents, signed. Three points, depths 8, 20, 40, fit to
+          4 %; above 40 the law is extrapolated.
+     LEV  adds d/63 of full-scale amplitude to the tone level's own square
+          law, the sum clamped to 0..1 - within 0.2 dB at tone levels 32, 64,
+          96 and 127, both signs. Measured with the tone level only: whether
+          velocity, patch and part level scale before or after the sum is
+          not, and here they scale after it.
+     CUT  2.3 cutoff units per step, from depths -16 to +16 read against the
+          cutoff field itself, +-2 units.
+     RES  about 2 resonance units per step: APPROXIMATE, the four readings
+          scatter +-14 units and none matches a resonance-field spectrum
+          well, so the matrix may not act on the field at all.
+     PL1  adds to the tone's own pitch LFO depth in cents, through the same
+          depth law. The matrix's own readings run 3-9 % above that law at
+          the same depth; that gap is not recovered and not fitted.
+     L1R  0.198 Hz per step, linear in hertz rather than in rate units, and
+          clamped at 0 Hz - three points 5, 20, 63 at rate 64.
+
+   PL2 and L2R are taken as PL1 and L1R on the second LFO, which is not
+   measured. MIX, CHO and REV (the sends), PAN, FL1/FL2, AL1/AL2 and
+   pL1/pL2 are NOT IMPLEMENTED: a slot routed to one does nothing. */
+const uint8_t kMatrixPch = 1u, kMatrixCut = 2u, kMatrixRes = 3u,
+  kMatrixLev = 4u, kMatrixPl1 = 9u, kMatrixPl2 = 10u, kMatrixL1r = 17u,
+  kMatrixL2r = 18u;
+
+void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
+                              const double source[3])
+{
+  if (!voice || !source || !voice->matrix_used)
+    return;
+  double cents = 0.0, level = 0.0, cutoff = 0.0, resonance = 0.0;
+  double lfoCents[2] = { 0.0, 0.0 }, lfoHz[2] = { 0.0, 0.0 };
+  bool moveLevel = false, moveResonance = false;
+  for (unsigned s = 0; s < 12u; ++s) {
+    double d = voice->matrix_depth[s] * source[s / 4u];
+    switch (voice->matrix_dest[s]) {
+    case kMatrixPch: cents += (d < 0.0 ? -0.31 : 0.31) * d * d; break;
+    case kMatrixLev: level += d / 63.0; moveLevel = true; break;
+    case kMatrixCut: cutoff += 2.3 * d; break;
+    case kMatrixRes: resonance += 2.0 * d; moveResonance = true; break;
+    case kMatrixPl1:
+    case kMatrixPl2:
+      lfoCents[voice->matrix_dest[s] - kMatrixPl1] +=
+        signed_law(d, pitch_depth_cents);
+      break;
+    case kMatrixL1r:
+    case kMatrixL2r:
+      lfoHz[voice->matrix_dest[s] - kMatrixL1r] += 0.198 * d;
+      break;
+    default: break;
+    }
+  }
+  voice->matrix_pitch_ratio = std::pow(2.0, cents / 1200.0);
+  double tone = voice->tone_level_gain;
+  if (moveLevel) {
+    tone += level;
+    tone = tone < 0.0 ? 0.0 : (tone > 1.0 ? 1.0 : tone);
+  }
+  voice->gain_levels = tone * voice->outer_level_gain;
+  jv1080_voice_set_volume(voice, voice->volume);
+  for (unsigned i = 0; i < 2u; ++i) {
+    voice->lfo_pitch_cents[i] = voice->lfo_base_cents[i] + lfoCents[i];
+    double hz = voice->lfo_base_frequency[i] + lfoHz[i];
+    voice->lfo[i].frequency = hz < 0.0 ? 0.0 : hz;
+    if (voice->lfo_pitch_cents[i] != 0.0)
+      voice->lfo_active = true;
+  }
+  if (voice->filter_type) {
+    voice->matrix_cutoff = cutoff;
+    if (moveResonance) {
+      double r = (double)voice->resonance_base + resonance;
+      r = r < 0.0 ? 0.0 : (r > 127.0 ? 127.0 : r);
+      voice->resonance_q = tvf_q((unsigned)std::lround(r));
+    } else {
+      voice->resonance_q = voice->resonance_q_base;
+    }
+    set_biquad(voice, voice->filter_type,
+                tvf_cutoff_hz(filter_env_cutoff(voice)),
+                voice->resonance_q, voice->output_rate);
+  }
 }
 
 void jv1080_voice_note_off(struct XpJv1080Voice *voice)
@@ -1787,7 +1959,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     r[n] += (float)(value * voice->gain_right);
 
     if (voice->reverse) {
-      double step = voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio *
+        voice->matrix_pitch_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position -= step;
@@ -1796,7 +1969,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         break;
       }
     } else {
-      double step = voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio *
+        voice->matrix_pitch_ratio;
       if (voice->lfo_active)
         step *= voice->lfo_pitch_ratio;
       voice->position += step;
