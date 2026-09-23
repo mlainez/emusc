@@ -1280,11 +1280,9 @@ void delay_refresh(struct Engine *engine, bool panning)
   engine->delay_ready = true;
 }
 
-/* The effect block in force. The output bytes are the performance's own;
-   the type and its twelve parameters come from whichever patch the source
-   selector names, which is the only part of this the firmware documents as
-   following the selector. Whether the output bytes follow it too is NOT
-   established, so they do not. */
+/* The effect block in force: the type and its twelve parameters, from
+   whichever patch the source selector names. The output bytes follow the
+   same selector and are read by `efx_refresh`. */
 void efx_block_refresh(struct Engine *engine)
 {
   bool performance = true;
@@ -2150,13 +2148,8 @@ void efx_refresh(struct Engine *engine)
    common arrived. Rebuilt only when the block in force actually moved, so
    a write to any other part costs nothing and restarts nothing.
 
-   A PROGRAM CHANGE ON THE SOURCE PART DOES NOT CALL THIS. Whether the
-   machine reloads the effect when a performance part that is the effect
-   source takes a program change is not traced - `0x0A00980A` has no direct
-   caller in the disassembly - and it decides what `1_rise`'s 24.63 s
-   cluster goes through: part 13 is program-changed at 22.92 s to PR-B 055,
-   whose own effect is PHASER. So a program change leaves the effect in
-   force alone. */
+   A program change on the source part takes its own path,
+   `efx_follow_program_change`. */
 void efx_follow_source(struct Engine *engine)
 {
   efx_refresh(engine);
@@ -3047,6 +3040,35 @@ bool engine_gm_system_on(void *state)
   return true;
 }
 
+/* THE EFFECT RELOADS WHEN ITS SOURCE PART TAKES A PROGRAM CHANGE. The
+   per-part handler `0x0A018A0C` copies the patch into the part's image
+   (`0x0A01993C`) and then calls `0x0A007D78(part)`, which maps the part
+   onto the selector's numbering (part + 1 below the rhythm part, part
+   above it, the rhythm part itself never) and, when that equals the
+   performance's EFX:Source, posts event bit 2 to the DSP task. The task
+   (`0x0A00A0C8`) dispatches bit 2 through `0x0A059C0C[2]` to
+   `0x0A009D60`, which runs a level ramp, loads the idle program, and
+   re-reads the type, the twelve parameters AND the four output bytes from
+   the source image (`0x0A0096EC`, offsets +12..+28) before loading the
+   new program and output block (FW-EXACT). The reload is unconditional:
+   it happens even when the new patch's effect equals the old one.
+
+   What is not modelled: that ramp (a counter stepped to 127 with a
+   one-tick wait per step, writing CRAM 135 and 145, whose roles are not
+   identified), the send ramps, and the idle program's gap. */
+static void efx_follow_program_change(struct Engine *engine, unsigned part)
+{
+  bool performance = true;
+  unsigned image = 0;
+  if (!efx_resolve_source(engine->common[kEfxSourceField], &performance,
+                           &image) ||
+      performance || image != part)
+    return;
+  efx_refresh(engine);
+  efx_block_refresh(engine);
+  efx_algorithm_refresh(engine);
+}
+
 bool engine_program_change(void *state, unsigned channel, unsigned program)
 {
   struct Engine *engine = (struct Engine *)state;
@@ -3054,7 +3076,10 @@ bool engine_program_change(void *state, unsigned channel, unsigned program)
     return false;
   unsigned loaded = 0;
   for_each_part_on(engine, channel, [&](unsigned part) {
-    loaded += engine_program_change_one(engine, part, program) ? 1u : 0u;
+    if (engine_program_change_one(engine, part, program)) {
+      ++loaded;
+      efx_follow_program_change(engine, part);
+    }
   });
   return loaded != 0u;
 }
@@ -3311,7 +3336,17 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
        feeds the chorus and reverb through the two sends the output assign
        may have masked to zero. The dry side of the balance is the signal
        the effect was fed, which is why the bus is kept rather than summed
-       into the mix on the way in. */
+       into the mix on the way in.
+
+       EFX:Output Level scales the return to the output bus and NOT the
+       sends. Its coefficient lands in CRAM 246 and 249 (`0x03856C[v]`,
+       unity at 127, FW-EXACT), and 246 and 249 are the instruction slots
+       the output assign re-points between MIX, OUTPUT1 and OUTPUT2
+       (`0x37D8`, `0x37E4` = PRAM 246, 249) - the writes into the bus. The
+       sends are instructions 222 and 224, earlier in the program, so they
+       read the effect's output before the level multiplies it (FW-STRUCT:
+       the slots and order are exact; what each opcode computes is not
+       decoded). */
     if (engine->efx_ready) {
       if (efx_drive_type(engine->efx_type, NULL))
         drive_process(&engine->efx_drive, efxL, efxR, efxWetL, efxWetR, n);
@@ -3337,8 +3372,8 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
           (engine->efx_wet * efxWetL[k] + engine->efx_dry * efxL[k]);
         float r = engine->efx_level *
           (engine->efx_wet * efxWetR[k] + engine->efx_dry * efxR[k]);
-        stereo[(done + k) * 2u] += l;
-        stereo[(done + k) * 2u + 1u] += r;
+        stereo[(done + k) * 2u] += engine->efx_output_level * l;
+        stereo[(done + k) * 2u + 1u] += engine->efx_output_level * r;
         float mono = 0.5f * (l + r);
         csend[k] += engine->efx_chorus_send * mono;
         send[k] += engine->efx_reverb_send * mono;

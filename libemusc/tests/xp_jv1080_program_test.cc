@@ -1023,6 +1023,60 @@ int main(void)
     assert(render(roms, efxSends(0, 127)) != dry);
   }
 
+  /* EFX:Output Level scales the insert's return to the mix (CRAM 246 and
+     249). At 0 its coefficient is exactly 0, so with both sends also at 0
+     a part that plays only through the insert is silent. */
+  auto efxLevel = [](uint8_t level) {
+    return [level](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      const uint8_t record[] = { 0x01, 0x00, 0x10, 0x0a };
+      dt1(d, record, { 1 });
+      const uint8_t common[] = { 0x01, 0x00, 0x00, 0x0c };
+      dt1(d, common, { 1, 2, 127, 64, 2, 15, 15, 127, 0, 0, 0, 0, 0, 0,
+                       0, 127, 0, 0 });
+      const uint8_t own[] = { 0x02, 0x00, 0x00, 0x0c };
+      dt1(d, own, { 2, 127, 64, 2, 15, 15, 127, 0, 0, 0, 0, 0, 0,
+                    0, level, 0, 0 });
+    };
+  };
+  {
+    std::vector<float> full = render(roms, efxLevel(127));
+    assert(energy(full) > 0.0);
+    std::vector<float> half = render(roms, efxLevel(64));
+    assert(energy(half) > 0.0 && energy(half) < energy(full));
+    assert(energy(render(roms, efxLevel(0))) == 0.0);
+  }
+
+  /* A program change on the effect's source part reloads the effect from
+     the patch it loads (`0x0A007D78` posts the DSP task's reload). Part 1
+     is the source; its own block is rewritten to DISTORTION, and a
+     program change back to PR-A 001 must restore PR-A 001's own effect,
+     as if the rewrite had never happened. The same change on part 2,
+     which is not the source, leaves the rewritten effect in force. */
+  {
+    auto setup = [](bool rewrite, int change) {
+      return [rewrite, change](EmuSC::Xp::Device *d) {
+        bank(d, 81, 0, 0);
+        const uint8_t record[] = { 0x01, 0x00, 0x10, 0x0a };
+        dt1(d, record, { 1 });
+        const uint8_t common[] = { 0x01, 0x00, 0x00, 0x0c };
+        dt1(d, common, { 1 });
+        if (rewrite) {
+          const uint8_t own[] = { 0x02, 0x00, 0x00, 0x0c };
+          dt1(d, own, { 2, 127, 64, 2, 15, 15, 127, 0, 0, 0, 0, 0, 0 });
+        }
+        if (change >= 0)
+          bank(d, 81, 0, 0, (uint8_t)change);
+      };
+    };
+    std::vector<float> own = render(roms, setup(false, -1));
+    std::vector<float> rewritten = render(roms, setup(true, -1));
+    assert(energy(own) > 0.0);
+    assert(rewritten != own);
+    assert(render(roms, setup(true, 0)) == own);
+    assert(render(roms, setup(true, 1)) == rewritten);
+  }
+
   printf("ok\n");
   return 0;
 }
