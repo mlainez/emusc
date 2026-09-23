@@ -613,6 +613,10 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .patchFieldLevel = 0x2eu,
   .patchFieldPan = 0x2fu,
   .patchFieldOctaveShift = 0x41u,
+  .patchFieldStructure12 = 0x44u,
+  .patchFieldBooster12 = 0x45u,
+  .patchFieldStructure34 = 0x46u,
+  .patchFieldBooster34 = 0x47u,
   /* MEASURED (`M-014`): bend is linear in the 14-bit value, scaled by the
      range on its own side - +-200 cents at 2, +-1200 at 12, and -2400 at
      half of an asymmetric down range of 48. */

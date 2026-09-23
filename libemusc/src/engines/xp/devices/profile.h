@@ -650,6 +650,12 @@ struct XpDeviceProfile {
   uint16_t patchFieldLevel;
   uint16_t patchFieldPan;
   uint16_t patchFieldOctaveShift;
+  /* The structure of tones 1 and 2 and of tones 3 and 4, 0..9 for the
+     panel's types 1 to 10, and each pair's booster, 0..3. */
+  uint16_t patchFieldStructure12;
+  uint16_t patchFieldBooster12;
+  uint16_t patchFieldStructure34;
+  uint16_t patchFieldBooster34;
   /* The patch's bend range, up and down, in semitones. */
   uint16_t patchFieldBendUp;
   uint16_t patchFieldBendDown;

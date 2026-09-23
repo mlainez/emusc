@@ -1946,6 +1946,9 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
   voice->volume = volume;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
     voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+  voice->tone_gain = (voice->outer_level_gain > 0.0
+                        ? voice->gain_levels / voice->outer_level_gain : 0.0) *
+    voice->gain_velocity * voice->gain_wave;
 }
 
 /* THE CONTROLLER MATRIX. Each slot's effective depth is its depth times its
@@ -2316,11 +2319,156 @@ bool voice_advance(struct XpJv1080Voice *voice)
 
 }  // namespace
 
+void jv1080_voice_pair(struct XpJv1080Voice *first, struct XpJv1080Voice *second,
+                       unsigned type, unsigned booster)
+{
+  if (!first || !second)
+    return;
+  second->partner = first;
+  second->structure = type;
+  second->booster = booster > 3u ? 3u : booster;
+}
+
+namespace {
+
+/* THE STRUCTURE TYPES, as the owner's manual draws them (pp. 43-44): W is a
+   tone's wave generator, F its TVF, A its TVA, R the ring modulator, B the
+   booster.
+
+     2   A2 F2 F1 (A1 W1 + W2)
+     3   A2 F2 F1 B(A1 W1 + W2)
+     4   A2 F2 B(F1 (A1 W1 + W2))
+     5   A2 F2 F1 R(A1 W1, W2)
+     6   A2 F2 (F1 R(A1 W1, W2) + W2)
+     7   A2 F2 R(A1 F1 W1, W2)
+     8   A2 F2 (R(A1 F1 W1, W2) + W2)
+     9   A2 R(A1 F1 W1, F2 W2)
+     10  A2 (R(A1 F1 W1, F2 W2) + F2 W2)
+
+   MEASURED (`M-038`, `P-xxxx`, `structure/structure_1_2_s0..s9`,
+   `structure_3_4_s2`, `booster_1_2_b0..b3`: tone 1 `Synth Saw 2`, tone 2 a
+   `Sine` a fifth up, both at level 110, filters off; tones 3 and 4 answer
+   their own structure exactly as 1 and 2 do theirs). Type 2's saw falls
+   2.6 dB against type 1's - (110/127)^2, the saw through both TVAs - with
+   the sine unchanged.
+
+   The ring types keep the sine at -62.7 dB and the saw's own lines under
+   -80, and their sidebands reproduce the saw's harmonic balance (f2 + 2 f1
+   against f2 + f1: -7.2 dB, the saw's own h2 against h1), so R is a
+   product. Types 6, 8 and 10 restore the sine at -35.2; 5, 7 and 9 do not.
+   The f2 +- f1 sidebands stand 26.5 dB (geometric mean) above the sum, in
+   dB, of type 1's saw fundamental and sine. A product's scale moves with
+   the level gauge, taken here as the 512-patch sweep's median: our renders
+   4.6 dB over the takes. Against this take alone our saw runs 6.7 dB over
+   and the sine 4.4, so the scale is good to about 2 dB. The two sidebands
+   part the wrong way, f2 + f1 1.4 dB over f2 - f1 against 1.4 dB under on
+   the machine; that is not resolved.
+
+   The booster is a gain into a hard clip. The type 3 takes, set sample
+   against sample on the type 2 take - the booster's own input, through A2
+   alone, and the same waveform to a correlation of 0.996 - rise at slopes
+   1.00, 1.98 and 3.90 for boosts 0, 1 and 2, flat into one ceiling at all
+   four. Boost 3's slope is lost to the output's band limit (5.7 at the
+   crossing); clipping the type 2 take at gains 2 and 4 lands on boosts 1
+   and 2's third-octave spectra within 0.9 dB, and boost 3 lies between 8
+   and 10, so the doubling's 8 is taken, not resolved. The ceiling, 18.1
+   thousandths of the take's full scale, is 0.33 in the units below on the
+   same gauge. Whether it moves with tone 1's level, which scales half its
+   input, is not measured.
+
+   WHICH FILTER EACH SIGNAL PASSES THROUGH - all that separates 5 from 7
+   from 9, 6 from 8 from 10, and 3 from 4 - rests on the diagrams alone:
+   the takes run with the filters off and cannot see it. */
+const double kRingScale = 1.87;
+const double kBoostGain[4] = {1.0, 2.0, 4.0, 8.0};
+const double kBoostCeiling = 0.33;
+
+double boost(double x, unsigned setting)
+{
+  double y = kBoostGain[setting] * x;
+  return y > kBoostCeiling ? kBoostCeiling
+    : (y < -kBoostCeiling ? -kBoostCeiling : y);
+}
+
+bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
+{
+  struct XpJv1080Voice *v1 = v2->partner;
+  const bool sweep1 = v1->filter_type && v1->cutoff_offset != 0.0;
+  const bool lfoF1 = v1->filter_type &&
+    (v1->lfo_cutoff_units[0] != 0.0 || v1->lfo_cutoff_units[1] != 0.0);
+  const bool sweep2 = v2->filter_type && v2->cutoff_offset != 0.0;
+  const bool lfoF2 = v2->filter_type &&
+    (v2->lfo_cutoff_units[0] != 0.0 || v2->lfo_cutoff_units[1] != 0.0);
+  for (size_t n = 0; n < frames; ++n) {
+    double w1 = 0.0, g1 = 0.0;
+    voice_controls(v1, sweep1, lfoF1);
+    if (!v1->wave_done && !v1->envelope_done) {
+      if (!voice_wave(v1, &w1)) {
+        v1->wave_done = true;
+        w1 = 0.0;
+      } else if (!voice_envelope(v1)) {
+        v1->envelope_done = true;
+        w1 = 0.0;
+      } else {
+        g1 = v1->envelope * v1->tone_gain;
+        if (v1->lfo_active)
+          g1 *= v1->lfo_gain;
+      }
+      v1->active = true;
+    }
+    voice_controls(v2, sweep2, lfoF2);
+    double w2 = 0.0;
+    if (!v2->wave_done && !voice_wave(v2, &w2)) {
+      v2->wave_done = true;
+      v2->active = true;
+      w2 = 0.0;
+    }
+    if (!voice_envelope(v2))
+      break;
+    double x;
+    switch (v2->structure) {
+    case 2: x = voice_tvf(v2, voice_tvf(v1, g1 * w1 + w2)); break;
+    case 3:
+      x = voice_tvf(v2, voice_tvf(v1, boost(g1 * w1 + w2, v2->booster)));
+      break;
+    case 4:
+      x = voice_tvf(v2, boost(voice_tvf(v1, g1 * w1 + w2), v2->booster));
+      break;
+    case 5: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2)); break;
+    case 6: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2) + w2); break;
+    case 7: x = voice_tvf(v2, kRingScale * g1 * voice_tvf(v1, w1) * w2); break;
+    case 8: x = voice_tvf(v2, kRingScale * g1 * voice_tvf(v1, w1) * w2 + w2); break;
+    case 9: x = kRingScale * g1 * voice_tvf(v1, w1) * voice_tvf(v2, w2); break;
+    default: {
+      double f2 = voice_tvf(v2, w2);
+      x = kRingScale * g1 * voice_tvf(v1, w1) * f2 + f2;
+      break;
+    }
+    }
+    double value = voice_tva(v2, x);
+    l[n] += (float)(value * v2->gain_left);
+    r[n] += (float)(value * v2->gain_right);
+    if (!v1->wave_done && !v1->envelope_done && !voice_advance(v1)) {
+      v1->wave_done = true;
+      v1->active = true;
+    }
+    if (!v2->wave_done && !voice_advance(v2)) {
+      v2->wave_done = true;
+      v2->active = true;
+    }
+  }
+  return v2->active;
+}
+
+}  // namespace
+
 bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
                           size_t frames)
 {
   if (!voice || !voice->active || !voice->pcm || !l || !r)
     return false;
+  if (voice->partner && voice->structure >= 2u)
+    return render_pair(voice, l, r, frames);
 
   const bool sweeping = voice->filter_type && voice->cutoff_offset != 0.0;
   const bool lfoFilter = voice->filter_type &&
