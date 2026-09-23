@@ -570,6 +570,36 @@ int main(void)
                      (-2.2 + 11.9)) < 0.5);
   }
 
+  /* The channel mode messages (`M-049`): All Notes Off and the two Omni
+     messages release the part's keys exactly as their note-offs do, and
+     change nothing under the hold pedal; All Sound Off cuts. */
+  {
+    Setup noteOff = [](EmuSC::Xp::Device *d) { midi(d, 0x80, 60, 0); };
+    std::vector<float> released = two_halves(nothing, noteOff);
+    for (uint8_t cc : { (uint8_t)123, (uint8_t)124, (uint8_t)125 })
+      assert(released == two_halves(nothing, [cc](EmuSC::Xp::Device *d) {
+        midi(d, 0xb0, cc, 0);
+      }));
+    Setup pedal = [](EmuSC::Xp::Device *d) { midi(d, 0xb0, 64, 127); };
+    assert(two_halves(pedal, nothing) ==
+           two_halves(pedal, [](EmuSC::Xp::Device *d) {
+             midi(d, 0xb0, 123, 0);
+           }));
+    std::vector<float> cut = two_halves(nothing, [](EmuSC::Xp::Device *d) {
+      midi(d, 0xb0, 120, 0);
+    });
+    /* What follows the cut is the output stage's 10 Hz DC blocker
+       settling - one smooth exponential, the same in both channels - so it
+       is given 4000 frames, about eight of its time constants, before the
+       rest is required to be 100 dB under the first half. */
+    double before = 0.0, after = 0.0;
+    for (size_t i = 0; i < kFrames; ++i)
+      before += (double)cut[i] * cut[i];
+    for (size_t i = kFrames + 2 * 4000; i < cut.size(); ++i)
+      after += (double)cut[i] * cut[i];
+    assert(before > 0.0 && after < before * 1e-10);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

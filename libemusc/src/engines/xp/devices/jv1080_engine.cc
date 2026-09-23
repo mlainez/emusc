@@ -2381,6 +2381,19 @@ static void key_off(struct Voice *voice)
   }
 }
 
+/* The key coming up on one voice of a part. The firmware's own note-off
+   handler reads the part's hold byte and leaves a held voice sounding
+   (`04_protocol/midi.md`); a record whose Hold-1 switch is off ignores
+   the pedal. */
+static void voice_note_off(struct Engine *engine, struct Voice *voice)
+{
+  voice->key_down = false;
+  if (engine->parts[voice->part].hold && voice->holdable)
+    voice->sustained = true;
+  else
+    key_off(voice);
+}
+
 bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
 {
   struct Engine *engine = (struct Engine *)state;
@@ -2393,14 +2406,7 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
       if (!voice->allocated || !voice->key_down || voice->part != part ||
           voice->key != key)
         continue;
-      voice->key_down = false;
-      /* The firmware's own note-off handler reads the part's hold byte
-         and leaves a held voice sounding (`04_protocol/midi.md`); a record
-         whose Hold-1 switch is off ignores the pedal. */
-      if (engine->parts[part].hold && voice->holdable)
-        voice->sustained = true;
-      else
-        key_off(voice);
+      voice_note_off(engine, voice);
       ++released;
     }
   });
@@ -2439,6 +2445,31 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
       p.hold = hold;
       break;
     }
+    case 120:
+      /* ALL SOUND OFF cuts rather than releases: the chord goes from -29
+         to -100 dBFS inside the 0.2 s `M-049` resolves, where a release
+         of the same notes falls 14.5 dB a second. The cut's own shape
+         inside that is not measured. */
+      for (unsigned i = 0; i < kMaxVoices; ++i) {
+        struct Voice *voice = engine->voices + i;
+        if (voice->allocated && voice->part == part)
+          free_voice(voice);
+      }
+      break;
+    case 123:
+    case 124:
+    case 125:
+      /* ALL NOTES OFF, and OMNI OFF and ON with it: each releases the
+         part's keys as their own note-offs would, within 1 dB of one
+         another at every frame, and with the hold pedal down nothing
+         changes at all (`M-049`). What the Omni messages do to the
+         receive mode itself is not measured and nothing here changes it. */
+      for (unsigned i = 0; i < kMaxVoices; ++i) {
+        struct Voice *voice = engine->voices + i;
+        if (voice->allocated && voice->key_down && voice->part == part)
+          voice_note_off(engine, voice);
+      }
+      break;
     case 101: p.rpn_msb = (uint8_t)value; break;
     case 100: p.rpn_lsb = (uint8_t)value; break;
     case 6:
