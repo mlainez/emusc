@@ -584,7 +584,52 @@ struct Voice {
   uint8_t destination;
   bool allocated;
   bool key_down;
+  /* The tone delay. `wait` is the frames still to pass before the voice
+     sounds, and `release_in` the frames to a release its note-off
+     postponed, zero for none. `delay` is the record's own delay in
+     frames. */
+  uint8_t delay_mode;
+  size_t delay;
+  size_t wait;
+  size_t release_in;
 };
+
+/* THE TONE DELAY, by the modes of the panel's own list at PRG `0x0573B7`:
+   NORMAL, HOLD, PLAY-MATE, CLOCK-SYNC, TAP-SYNC, KEY-OFF-NORMAL,
+   KEY-OFF-DECAY. */
+const uint8_t kDelayNormal = 0u;
+const uint8_t kDelayHold = 1u;
+const uint8_t kDelayKeyOffNormal = 5u;
+const uint8_t kDelayKeyOffDecay = 6u;
+
+/* MEASURED (`M-016`), key 60, one onset per value: the delay time field
+   against the onset after the note-on, the ~5 ms every value shows at 0
+   taken off. Linear at about 10 ms a step to 96, then a coarse tail. The
+   law between these points is not recovered and is read here as straight
+   lines between them. */
+struct DelayPoint {
+  uint8_t value;
+  double ms;
+};
+const struct DelayPoint kDelayPoints[] = {
+  { 0u, 0.0 },     { 16u, 170.0 },  { 32u, 320.0 },
+  { 48u, 480.0 },  { 64u, 640.0 },  { 80u, 805.0 },
+  { 96u, 955.0 },  { 112u, 2210.0 }, { 127u, 5010.0 },
+};
+
+double tone_delay_ms(unsigned value)
+{
+  const size_t count = sizeof kDelayPoints / sizeof kDelayPoints[0];
+  if (value >= kDelayPoints[count - 1].value)
+    return kDelayPoints[count - 1].ms;
+  for (size_t i = 1; i < count; ++i)
+    if (value <= kDelayPoints[i].value) {
+      const DelayPoint &a = kDelayPoints[i - 1], &b = kDelayPoints[i];
+      return a.ms + (b.ms - a.ms) * (double)(value - a.value) /
+                      (double)(b.value - a.value);
+    }
+  return 0.0;
+}
 
 /* THE OUTPUT IS AC-COUPLED, AS EVERY ANALOGUE AUDIO OUTPUT IS.
  *
@@ -739,6 +784,10 @@ void free_voice(struct Voice *voice)
   voice->capacity = 0;
   voice->allocated = false;
   voice->key_down = false;
+  voice->delay_mode = 0u;
+  voice->delay = 0u;
+  voice->wait = 0u;
+  voice->release_in = 0u;
   std::memset(&voice->voice, 0, sizeof voice->voice);
 }
 
@@ -1856,6 +1905,23 @@ bool start_record(struct Engine *engine, unsigned part,
                    const struct XpVoiceFieldMap *fields, const uint8_t *bytes,
                    unsigned key, unsigned velocity)
 {
+  /* A KEY-OFF tone does not sound at the note-on: both modes' takes are
+     silent for the whole 2.5 s the key is held (`M-016`), and on the first
+     factory song part 9's two KEY-OFF tones leave 9.08-9.20 s at -58 dB
+     against the hardware's -65 to -60, where sounding them at the note-on
+     put it at -32 to -40.
+
+     NOR DOES IT SOUND AT THE NOTE-OFF HERE, and that half is the least
+     assumption rather than a finding. The same takes are silent after the
+     note-off too - KEY-OFF-NORMAL entirely, KEY-OFF-DECAY but for one
+     1 ms blip 25 dB under the tone at note-off + the delay - with a
+     release time of 0, so what either mode does with a slower release is
+     not measured, and the song's own note-off is masked by the band
+     entering 15 ms later. No voice is taken for one. */
+  if (fields->toneDelayMode != XP_VOICE_FIELD_NONE &&
+      (bytes[fields->toneDelayMode] == kDelayKeyOffNormal ||
+       bytes[fields->toneDelayMode] == kDelayKeyOffDecay))
+    return false;
   size_t samples = 0;
   if (!jv1080_voice_span(&engine->rom, fields, bytes, key, velocity,
                          &samples) || !samples)
@@ -1901,7 +1967,56 @@ bool start_record(struct Engine *engine, unsigned part,
     ? 0u : bytes[fields->muteGroup];
   voice->allocated = true;
   voice->key_down = true;
+  voice->delay_mode = fields->toneDelayMode == XP_VOICE_FIELD_NONE
+    ? kDelayNormal : bytes[fields->toneDelayMode];
+  voice->delay = fields->toneDelayTime == XP_VOICE_FIELD_NONE ? 0u
+    : (size_t)std::lround(tone_delay_ms(bytes[fields->toneDelayTime]) *
+                          engine->output_rate / 1000.0);
+  voice->release_in = 0u;
+  switch (voice->delay_mode) {
+  case kDelayNormal:
+  case kDelayHold:
+    voice->wait = voice->delay;
+    break;
+  default:
+    /* PLAY-MATE, CLOCK-SYNC and TAP-SYNC: `M-016` and `M-020` time them
+       against things this engine does not keep - a previous note-on, a
+       clock - so they start at once, as every mode did before. */
+    voice->wait = 0u;
+    break;
+  }
   return true;
+}
+
+/* Render a voice through its tone delay: nothing until it is due, then the
+   voice from that frame, and a postponed release at its own frame. False
+   once the voice has finished. */
+bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
+{
+  size_t release = voice->release_in ? voice->release_in : SIZE_MAX;
+  if (voice->release_in)
+    voice->release_in = release > n ? release - n : 0u;
+  size_t start = 0;
+  if (voice->wait) {
+    if (release != SIZE_MAX && release <= voice->wait)
+      return false;             /* released before it ever sounded */
+    if (voice->wait >= n) {
+      voice->wait -= n;
+      return true;
+    }
+    start = voice->wait;
+    voice->wait = 0u;
+  }
+  if (release != SIZE_MAX && release <= n) {
+    if (!jv1080_voice_render(&voice->voice, l + start, r + start,
+                             release - start))
+      return false;
+    jv1080_voice_release(&voice->voice);
+    return release == n ||
+      jv1080_voice_render(&voice->voice, l + release, r + release,
+                          n - release);
+  }
+  return jv1080_voice_render(&voice->voice, l + start, r + start, n - start);
 }
 
 /* THE PART IS NOT THE CHANNEL. Every part carries its own receive channel,
@@ -2133,7 +2248,30 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
           voice->key != key)
         continue;
       voice->key_down = false;
-      jv1080_voice_release(&voice->voice);
+      switch (voice->delay_mode) {
+      case kDelayNormal:
+        /* The note-off is postponed by the delay, as the start was: the
+           NORMAL take at delay 64 stops sounding 647 ms after its
+           note-off, against the 640 ms this gives. */
+        if (voice->delay)
+          voice->release_in = voice->delay;
+        else
+          jv1080_voice_release(&voice->voice);
+        break;
+      case kDelayHold:
+        /* HOLD releases at the key, and a key that comes up before the
+           delay has run cancels the tone: the hold take stops at the
+           note-off, and `tone_delay_hold_cancel` - delay 96, key held
+           400 ms - is silent from start to end. */
+        if (voice->wait)
+          free_voice(voice);
+        else
+          jv1080_voice_release(&voice->voice);
+        break;
+      default:
+        jv1080_voice_release(&voice->voice);
+        break;
+      }
       ++released;
     }
   });
@@ -2468,7 +2606,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
           voice->destination == kOutputTwo) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
-        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+        if (!render_voice(voice, vl, vr, n))
           free_voice(voice);
         continue;
       }
@@ -2479,7 +2617,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
       if (voice->destination == kOutputEfx && engine->efx_ready) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
-        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+        if (!render_voice(voice, vl, vr, n))
           free_voice(voice);
         for (size_t k = 0; k < n; ++k) {
           efxL[k] += vl[k];
@@ -2494,7 +2632,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
           (engine->chorus_ready && voice->chorus_send > 0.0f)) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
-        if (!jv1080_voice_render(&voice->voice, vl, vr, n)) {
+        if (!render_voice(voice, vl, vr, n)) {
           free_voice(voice);
         }
         for (size_t k = 0; k < n; ++k) {
@@ -2507,7 +2645,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
         sending = true;
         continue;
       }
-      if (!jv1080_voice_render(&voice->voice, left, right, n))
+      if (!render_voice(voice, left, right, n))
         free_voice(voice);
     }
     for (size_t k = 0; k < n; ++k) {

@@ -159,6 +159,9 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
+  /* The tone delay: which mode it runs in, and its time. */
+  uint16_t toneDelayMode;
+  uint16_t toneDelayTime;
   /* Indices into XpDeviceProfile::keyFollowTable. */
   uint16_t pitchKeyFollow;
   uint16_t cutoffKeyFollow;
