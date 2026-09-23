@@ -92,6 +92,26 @@ struct XpJv1080PartControls {
   int fine_tune;                 /* the part's own detune, in cents */
   int patch_octave;              /* whole-patch transposition, in octaves */
   double tune_cents;             /* the RPN master coarse and fine tune */
+  /* The engine's own running clock at note-on, which a free-running LFO
+     takes its phase from, and a seed for the drawn LFO waveforms. */
+  double clock_seconds;
+  uint32_t lfo_seed;
+};
+
+/* One of a voice's two LFOs: its waveform, its rate, the offset its
+   output is shifted by, and the delay and fade that shape its depth. */
+struct XpJv1080Lfo {
+  unsigned form;
+  double frequency;              /* Hz */
+  double phase;                  /* cycles, 0..1 */
+  double offset;                 /* -1..+1 of the waveform's amplitude */
+  double delay;                  /* seconds */
+  unsigned fade_mode;            /* ON-IN, ON-OUT, OFF-IN, OFF-OUT */
+  double fade;                   /* seconds */
+  double held;                   /* the drawn forms' current value */
+  uint32_t seed;
+  double since_on;               /* seconds since the note-on */
+  double since_off;              /* seconds since the note-off, < 0 before */
 };
 
 struct XpJv1080Voice {
@@ -102,6 +122,23 @@ struct XpJv1080Voice {
   bool pending_release;
   /* Release on reaching the sustain level, with no key to wait for. */
   bool release_at_sustain;
+
+  /* The two LFOs and what each moves: pitch in cents, amplitude in dB,
+     cutoff in the cutoff parameter's own units and pan in pan-table
+     distance, each a signed peak for a waveform of +-1. lfo_active is
+     false when every depth is zero, and then none of this is read. */
+  struct XpJv1080Lfo lfo[2];
+  bool lfo_active;
+  double lfo_pitch_cents[2];
+  double lfo_amp_db[2];
+  double lfo_cutoff_units[2];
+  double lfo_pan_units[2];
+  int pan_offset;                /* the voice's own pan, before the LFO */
+  double lfo_pitch_ratio;
+  double lfo_gain;
+  double lfo_cutoff;
+  size_t lfo_period;
+  size_t lfo_countdown;
 
   /* The decoded element, and where in it the read head is. */
   const int32_t *pcm;

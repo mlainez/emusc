@@ -643,6 +643,46 @@ int main(void)
     assert(render(roms, tuned(2, 0), 0, 60) == render(roms, tuned(2, 64), 0, 60));
   }
 
+  /* LFO 1 on the amplitude (`M-114`): triangle, key trigger on, rate 64
+     (1.1415 Hz), depth +32, whose law is an attenuation of up to twice
+     1.253 dB. A quarter cycle in, at the waveform's top, the level is the
+     unmodulated one; three quarters in, at its bottom, it is 2.51 dB down.
+     Each against the same note with depth 0. */
+  {
+    auto lfo_level = [&](uint8_t wire_depth, double at) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0);
+      const uint8_t lfo[8] = { 0, 1, 64, 2, 0, 0, 0, 0 };
+      for (unsigned i = 0; i < 8; ++i)
+        tone_field(d, 1, (uint8_t)(0x2d + i), lfo[i]);
+      tone_field(d, 1, 0x75, wire_depth);
+      midi(d, 0x90, 60, 100);
+      std::vector<float> x(2 * 25600);
+      EmuSC::Xp::device_render(d, x.data(), 25600);     /* 0.8 s */
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      size_t a = (size_t)(at * kRate), b = a + 32;      /* 1 ms */
+      double e = 0.0;
+      for (size_t i = 2 * a; i < 2 * b; ++i)
+        e += (double)x[i] * x[i];
+      return 10.0 * std::log10(e);
+    };
+    const double period = 1.0 / (0.0494 * std::pow(2.0, 64.0 / 14.13));
+    double top = lfo_level(63 + 32, 0.25 * period) - lfo_level(63, 0.25 * period);
+    double bottom = lfo_level(63 + 32, 0.75 * period) - lfo_level(63, 0.75 * period);
+    assert(std::fabs(top) < 0.1);
+    assert(std::fabs(bottom + 2.51) < 0.1);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

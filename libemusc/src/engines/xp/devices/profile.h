@@ -172,6 +172,14 @@ struct XpVoiceFieldMap {
      the device's velocity curves it reads through. */
   uint16_t ampVelocitySens;
   uint16_t ampVelocityCurve;
+  /* The two LFOs' eight fields each - waveform, key trigger, rate, level
+     offset, delay, fade mode, fade time, external sync - from these
+     indices on, and the first of each destination's two depths. */
+  uint16_t lfoFirst[2];
+  uint16_t pitchLfoDepth;
+  uint16_t filterLfoDepth;
+  uint16_t ampLfoDepth;
+  uint16_t panLfoDepth;
   /* The rhythm note's envelope mode: 0 NO-SUSTAIN, 1 SUSTAIN. */
   uint16_t envelopeMode;
   /* The tone delay: which mode it runs in, and its time. */
