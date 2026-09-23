@@ -716,7 +716,8 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
    this law and is NOT modelled here. */
 double filter_env_cutoff(const struct XpJv1080Voice *voice)
 {
-  double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value;
+  double cutoff = voice->cutoff_base + voice->cutoff_offset * voice->fenv_value +
+    voice->lfo_cutoff;
   if (cutoff < 0.0)
     return 0.0;
   return cutoff > 127.0 ? 127.0 : cutoff;
@@ -897,6 +898,237 @@ double velocity_curve_gain(unsigned curve, unsigned velocity)
                                  kVelocityCurveDb[curve - 1u], 10u,
                                  (double)velocity);
   return std::pow(10.0, db / 20.0);
+}
+
+/* ---- The LFOs ------------------------------------------------------
+
+   MEASURED (`M-013`, `M-022`, `M-041`): both LFOs read one rate law over
+   the whole field, 0.0494 Hz * 2^(v / 14.13), 0.0488 to 25.0 Hz. */
+double lfo_rate_hz(unsigned value)
+{
+  return 0.0494 * std::pow(2.0, (double)value / 14.13);
+}
+
+/* Interpolation through a table of (value, y) points, linear in y. */
+struct LawPoint { double x, y; };
+double law(const LawPoint *p, unsigned n, double x)
+{
+  if (x <= p[0].x)
+    return p[0].y;
+  for (unsigned i = 1; i < n; ++i)
+    if (x <= p[i].x)
+      return p[i - 1].y + (p[i].y - p[i - 1].y) * (x - p[i - 1].x) /
+                            (p[i].x - p[i - 1].x);
+  return p[n - 1].y;
+}
+
+/* MEASURED (`M-071`, `M-085`): the delay before an LFO acts and the time
+   it fades over, one 62 s note per top value. Between the measured values
+   the time is interpolated in its logarithm above 32 and linearly below,
+   which is not recovered; `M-071` read no fade at all at 32. */
+double lfo_time_seconds(const LawPoint *p, unsigned n, unsigned value)
+{
+  double v = (double)value;
+  for (unsigned i = 1; i < n; ++i)
+    if (v <= p[i].x) {
+      if (p[i - 1].y > 0.0)
+        return p[i - 1].y * std::pow(p[i].y / p[i - 1].y,
+                                     (v - p[i - 1].x) / (p[i].x - p[i - 1].x));
+      return p[i - 1].y + (p[i].y - p[i - 1].y) * (v - p[i - 1].x) /
+                            (p[i].x - p[i - 1].x);
+    }
+  return p[n - 1].y;
+}
+const LawPoint kLfoDelay[] = {
+  { 0, 0.0 }, { 32, 0.255 }, { 64, 1.610 }, { 80, 3.500 }, { 96, 7.380 },
+  { 112, 16.320 }, { 127, 32.700 } };
+const LawPoint kLfoFade[] = {
+  { 0, 0.0 }, { 32, 0.0 }, { 64, 1.135 }, { 80, 2.800 }, { 96, 6.380 },
+  { 112, 14.300 }, { 127, 28.880 } };
+
+/* MEASURED (`M-114`): how far each depth moves each destination, as the
+   peak of a triangle at rate 64 read by lock-in on the owner's unit,
+   2026-09-23, with the corpus's own depth +63 takes replayed as a
+   known-answer control (within 0.6 %).
+
+   PITCH, cents: quadratic in depth - 0.455 d^2 to 1-2 % from depth 8 up.
+   Below 8 the take is under its own noise, so there the quadratic is
+   extrapolated and not measured.
+   AMPLITUDE, dB: an ATTENUATION only - the take's top sits on the
+   unmodulated level at every depth - of twice the listed peak at the
+   waveform's bottom.
+   FILTER, octaves of the corner: read on two base cutoffs (60 and 86)
+   whose clean halves agree to 3 % from depth 12 to 48; above 48 each take
+   clips one half against the analysis floor or the 7891 Hz resonant
+   ceiling, so the quadratic that runs through the measured points is
+   carried on from 48, and below 8 likewise. Neither is recovered.
+   PAN is taken as one pan-table unit of distance per step of depth, which
+   the take matches to 1 % up to depth 32 read through the pan table
+   (2.19, 4.50, 9.26 dB at 8, 16, 32 against the table's 2.20, 4.50,
+   9.20). Depth 1 does not move the pan at all on the machine. */
+const LawPoint kLfoPitchCents[] = {
+  { 8, 29.3 }, { 12, 65.6 }, { 16, 116.5 }, { 24, 259.9 }, { 32, 451.3 },
+  { 40, 722.4 }, { 48, 1053.9 }, { 56, 1416.6 }, { 63, 1805.3 } };
+const LawPoint kLfoAmpDb[] = {
+  { 0, 0.0 }, { 1, 0.034 }, { 2, 0.070 }, { 4, 0.138 }, { 8, 0.275 },
+  { 12, 0.431 }, { 16, 0.573 }, { 24, 0.840 }, { 32, 1.253 }, { 40, 1.649 },
+  { 48, 1.972 }, { 56, 2.257 }, { 63, 2.745 } };
+const LawPoint kLfoFilterOct[] = {
+  { 8, 0.088 }, { 12, 0.194 }, { 16, 0.308 }, { 24, 0.732 }, { 32, 1.268 },
+  { 40, 2.047 }, { 48, 2.977 } };
+
+double signed_law(double depth, double (*f)(double))
+{
+  return depth < 0.0 ? -f(-depth) : f(depth);
+}
+double pitch_depth_cents(double d)
+{
+  return d < 8.0 ? 0.455 * d * d : law(kLfoPitchCents, 9u, d);
+}
+double amp_depth_db(double d)
+{
+  return law(kLfoAmpDb, 13u, d);
+}
+double filter_depth_octaves(double d)
+{
+  if (d < 8.0)
+    return 0.088 * (d / 8.0) * (d / 8.0);
+  if (d > 48.0)
+    return 2.977 * (d / 48.0) * (d / 48.0);
+  return law(kLfoFilterOct, 7u, d);
+}
+double pan_depth_units(double d)
+{
+  return d <= 1.0 ? 0.0 : d;
+}
+
+uint32_t lfo_random(uint32_t *seed)
+{
+  uint32_t x = *seed ? *seed : 0x9e3779b9u;
+  x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+  *seed = x;
+  return x;
+}
+
+/* MEASURED (`M-034`, `M-054`, `M-074`, and the form takes read cycle by
+   cycle): TRI, SIN and SAW are the ideal waveforms, SAW rising; SQR is a
+   symmetric +-1 square at half duty; TRP is a trapezoid - a quarter of the
+   cycle at each extreme and a quarter on each ramp, which is a triangle
+   doubled and clipped. Key trigger starts a cycle at zero and rising
+   (`M-071`); where SAW and SQR stand at that point is not measured, and
+   here SAW starts at zero and SQR on its top.
+
+   S&H, RND and CHS DRAW rather than follow a curve. They are not
+   recovered: S&H and RND hold a new random value for each LFO period here,
+   and CHS, which `M-054` found running fifteen times the rate field's
+   frequency, does the same at fifteen times the rate. */
+double lfo_triangle(double ph)
+{
+  return ph < 0.25 ? 4.0 * ph : ph < 0.75 ? 2.0 - 4.0 * ph : 4.0 * ph - 4.0;
+}
+double lfo_wave(const struct XpJv1080Lfo *lfo)
+{
+  double ph = lfo->phase;
+  switch (lfo->form) {
+  case 0: return lfo_triangle(ph);
+  case 1: return std::sin(2.0 * 3.14159265358979323846 * ph);
+  case 2: return ph < 0.5 ? 2.0 * ph : 2.0 * ph - 2.0;
+  case 3: return ph < 0.5 ? 1.0 : -1.0;
+  case 4: {
+    double t = 2.0 * lfo_triangle(ph);
+    return t > 1.0 ? 1.0 : (t < -1.0 ? -1.0 : t);
+  }
+  default: return lfo->held;
+  }
+}
+
+/* How much of its depth an LFO has, from its delay, its fade time and its
+   fade mode: ON-IN waits the delay and fades in, ON-OUT acts at once and
+   fades out after the delay, OFF-IN and OFF-OUT do the same from the
+   note-off - what the four `lfo1_fade_*` takes show. The fade is taken as
+   a straight ramp in depth, which is not measured. */
+double lfo_amount(const struct XpJv1080Lfo *lfo)
+{
+  bool fadeIn = lfo->fade_mode == 0u || lfo->fade_mode == 2u;
+  double t = lfo->since_on;
+  if (lfo->fade_mode >= 2u) {
+    if (lfo->since_off < 0.0)
+      return fadeIn ? 0.0 : 1.0;
+    t = lfo->since_off;
+  }
+  double ramp;
+  if (t < lfo->delay)
+    ramp = 0.0;
+  else if (lfo->fade <= 0.0 || t >= lfo->delay + lfo->fade)
+    ramp = 1.0;
+  else
+    ramp = (t - lfo->delay) / lfo->fade;
+  return fadeIn ? ramp : 1.0 - ramp;
+}
+
+void lfo_advance(struct XpJv1080Lfo *lfo, double seconds)
+{
+  double rate = lfo->form == 7u ? 15.0 * lfo->frequency : lfo->frequency;
+  lfo->phase += rate * seconds;
+  if (lfo->phase >= 1.0) {
+    lfo->phase -= std::floor(lfo->phase);
+    if (lfo->form >= 5u)
+      lfo->held = (double)(lfo_random(&lfo->seed) >> 8) / 8388608.0 - 1.0;
+  }
+  lfo->since_on += seconds;
+  if (lfo->since_off >= 0.0)
+    lfo->since_off += seconds;
+}
+
+/* The pan-table difference for a pan distance that need not be whole. */
+double pan_difference_db_at(double offset)
+{
+  const unsigned count = (unsigned)(sizeof kPanTable / sizeof kPanTable[0]);
+  double xs[sizeof kPanTable / sizeof kPanTable[0]];
+  double ys[sizeof kPanTable / sizeof kPanTable[0]];
+  for (unsigned i = 0; i < count; ++i) {
+    xs[i] = kPanTable[i].distance;
+    ys[i] = kPanTable[i].difference_db;
+  }
+  double m = interpolate_points(xs, ys, count, offset < 0.0 ? -offset : offset);
+  return offset < 0.0 ? -m : m;
+}
+
+void set_pan(struct XpJv1080Voice *voice, double offset)
+{
+  if (offset < -64.0)
+    offset = -64.0;
+  if (offset > 63.0)
+    offset = 63.0;
+  double ratio = std::pow(10.0, pan_difference_db_at(offset) / 20.0);
+  double left = std::sqrt(1.0 / (1.0 + ratio * ratio));
+  voice->gain_left = left;
+  voice->gain_right = ratio * left;
+}
+
+/* Once per control block: advance both LFOs and form what they do to the
+   pitch, the level, the cutoff and the pan. */
+void lfo_update(struct XpJv1080Voice *voice, double seconds)
+{
+  double cents = 0.0, db = 0.0, cutoff = 0.0, pan = 0.0;
+  for (unsigned i = 0; i < 2u; ++i) {
+    struct XpJv1080Lfo *lfo = voice->lfo + i;
+    lfo_advance(lfo, seconds);
+    double v = lfo_wave(lfo) + lfo->offset;
+    double k = lfo_amount(lfo);
+    cents += voice->lfo_pitch_cents[i] * v * k;
+    cutoff += voice->lfo_cutoff_units[i] * v * k;
+    pan += voice->lfo_pan_units[i] * v * k;
+    /* Attenuation only, from the waveform's own top. */
+    double a = voice->lfo_amp_db[i];
+    double top = a >= 0.0 ? 1.0 + lfo->offset : 1.0 - lfo->offset;
+    db += std::fabs(a) * ((a >= 0.0 ? v : -v) - top) * k;
+  }
+  voice->lfo_pitch_ratio = std::pow(2.0, cents / 1200.0);
+  voice->lfo_gain = std::pow(10.0, db / 20.0);
+  voice->lfo_cutoff = cutoff;
+  if (voice->lfo_pan_units[0] != 0.0 || voice->lfo_pan_units[1] != 0.0)
+    set_pan(voice, (double)voice->pan_offset + pan);
 }
 
 /* A field this record type has, or `absent` where it does not have one. */
@@ -1181,6 +1413,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      places off centre and was confirmed on the device: a tone pan of 127
      with the part centred measures the right channel 56 dB above the left
      on hardware, where this rendered it 62 dB BELOW. */
+  voice->pan_offset = panOffset;
   double difference = pan_difference_db(panOffset);
   double ratio = std::pow(10.0, difference / 20.0);
   double left = std::sqrt(1.0 / (1.0 + ratio * ratio));
@@ -1269,6 +1502,54 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     voice->control_countdown = 0u;
   }
 
+  /* The two LFOs. A record with no depth anywhere leaves lfo_active false
+     and takes none of the paths below. */
+  voice->lfo_active = false;
+  voice->lfo_pitch_ratio = 1.0;
+  voice->lfo_gain = 1.0;
+  voice->lfo_cutoff = 0.0;
+  if (fields->lfoFirst[0] != XP_VOICE_FIELD_NONE) {
+    static const double kOffsets[5] = { -1.0, -0.5, 0.0, 0.5, 1.0 };
+    for (unsigned i = 0; i < 2u; ++i) {
+      const uint8_t *f = tone + fields->lfoFirst[i];
+      struct XpJv1080Lfo *lfo = voice->lfo + i;
+      lfo->form = f[0] & 7u;
+      lfo->frequency = lfo_rate_hz(f[2]);
+      lfo->offset = kOffsets[f[3] > 4u ? 2u : f[3]];
+      lfo->delay = lfo_time_seconds(kLfoDelay, 7u, f[4]);
+      lfo->fade_mode = f[5] & 3u;
+      lfo->fade = lfo_time_seconds(kLfoFade, 7u, f[6]);
+      /* Key trigger starts the cycle at zero (`M-071`); off, the LFO runs
+         free, taken here as one clock the whole engine shares - whether
+         the machine keeps one per part or per voice is not measured. */
+      double cycles = f[1] ? 0.0 : controls->clock_seconds * lfo->frequency;
+      lfo->phase = cycles - std::floor(cycles);
+      lfo->seed = controls->lfo_seed * 2654435761u + i * 40503u + 1u;
+      lfo->held = (double)(lfo_random(&lfo->seed) >> 8) / 8388608.0 - 1.0;
+      lfo->since_on = 0.0;
+      lfo->since_off = -1.0;
+      /* EXT SYNC (f[7]) is not followed: this engine keeps no clock. */
+      double pitch = (double)(int8_t)tone[fields->pitchLfoDepth + i];
+      double filter = (double)(int8_t)tone[fields->filterLfoDepth + i];
+      double amp = (double)(int8_t)tone[fields->ampLfoDepth + i];
+      double pan = (double)(int8_t)tone[fields->panLfoDepth + i];
+      voice->lfo_pitch_cents[i] = signed_law(pitch, pitch_depth_cents);
+      voice->lfo_cutoff_units[i] =
+        voice->filter_type ? 10.0 * signed_law(filter, filter_depth_octaves)
+                           : 0.0;
+      voice->lfo_amp_db[i] = signed_law(amp, amp_depth_db);
+      voice->lfo_pan_units[i] = signed_law(pan, pan_depth_units);
+      if (voice->lfo_pitch_cents[i] != 0.0 ||
+          voice->lfo_cutoff_units[i] != 0.0 || voice->lfo_amp_db[i] != 0.0 ||
+          voice->lfo_pan_units[i] != 0.0)
+        voice->lfo_active = true;
+    }
+    voice->lfo_period = (size_t)(outputRate / 1000.0);
+    if (!voice->lfo_period)
+      voice->lfo_period = 1u;
+    voice->lfo_countdown = 0u;
+  }
+
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
                 tvf_cutoff_hz(filter_env_cutoff(voice)),
@@ -1308,6 +1589,8 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
   if (!voice || !voice->active || voice->releasing)
     return;
   voice->releasing = true;
+  voice->lfo[0].since_off = 0.0;
+  voice->lfo[1].since_off = 0.0;
   voice->segment = 3u;
   voice->segment_start = amp_env_amplitude_units(voice->envelope);
   voice->segment_total = amp_env_segment_seconds(voice->time[3]);
@@ -1325,8 +1608,23 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     return false;
 
   const bool sweeping = voice->filter_type && voice->cutoff_offset != 0.0;
+  const bool lfoFilter = voice->filter_type &&
+    (voice->lfo_cutoff_units[0] != 0.0 || voice->lfo_cutoff_units[1] != 0.0);
 
   for (size_t n = 0; n < frames; ++n) {
+    /* The LFOs, once per control block as the filter envelope is
+       (`M-074`). */
+    if (voice->lfo_active) {
+      if (!voice->lfo_countdown) {
+        lfo_update(voice, (double)voice->lfo_period * voice->sample_period);
+        if (lfoFilter && !sweeping)
+          set_biquad(voice, voice->filter_type,
+                      tvf_cutoff_hz(filter_env_cutoff(voice)),
+                      voice->resonance_q, voice->output_rate);
+        voice->lfo_countdown = voice->lfo_period;
+      }
+      --voice->lfo_countdown;
+    }
     /* The filter envelope, once per control block rather than per sample
        (`M-074`). A voice whose envelope cannot move the corner - no filter
        or no depth - never enters here and its section is solved once at
@@ -1466,6 +1764,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     }
 
     double value = sample * voice->envelope * voice->static_gain;
+    if (voice->lfo_active)
+      value *= voice->lfo_gain;
 
     if (voice->filter_type) {
       double out = voice->b0 * value + voice->b1 * voice->x1 +
@@ -1481,13 +1781,19 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     r[n] += (float)(value * voice->gain_right);
 
     if (voice->reverse) {
-      voice->position -= voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio;
+      if (voice->lfo_active)
+        step *= voice->lfo_pitch_ratio;
+      voice->position -= step;
       if (voice->position < 1.0) {
         voice->active = false;
         break;
       }
     } else {
-      voice->position += voice->increment * voice->bend_ratio;
+      double step = voice->increment * voice->bend_ratio;
+      if (voice->lfo_active)
+        step *= voice->lfo_pitch_ratio;
+      voice->position += step;
       if (voice->in_cycle) {
         /* Wrapped by the cycle, not by the loop's length: a full cycle is
            the reflected descending pass and the forward ascending one, so

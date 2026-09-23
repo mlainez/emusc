@@ -713,6 +713,9 @@ struct Engine {
   double output_rate;
   unsigned max_voices;
   uint64_t serial;
+  /* Frames rendered since the engine was created: the clock a
+     free-running LFO takes its phase from. */
+  uint64_t frames;
   struct Part parts[kParts];
   /* GM mode: entered by GM System On, left only by a reset. */
   bool gm_mode;
@@ -1926,6 +1929,8 @@ void part_controls(const struct Engine *engine, unsigned part,
     ? 0
     : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
   out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
+  out->clock_seconds = (double)engine->frames / engine->output_rate;
+  out->lfo_seed = (uint32_t)engine->serial;
 }
 
 /* The part's assign, or the record's where the part defers to it. */
@@ -2797,6 +2802,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
   struct Engine *engine = (struct Engine *)state;
   if (!engine || !stereo || !frames)
     return;
+  engine->frames += frames;
   /* The caller's buffer is interleaved; the voice model writes into two
      planar spans, so the sum is built planar and interleaved once. A
      block-sized scratch pair rather than a per-sample transpose.
