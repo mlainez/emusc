@@ -296,12 +296,15 @@ struct EfxModSpec {
   int feedback;                 /* -1 where none is identified */
   int damp;                     /* -1 where the type has none */
   double sweepMs;
+  /* A second modulator on the AMPLITUDE, where the type carries one.
+     -1 on both where it does not. */
+  int tremRate, tremDepth;
 };
 const struct EfxModSpec kEfxModSpecs[] = {
   /* 14 STEREO-CHORUS: one pre-delay for both channels; p7 has a ceiling of
      127 and a factory 0 and is not identified, so no feedback is applied. */
   { 13u, kEfxModTriangle, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 5u, 9u, 10u, -1, -1, 12.38 },
+    3u, 4u, 5u, 9u, 10u, -1, -1, 12.38, -1, -1 },
   /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback - and a
      DIFFERENT modulator, which took three attempts to pin down. Its
      deviation's harmonic ratios at the rates where they resolve read
@@ -320,7 +323,7 @@ const struct EfxModSpec kEfxModSpecs[] = {
      last one also settles the direction: a sweep this wide that never
      clips at a 1.00 ms nominal is one-sided UPWARD, as the chorus's is. */
   { 14u, kEfxModParabola, { 2u, 2u }, kEfxPreDelayTable,
-    3u, 4u, 5u, 9u, 10u,  6, -1, 12.32 },
+    3u, 4u, 5u, 9u, 10u,  6, -1, 12.32, -1, -1 },
   /* 18 MODULATION-DELAY: a stereo delay with the same LFO on top. Its two
      delay slots read `0x038FC8` at `ms = table / 32`, measured with the
      depth at zero so the delay stands still - ratio 1.0000 at values 16,
@@ -328,7 +331,33 @@ const struct EfxModSpec kEfxModSpecs[] = {
      `0x038EC8` predicts 46, 74 and 101 ms where the machine gives 100, 260
      and 500, so it is not that table. */
   { 17u, kEfxModTriangle, { 1u, 2u }, kEfxDelayTable,
-    5u, 6u, 7u, 10u, 11u,  3,  4, 49.55 },
+    5u, 6u, 7u, 10u, 11u,  3,  4, 49.55, -1, -1 },
+  /* 12 TREMOLO-CHORUS: a chorus and an amplitude modulator, each with its
+     own rate and depth, separated by driving one with the other at zero.
+
+     p2 is the chorus rate and p4 the tremolo rate, both on the family law:
+     p2 at 24 and 72 counts 1.2493 and 3.6487 Hz against 1.2493 and 3.6488,
+     and p4 at its factory 76 counts 3.845 against 3.849.
+
+     THE TREMOLO'S MODULATOR IS A TRIANGLE, measured on its envelope's
+     harmonics at six depths: h2 0.008, h3 0.111, h5 0.040 against an ideal
+     triangle's 0, 0.111, 0.040, identical to three decimals at every one.
+     Its depth is the same level curve the rest of the family uses: read as
+     an envelope falling from 1 to 1-m, the six values give m normalised at
+     0.142, 0.266, 0.418, 0.585, 0.776, 1.000 against the curve's 0.121,
+     0.258, 0.418, 0.590, 0.783, 1.000.
+
+     The chorus sweep tops out at 12.23 ms, alongside 12.38 and 12.32 on
+     the other two that have a pre-delay. Its SHAPE matches the level curve
+     only to 0.019 where the other three match to 0.0005, so that this type
+     reads the same table is consistent rather than established.
+
+     p1 is not a rate - driven to 72 it moves the deviation 0.037 % against
+     p2's 9.372 - and it is wired as the pre-delay because that is the
+     family's shape and it ships at 0, where the table's own entry is one
+     sample. If it is something else, nothing here depends on it. */
+  { 11u, kEfxModTriangle, { 0u, 0u }, kEfxPreDelayTable,
+    1u, 2u, 5u, 6u, 7u, -1, -1, 12.23, 3, 4 },
 };
 const unsigned kEfxModSpecCount =
   (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
@@ -523,6 +552,8 @@ struct Engine {
   double efx_sweep;
   double efx_nominal[2];
   unsigned efx_shape;
+  double efx_trem_phase, efx_trem_step;
+  float efx_trem_depth;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1223,6 +1254,20 @@ void efx_modulated_refresh(struct Engine *engine)
      deepest and symmetric at 50, which is what makes it a balance rather
      than a wet level. p11 LEVEL, measured: driving it to 0 silences the
      effect. */
+  /* The amplitude modulator, where the type has one. Its envelope falls
+     from unity by the depth, which the level curve scales. */
+  engine->efx_trem_depth = 0.0f;
+  engine->efx_trem_step = 0.0;
+  if (spec->tremRate >= 0 && spec->tremDepth >= 0) {
+    uint16_t raw = 0;
+    efx_table_value(&engine->rom, kEfxLfoRateTable, p[spec->tremRate], 0,
+                     &raw);
+    engine->efx_trem_step =
+      (double)raw * kXpNativeRate / 16777216.0 / engine->output_rate;
+    engine->efx_trem_depth =
+      (float)efx_unit(engine, kEfxLevelTableIndex, p[spec->tremDepth], 0);
+  }
+
   engine->efx_wet =
     (float)efx_unit(engine, kEfxBalanceTable, p[spec->balance], 0);
   engine->efx_dry =
@@ -1261,6 +1306,16 @@ void efx_mod_process(struct Engine *engine, const float *inL,
       inR[k] + engine->efx_feedback * engine->efx_damp_state[1];
     if (++engine->efx_pos >= engine->efx_len)
       engine->efx_pos = 0;
+    if (engine->efx_trem_depth > 0.0f) {
+      /* on the effect's own path, which is what TREMOLO-CHORUS names */
+      float g = 1.0f - engine->efx_trem_depth *
+        efx_mod_shape(kEfxModTriangle, engine->efx_trem_phase);
+      l *= g;
+      r *= g;
+      engine->efx_trem_phase += engine->efx_trem_step;
+      if (engine->efx_trem_phase >= 1.0)
+        engine->efx_trem_phase -= 1.0;
+    }
     wetL[k] = l;
     wetR[k] = r;
     engine->efx_lfo_phase += engine->efx_lfo_step;
