@@ -611,6 +611,9 @@ struct Voice {
   double bend_down;
   bool holdable;
   bool sustained;
+  /* A KEY-OFF-DECAY voice runs from its note-on unheard until its release
+     begins. */
+  bool muted;
 };
 
 /* MEASURED (`M-014`): linear in the 14-bit value, scaled by the range on
@@ -629,6 +632,7 @@ const uint8_t kDelayNormal = 0u;
 const uint8_t kDelayHold = 1u;
 const uint8_t kDelayKeyOffNormal = 5u;
 const uint8_t kDelayKeyOffDecay = 6u;
+const size_t kWaitForKeyOff = SIZE_MAX;
 
 /* MEASURED (`M-016`), key 60, one onset per value: the delay time field
    against the onset after the note-on, the ~5 ms every value shows at 0
@@ -820,6 +824,7 @@ void free_voice(struct Voice *voice)
   voice->bend_down = 0.0;
   voice->holdable = false;
   voice->sustained = false;
+  voice->muted = false;
   std::memset(&voice->voice, 0, sizeof voice->voice);
 }
 
@@ -1940,23 +1945,6 @@ bool start_record(struct Engine *engine, unsigned part,
                    const struct XpVoiceFieldMap *fields, const uint8_t *bytes,
                    unsigned key, unsigned velocity)
 {
-  /* A KEY-OFF tone does not sound at the note-on: both modes' takes are
-     silent for the whole 2.5 s the key is held (`M-016`), and on the first
-     factory song part 9's two KEY-OFF tones leave 9.08-9.20 s at -58 dB
-     against the hardware's -65 to -60, where sounding them at the note-on
-     put it at -32 to -40.
-
-     NOR DOES IT SOUND AT THE NOTE-OFF HERE, and that half is the least
-     assumption rather than a finding. The same takes are silent after the
-     note-off too - KEY-OFF-NORMAL entirely, KEY-OFF-DECAY but for one
-     1 ms blip 25 dB under the tone at note-off + the delay - with a
-     release time of 0, so what either mode does with a slower release is
-     not measured, and the song's own note-off is masked by the band
-     entering 15 ms later. No voice is taken for one. */
-  if (fields->toneDelayMode != XP_VOICE_FIELD_NONE &&
-      (bytes[fields->toneDelayMode] == kDelayKeyOffNormal ||
-       bytes[fields->toneDelayMode] == kDelayKeyOffDecay))
-    return false;
   size_t samples = 0;
   if (!jv1080_voice_span(&engine->rom, fields, bytes, key, velocity,
                          &samples) || !samples)
@@ -2040,6 +2028,33 @@ bool start_record(struct Engine *engine, unsigned part,
   case kDelayHold:
     voice->wait = voice->delay;
     break;
+  case kDelayKeyOffNormal:
+    /* MEASURED (`M-113`): KEY-OFF-NORMAL sounds nothing while the key is
+       held and starts a fresh attack at note-off + the delay - four slots
+       of two gates and two delays agree to 0.33 dB - then releases the
+       moment it reaches its sustain level, which a second envelope with a
+       different sustain arrival moved to match. The voice is taken at the
+       note-on and waits unrendered. NOT MEASURED, for either KEY-OFF mode:
+       whether the machine holds a voice that early, what the hold pedal
+       does to them - here it postpones their note-off as it does any
+       other - what a new note-on does mid-envelope, and any dependence on
+       velocity. An envelope whose times are all zero sounds here for the
+       few samples its segments take to step through, where the hardware's
+       all-zero bench take is silent. */
+    voice->wait = kWaitForKeyOff;
+    voice->voice.release_at_sustain = true;
+    break;
+  case kDelayKeyOffDecay:
+    /* MEASURED (`M-113`): KEY-OFF-DECAY runs its envelope from the note-on
+       as if held but unheard, and is heard from note-off + the delay at
+       whatever level that envelope has reached, releasing from there: at
+       delay 64 on a 0.5 s gate it enters at -39.6 dB, the held envelope's
+       level at that moment. NOT MEASURED: where the wave, the pitch and
+       filter envelopes and the LFOs stand after the unheard stretch - a
+       looped sine cannot show it - so they run on with the envelope here. */
+    voice->wait = 0u;
+    voice->muted = true;
+    break;
   default:
     /* PLAY-MATE, CLOCK-SYNC and TAP-SYNC: `M-016` and `M-020` time them
        against things this engine does not keep - a previous note-on, a
@@ -2058,6 +2073,28 @@ bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
   size_t release = voice->release_in ? voice->release_in : SIZE_MAX;
   if (voice->release_in)
     voice->release_in = release > n ? release - n : 0u;
+  if (voice->wait == kWaitForKeyOff)
+    return true;
+  if (voice->muted) {
+    /* Unheard: rendered into scratch until the release begins. */
+    static thread_local float scratchL[512], scratchR[512];
+    size_t upto = release < n ? release : n;
+    for (size_t done = 0; done < upto;) {
+      size_t k = upto - done > 512u ? 512u : upto - done;
+      std::memset(scratchL, 0, k * sizeof *scratchL);
+      std::memset(scratchR, 0, k * sizeof *scratchR);
+      if (!jv1080_voice_render(&voice->voice, scratchL, scratchR, k))
+        return false;
+      done += k;
+    }
+    if (release > n)
+      return true;
+    voice->muted = false;
+    jv1080_voice_note_off(&voice->voice);
+    return release == n ||
+      jv1080_voice_render(&voice->voice, l + release, r + release,
+                          n - release);
+  }
   size_t start = 0;
   if (voice->wait) {
     if (release != SIZE_MAX && release <= voice->wait)
@@ -2325,6 +2362,17 @@ static void key_off(struct Voice *voice)
       free_voice(voice);
     else
       jv1080_voice_note_off(&voice->voice);
+    break;
+  case kDelayKeyOffNormal:
+    voice->wait = voice->delay;
+    break;
+  case kDelayKeyOffDecay:
+    if (voice->delay) {
+      voice->release_in = voice->delay;
+    } else {
+      voice->muted = false;
+      jv1080_voice_note_off(&voice->voice);
+    }
     break;
   default:
     jv1080_voice_note_off(&voice->voice);
