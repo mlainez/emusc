@@ -53,6 +53,10 @@ inline constexpr uint8_t XP_REVERB_WORD_NONE = 0xffu;
 inline constexpr uint8_t XP_CHORUS_MOD_SINE = 0u;
 inline constexpr uint8_t XP_CHORUS_MOD_TRIANGLE_UP = 1u;
 
+/* What a device's chorus feeds back; see `chorusFeedbackTap`. */
+inline constexpr uint8_t XP_CHORUS_FB_TAP_MEAN = 0u;
+inline constexpr uint8_t XP_CHORUS_FB_TAP_LEFT = 1u;
+
 inline constexpr unsigned XP_REVERB_BUFFERS = 12u;
 inline constexpr unsigned XP_REVERB_TAPS = 8u;
 inline constexpr unsigned XP_REVERB_HALF_BUFFERS = 4u;
@@ -422,6 +426,21 @@ struct XpDeviceProfile {
      millisecond, against the factor of two a sine would put between its
      own early and late slopes. */
   uint8_t chorusModulator;
+  /* WHICH TAP THE CHORUS FEEDS BACK into the head of its line.
+
+     `XP_CHORUS_FB_TAP_MEAN` feeds back the mean of the two output taps.
+     The SC-88's own feedback topology has never been measured and that is
+     the assumption it keeps.
+
+     `XP_CHORUS_FB_TAP_LEFT` feeds back the left output tap alone -
+     measured on the JV-1080 (`M-112`): with the taps apart, the left
+     channel's second-order echo sits at twice the left delay only and the
+     right channel's at the sum of the two delays only, the other terms
+     at -0.006 and -0.003 of the first order. The mean of two taps at
+     different delays is a comb inside the loop that discards energy every
+     pass, which is what the mean cannot reproduce here: a modulated
+     feedback-127 ring that decays at -2.3 to -2.4 dB/s on hardware. */
+  uint8_t chorusFeedbackTap;
   /* The tables a device drives its chorus from, zero where it has none.
      `chorusRateAccumulator` is the modulus the rate table's entry is a
      per-control-period increment on, so the modulation is

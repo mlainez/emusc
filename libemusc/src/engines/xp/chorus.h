@@ -54,6 +54,8 @@ struct xp_chorus {
      fixes what `depth_samples` means: a sine sweeps +-depth about the
      nominal delay, a rising triangle sweeps 0..+depth above it. */
   uint8_t modulator;
+  /* Which tap feeds back, from the device's profile (`chorusFeedbackTap`). */
+  uint8_t feedback_tap;
   bool active;
 };
 
