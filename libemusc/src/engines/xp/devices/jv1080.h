@@ -247,6 +247,22 @@ struct XpJv1080Voice {
      penv_time[] its duration, and penv_ratio the pitch factor it currently
      stands at. penv_active is false when the depth is zero or every level
      is centre, and then none of this is read. */
+  /* A structured tone pair: set on the pair's second tone, which renders
+     both, `partner` being the first. structure is the panel's type, 2 to
+     10. tone_gain is this voice's own share of its level - tone level,
+     matrix LEV, velocity and wave gain - without the patch's, the part's,
+     CC7 or the mix scale, which a pair applies once, through the second
+     tone. */
+  struct XpJv1080Voice *partner;
+  unsigned structure;
+  unsigned booster;              /* the pair's booster, 0..3 */
+  /* In a pair, a wave that has played out and a voice whose envelope has
+     ended are different things: the other tone still sounds through this
+     one's filter, and through the second tone's TVA. */
+  bool wave_done;
+  bool envelope_done;
+  double tone_gain;
+
   bool penv_active;
   double penv_level[4];
   double penv_time[4];
@@ -303,6 +319,12 @@ bool jv1080_voice_span(const struct xp_rom *rom,
                         int keyShift, size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
+/* Link a tone pair under structure `type` (the panel's 2..10): `second`
+   renders both from then on, and `first` must no longer be rendered on its
+   own. `booster` is the pair's booster setting, 0..3, read by types 3 and
+   4. */
+void jv1080_voice_pair(struct XpJv1080Voice *first, struct XpJv1080Voice *second,
+                       unsigned type, unsigned booster);
 /* A CC7 value reaching a voice that is already sounding. */
 void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume);
 /* The matrix controllers' sources moving under a sounding voice. */

@@ -1954,6 +1954,9 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
   voice->volume = volume;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
     voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+  voice->tone_gain = (voice->outer_level_gain > 0.0
+                        ? voice->gain_levels / voice->outer_level_gain : 0.0) *
+    voice->gain_velocity * voice->gain_wave;
 }
 
 /* THE CONTROLLER MATRIX. Each slot's effective depth is its depth times its
@@ -2074,234 +2077,423 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
     filter_env_enter(voice, 3u);
 }
 
+namespace {
+
+/* One sample of a voice, in the stages the structure types route between:
+   the control blocks, the wave generator, the amplitude envelope, the TVA's
+   gain, the TVF and the read head's advance. jv1080_voice_render runs them
+   in this order; a structured pair runs the two voices' stages in its own. */
+void voice_controls(struct XpJv1080Voice *voice, bool sweeping, bool lfoFilter)
+{
+  /* The LFOs, once per control block as the filter envelope is
+     (`M-074`). */
+  if (voice->lfo_active) {
+    if (!voice->lfo_countdown) {
+      lfo_update(voice, (double)voice->lfo_period * voice->sample_period);
+      if (lfoFilter && !sweeping)
+        set_biquad(voice, voice->filter_type,
+                    tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
+                    voice->resonance_q, voice->output_rate);
+      voice->lfo_countdown = voice->lfo_period;
+    }
+    --voice->lfo_countdown;
+  }
+  /* The pitch envelope, once per control block as the others are. */
+  if (voice->penv_active) {
+    if (!voice->penv_countdown) {
+      pitch_env_advance(voice, (double)voice->penv_period *
+                                 voice->sample_period);
+      voice->penv_ratio = std::pow(2.0, voice->penv_value / 1200.0);
+      voice->penv_countdown = voice->penv_period;
+    }
+    --voice->penv_countdown;
+  }
+  /* The filter envelope, once per control block rather than per sample
+     (`M-074`). A voice whose envelope cannot move the corner - no filter
+     or no depth - never enters here and its section is solved once at
+     note-on, as it was before this envelope existed. */
+  if (sweeping) {
+    if (!voice->control_countdown) {
+      filter_env_advance(voice, (double)voice->control_period *
+                                  voice->sample_period);
+      set_biquad(voice, voice->filter_type,
+                  tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
+                  voice->resonance_q, voice->output_rate);
+      voice->control_countdown = voice->control_period;
+    }
+    --voice->control_countdown;
+  }
+
+}
+
+bool voice_wave(struct XpJv1080Voice *voice, double *out)
+{
+  /* THE INTERPOLATOR IS A FOUR-POINT CUBIC B-SPLINE, the kernel this
+     chip was measured to use - the same one `oscillator.cc` gives the
+     sibling engine, since it is the same Roland part.
+
+     This read was two-point linear, on `M-087`. THAT MEASUREMENT IS
+     WITHDRAWN ON THE KERNEL by `M-107` and `M-108`, and the reason is
+     instructive rather than a correction of arithmetic: M-087 ranked
+     four candidates by time-domain correlation, all four of them
+     INTERPOLATING kernels and therefore the identity at fraction 0, so
+     none of them could represent a chip that smooths when the fraction
+     is zero and the ranking could not detect one. Linear won by being
+     the least sharp of four candidates all sharper than the chip. Read
+     as a RESPONSE instead, over 42 dB of span, a cubic B-spline fits to
+     0.63 and 0.59 dB rms on the two waves against two-point linear's
+     5.48 and 4.23; and a dedicated unity-ladder capture measures the
+     fraction-0 weights directly as `[w, 1-2w, w]` with
+     w = 0.1614 +- 0.0088, against 1/6 for the cubic (0.6 sigma) and 0
+     for every interpolating kernel (18.3 sigma). The chip is NOT
+     transparent at its own root key: it is 8.4 dB down at theta 0.39
+     where a linear read would be flat.
+
+     What that costs in the mix is the top octave. Reading linearly left
+     the interpolation's images unsmoothed, and against a hardware take
+     of the first factory song this engine carried 15.2 % of its energy
+     between 8 and 16 kHz where the machine carries 1.3 %. */
+  double frac;
+  double v0, v1, vBack, vFwd;
+  if (voice->in_cycle) {
+    /* Past the first turn, `position` is a position in the ping-pong
+       cycle, not an index into `pcm`. Every one of the four taps goes
+       through the same mapping, so the turn needs no special case: the
+       interpolator reads across it exactly as it reads anywhere else. */
+    long long c0 = (long long)voice->position;
+    frac = voice->position - (double)c0;
+    v0 = cycle_sample(voice, c0);
+    v1 = cycle_sample(voice, c0 + 1);
+    vBack = cycle_sample(voice, c0 - 1);
+    vFwd = cycle_sample(voice, c0 + 2);
+  } else {
+  size_t i0 = (size_t)voice->position;
+  /* The loop's last sample is a valid read head position - its partner
+     for the interpolation is the loop's first sample - so only a head
+     genuinely past it has run off the end. THE LOOP INCLUDES THAT LAST
+     SAMPLE: reading straight on past it instead costs the loop a sample,
+     a pitch error of one part in the loop's length, which is nothing on
+     a long loop and 73.6 measured cents on the internal `Sine` wave's
+     24-sample top zone. */
+  bool atLoopEnd = voice->looping && i0 == voice->loop_last;
+  if (!atLoopEnd && i0 + 1u >= voice->pcm_count) {
+    if (!voice->looping) {
+      voice->active = false;   /* the element is played out */
+      return false;
+    }
+    i0 = voice->loop_first;
+    voice->position = (double)i0;
+  }
+  frac = voice->position - (double)i0;
+  /* The uniform cubic B-spline basis, with `rest` = 1 - fraction:
+       index - 1   rest^3 / 6
+       index       2/3 - fraction^2 + fraction^3 / 2
+       index + 1   2/3 - rest^2     + rest^3 / 2
+       index + 2   fraction^3 / 6
+     which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
+     identity - and sums to one at every fraction. */
+  v0 = (double)voice->pcm[i0];
+  v1 = wave_tap(voice, i0, 1, v0);
+  vBack = wave_tap(voice, i0, -1, v0);
+  vFwd = wave_tap(voice, i0, 2, v1);
+  }
+  double rest = 1.0 - frac;
+  double sample = (rest * rest * rest / 6.0 * vBack +
+                    (2.0 / 3.0 - frac * frac * (1.0 - frac * 0.5)) * v0 +
+                    (2.0 / 3.0 - rest * rest * (1.0 - rest * 0.5)) * v1 +
+                    frac * frac * frac / 6.0 * vFwd) / 8388608.0;
+  *out = sample;
+  return true;
+}
+
+bool voice_envelope(struct XpJv1080Voice *voice)
+{
+  /* The envelope, one segment at a time. The attack follows its measured
+     shape over its measured duration; every later segment moves linearly
+     in level units over its one duration (see amp_env_segment_seconds).
+     Every segment that has run out is resolved before this sample's
+     value, so a chain of zero-length ones takes no time at all. Neither
+     is the chip's own segment stepper - that is internal (`M-011`'s own
+     caveat). */
+  if (voice->segment < 4u) {
+    while (voice->segment < 4u && voice->segment_remaining <= 0.0) {
+      voice->envelope = voice->level[voice->segment];
+      if (voice->releasing) {
+        voice->active = false;
+        break;
+      }
+      if (voice->segment < 2u) {
+        ++voice->segment;
+        voice->segment_start = voice->level_units[voice->segment - 1u];
+        voice->segment_total =
+          amp_env_segment_seconds(voice->time[voice->segment]);
+        voice->segment_remaining = voice->segment_total;
+      } else {
+        voice->segment = 4u;   /* holding the sustain level */
+        if (voice->pending_release || voice->release_at_sustain) {
+          jv1080_voice_release(voice);
+        } else if (voice->one_shot && voice->envelope < 1e-5) {
+          /* Holding at a level-3 of zero, with nothing left to come. */
+          voice->active = false;
+          break;
+        }
+      }
+    }
+    if (!voice->active)
+      return false;
+    if (voice->segment < 4u) {
+      double done = voice->segment_total > 0.0
+        ? 1.0 - voice->segment_remaining / voice->segment_total : 1.0;
+      if (!voice->segment) {
+        voice->envelope = voice->level[0] * amp_env_attack_shape(done);
+      } else {
+        double units = voice->segment_start +
+          (voice->level_units[voice->segment] - voice->segment_start) * done;
+        voice->envelope = amp_env_units_amplitude(units);
+      }
+      voice->segment_remaining -= voice->sample_period;
+    }
+  }
+  return true;
+}
+
+double voice_tva(const struct XpJv1080Voice *voice, double sample)
+{
+  double value = sample * voice->envelope * voice->static_gain;
+  if (voice->lfo_active)
+    value *= voice->lfo_gain;
+
+  return value;
+}
+
+double voice_tvf(struct XpJv1080Voice *voice, double value)
+{
+  if (voice->filter_type) {
+    double out = voice->b0 * value + voice->b1 * voice->x1 +
+      voice->b2 * voice->x2 - voice->a1 * voice->y1 - voice->a2 * voice->y2;
+    voice->x2 = voice->x1;
+    voice->x1 = value;
+    voice->y2 = voice->y1;
+    voice->y1 = out;
+    value = out;
+  }
+
+  return value;
+}
+
+bool voice_advance(struct XpJv1080Voice *voice)
+{
+  if (voice->reverse) {
+    double step = voice->increment * voice->bend_ratio *
+      voice->matrix_pitch_ratio * voice->penv_ratio;
+    if (voice->lfo_active)
+      step *= voice->lfo_pitch_ratio;
+    voice->position -= step;
+    if (voice->position < 1.0) {
+      voice->active = false;
+      return false;
+    }
+  } else {
+    double step = voice->increment * voice->bend_ratio *
+      voice->matrix_pitch_ratio * voice->penv_ratio;
+    if (voice->lfo_active)
+      step *= voice->lfo_pitch_ratio;
+    voice->position += step;
+    if (voice->in_cycle) {
+      /* Wrapped by the cycle, not by the loop's length: a full cycle is
+         the reflected descending pass and the forward ascending one, so
+         it is twice the loop. */
+      double cycle =
+        2.0 * (double)(voice->loop_last - voice->loop_first + 1u);
+      while (voice->position >= cycle)
+        voice->position -= cycle;
+    } else if (voice->position >= (double)voice->loop_last + 1.0) {
+      if (voice->ping_pong) {
+        /* The head has read loop_last and turned. Cycle position 0 is the
+           first reflected sample, at loop_last-1. */
+        voice->in_cycle = true;
+        voice->position -= (double)voice->loop_last + 1.0;
+      } else if (voice->looping)
+        voice->position -=
+          (double)(voice->loop_last - voice->loop_first + 1u);
+      else if (voice->position + 1.0 >= (double)voice->pcm_count) {
+        voice->active = false;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+void jv1080_voice_pair(struct XpJv1080Voice *first, struct XpJv1080Voice *second,
+                       unsigned type, unsigned booster)
+{
+  if (!first || !second)
+    return;
+  second->partner = first;
+  second->structure = type;
+  second->booster = booster > 3u ? 3u : booster;
+}
+
+namespace {
+
+/* THE STRUCTURE TYPES, as the owner's manual draws them (pp. 43-44): W is a
+   tone's wave generator, F its TVF, A its TVA, R the ring modulator, B the
+   booster.
+
+     2   A2 F2 F1 (A1 W1 + W2)
+     3   A2 F2 F1 B(A1 W1 + W2)
+     4   A2 F2 B(F1 (A1 W1 + W2))
+     5   A2 F2 F1 R(A1 W1, W2)
+     6   A2 F2 (F1 R(A1 W1, W2) + W2)
+     7   A2 F2 R(A1 F1 W1, W2)
+     8   A2 F2 (R(A1 F1 W1, W2) + W2)
+     9   A2 R(A1 F1 W1, F2 W2)
+     10  A2 (R(A1 F1 W1, F2 W2) + F2 W2)
+
+   MEASURED (`M-038`, `P-xxxx`, `structure/structure_1_2_s0..s9`,
+   `structure_3_4_s2`, `booster_1_2_b0..b3`: tone 1 `Synth Saw 2`, tone 2 a
+   `Sine` a fifth up, both at level 110, filters off; tones 3 and 4 answer
+   their own structure exactly as 1 and 2 do theirs). Type 2's saw falls
+   2.6 dB against type 1's - (110/127)^2, the saw through both TVAs - with
+   the sine unchanged.
+
+   The ring types keep the sine at -62.7 dB and the saw's own lines under
+   -80, and their sidebands reproduce the saw's harmonic balance (f2 + 2 f1
+   against f2 + f1: -7.2 dB, the saw's own h2 against h1), so R is a
+   product. Types 6, 8 and 10 restore the sine at -35.2; 5, 7 and 9 do not.
+   The f2 +- f1 sidebands stand 26.5 dB (geometric mean) above the sum, in
+   dB, of type 1's saw fundamental and sine. A product's scale moves with
+   the level gauge, taken here as the 512-patch sweep's median: our renders
+   4.6 dB over the takes. Against this take alone our saw runs 6.7 dB over
+   and the sine 4.4, so the scale is good to about 2 dB. The two sidebands
+   part the wrong way, f2 + f1 1.4 dB over f2 - f1 against 1.4 dB under on
+   the machine; that is not resolved.
+
+   The booster is a gain into a hard clip. The type 3 takes, set sample
+   against sample on the type 2 take - the booster's own input, through A2
+   alone, and the same waveform to a correlation of 0.996 - rise at slopes
+   1.00, 1.98 and 3.90 for boosts 0, 1 and 2, flat into one ceiling at all
+   four. Boost 3's slope is lost to the output's band limit (5.7 at the
+   crossing); clipping the type 2 take at gains 2 and 4 lands on boosts 1
+   and 2's third-octave spectra within 0.9 dB, and boost 3 lies between 8
+   and 10, so the doubling's 8 is taken, not resolved. The ceiling, 18.1
+   thousandths of the take's full scale, is 0.33 in the units below on the
+   same gauge. Whether it moves with tone 1's level, which scales half its
+   input, is not measured.
+
+   WHICH FILTER EACH SIGNAL PASSES THROUGH - all that separates 5 from 7
+   from 9, 6 from 8 from 10, and 3 from 4 - rests on the diagrams alone:
+   the takes run with the filters off and cannot see it. */
+const double kRingScale = 1.87;
+const double kBoostGain[4] = {1.0, 2.0, 4.0, 8.0};
+const double kBoostCeiling = 0.33;
+
+double boost(double x, unsigned setting)
+{
+  double y = kBoostGain[setting] * x;
+  return y > kBoostCeiling ? kBoostCeiling
+    : (y < -kBoostCeiling ? -kBoostCeiling : y);
+}
+
+bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
+{
+  struct XpJv1080Voice *v1 = v2->partner;
+  const bool sweep1 = v1->filter_type && v1->cutoff_offset != 0.0;
+  const bool lfoF1 = v1->filter_type &&
+    (v1->lfo_cutoff_units[0] != 0.0 || v1->lfo_cutoff_units[1] != 0.0);
+  const bool sweep2 = v2->filter_type && v2->cutoff_offset != 0.0;
+  const bool lfoF2 = v2->filter_type &&
+    (v2->lfo_cutoff_units[0] != 0.0 || v2->lfo_cutoff_units[1] != 0.0);
+  for (size_t n = 0; n < frames; ++n) {
+    double w1 = 0.0, g1 = 0.0;
+    voice_controls(v1, sweep1, lfoF1);
+    if (!v1->wave_done && !v1->envelope_done) {
+      if (!voice_wave(v1, &w1)) {
+        v1->wave_done = true;
+        w1 = 0.0;
+      } else if (!voice_envelope(v1)) {
+        v1->envelope_done = true;
+        w1 = 0.0;
+      } else {
+        g1 = v1->envelope * v1->tone_gain;
+        if (v1->lfo_active)
+          g1 *= v1->lfo_gain;
+      }
+      v1->active = true;
+    }
+    voice_controls(v2, sweep2, lfoF2);
+    double w2 = 0.0;
+    if (!v2->wave_done && !voice_wave(v2, &w2)) {
+      v2->wave_done = true;
+      v2->active = true;
+      w2 = 0.0;
+    }
+    if (!voice_envelope(v2))
+      break;
+    double x;
+    switch (v2->structure) {
+    case 2: x = voice_tvf(v2, voice_tvf(v1, g1 * w1 + w2)); break;
+    case 3:
+      x = voice_tvf(v2, voice_tvf(v1, boost(g1 * w1 + w2, v2->booster)));
+      break;
+    case 4:
+      x = voice_tvf(v2, boost(voice_tvf(v1, g1 * w1 + w2), v2->booster));
+      break;
+    case 5: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2)); break;
+    case 6: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2) + w2); break;
+    case 7: x = voice_tvf(v2, kRingScale * g1 * voice_tvf(v1, w1) * w2); break;
+    case 8: x = voice_tvf(v2, kRingScale * g1 * voice_tvf(v1, w1) * w2 + w2); break;
+    case 9: x = kRingScale * g1 * voice_tvf(v1, w1) * voice_tvf(v2, w2); break;
+    default: {
+      double f2 = voice_tvf(v2, w2);
+      x = kRingScale * g1 * voice_tvf(v1, w1) * f2 + f2;
+      break;
+    }
+    }
+    double value = voice_tva(v2, x);
+    l[n] += (float)(value * v2->gain_left);
+    r[n] += (float)(value * v2->gain_right);
+    if (!v1->wave_done && !v1->envelope_done && !voice_advance(v1)) {
+      v1->wave_done = true;
+      v1->active = true;
+    }
+    if (!v2->wave_done && !voice_advance(v2)) {
+      v2->wave_done = true;
+      v2->active = true;
+    }
+  }
+  return v2->active;
+}
+
+}  // namespace
+
 bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
                           size_t frames)
 {
   if (!voice || !voice->active || !voice->pcm || !l || !r)
     return false;
+  if (voice->partner && voice->structure >= 2u)
+    return render_pair(voice, l, r, frames);
 
   const bool sweeping = voice->filter_type && voice->cutoff_offset != 0.0;
   const bool lfoFilter = voice->filter_type &&
     (voice->lfo_cutoff_units[0] != 0.0 || voice->lfo_cutoff_units[1] != 0.0);
 
   for (size_t n = 0; n < frames; ++n) {
-    /* The LFOs, once per control block as the filter envelope is
-       (`M-074`). */
-    if (voice->lfo_active) {
-      if (!voice->lfo_countdown) {
-        lfo_update(voice, (double)voice->lfo_period * voice->sample_period);
-        if (lfoFilter && !sweeping)
-          set_biquad(voice, voice->filter_type,
-                      tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                      voice->resonance_q, voice->output_rate);
-        voice->lfo_countdown = voice->lfo_period;
-      }
-      --voice->lfo_countdown;
-    }
-    /* The pitch envelope, once per control block as the others are. */
-    if (voice->penv_active) {
-      if (!voice->penv_countdown) {
-        pitch_env_advance(voice, (double)voice->penv_period *
-                                   voice->sample_period);
-        voice->penv_ratio = std::pow(2.0, voice->penv_value / 1200.0);
-        voice->penv_countdown = voice->penv_period;
-      }
-      --voice->penv_countdown;
-    }
-    /* The filter envelope, once per control block rather than per sample
-       (`M-074`). A voice whose envelope cannot move the corner - no filter
-       or no depth - never enters here and its section is solved once at
-       note-on, as it was before this envelope existed. */
-    if (sweeping) {
-      if (!voice->control_countdown) {
-        filter_env_advance(voice, (double)voice->control_period *
-                                    voice->sample_period);
-        set_biquad(voice, voice->filter_type,
-                    tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
-                    voice->resonance_q, voice->output_rate);
-        voice->control_countdown = voice->control_period;
-      }
-      --voice->control_countdown;
-    }
-
-    /* THE INTERPOLATOR IS A FOUR-POINT CUBIC B-SPLINE, the kernel this
-       chip was measured to use - the same one `oscillator.cc` gives the
-       sibling engine, since it is the same Roland part.
-
-       This read was two-point linear, on `M-087`. THAT MEASUREMENT IS
-       WITHDRAWN ON THE KERNEL by `M-107` and `M-108`, and the reason is
-       instructive rather than a correction of arithmetic: M-087 ranked
-       four candidates by time-domain correlation, all four of them
-       INTERPOLATING kernels and therefore the identity at fraction 0, so
-       none of them could represent a chip that smooths when the fraction
-       is zero and the ranking could not detect one. Linear won by being
-       the least sharp of four candidates all sharper than the chip. Read
-       as a RESPONSE instead, over 42 dB of span, a cubic B-spline fits to
-       0.63 and 0.59 dB rms on the two waves against two-point linear's
-       5.48 and 4.23; and a dedicated unity-ladder capture measures the
-       fraction-0 weights directly as `[w, 1-2w, w]` with
-       w = 0.1614 +- 0.0088, against 1/6 for the cubic (0.6 sigma) and 0
-       for every interpolating kernel (18.3 sigma). The chip is NOT
-       transparent at its own root key: it is 8.4 dB down at theta 0.39
-       where a linear read would be flat.
-
-       What that costs in the mix is the top octave. Reading linearly left
-       the interpolation's images unsmoothed, and against a hardware take
-       of the first factory song this engine carried 15.2 % of its energy
-       between 8 and 16 kHz where the machine carries 1.3 %. */
-    double frac;
-    double v0, v1, vBack, vFwd;
-    if (voice->in_cycle) {
-      /* Past the first turn, `position` is a position in the ping-pong
-         cycle, not an index into `pcm`. Every one of the four taps goes
-         through the same mapping, so the turn needs no special case: the
-         interpolator reads across it exactly as it reads anywhere else. */
-      long long c0 = (long long)voice->position;
-      frac = voice->position - (double)c0;
-      v0 = cycle_sample(voice, c0);
-      v1 = cycle_sample(voice, c0 + 1);
-      vBack = cycle_sample(voice, c0 - 1);
-      vFwd = cycle_sample(voice, c0 + 2);
-    } else {
-    size_t i0 = (size_t)voice->position;
-    /* The loop's last sample is a valid read head position - its partner
-       for the interpolation is the loop's first sample - so only a head
-       genuinely past it has run off the end. THE LOOP INCLUDES THAT LAST
-       SAMPLE: reading straight on past it instead costs the loop a sample,
-       a pitch error of one part in the loop's length, which is nothing on
-       a long loop and 73.6 measured cents on the internal `Sine` wave's
-       24-sample top zone. */
-    bool atLoopEnd = voice->looping && i0 == voice->loop_last;
-    if (!atLoopEnd && i0 + 1u >= voice->pcm_count) {
-      if (!voice->looping) {
-        voice->active = false;   /* the element is played out */
-        break;
-      }
-      i0 = voice->loop_first;
-      voice->position = (double)i0;
-    }
-    frac = voice->position - (double)i0;
-    /* The uniform cubic B-spline basis, with `rest` = 1 - fraction:
-         index - 1   rest^3 / 6
-         index       2/3 - fraction^2 + fraction^3 / 2
-         index + 1   2/3 - rest^2     + rest^3 / 2
-         index + 2   fraction^3 / 6
-       which is [1/6, 2/3, 1/6, 0] at fraction 0 - a smoother, not an
-       identity - and sums to one at every fraction. */
-    v0 = (double)voice->pcm[i0];
-    v1 = wave_tap(voice, i0, 1, v0);
-    vBack = wave_tap(voice, i0, -1, v0);
-    vFwd = wave_tap(voice, i0, 2, v1);
-    }
-    double rest = 1.0 - frac;
-    double sample = (rest * rest * rest / 6.0 * vBack +
-                      (2.0 / 3.0 - frac * frac * (1.0 - frac * 0.5)) * v0 +
-                      (2.0 / 3.0 - rest * rest * (1.0 - rest * 0.5)) * v1 +
-                      frac * frac * frac / 6.0 * vFwd) / 8388608.0;
-
-    /* The envelope, one segment at a time. The attack follows its measured
-       shape over its measured duration; every later segment moves linearly
-       in level units over its one duration (see amp_env_segment_seconds).
-       Every segment that has run out is resolved before this sample's
-       value, so a chain of zero-length ones takes no time at all. Neither
-       is the chip's own segment stepper - that is internal (`M-011`'s own
-       caveat). */
-    if (voice->segment < 4u) {
-      while (voice->segment < 4u && voice->segment_remaining <= 0.0) {
-        voice->envelope = voice->level[voice->segment];
-        if (voice->releasing) {
-          voice->active = false;
-          break;
-        }
-        if (voice->segment < 2u) {
-          ++voice->segment;
-          voice->segment_start = voice->level_units[voice->segment - 1u];
-          voice->segment_total =
-            amp_env_segment_seconds(voice->time[voice->segment]);
-          voice->segment_remaining = voice->segment_total;
-        } else {
-          voice->segment = 4u;   /* holding the sustain level */
-          if (voice->pending_release || voice->release_at_sustain) {
-            jv1080_voice_release(voice);
-          } else if (voice->one_shot && voice->envelope < 1e-5) {
-            /* Holding at a level-3 of zero, with nothing left to come. */
-            voice->active = false;
-            break;
-          }
-        }
-      }
-      if (!voice->active)
-        break;
-      if (voice->segment < 4u) {
-        double done = voice->segment_total > 0.0
-          ? 1.0 - voice->segment_remaining / voice->segment_total : 1.0;
-        if (!voice->segment) {
-          voice->envelope = voice->level[0] * amp_env_attack_shape(done);
-        } else {
-          double units = voice->segment_start +
-            (voice->level_units[voice->segment] - voice->segment_start) * done;
-          voice->envelope = amp_env_units_amplitude(units);
-        }
-        voice->segment_remaining -= voice->sample_period;
-      }
-    }
-
-    double value = sample * voice->envelope * voice->static_gain;
-    if (voice->lfo_active)
-      value *= voice->lfo_gain;
-
-    if (voice->filter_type) {
-      double out = voice->b0 * value + voice->b1 * voice->x1 +
-        voice->b2 * voice->x2 - voice->a1 * voice->y1 - voice->a2 * voice->y2;
-      voice->x2 = voice->x1;
-      voice->x1 = value;
-      voice->y2 = voice->y1;
-      voice->y1 = out;
-      value = out;
-    }
-
+    voice_controls(voice, sweeping, lfoFilter);
+    double sample;
+    if (!voice_wave(voice, &sample))
+      break;
+    if (!voice_envelope(voice))
+      break;
+    double value = voice_tvf(voice, voice_tva(voice, sample));
     l[n] += (float)(value * voice->gain_left);
     r[n] += (float)(value * voice->gain_right);
-
-    if (voice->reverse) {
-      double step = voice->increment * voice->bend_ratio *
-        voice->matrix_pitch_ratio * voice->penv_ratio;
-      if (voice->lfo_active)
-        step *= voice->lfo_pitch_ratio;
-      voice->position -= step;
-      if (voice->position < 1.0) {
-        voice->active = false;
-        break;
-      }
-    } else {
-      double step = voice->increment * voice->bend_ratio *
-        voice->matrix_pitch_ratio * voice->penv_ratio;
-      if (voice->lfo_active)
-        step *= voice->lfo_pitch_ratio;
-      voice->position += step;
-      if (voice->in_cycle) {
-        /* Wrapped by the cycle, not by the loop's length: a full cycle is
-           the reflected descending pass and the forward ascending one, so
-           it is twice the loop. */
-        double cycle =
-          2.0 * (double)(voice->loop_last - voice->loop_first + 1u);
-        while (voice->position >= cycle)
-          voice->position -= cycle;
-      } else if (voice->position >= (double)voice->loop_last + 1.0) {
-        if (voice->ping_pong) {
-          /* The head has read loop_last and turned. Cycle position 0 is the
-             first reflected sample, at loop_last-1. */
-          voice->in_cycle = true;
-          voice->position -= (double)voice->loop_last + 1.0;
-        } else if (voice->looping)
-          voice->position -=
-            (double)(voice->loop_last - voice->loop_first + 1u);
-        else if (voice->position + 1.0 >= (double)voice->pcm_count) {
-          voice->active = false;
-          break;
-        }
-      }
-    }
+    if (!voice_advance(voice))
+      break;
   }
   return voice->active;
 }

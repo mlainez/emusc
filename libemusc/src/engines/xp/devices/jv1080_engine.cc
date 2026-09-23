@@ -620,6 +620,10 @@ struct Voice {
   /* A KEY-OFF-DECAY voice runs from its note-on unheard until its release
      begins. */
   bool muted;
+  /* A structured tone pair: `pair` is the other voice, and the first
+     tone's voice, `pair_feed`, is rendered by the second's. */
+  struct Voice *pair;
+  bool pair_feed;
 };
 
 /* MEASURED (`M-014`): linear in the 14-bit value, scaled by the range on
@@ -823,6 +827,15 @@ struct Engine {
    `M-052`), so a voice carries its part's send from note-on. */
 void free_voice(struct Voice *voice)
 {
+  if (struct Voice *other = voice->pair) {
+    voice->pair = nullptr;
+    other->pair = nullptr;
+    if (voice->pair_feed)
+      other->voice.partner = nullptr;
+    else
+      free_voice(other);
+  }
+  voice->pair_feed = false;
   std::free(voice->pcm);
   voice->pcm = nullptr;
   voice->capacity = 0;
@@ -2016,7 +2029,7 @@ unsigned voice_destination(const struct Engine *engine, unsigned part,
 /* `key` is the note as received, which a note-off matches; `sounded` is
    the note the record plays, which is the same key but for the patch's
    octave shift. */
-bool start_record(struct Engine *engine, unsigned part,
+struct Voice *start_record(struct Engine *engine, unsigned part,
                    const struct XpVoiceFieldMap *fields, const uint8_t *bytes,
                    unsigned key, unsigned velocity, unsigned sounded)
 {
@@ -2025,25 +2038,25 @@ bool start_record(struct Engine *engine, unsigned part,
     .part[xp_profile(&engine->rom)->partFieldKeyShift];
   if (!jv1080_voice_span(&engine->rom, fields, bytes, sounded, velocity,
                          keyShift, &samples) || !samples)
-    return false;
+    return nullptr;
 
   struct Voice *voice = take_voice(engine);
   if (!voice)
-    return false;
+    return nullptr;
   /* The decode is differential, so a sample's value depends on every delta
      before it in the block and the element's span is decoded whole at
      note-on rather than streamed. The sibling engine's renderer does the
      same thing for the same reason. */
   int32_t *pcm = (int32_t *)std::malloc(samples * sizeof *pcm);
   if (!pcm)
-    return false;
+    return nullptr;
   struct XpJv1080PartControls controls;
   part_controls(engine, part, &controls);
   if (!jv1080_voice_start(&engine->rom, fields, bytes, &controls, sounded,
                           velocity, engine->banks, engine->bank_sizes, pcm,
                           samples, engine->output_rate, &voice->voice)) {
     std::free(pcm);
-    return false;
+    return nullptr;
   }
   voice->pcm = pcm;
   voice->capacity = samples;
@@ -2140,7 +2153,7 @@ bool start_record(struct Engine *engine, unsigned part,
     voice->wait = 0u;
     break;
   }
-  return true;
+  return voice;
 }
 
 /* Render a voice through its tone delay: nothing until it is due, then the
@@ -2437,6 +2450,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       engine->parts[part].common[sw] != 0u;
     const uint16_t vlo = profile->toneFields.velocityRangeLow;
     const uint16_t vhi = profile->toneFields.velocityRangeHigh;
+    struct Voice *toneVoice[XP_JV1080_TONES_PER_PATCH] = {};
     for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
       const uint8_t *bytes = engine->parts[part].tone[t];
       uint8_t open[XP_JV1080_TONE_FIELDS];
@@ -2446,8 +2460,37 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
         open[vhi] = 127u;
         bytes = open;
       }
-      started += start_record(engine, part, &profile->toneFields, bytes, key,
-                               velocity, sounded) ? 1u : 0u;
+      toneVoice[t] = start_record(engine, part, &profile->toneFields, bytes, key,
+                               velocity, sounded);
+      started += toneVoice[t] ? 1u : 0u;
+    }
+    /* THE STRUCTURES, types 2 and 5 to 10: a pair both of whose tones sound
+       renders as one voice through the second tone (see `render_pair`),
+       which carries the pair's output, pan and sends - the manual's own
+       rule. A pair with one tone silent plays as type 1, as the manual
+       says, and so, here, does a pair either of whose tones waits on a
+       tone delay: how a delayed tone joins its pair is not measured.
+       Types 3 and 4, the booster's, play as type 1. */
+    const uint16_t structField[2] = {profile->patchFieldStructure12,
+                                     profile->patchFieldStructure34};
+    const uint16_t boostField[2] = {profile->patchFieldBooster12,
+                                    profile->patchFieldBooster34};
+    for (unsigned k = 0; k < 2u; ++k) {
+      if (structField[k] == XP_VOICE_FIELD_NONE)
+        continue;
+      unsigned type = (unsigned)engine->parts[part].common[structField[k]] + 1u;
+      struct Voice *first = toneVoice[2u * k];
+      struct Voice *second = toneVoice[2u * k + 1u];
+      if (type < 2u || type > 10u || type == 3u || type == 4u || !first ||
+          !second || first->wait || second->wait || first->muted ||
+          second->muted)
+        continue;
+      unsigned boosted = boostField[k] == XP_VOICE_FIELD_NONE ? 0u
+        : (unsigned)engine->parts[part].common[boostField[k]];
+      first->pair = second;
+      first->pair_feed = true;
+      second->pair = first;
+      jv1080_voice_pair(&first->voice, &second->voice, type, boosted);
     }
     engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
   });
@@ -2980,7 +3023,7 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
     bool sending = false;
     for (unsigned i = 0; i < kMaxVoices; ++i) {
       struct Voice *voice = engine->voices + i;
-      if (!voice->allocated)
+      if (!voice->allocated || voice->pair_feed)
         continue;
       /* A voice assigned to OUTPUT1 or OUTPUT2 leaves the machine by its
          own jacks and is not on the MIX bus the chorus and reverb return
