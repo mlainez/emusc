@@ -281,8 +281,15 @@ const unsigned kEfxPreDelayTable = 9u;     /* XP_EFX_TABLE_PRE_DELAY */
    MODULATION-DELAY is absent for a different reason - everything about its
    LFO is measured and matches these two exactly, but its delay times are
    not, and a delay whose time is guessed is not the effect. */
+/* The shape the delay is swept with, named by the DEVIATION it produces,
+   because that is what is measured. A triangle delay makes the carrier's
+   frequency deviation a SQUARE; a parabolic one makes it a SAWTOOTH. */
+#define kEfxModTriangle 0u
+#define kEfxModParabola 1u
+
 struct EfxModSpec {
   unsigned type;
+  unsigned shape;
   unsigned nominal[2];          /* the still delay each channel sweeps from */
   unsigned nominalTable;        /* which conversion table those slots read */
   unsigned rate, depth, phase, balance, level;
@@ -293,16 +300,35 @@ struct EfxModSpec {
 const struct EfxModSpec kEfxModSpecs[] = {
   /* 14 STEREO-CHORUS: one pre-delay for both channels; p7 has a ceiling of
      127 and a factory 0 and is not identified, so no feedback is applied. */
-  { 13u, { 2u, 2u }, kEfxPreDelayTable, 3u, 4u, 5u, 9u, 10u, -1, -1, 12.38 },
-  /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback. */
-  { 14u, { 2u, 2u }, kEfxPreDelayTable, 3u, 4u, 5u, 9u, 10u,  6, -1, 12.32 },
+  { 13u, kEfxModTriangle, { 2u, 2u }, kEfxPreDelayTable,
+    3u, 4u, 5u, 9u, 10u, -1, -1, 12.38 },
+  /* 15 STEREO-FLANGER: the same layout with p7 a bipolar feedback - and a
+     DIFFERENT modulator, which took three attempts to pin down. Its
+     deviation's harmonic ratios at the rates where they resolve read
+     h2 0.462, h3 0.344, h4 0.261, h5 0.191 against an ideal sawtooth's
+     0.500, 0.333, 0.250, 0.200; the chorus at the same settings reads
+     0.006, 0.343, 0.002, 0.191 against an ideal square's 0, 0.333, 0,
+     0.200. Every harmonic present, not just the odd ones, is what
+     separates the two, and peak/rms cannot - a triangle and a sawtooth
+     both give root three.
+
+     Two wrong explanations were tried and measured away first: the filter
+     pair, which does nothing to the deviation on either type (driven off,
+     type 15 still reads 1.709), and clipping against the delay floor,
+     which would have shown as a dependence on the pre-delay and does not
+     - 10, 32, 64 and 96 give the same harmonics to three decimals. That
+     last one also settles the direction: a sweep this wide that never
+     clips at a 1.00 ms nominal is one-sided UPWARD, as the chorus's is. */
+  { 14u, kEfxModParabola, { 2u, 2u }, kEfxPreDelayTable,
+    3u, 4u, 5u, 9u, 10u,  6, -1, 12.32 },
   /* 18 MODULATION-DELAY: a stereo delay with the same LFO on top. Its two
      delay slots read `0x038FC8` at `ms = table / 32`, measured with the
      depth at zero so the delay stands still - ratio 1.0000 at values 16,
      32, 64, 96, 112 and 126, which is 1.59 ms to 500.01 ms, a 314x range.
      `0x038EC8` predicts 46, 74 and 101 ms where the machine gives 100, 260
      and 500, so it is not that table. */
-  { 17u, { 1u, 2u }, kEfxDelayTable, 5u, 6u, 7u, 10u, 11u,  3,  4, 49.55 },
+  { 17u, kEfxModTriangle, { 1u, 2u }, kEfxDelayTable,
+    5u, 6u, 7u, 10u, 11u,  3,  4, 49.55 },
 };
 const unsigned kEfxModSpecCount =
   (unsigned)(sizeof kEfxModSpecs / sizeof *kEfxModSpecs);
@@ -496,6 +522,7 @@ struct Engine {
   double efx_lfo_offset;
   double efx_sweep;
   double efx_nominal[2];
+  unsigned efx_shape;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1062,7 +1089,9 @@ void efx_time_control_refresh(struct Engine *engine)
   engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
 }
 
-/* A SYMMETRIC triangle: 0 at the bottom, 1 at the top, equal slopes.
+/* The sweep shape, 0 at one end and 1 at the other.
+
+   A SYMMETRIC triangle: 0 at the bottom, 1 at the top, equal slopes.
 
    The symmetry is measured, not assumed. Wet-only, this modulator makes the
    carrier's frequency deviation a SQUARE wave - peak/rms 1.030 to 1.055
@@ -1070,9 +1099,16 @@ void efx_time_control_refresh(struct Engine *engine)
    harmonic 0.26 to 0.37 against 1/3 and fifth 0.18 to 0.24 against 1/5 -
    with a duty of 0.484 to 0.502. A sawtooth would put the duty far from a
    half and a strong second harmonic in the deviation; neither is there. */
-float efx_triangle(double phase)
+float efx_mod_shape(unsigned shape, double phase)
 {
   phase -= std::floor(phase);
+  if (shape == kEfxModParabola) {
+    /* zero at the middle of the cycle, full sweep at its ends, so the
+       delay runs upward from the nominal and its VELOCITY ramps linearly
+       and resets - which is the sawtooth deviation that is measured. */
+    double u = 2.0 * phase - 1.0;
+    return (float)(u * u);
+  }
   return (float)(phase < 0.5 ? 2.0 * phase : 2.0 * (1.0 - phase));
 }
 
@@ -1098,6 +1134,7 @@ void efx_modulated_refresh(struct Engine *engine)
     return;
   double scale = engine->output_rate / kXpNativeRate;
   double sweep_max = spec->sweepMs * engine->output_rate / 1000.0;
+  engine->efx_shape = spec->shape;
   {
     unsigned n = 0;
     efx_table_shape(&engine->rom, spec->nominalTable, &n, NULL);
@@ -1204,11 +1241,13 @@ void efx_mod_process(struct Engine *engine, const float *inL,
        two agree about what a delay of one sample means. */
     float l = efx_tap(engine, 0, engine->efx_nominal[0] +
                        engine->efx_sweep *
-                       efx_triangle(engine->efx_lfo_phase));
+                       efx_mod_shape(engine->efx_shape,
+                                      engine->efx_lfo_phase));
     float r = efx_tap(engine, 1, engine->efx_nominal[1] +
                        engine->efx_sweep *
-                       efx_triangle(engine->efx_lfo_phase +
-                                     engine->efx_lfo_offset));
+                       efx_mod_shape(engine->efx_shape,
+                                      engine->efx_lfo_phase +
+                                      engine->efx_lfo_offset));
     /* the damping one-pole, on the way round the loop; at damp 0 it is the
        identity and the two feedback-less types are unaffected */
     for (unsigned c = 0; c < 2u; ++c) {
