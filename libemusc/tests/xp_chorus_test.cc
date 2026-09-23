@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 #include "engines/xp/chorus.h"
+#include "engines/xp/devices/jv1080.h"
 
 #include <cassert>
 #ifdef NDEBUG
@@ -100,5 +101,42 @@ int main()
 
   chorus_destroy(&ch);
   assert(!chorus_init(&ch, 1000.0, &SC88_PROFILE));
+
+  /* The feedback source is the profile's. With the sweep held at phase 0,
+     a rising triangle puts the left tap at 100 samples and the right at
+     140, so an impulse's second pass tells the sources apart: fed back
+     from the left tap, the left output repeats at 200 and not at 240;
+     fed back from the mean, it repeats at both at half the gain. */
+  assert(SC88_PROFILE.chorusFeedbackTap == XP_CHORUS_FB_TAP_MEAN);
+  assert(JV1080_PROFILE.chorusFeedbackTap == XP_CHORUS_FB_TAP_LEFT);
+  {
+    static float out[300 * 2];
+    static float in[300];
+    const uint8_t taps[2] = { XP_CHORUS_FB_TAP_LEFT, XP_CHORUS_FB_TAP_MEAN };
+    for (unsigned t = 0; t < 2; ++t) {
+      struct XpDeviceProfile p = SC88_PROFILE;
+      p.chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP;
+      p.chorusFeedbackTap = taps[t];
+      assert(chorus_init(&ch, 32000.0, &p));
+      chorus_set_params(NULL, &ch, 0, 0, 0, 0, 0, 0);
+      chorus_set_runtime(&ch, 100.0, 40.0, 0.0, 0.5f, 1.0f);
+      chorus_reset(&ch);
+      memset(out, 0, sizeof out);
+      memset(in, 0, sizeof in);
+      in[0] = 1.0f;
+      chorus_process(&ch, in, out, 300);
+      assert(fabs(out[100 * 2] - 1.0) < 1e-6);
+      assert(fabs(out[140 * 2 + 1] - 1.0) < 1e-6);
+      if (taps[t] == XP_CHORUS_FB_TAP_LEFT) {
+        assert(fabs(out[200 * 2] - 0.5) < 1e-6);
+        assert(fabs(out[240 * 2]) < 1e-6);
+        assert(fabs(out[240 * 2 + 1] - 0.5) < 1e-6);
+      } else {
+        assert(fabs(out[200 * 2] - 0.25) < 1e-6);
+        assert(fabs(out[240 * 2] - 0.25) < 1e-6);
+      }
+      chorus_destroy(&ch);
+    }
+  }
   return 0;
 }

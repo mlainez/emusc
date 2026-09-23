@@ -178,14 +178,14 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      being only 5.3 cents of excursion where `M-043` found its own depth-0
      reading of 1.5 cents to be that floor.
 
-     FEEDBACK IS NOT PLUMBED, for the same reason the reverb's is not: the
-     parameter's CRAM slot is not in the extracted tables and identifying
-     it needs the disassembly `U-R5-01`'s remaining half needs. The
-     recordings show it matters - feedback 127 sustains past 200 ms where 0
-     falls to the noise floor in 50 - so this is a known gap and not a
-     judgement that it does nothing. */
+     FEEDBACK: the level table read unshifted (jv1080_engine.cc), taken
+     from the left tap alone and written back ahead of the pre-delay
+     (`M-112`). What is not recovered is an extra loss of about 0.0017 dB
+     per pass that hardware shows at feedback 127 beyond the table's own
+     8191/8192; it is left out rather than fitted. */
   .chorusMaxMs = 128.0,
   .chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP,
+  .chorusFeedbackTap = XP_CHORUS_FB_TAP_LEFT,   /* M-112 */
   .chorusPreDelayTable = 0x038EC8u,
   .chorusRateTable = 0x038B2Eu,
   .chorusRateAccumulator = 65536.0,

@@ -264,6 +264,9 @@ const struct XpDeviceProfile SC88_PROFILE = {
      sound chip runs its lines at, so every recovered length is converted
      from that. */
   .chorusMaxMs = 64.0,
+  /* Unmeasured on this device: the mean of both taps is an assumption,
+     not a reading (see `chorusFeedbackTap`). */
+  .chorusFeedbackTap = XP_CHORUS_FB_TAP_MEAN,
 
   /* Centre of the 255-word bipolar pitch-control curve at
    * 0x78304..0x78502, indexed -127..127 about this address

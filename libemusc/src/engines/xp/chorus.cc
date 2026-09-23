@@ -68,6 +68,7 @@ bool chorus_init(struct xp_chorus *ch, double outputRate,
   ch->output_rate = outputRate;
   ch->pre_in = 1.0f;
   ch->modulator = profile->chorusModulator;
+  ch->feedback_tap = profile->chorusFeedbackTap;
   /* GS's own defaults: level 0x40, feedback 0x08, delay 0x50, rate 0x03,
      depth 0x13, pre-LPF 0 (`04_protocol/sysex.md`). */
   chorus_set_params(nullptr, ch, 0x40, 0x08, 0x50, 0x03, 0x13, 0);
@@ -192,7 +193,9 @@ void chorus_process(struct xp_chorus *ch, const float *send, float *stereo,
        DSP's stereo phase is not decoded. */
     float left = tap(ch, ch->delay_samples + sweep * ch->depth_samples);
     float right = tap(ch, ch->delay_samples + other * ch->depth_samples);
-    ch->buf[ch->pos] = x + ch->feedback * 0.5f * (left + right);
+    float back = ch->feedback_tap == XP_CHORUS_FB_TAP_LEFT
+      ? left : 0.5f * (left + right);
+    ch->buf[ch->pos] = x + ch->feedback * back;
     if (++ch->pos >= ch->len)
       ch->pos = 0;
     ch->phase += ch->phase_step;
