@@ -453,7 +453,10 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x77u,
     .coarseTune = 0x3du,
     .fineTune = 0x3eu,
+    .toneDelayMode = 0x09u,
+    .toneDelayTime = 0x0au,
     .pitchKeyFollow = 0x40u,
+    .cutoffKeyFollow = 0x52u,
     .sourceKey = XP_VOICE_FIELD_NONE,
     /* MIX / EFX / OUTPUT1 / OUTPUT2 (`05_data_model/partial_schema.md`,
        PRG 0x057158). A tone has no PATCH value - only a part does. */
@@ -487,7 +490,10 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x33u,
     .coarseTune = XP_VOICE_FIELD_NONE,
     .fineTune = 0x0du,
+    .toneDelayMode = XP_VOICE_FIELD_NONE,
+    .toneDelayTime = XP_VOICE_FIELD_NONE,
     .pitchKeyFollow = XP_VOICE_FIELD_NONE,
+    .cutoffKeyFollow = XP_VOICE_FIELD_NONE,
     .sourceKey = 0x0cu,
     .outputAssign = 0x36u,       /* the rhythm note's own, same four values */
     .cutoff = 0x1bu,
@@ -522,11 +528,16 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      on the first factory song's part 6, whose tone 1 sounds 5 semitones
      under its unison at key 70 on the hardware take (TASK-356). That
      reading also puts the pivot at key 60, as `M-077` has it for every
-     key-scaling field on this machine. The rhythm note has no such
+     key-scaling field on this machine.
+
+     CUTOFF KEY FOLLOW, the tone's field 0x52, indexes the same list, and
+     the displayed percentage is again the law: MEASURED (`M-077`) at
+     indices 0, 5, 12 and 15 as -1.003, +0.002, +0.991 and +2.03 octaves of
+     corner per octave of key about key 60. The rhythm note has neither
      field. */
-  .pitchKeyFollowTable = 0x057541u,
-  .pitchKeyFollowCount = 16u,
-  .pitchKeyFollowWidth = 4u,
+  .keyFollowTable = 0x057541u,
+  .keyFollowCount = 16u,
+  .keyFollowWidth = 4u,
 
   /* The rhythm set is groups 8 and 9, addressed as part index 9 - which is
      MIDI part 10 - and holds the 64 keys 35 to 98. */

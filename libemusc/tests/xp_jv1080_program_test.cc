@@ -12,6 +12,7 @@
  */
 #include "engines/xp/device.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -216,6 +217,76 @@ int main(void)
     double half = strongest_hz(render(roms, kf(10), 0, 72));
     assert(full > 0.0 && half > 0.0);
     assert(std::fabs(1200.0 * std::log2(full / half) - 600.0) < 5.0);
+  }
+
+  /* Cutoff key follow, tone field 0x52, on the same tone, whose filter is
+     a low-pass at cutoff 58, its F-ENV depth zeroed (wire 63) so that the
+     envelope does not carry the corner to the top of its range: index 5
+     (0 %) and 12 (+100 %) meet at key 60, and two octaves up, where the
+     note's fundamental sits above both corners, +100 %'s corner is two
+     octaves higher and passes far more of it. */
+  auto ckf = [](uint8_t index) {
+    return [index](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x55, 63);
+      tone_field(d, 1, 0x52, index);
+    };
+  };
+  assert(render(roms, ckf(5)) == render(roms, ckf(12)));
+  assert(energy(render(roms, ckf(12), 0, 84)) >
+         10.0 * energy(render(roms, ckf(5), 0, 84)));
+
+  /* Tone delay, fields 0x09 (mode) and 0x0A (time), on the same tone.
+     NORMAL at time 16 starts it 170 ms after the note-on (`M-016`); a
+     KEY-OFF tone does not sound while the key is held; and HOLD cancels a
+     tone whose key comes up before its delay has run. */
+  auto delay = [](uint8_t mode, uint8_t time) {
+    return [mode, time](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x09, mode);
+      tone_field(d, 1, 0x0a, time);
+    };
+  };
+  {
+    auto first = [](const std::vector<float> &x) {
+      size_t i = 0;
+      while (i < kFrames && x[2 * i] == 0.0f && x[2 * i + 1] == 0.0f)
+        ++i;
+      return i;
+    };
+    size_t at0 = first(render(roms, delay(0, 0)));
+    assert(at0 < 64);
+    assert(first(render(roms, delay(0, 16))) ==
+           at0 + (size_t)std::lround(0.170 * kRate));
+    assert(render(roms, delay(0, 0)) == render(roms, [](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+    }));
+    assert(energy(render(roms, delay(5, 0))) == 0.0);
+    assert(energy(render(roms, delay(6, 0))) == 0.0);
+    std::vector<float> out(2 * kFrames);
+    auto early_release = [&](uint8_t mode) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      delay(mode, 16)(d);
+      midi(d, 0x90, 60, 100);
+      std::fill(out.begin(), out.end(), 0.0f);
+      EmuSC::Xp::device_render(d, out.data(), 1024);  /* 32 ms, inside it */
+      midi(d, 0x80, 60, 0);
+      EmuSC::Xp::device_render(d, out.data() + 2048, kFrames - 1024);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return energy(out);
+    };
+    assert(early_release(1) == 0.0);    /* HOLD: cancelled */
+    assert(early_release(0) > 0.0);     /* NORMAL: sounds, postponed */
   }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,
