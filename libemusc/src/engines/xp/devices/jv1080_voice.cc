@@ -2289,7 +2289,11 @@ bool voice_wave(struct XpJv1080Voice *voice, double *out)
      a long loop and 73.6 measured cents on the internal `Sine` wave's
      24-sample top zone. */
   bool atLoopEnd = voice->looping && i0 == voice->loop_last;
-  if (!atLoopEnd && i0 + 1u >= voice->pcm_count) {
+  /* A reversed element starts its head on the last sample and walks down,
+     so the far end is where it begins, not where it has played out; its
+     own end is voice_advance's, and wave_tap stands in for the tap past
+     the last sample. */
+  if (!voice->reverse && !atLoopEnd && i0 + 1u >= voice->pcm_count) {
     if (!voice->looping) {
       voice->active = false;   /* the element is played out */
       return false;
