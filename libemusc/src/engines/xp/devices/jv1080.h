@@ -106,6 +106,17 @@ struct XpJv1080Voice {
   size_t loop_last;
   bool looping;
   bool reverse;
+  /* A ping-pong loop (`loop type 1`) does not read forward. Its turn is a
+     REFLECTION, not a time reversal, because the wave format is a
+     differential one: running the address back down the stream while still
+     accumulating what it reads gives the loop backwards and reflected about
+     the value it turned at, continuous in value AND in slope. Once the head
+     has passed the loop's end, `position` stops being an index into `pcm`
+     and becomes a position in a cycle of `2 * (loop_last - loop_first + 1)`
+     - the reflected descending pass, then the forward ascending one - and
+     `in_cycle` says which of the two meanings it currently has. */
+  bool ping_pong;
+  bool in_cycle;
 
   /* Amplitude. static_gain is everything that does not move: the level
      fields' square law, the velocity curve and the wave gain. */

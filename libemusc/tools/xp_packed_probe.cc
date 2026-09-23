@@ -24,6 +24,7 @@
  * the engine would play.
  */
 #include "engines/xp/devices/jv1080.h"
+#include "engines/xp/efx.h"
 #include "engines/xp/packed_rom.h"
 #include "engines/xp/rom.h"
 #include "engines/xp/wave.h"
@@ -108,7 +109,9 @@ void usage(void)
     "  xp_packed_probe patch <control.bin> <w1> <w2> <w3> <w4> "
     "<bank> <program> <key> <velocity> <seconds> <out.wav>\n"
     "  xp_packed_probe song <control.bin> <w1> <w2> <w3> <w4> "
-    "<song.mid> <seconds> <out.wav>\n");
+    "<song.mid> <seconds> <out.wav>\n"
+    "  xp_packed_probe perfparts <control.bin> <w1> <w2> <w3> <w4> "
+    "<song.mid>\n");
   std::exit(1);
 }
 
@@ -413,6 +416,182 @@ int main(int argc, char **argv)
     }
     WavWriter wav(outPath, (uint32_t)kRate, 2, true);
     wav.write(interleaved.data(), frames);
+    return 0;
+  }
+
+  /* What a song's own SysEx leaves in each performance PART record, decoded
+     by the engine's own applier rather than by a reading of the wire bytes:
+     the `01 00 1n xx` frames are the only place a part's sends can come
+     from, and a field read by eye off the payload is exactly the mistake
+     that made the coarse tunes look inert. */
+  if (mode == "perfparts") {
+    if (argc < 8)
+      usage();
+    std::vector<uint8_t> songBytes = read_file(argv[7]);
+    smf::File song = smf::parse(songBytes);
+    const unsigned kParts = 16u;
+    const unsigned kPartFields = 20u;
+    std::vector<std::vector<uint8_t>> part(
+      kParts, std::vector<uint8_t>(kPartFields, 0));
+    unsigned applied = 0;
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x01u || x[6] != 0x00u || (x[7] & 0xf0u) != 0x10u)
+        continue;
+      unsigned index = x[7] & 0x0fu;
+      unsigned within = x[8];
+      if (index >= kParts || within >= kPartFields)
+        continue;
+      packed_apply_wire_block(&rom, profile->packedPerformancePartGroup,
+                              within, x.data() + 9, x.size() - 11u,
+                              part[index].data(), kPartFields);
+      ++applied;
+    }
+    /* And the performance COMMON, where this device keeps the reverb and
+       chorus parameters themselves: a send means nothing if the return it
+       feeds is closed. */
+    const unsigned kCommonFields = 66u;
+    std::vector<uint8_t> common(kCommonFields, 0);
+    unsigned commonFrames = 0;
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x01u || x[6] != 0x00u || x[7] != 0x00u)
+        continue;
+      if (x[8] >= kCommonFields)
+        continue;
+      packed_apply_wire_block(&rom, profile->packedPerformanceCommonGroup,
+                              x[8], x.data() + 9, x.size() - 11u,
+                              common.data(), kCommonFields);
+      ++commonFrames;
+    }
+    std::printf("%u performance-common frames applied\n", commonFrames);
+    std::printf("  chorus  level %u rate %u depth %u predelay %u out %u\n",
+                common[0x22], common[0x23], common[0x24], common[0x25],
+                common[0x27]);
+    std::printf("  reverb  type %u level %u time %u hfdamp %u\n",
+                common[0x28], common[0x29], common[0x2a], common[0x2b]);
+    std::printf("  efx     source %u type %u  assign %u level %u "
+                "chorus send %u reverb send %u\n",
+                common[0x0c], common[0x0d], common[0x1a], common[0x1b],
+                common[0x1c], common[0x1d]);
+    std::printf("  common fields 0x0c..0x1f:");
+    for (unsigned f = 0x0c; f < 0x20; ++f)
+      std::printf(" %u", common[f]);
+    std::printf("\n");
+    std::printf("  common fields 0x20..0x2f:");
+    for (unsigned f = 0x20; f < 0x30; ++f)
+      std::printf(" %u", common[f]);
+    std::printf("\n");
+    /* The tone records too, so a part whose assign says PATCH can be
+       followed to the tones that actually decide. */
+    const unsigned kToneAssign = 0x7du;
+    const unsigned kPartAssign = 10u;
+    std::vector<std::vector<uint8_t>> tone(
+      kParts * XP_JV1080_TONES_PER_PATCH,
+      std::vector<uint8_t>(XP_JV1080_TONE_FIELDS, 0));
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x02u || x[6] >= kParts)
+        continue;
+      unsigned block = x[7];
+      if (block < 0x10u || block > 0x17u)
+        continue;
+      unsigned t = (block - 0x10u) / 2u;
+      unsigned off = ((block - 0x10u) % 2u) * 128u + x[8];
+      if (t >= XP_JV1080_TONES_PER_PATCH || off >= XP_JV1080_TONE_FIELDS)
+        continue;
+      packed_apply_wire_block(&rom, toneGroup, off, x.data() + 9,
+                              x.size() - 11u,
+                              tone[x[6] * XP_JV1080_TONES_PER_PATCH + t].data(),
+                              XP_JV1080_TONE_FIELDS);
+    }
+    /* The patch commons too, so the EFX source can be followed to the
+       block it actually names. */
+    std::vector<std::vector<uint8_t>> pcommon(
+      kParts, std::vector<uint8_t>(XP_JV1080_PATCH_COMMON_FIELDS, 0));
+    for (const smf::Event &e : song.events) {
+      if (e.kind != smf::Kind::SysEx)
+        continue;
+      const std::vector<uint8_t> &x = e.bytes;
+      if (x.size() < 12 || x[0] != 0xf0 || x[1] != 0x41 || x[3] != 0x6a ||
+          x[4] != 0x12)
+        continue;
+      if (x[5] != 0x02u || x[6] >= kParts || x[7] != 0x00u)
+        continue;
+      if (x[8] >= XP_JV1080_PATCH_COMMON_FIELDS)
+        continue;
+      packed_apply_wire_block(&rom, patchCommonGroup, x[8], x.data() + 9,
+                              x.size() - 11u, pcommon[x[6]].data(),
+                              XP_JV1080_PATCH_COMMON_FIELDS);
+    }
+    {
+      unsigned src = common[0x0c];
+      bool own = false; unsigned image = 0;
+      const char *where = "?";
+      unsigned type = 0;
+      if (efx_resolve_source(src, &own, &image)) {
+        if (own) { where = "PERFORM"; type = common[0x0d]; }
+        else if (image < kParts) { where = "patch"; type = pcommon[image][0x0c]; }
+      }
+      std::printf("  EFX switch %u  chorus switch %u  reverb switch %u\n",
+                  common[0x08], common[0x09], common[0x0a]);
+      std::printf("  EFX source %u -> %s", src, where);
+      if (!own) std::printf(" image %u", image);
+      std::printf("   EFFECTIVE TYPE %u (0-based)\n", type);
+    }
+    {
+      const struct XpVoiceFieldMap &tf = profile->toneFields;
+      std::printf("part 0 tones: enable/waveGroup/groupId/waveNumber\n");
+      for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+        const uint8_t *r = tone[t].data();
+        std::printf("   tone %u  en %u  group %u  id %u  number %u\n", t,
+                    tf.enable < XP_JV1080_TONE_FIELDS ? r[tf.enable] : 0u,
+                    tf.waveGroup < XP_JV1080_TONE_FIELDS ? r[tf.waveGroup] : 0u,
+                    tf.waveGroupId < XP_JV1080_TONE_FIELDS ? r[tf.waveGroupId] : 0u,
+                    tf.waveNumber < XP_JV1080_TONE_FIELDS ? r[tf.waveNumber] : 0u);
+      }
+    }
+    static const char *kAssign[] = { "MIX", "EFX", "OUT1", "OUT2", "PATCH" };
+    std::printf("output assign per part (0-based), and its tones:\n");
+    for (unsigned i = 0; i < kParts; ++i) {
+      unsigned pa = part[i][kPartAssign];
+      std::printf("  part %2u  part-assign %-5s  tones", i,
+                  pa < 5u ? kAssign[pa] : "?");
+      for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+        unsigned ta = tone[i * XP_JV1080_TONES_PER_PATCH + t][kToneAssign];
+        std::printf(" %s", ta < 5u ? kAssign[ta] : "?");
+      }
+      std::printf("\n");
+    }
+    std::printf("%u performance-part frames applied\n", applied);
+    std::printf("part  chorusSend(%u)  reverbSend(%u)  all %u fields\n",
+                profile->partFieldChorusSend, profile->partFieldReverbSend,
+                kPartFields);
+    for (unsigned i = 0; i < kParts; ++i) {
+      std::printf("  %2u   %11u  %11u   ", i + 1u,
+                  profile->partFieldChorusSend < kPartFields
+                    ? part[i][profile->partFieldChorusSend] : 0u,
+                  profile->partFieldReverbSend < kPartFields
+                    ? part[i][profile->partFieldReverbSend] : 0u);
+      for (unsigned f = 0; f < kPartFields; ++f)
+        std::printf("%3u ", part[i][f]);
+      std::printf("\n");
+    }
     return 0;
   }
 

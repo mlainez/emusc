@@ -134,6 +134,21 @@ bool reverb_read_character(const struct xp_rom *rom, uint8_t character,
       ++out->allpasses;
     }
   }
+  /* The character's own input one-pole, where the record carries one. The
+     pair is the input coefficient first and the pole second, and the two
+     sum to unity - which is the check applied here rather than a shape
+     assumed: a pair that does not sum to one is not this filter, and the
+     input then runs on whatever the device's pre-LPF parameter says. */
+  if (profile->reverbInputWord != XP_REVERB_WORD_NONE) {
+    const uint8_t *pair = rec + 2u * profile->reverbInputWord;
+    double a = xp(be16(pair));
+    double b = xp(be16(pair + 2u));
+    if (a > 0.0 && a <= 1.0 && b >= 0.0 && b < 1.0 &&
+        a + b > 0.99 && a + b < 1.01) {
+      out->input_in = (float)a;
+      out->input_pole = (float)b;
+    }
+  }
   /* words 16..19 are the two damping pairs, one per tank half: they are the
      coefficients at CRAM (59, 58) and (74, 75), the slots immediately before
      each half's reads. Each pair is a one-pole whose POLE is its positive
@@ -266,6 +281,10 @@ bool reverb_init(struct xp_reverb *rv, const struct xp_rom *rom,
     for (unsigned i = 0; i < XP_REVERB_TAPS; ++i)
       rv->tap_gain[i] = 1.0f;
   reverb_set_params(rv, 64, 64, 3);
+  if (rv->character.input_in > 0.0f) {
+    rv->pre_in = rv->character.input_in;
+    rv->pre_fb = rv->character.input_pole;
+  }
   rv->active = true;
   return true;
 }
@@ -319,7 +338,11 @@ void reverb_set_params(struct xp_reverb *rv, uint8_t level, uint8_t time,
   if (!rv)
     return;
   float fb, in;
-  if (reverb_pre_lpf(preLpf > 7 ? 7 : preLpf, &fb, &in)) {
+  /* A character that carries its own input filter owns the input: the
+     pre-LPF parameter is how a device WITHOUT one reaches this quantity,
+     so it does not get to overwrite a filter the record already fixed. */
+  if (rv->character.input_in <= 0.0f &&
+      reverb_pre_lpf(preLpf > 7 ? 7 : preLpf, &fb, &in)) {
     rv->pre_fb = fb;
     rv->pre_in = in;
   }

@@ -91,7 +91,16 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .reverbAllpassPairA = 0x3000u,
   .reverbAllpassPairB = 0x1000u,
   .reverbAllpassG = 0.5f,
-  .reverbImage0Cram = 0x03F77Cu,
+  /* Boot image 2's CRAM, where the permanent chorus/reverb/output program's
+     coefficients are loaded from at power-on (`08_effects/dsp_program.md`,
+     the boot-image table). The value that was here, 0x03F77C, is inside the
+     PRAM-shaped band that same document lists as NOT YET ATTRIBUTED
+     (`U-R5-04`), so the eight tap gains were being read out of a smooth
+     monotonic ramp - 0.053, 0.046, 0.054, 0.018, ... - instead of off the
+     reverb's own coefficients, and every tap ran about 19 times too quiet.
+     Nothing caught it because those values pass the range check a gain has
+     to pass; only comparing the tail against the machine does. */
+  .reverbImage0Cram = 0x03FEBCu,
   .headWord = { 0u, 2u, 4u, 6u, 8u, 10u, 14u, 16u, 20u, 22u, 26u, 28u },
   .farWord = { 1u, 3u, 5u, 7u, 9u, 13u, 15u, 19u, 21u, 25u, 27u, 31u },
   .tapWord = { 11u, 17u, 23u, 29u, 12u, 18u, 24u, 30u },
@@ -124,12 +133,35 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      wet gap at 103.00 ms against the 103.000 that is at 32 kHz, so there is
      no further fixed delay to add.
 
-     RATE: the table entry is a per-control-period increment on a 15-bit
-     accumulator, so the modulation is `table[rate] / 32768` cycles per
-     control period. Measured at four rates: 8, 24, 48 and 96 give 0.916,
-     2.563, 4.944 and 9.705 Hz against the law's 0.896, 2.499, 4.898 and
-     9.697 - within 2.6 % over a tenfold range, and within 0.9 % at the two
-     fastest, where the measurement has the most cycles to work with.
+     RATE: the table entry is a per-control-period increment on a 16-bit
+     accumulator, so the modulation is `table[rate] / 65536` cycles per
+     control period - `table * 32000 / 2^24` hertz, the control period
+     being 256 samples at 32 kHz.
+
+     Measured on the system chorus at values 32, 64, 96 and 127: 1.6191,
+     3.2842, 4.8658 and 11.0000 Hz against the law's 1.6498, 3.2482,
+     4.8485 and 10.998. Every deviation is inside that point's own
+     counting resolution, which is half a cycle in the 9.5, 19.5, 29 and
+     66 cycles the take contains: 1.9 % against 5.3, 1.1 against 2.6,
+     0.36 against 1.7, and 0.02 against 0.76.
+
+     The same constant is measured independently on the EFX chorus, whose
+     rate reads the same table through a different DSP program: values 20
+     and 45 give 1.0490 and 2.2983 Hz against 1.0490 and 2.2984.
+
+     The rate is read by COUNTING the delay's own reversals, because the
+     instantaneous frequency of a carrier through this chorus cannot be
+     peak-picked. A dry-plus-wet comb notches at delays of 1.911, 5.734
+     and 9.556 ms for a 261.63 Hz carrier, the triangle crosses every
+     notch inside its excursion twice per period, and the resulting
+     glitches put a strong component at (2 x crossings) times the rate.
+     The excursion is set by the depth, so the multiple is too: depth 32
+     spans one notch and reads 2x, depth 80 spans two and reads 4x, depth
+     127 spans three and reads 6x.
+
+     The law also reproduces the field's published range. Table entry 0 is
+     26 and entry 127 is 5766, so the parameter spans 0.0496 to 10.998 Hz
+     against the specified 0.05 to 10.0.
 
      DEPTH: the peak-to-peak sweep, 12.1 ms at the top of the field from a
      direct cepstral reading of the delay, scaled by the table's own shape.
@@ -156,7 +188,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .chorusModulator = XP_CHORUS_MOD_TRIANGLE_UP,
   .chorusPreDelayTable = 0x038EC8u,
   .chorusRateTable = 0x038B2Eu,
-  .chorusRateAccumulator = 32768.0,
+  .chorusRateAccumulator = 65536.0,
   .chorusDepthTable = 0x03856Cu,
   .chorusDepthMaxMs = 12.1,
   .chorusLevelTable = 0x03856Cu,
@@ -274,8 +306,18 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     { 0x0bd3c9u,   1u,  245u, 4u, 5u, 16u },   /* 8 INIT PERFORM */
     { 0x0bd4beu,   1u,  401u, 6u, 7u,  4u },   /* 9 INIT PATCH */
     { 0x0bd64fu,   1u, 2699u, 8u, 9u, 64u },   /* 10 INIT SET (rhythm) */
+    /* The rhythm sets each group carries, two to a bank, 2699 bytes to a
+       set (`02_rom/rhythm_data.md`, all HIGH, bases and stride supplied by
+       the rhythm loader `0x0A019D34` itself). Index 15 is the user
+       memory's factory contents, which stand in for battery RAM this
+       implementation does not have, exactly as bank 7 does for patches. */
+    { 0x0b7de0u,   2u, 2699u, 8u, 9u, 64u },   /* 11 rhythm PR-A */
+    { 0x0b92f6u,   2u, 2699u, 8u, 9u, 64u },   /* 12 rhythm PR-B */
+    { 0x0ba80cu,   2u, 2699u, 8u, 9u, 64u },   /* 13 rhythm PR-C */
+    { 0x0bbd22u,   2u, 2699u, 8u, 9u, 64u },   /* 14 rhythm GM */
+    { 0x06e720u,   2u, 2699u, 8u, 9u, 64u },   /* 15 rhythm USER default */
   },
-  .packedBankCount = 11u,
+  .packedBankCount = 16u,
 
   /* The four banks a melodic program change reaches, in the firmware's own
      selector order (2, 3, 4, 5 at 0x0A019AE4), and the rhythm set the
@@ -284,8 +326,8 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      only the INIT set is listed rather than guessed at. */
   .packedMelodicBanks = { 3u, 4u, 5u, 6u },
   .packedMelodicBankCount = 4u,
-  .packedRhythmBanks = { 10u },
-  .packedRhythmBankCount = 1u,
+  .packedRhythmBanks = { 11u, 12u, 13u, 14u, 15u, 10u },
+  .packedRhythmBankCount = 6u,
 
   /* Bank select to bank, as `0x0A014EF6` resolves CC0 and CC32
      (`04_protocol/program_bank.md`): MSB 81 with LSB 0..3 reaches the
@@ -303,11 +345,13 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      The same caveat belongs on .selectors above, whose bytes stand in for
      a register encoding this project has not recovered. */
   .packedBankSelect = {
-    { 0x51u, 0x00u, 3u },        /* PR-A */
-    { 0x51u, 0x01u, 4u },        /* PR-B */
-    { 0x51u, 0x02u, 5u },        /* PR-C */
-    { 0x51u, 0x03u, 6u },        /* GM */
-    { 0x50u, 0x00u, 7u },        /* USER, factory contents */
+    /* msb, lsb, patch source, RHYTHM source - one group, two sources, and
+       the part's own rhythm flag picks between them. */
+    { 0x51u, 0x00u, 3u, 11u },   /* PR-A */
+    { 0x51u, 0x01u, 4u, 12u },   /* PR-B */
+    { 0x51u, 0x02u, 5u, 13u },   /* PR-C */
+    { 0x51u, 0x03u, 6u, 14u },   /* GM */
+    { 0x50u, 0x00u, 7u, 15u },   /* USER, factory contents */
   },
   .packedBankSelectCount = 5u,
 
@@ -331,6 +375,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .coarseTune = 0x3du,
     .fineTune = 0x3eu,
     .sourceKey = XP_VOICE_FIELD_NONE,
+    /* MIX / EFX / OUTPUT1 / OUTPUT2 (`05_data_model/partial_schema.md`,
+       PRG 0x057158). A tone has no PATCH value - only a part does. */
+    .outputAssign = 0x7du,
     .cutoff = 0x51u,
     .resonance = 0x53u,
     .filterType = 0x50u,
@@ -361,6 +408,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .coarseTune = XP_VOICE_FIELD_NONE,
     .fineTune = 0x0du,
     .sourceKey = 0x0cu,
+    .outputAssign = 0x36u,       /* the rhythm note's own, same four values */
     .cutoff = 0x1bu,
     .resonance = 0x1cu,
     .filterType = 0x1au,
@@ -436,6 +484,13 @@ const struct XpDeviceProfile JV1080_PROFILE = {
      on the device by +50.1 cents, measured against the same note with the
      field at its centre. */
   .partFieldKeyShift = 0x08u,
+  /* Field 10 of the performance part, five values MIX / EFX / OUTPUT1 /
+     OUTPUT2 / PATCH (PRG 0x057158). In the factory demo songs the parts
+     that read PATCH are exactly the ones whose tones then say EFX, which
+     is the law being self-consistent across sixteen parts and three
+     songs. */
+  .partFieldOutputAssign = 10u,
+  .partOutputAssignPatch = 4u,
   .partFieldReverbSend = 0x0du,
   .partFieldChorusSend = 0x0cu,
   .partFieldFineTune = 0x09u,
@@ -560,6 +615,57 @@ const struct XpDeviceProfile JV1080_PROFILE = {
 
   /* This device's voice path is its own, because it has to be - see
      jv1080_engine.cc and jv1080.h. */
+  /* THE INSERT EFFECT'S PROGRAM BANK. 32 slots at 0x0400BC on a 0x270
+     stride, each 104 u32 BE program words then 104 u16 BE coefficients -
+     0x1A0 + 0xD0 = 0x270, tiling the stride exactly - and the bank ends at
+     0x044EBC, which IS where the type table starts, to the byte. The table
+     is 46 rows of two pointers, indexed by the 0-based type; row 46 reads
+     0x7F7F7F7D, which is not an address, and ends it. All 46 rows resolve
+     to a slot base with the coefficient pointer exactly 0x1A0 above the
+     program one, they reach 31 distinct slots, and all 3328 program words
+     have top nibble zero - the 28 bits the RAM test implies
+     (`08_effects/dsp_program.md`, FW-EXACT). */
+  .efxBankBase = 0x0400BCu,
+  .efxSlotStride = 0x270u,
+  .efxSlotCount = 32u,
+  .efxTypeTable = 0x044EBCu,
+  .efxTypeCount = 46u,
+  .efxPointerBase = 0x0A000000u,
+  .efxLevelTable = 0x03856Cu,
+
+  /* THE PARAMETER CONVERSION TABLES, as this device's own extraction lists
+     them (`02_rom/extracted/dsp/conversion_tables.json`). Reading them back
+     out of the ROM with the geometry below reproduces that extraction
+     byte for byte on all nineteen.
+
+     TWO OF THE COUNTS OVERRUN THE TABLE THAT FOLLOWS: 0x038A32's 128
+     entries reach two words into 0x038B2E, and 0x038E12's reach 37 words
+     into 0x038EC8. The counts are kept as the extraction has them, because
+     a parameter running 0..127 does index that far and the firmware packs
+     these tight; it is recorded here rather than trimmed away. */
+  .efxTables = {
+    { 0x03856Cu, 178u, 1u },     /* 0  master level / gain, 0..0x1FFF */
+    { 0x038732u, 128u, 1u },     /* 1  level family */
+    { 0x038832u, 128u, 1u },     /* 2  level family */
+    { 0x038932u, 128u, 1u },     /* 3  level family */
+    { 0x038A32u, 128u, 1u },     /* 4  non-monotonic coefficient list */
+    { 0x038B2Eu, 128u, 1u },     /* 5  LFO rate / short time */
+    { 0x038C2Eu, 126u, 1u },     /* 6  rotary speed family */
+    { 0x038D2Au, 116u, 1u },     /* 7  */
+    { 0x038E12u, 128u, 1u },     /* 8  bit-15 tagged delay/offset */
+    { 0x038EC8u, 128u, 1u },     /* 9  pre-delay, 1..3296 = 103 ms */
+    { 0x038FC8u, 127u, 1u },     /* 10 delay, 1..16000 = 500 ms */
+    { 0x0390C6u, 116u, 1u },     /* 11 long delay, 200..1000 ms */
+    { 0x0391AEu, 121u, 1u },     /* 12 long delay, 200..1000 ms */
+    { 0x0392A0u, 128u, 2u },     /* 13 pan, (L, R) */
+    { 0x0394A0u, 128u, 2u },     /* 14 balance, (wet, dry) */
+    { 0x039700u,  18u, 2u },     /* 15 HF damp one-pole pairs */
+    { 0x03D014u, 129u, 1u },     /* 16 auto-wah family */
+    { 0x03EBB8u, 128u, 1u },     /* 17 compressor family */
+    { 0x03ECD8u, 113u, 1u },     /* 18 compressor family */
+  },
+  .efxTableCount = 19u,
+
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };
 

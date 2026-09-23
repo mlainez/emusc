@@ -71,6 +71,17 @@ inline constexpr unsigned XP_WAVE_DATA_LINES_MAX = 16u;
 inline constexpr unsigned XP_WAVE_ADDRESS_LINES_MAX = 21u;
 inline constexpr unsigned XP_PACKED_GROUP_MAX = 12u;
 inline constexpr unsigned XP_PACKED_BANK_MAX = 16u;
+inline constexpr uint8_t XP_PACKED_BANK_NONE = 0xffu;
+inline constexpr unsigned XP_EFX_TABLE_MAX = 24u;
+
+/* One parameter-conversion table: a run of big-endian words a parameter
+   value indexes. `columns` is 2 where an entry is a pair - a pan table's
+   two sides, a one-pole's two coefficients - and 1 otherwise. */
+struct XpEfxTable {
+  uint32_t base;
+  uint16_t count;
+  uint8_t columns;
+};
 inline constexpr unsigned XP_WAVE_SOURCE_MAX = 2u;
 inline constexpr unsigned XP_MULTISAMPLE_BANK_MAX = 2u;
 
@@ -141,6 +152,12 @@ struct XpVoiceFieldMap {
      transposing by the key that triggered it - which is what makes a drum
      a drum rather than a sample pitched to whatever key struck it. */
   uint16_t sourceKey;
+  /* Where this record's audio leaves the chip: the mix, the insert effect,
+     or one of the separate output pairs. A part's own assign OVERRIDES it
+     unless the part says PATCH, which is the part deferring to whatever
+     its records say (`M-006`, `M-019`). XP_VOICE_FIELD_NONE where a record
+     type carries no such field. */
+  uint16_t outputAssign;
   uint16_t cutoff;
   uint16_t resonance;
   uint16_t filterType;
@@ -172,6 +189,13 @@ struct XpBankSelect {
   uint8_t msb;
   uint8_t lsb;
   uint8_t bank;
+  /* The SAME pair reaches a different source on a rhythm part. The
+     JV-1080's bank select resolves CC0/CC32 to a GROUP, and a group holds
+     both a patch source and a rhythm source; which one is read is decided
+     by the part's own rhythm flag, not by the bank select
+     (`04_protocol/program_bank.md`, FW-EXACT). XP_PACKED_BANK_NONE where a
+     group has no rhythm source this implementation holds an image for. */
+  uint8_t rhythmBank;
 };
 
 /* One group of a descriptor-packed record schema: a run of field
@@ -509,6 +533,11 @@ struct XpDeviceProfile {
   uint16_t partFieldLevel;
   uint16_t partFieldPan;
   uint16_t partFieldKeyShift;
+  /* The part's own output assign, which decides for the whole part unless
+     it reads PATCH - the one value that hands the decision to the record.
+     `partOutputAssignPatch` is that value. */
+  uint16_t partFieldOutputAssign;
+  uint8_t partOutputAssignPatch;
   /* The part's own reverb send. `M-039`/`M-052`: the PART's send is the
      live one and a melodic tone's is inert, so a voice carries its part's
      at note-on. XP_VOICE_FIELD_NONE where a device has no such field. */
@@ -554,6 +583,34 @@ struct XpDeviceProfile {
      composes its amplitude from the ROM's own headroom instead and has no
      use for this. */
   double voiceMixScale;
+
+  /* --- The insert effect's program bank -------------------------------
+     A device whose insert effect is a loadable DSP program keeps a bank of
+     fixed-stride slots - one program image then one coefficient image to a
+     slot - and a table mapping the effect TYPE onto a slot. Several types
+     share a slot, being the same program under different coefficients,
+     which is why the bank is smaller than the type list.
+
+     `efxBankBase` is zero on a device with no such bank, and then nothing
+     in `efx.cc` will read anything. `efxPointerBase` is the address the ROM
+     is mapped at, which the table's entries are written in and which is
+     subtracted to reach a file offset. */
+  uint32_t efxBankBase;
+  uint32_t efxSlotStride;
+  uint16_t efxSlotCount;
+  uint32_t efxTypeTable;
+  uint16_t efxTypeCount;
+  uint32_t efxPointerBase;
+  /* The level table the EFX output block reads, shared in this device's ROM
+     with the chorus's and the reverb's but named here per block because it
+     is that block's own reference. */
+  uint32_t efxLevelTable;
+  /* The conversion tables the effect parameters read, in the order a
+     device's own extraction lists them. Named indices for the ones whose
+     meaning is established are in efx.h; the rest are reachable by index
+     and carry no claim about what they convert. */
+  struct XpEfxTable efxTables[XP_EFX_TABLE_MAX];
+  unsigned efxTableCount;
 
   /* Null on a device the shared firmware-port engine serves; see
      struct XpVoiceEngineOps above. */

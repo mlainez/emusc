@@ -27,6 +27,7 @@
 #include "jv1080.h"
 #include "../reverb.h"
 #include "../chorus.h"
+#include "../efx.h"
 #include "../common/constants.h"
 
 #include "../packed_rom.h"
@@ -52,10 +53,182 @@ const unsigned kReverbTypeField = 0x28u;
 const unsigned kReverbLevelField = 0x29u;
 const unsigned kReverbTimeField = 0x2au;
 const unsigned kReverbDampField = 0x2bu;
+const unsigned kReverbFeedbackField = 0x2cu;
+/* REVERB TYPES 6 AND 7 ARE NOT TANKS. For them Reverb:Time is the DELAY
+   LENGTH rather than the decay, and it is patched straight into nine PRAM
+   ERAM address fields as `112*v + 0x2016` - the eight output taps plus
+   instruction 176 (`08_effects/reverb.md`, `FW-EXACT`). PAN-DLY splits the
+   nine into a five-tap left list and a four-tap right list and patches each
+   with its own value. The character record's own network is nearly empty on
+   these two, which is why reading it as a tank finds nothing to play.
+
+   The two values are MEASURED off `effects/reverb_type_pandly`: at Time 96
+   the repeat lags 10769 samples on the left and 5393 on the right, against
+   112*96 and 56*96, both long by exactly +17 - the same constant on both
+   sides, the block's own input-path latency. `0x2016` is the line's base,
+   so the delay is the patched address less that base.
+
+   The tap gains are the program's own: the five left taps carry +0.7505,
+   +1, +1, +1 and +0.0006 and the four right ones +1 each, so the right
+   return sits 0.56 dB above the left.
+
+   FEEDBACK IS THE LOOP GAIN ON THESE TWO TYPES, and it writes the same two
+   CRAM slots - 165 and 181 - that Reverb:Time writes on types 0..5. One
+   coefficient under two names: `48*v` as a time, `64*v` as a feedback, both
+   against 8192 (`08_effects/reverb.md`, FW-EXACT). On types 0..5 the
+   feedback parameter is NOT APPLIED AT ALL, which is why `M-045` could only
+   measure 3 dB across its whole range.
+
+   THE TWO TYPES RETURN THEIR LINE DIFFERENTLY, which is measured rather than
+   reasoned. Type 7 at feedback 0 still repeats at full level - +3.58 dB
+   against the click - while type 6 at feedback 0 is silent for six seconds.
+   On type 6 the return is scaled by the loop gain: at feedback 64 the gain
+   is 64*64/8192 = 0.5 and the first repeat measures -6 dB, at 127 it is
+   0.992 and the repeats sustain past two and a half seconds without
+   decaying. So type 6's return carries the loop gain and type 7's does not.
+   Why the two differ that way is not established; that they do is. */
+const unsigned kReverbTypeDelay = 6u;
+const unsigned kReverbTypePanningDelay = 7u;
+const double kReverbDelaySlopeLeft = 112.0;
+const double kReverbDelaySlopeRight = 56.0;
+const double kReverbDelayLatency = 17.0;
+const double kReverbDelayTapSumLeft = 3.7511;
+const double kReverbDelayTapSumRight = 4.0;
+const double kReverbDelayFeedbackSlope = 64.0;
 const unsigned kChorusLevelField = 0x22u;
 const unsigned kChorusRateField = 0x23u;
 const unsigned kChorusDepthField = 0x24u;
 const unsigned kChorusPreDelayField = 0x25u;
+/* The insert effect's output block. The assign decides whether the effect's
+   own chorus and reverb sends reach anything at all: they are written as
+   `table[v] & mask`, and the mask is all ones only for MIX
+   (`08_effects/routing.md`, FW-EXACT). */
+/* The performance common's own effect block: the source selector, the type
+   and its twelve parameters, then the four output bytes. A PATCH's copy of
+   the same block sits one byte lower throughout, because a patch has no
+   source selector to carry (`05_data_model/effect_schema.md`). */
+/* Where a voice's audio leaves the chip. The part's own assign decides for
+   the whole part unless it reads PATCH, which hands the decision to the
+   record the voice came from - a tone, or a rhythm note (`M-006`,
+   `M-019`). A record has no PATCH value of its own; only a part does. */
+const unsigned kOutputMix = 0u;
+const unsigned kOutputEfx = 1u;
+const unsigned kOutputOne = 2u;
+const unsigned kOutputTwo = 3u;
+
+const unsigned kEfxSourceField = 0x0cu;
+const unsigned kEfxTypeField = 0x0du;
+const unsigned kEfxFirstParameterField = 0x0eu;
+const unsigned kEfxParameters = 12u;
+const unsigned kEfxPatchBlockShift = 1u;
+
+/* THE PURE-DELAY FAMILY, so far type 17 (0-based 16), STEREO-DELAY.
+
+   THE STORED BYTE ORDER IS MEASURED AND IS NOT THE DISPLAY ORDER
+   (`M-091`, `M-092`, per-parameter maxima read off the machine):
+
+     p1 Mode(1)  p2 DelayL(126)  p3 DelayR(126)  p4 PhaseL(1)  p5 PhaseR(1)
+     p6 Fbk(98)  p7 HFDamp(17)   p8 LowGain(30)  p9 HiGain(30)
+     p10 Balance(100)  p11 Level(127)
+
+   Delay L and R are independently named by an isolated audio probe rather
+   than by the label page, which this family proves unreliable - EFX 19's
+   labels start at parameter 1 where EFX 17's start at 2 (`M-065`,
+   `M-104`: "STEREO-DELAY's parameter 3 is the right delay, so 2 is the
+   left").
+
+   Each maximum pins its table: DelayL/R max 126 against `0x038FC8`'s 127
+   entries, HF Damp max 17 against `0x039700`'s 18 rows, Balance max 100
+   against the 101-step D100:0W..D0:100W display, Level max 127 against
+   `0x03856C`. The delay table is raw SAMPLE COUNTS at 32 kHz, measured
+   1.000 at all eight values over 0.4 to 60 ms plus 140 ms (`M-067`,
+   `M-065`).
+
+   FEEDBACK IS BIPOLAR AND ITS RAW ZERO IS 49, NOT 0 (`M-101`): 99 raw
+   steps of 2 % span -98 to +98 %, so the gain is (raw - 49) / 50 and
+   writing 0 asks for maximum NEGATIVE feedback.
+
+   THE FEEDBACK CROSSES THE TWO LINES. Its cepstrum on noise carries an
+   even-only series - 2T, 4T, 6T, 8T - with the single echo at T present
+   but weak, which is a loop crossing the two delay lines rather than each
+   feeding itself, and both output channels read the same so it is not a
+   ping-pong between them (`M-067`, confirmed independently by `M-091`'s
+   Mode 0 = CROSS / 1 = NORMAL range fingerprint).
+
+   LOW GAIN AND HI GAIN ARE NOT IMPLEMENTED. They are a two-band shelving
+   EQ, and this device's filter topology is silicon (`U-R5-02`) with only a
+   nine-octave-band magnitude picture available to constrain it. Fitting
+   one would be a fit, not a recovery. They are read and ignored, which is
+   said here rather than left to be discovered. */
+const unsigned kEfxTypeStereoDelay = 16u;
+/* TRIPLE-TAP-DELAY (display 19). One delay line read at three taps, which is
+   what its program carries: slot 8 has three ERAM reads and one write.
+
+   ITS STORED BYTE ORDER IS THE LABEL PAGE'S, which is measured rather than
+   assumed - an isolated audio probe puts its delay times at p1, p2 and p3
+   (`M-065`), and correlating the tick template at the expected 850 ms
+   against the 400 ms baseline separates those three from the other nine by
+   an order of magnitude. Type 17 is the family's exception, having eleven
+   labels for twelve slots and so starting at p2; 19, 20 and 21 do not.
+
+     p1 Delay C  p2 Delay L  p3 Delay R  p4 Fbk
+     p5 Level C  p6 Level L  p7 Level R  p8 HF Damp
+     p9 Low Gain p10 Hi Gain p11 Balance p12 Level
+
+   The delays read `0x0390C6`, whose entries are raw sample counts at
+   32 kHz and which measures 1.0000 at all eight values over 200 to 1000 ms
+   (`M-067`). Low Gain and Hi Gain are read and ignored for the reason they
+   are on type 17. */
+const unsigned kEfxTypeTripleTap = 18u;
+/* TIME-CONTROL-DELAY (display 21). One delay line, one tap - slot 28 carries
+   a single ERAM write and no static read, its tap being patched at runtime.
+
+   p1 IS THE DELAY AND p2 IS THE ACCEL, measured from the corpus's own
+   addressing rather than from the page: the four `closeout/efx21_accel_*`
+   stimuli sweep the delay by writing efx_p_1, and the only byte differing
+   between the `a000` and `a127` files of a pair is efx_p_2. `M-068` derived
+   its constant by watching the delay glide in those takes, which is only
+   possible if the swept byte is the delay.
+
+   THE REMAINING POSITIONS ARE THE LABEL PAGE'S AND ARE NOT INDIVIDUALLY
+   MEASURED - p3 Feedback, p4 Pan, p5 HF Damp, p6 Low Gain, p7 Hi Gain,
+   p8 Balance, p9 Level. The page is trusted here because its first two
+   entries are exactly where measurement found them, but it carries nine
+   labels for twelve slots, which is the same spare-slot condition that
+   makes type 17's page start at p2. Said plainly rather than presented as
+   measured.
+
+   THE DELAY IS THE SETTLED VALUE ONLY. Accel makes the delay time a TARGET
+   rather than a setting: the line glides to it over seconds, reading 680
+   then 476 then 389 then 386 ms across successive windows of one take
+   (`M-068`). WHAT IS NOT MODELLED HERE IS THAT GLIDE - the rate for a given
+   Accel value is not recovered, so this jumps to the settled value where
+   the machine slides to it. A transient, and a real difference for the
+   seconds it lasts.
+
+   THE 0.966 IS MEASURED AND UNEXPLAINED. Where every other delay table on
+   this device reads as raw samples at 32 kHz, `0x0391AE` settles at a
+   CONSTANT 0.966 of its entry across a 4.75x span, approached from above
+   and from below to within 0.1 ms (`M-068`). It is applied here as the
+   measured constant it is and NOT folded into a general scale, which is
+   TASK-342.02's own AC#4. */
+const unsigned kEfxTypeTimeControl = 20u;
+const unsigned kEfxAccelDelayTable = 12u;   /* 0x0391AE */
+const double kEfxTimeControlScale = 0.966;
+const unsigned kEfxLongDelayTable = 11u;   /* 0x0390C6 */
+const double kEfxFeedbackZero = 49.0;
+const double kEfxFeedbackStep = 50.0;
+const unsigned kEfxDelayTable = 10u;      /* XP_EFX_TABLE_DELAY */
+const unsigned kEfxBalanceTable = 14u;
+const unsigned kEfxDampTable = 15u;
+const unsigned kEfxLevelTableIndex = 0u;
+
+const unsigned kEfxOutputAssignField = 0x1au;
+const unsigned kEfxOutputLevelField = 0x1bu;
+const unsigned kEfxChorusSendField = 0x1cu;
+const unsigned kEfxReverbSendField = 0x1du;
+
+const unsigned kChorusFeedbackField = 0x26u;
 const unsigned kChorusOutputField = 0x27u;
 /* MIX / REVERB / MIX+REV, the machine's own order (`02_rom/strings.md`
    `0x057109`). */
@@ -114,6 +287,8 @@ struct Voice {
   /* This voice's share of each send bus, from its part at note-on. */
   float reverb_send;
   float chorus_send;
+  /* MIX, EFX, OUTPUT1 or OUTPUT2, resolved at note-on. */
+  uint8_t destination;
   bool allocated;
   bool key_down;
 };
@@ -178,6 +353,54 @@ struct Engine {
   uint8_t reverb_character;
   struct xp_chorus chorus;
   bool chorus_ready;
+  /* The panning delay, which replaces the tank on reverb type 7. */
+  float *delay_buf;
+  size_t delay_len;
+  size_t delay_pos;
+  double delay_left;
+  double delay_right;
+  float delay_gain_left;
+  float delay_gain_right;
+  float delay_feedback;
+  bool delay_ready;
+  /* The insert effect's output block, as coefficients. No effect renders
+     yet, so nothing reads these but the parameter path that forms them -
+     which is the point: the routing rule is testable before any algorithm
+     exists. */
+  float efx_output_level;
+  float efx_chorus_send;
+  float efx_reverb_send;
+  /* The effect block in force: its type and twelve parameters, fetched
+     from whichever patch the source selector names. `efx_dirty` is the
+     change detection the firmware's own applied-cache stands for - set
+     when anything in the block moves, and the type moving clears the
+     parameters with it, since a parameter means something different under
+     a different effect. */
+  uint8_t efx_type;
+  uint8_t efx_parameter[kEfxParameters];
+  bool efx_dirty;
+  /* The pure-delay family's two lines, and what the parameters made of
+     them. `efx_ready` is false for every type this engine does not yet
+     render, and then nothing is routed anywhere. */
+  float *efx_buf[2];
+  size_t efx_len;
+  size_t efx_pos;
+  double efx_delay[2];
+  float efx_feedback;
+  bool efx_cross;
+  float efx_phase[2];
+  float efx_damp;
+  float efx_damp_state[2];
+  /* The tap-delay family's taps: one line read at up to four points, each
+     with its own level and its own place in the image. */
+  double efx_tap_delay[4];
+  float efx_tap_left[4];
+  float efx_tap_right[4];
+  unsigned efx_taps;
+  float efx_wet;
+  float efx_dry;
+  float efx_level;
+  bool efx_ready;
 };
 
 /* THE PART'S REVERB SEND IS THE LIVE ONE, not the tone's (`M-039`,
@@ -377,8 +600,387 @@ void chorus_refresh(struct Engine *engine)
   }
   float level = (float)table_unit(engine, profile->chorusLevelTable,
                                    common[kChorusLevelField]);
+  /* Feedback is the level table read UNSHIFTED into CRAM word 225, so 127
+     is 8191/8192 (`08_effects/chorus.md`, FW-EXACT). */
+  float feedback = (float)table_unit(engine, profile->chorusLevelTable,
+                                      common[kChorusFeedbackField]);
   chorus_set_runtime(&engine->chorus, delay, depth,
-                      hz / engine->output_rate, 0.0f, level);
+                      hz / engine->output_rate, feedback, level);
+}
+
+/* One tap of the delay line, read back a fractional number of samples. */
+float delay_tap(const struct Engine *engine, double back)
+{
+  if (back < 1.0)
+    back = 1.0;
+  if (back > (double)(engine->delay_len - 2u))
+    back = (double)(engine->delay_len - 2u);
+  double read = (double)engine->delay_pos - back;
+  while (read < 0.0)
+    read += (double)engine->delay_len;
+  size_t i0 = (size_t)read;
+  double frac = read - (double)i0;
+  size_t i1 = i0 + 1u >= engine->delay_len ? 0u : i0 + 1u;
+  return (float)((1.0 - frac) * engine->delay_buf[i0] +
+                  frac * engine->delay_buf[i1]);
+}
+
+void delay_process(struct Engine *engine, const float *send, float *stereo,
+                    size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    float l = delay_tap(engine, engine->delay_left);
+    float r = delay_tap(engine, engine->delay_right);
+    /* The line is written with the input plus what the loop returns, which
+       is what makes the repeats repeat. */
+    engine->delay_buf[engine->delay_pos] =
+      send[k] + engine->delay_feedback * 0.5f * (l + r);
+    if (++engine->delay_pos >= engine->delay_len)
+      engine->delay_pos = 0;
+    stereo[k * 2u] += engine->delay_gain_left * l;
+    stereo[k * 2u + 1u] += engine->delay_gain_right * r;
+  }
+}
+
+/* The panning delay's own refresh: two taps on one line, from the same
+   Time parameter the tank reads as a decay. */
+void delay_refresh(struct Engine *engine, bool panning)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  double scale = engine->output_rate / kXpNativeRate;
+  unsigned v = engine->common[kReverbTimeField];
+  if (v > 127u)
+    v = 127u;
+  unsigned fb = engine->common[kReverbFeedbackField];
+  if (fb > 127u)
+    fb = 127u;
+  if (!engine->delay_buf) {
+    double longest = (kReverbDelaySlopeLeft * 127.0 + kReverbDelayLatency) *
+      scale + 4.0;
+    engine->delay_len = (size_t)longest + 4u;
+    engine->delay_buf = (float *)std::calloc(engine->delay_len,
+                                              sizeof *engine->delay_buf);
+    if (!engine->delay_buf) {
+      engine->delay_len = 0;
+      return;
+    }
+    engine->delay_pos = 0;
+  }
+  engine->delay_left =
+    (kReverbDelaySlopeLeft * (double)v + kReverbDelayLatency) * scale;
+  /* DELAY puts all nine taps on one address; PAN-DLY splits them, and the
+     right list gets half the left's delay. */
+  engine->delay_right = panning
+    ? (kReverbDelaySlopeRight * (double)v + kReverbDelayLatency) * scale
+    : engine->delay_left;
+  engine->delay_feedback =
+    (float)(kReverbDelayFeedbackSlope * (double)fb / 8192.0);
+  /* The same return the tank uses - this device's level table against a
+     512 full scale - carrying each side's own tap sum, and normalised the
+     way the tank's eight taps are. */
+  double level = table_unit(engine, profile->reverbLevelTable,
+                             engine->common[kReverbLevelField]);
+  double norm = std::sqrt((double)XP_REVERB_TAPS);
+  /* Type 6 carries the loop gain into its return and type 7 does not - the
+     measurement above, not a choice made here. */
+  double ret = panning ? 1.0 : (double)engine->delay_feedback;
+  engine->delay_gain_left =
+    (float)(level * ret * kReverbDelayTapSumLeft / norm);
+  engine->delay_gain_right =
+    (float)(level * ret * kReverbDelayTapSumRight / norm);
+  engine->delay_ready = true;
+}
+
+/* The effect block in force. The output bytes are the performance's own;
+   the type and its twelve parameters come from whichever patch the source
+   selector names, which is the only part of this the firmware documents as
+   following the selector. Whether the output bytes follow it too is NOT
+   established, so they do not. */
+void efx_block_refresh(struct Engine *engine)
+{
+  bool performance = true;
+  unsigned image = 0;
+  if (!efx_resolve_source(engine->common[kEfxSourceField], &performance,
+                           &image))
+    return;                      /* past the selector's range: leave it */
+  const uint8_t *block;
+  unsigned first;
+  if (performance) {
+    block = engine->common;
+    first = kEfxTypeField;
+  } else {
+    if (image >= kParts)
+      return;
+    block = engine->parts[image].common;
+    first = kEfxTypeField - kEfxPatchBlockShift;
+    if (first + kEfxParameters >= XP_JV1080_PATCH_COMMON_FIELDS)
+      return;
+  }
+  uint8_t type = block[first];
+  if (type != engine->efx_type) {
+    /* A parameter means something different under a different effect, so
+       the type carries the parameters away with it. */
+    engine->efx_type = type;
+    std::memset(engine->efx_parameter, 0, sizeof engine->efx_parameter);
+    engine->efx_dirty = true;
+  }
+  for (unsigned i = 0; i < kEfxParameters; ++i) {
+    uint8_t v = block[first + 1u + i];
+    if (v != engine->efx_parameter[i]) {
+      engine->efx_parameter[i] = v;
+      engine->efx_dirty = true;
+    }
+  }
+}
+
+/* One table entry as a fraction of unity, 0 where the table has no such
+   row - the same 8192 unity the rest of this device's coefficients use. */
+double efx_unit(const struct Engine *engine, unsigned table, unsigned index,
+                 unsigned column)
+{
+  uint16_t v = 0;
+  if (!efx_table_value(&engine->rom, table, index, column, &v))
+    return 0.0;
+  return (double)v / 8192.0;
+}
+
+/* STEREO-DELAY. Two lines, each fed by the input plus the feedback from
+   the other - or from itself where Mode says NORMAL. */
+void efx_stereo_delay_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  for (unsigned c = 0; c < 2u; ++c) {
+    uint16_t samples = 0;
+    efx_table_value(&engine->rom, kEfxDelayTable, p[1u + c], 0, &samples);
+    engine->efx_delay[c] = (double)samples * scale;
+    /* Phase: NORMAL or INVERT, one bit each. */
+    engine->efx_phase[c] = p[3u + c] ? -1.0f : 1.0f;
+  }
+  /* Bipolar, raw zero 49, 2 % a step. */
+  engine->efx_feedback =
+    (float)(((double)p[5] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  engine->efx_cross = p[0] == 0u;
+  /* The damping one-pole's pole, the same 18-row table the reverb reads;
+     its last row is a bypass rather than a pair. */
+  {
+    unsigned row = p[6];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0)
+                                : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[9], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[9], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[10], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+float efx_tap(const struct Engine *engine, unsigned channel, double back)
+{
+  if (back < 1.0)
+    back = 1.0;
+  if (back > (double)(engine->efx_len - 2u))
+    back = (double)(engine->efx_len - 2u);
+  double read = (double)engine->efx_pos - back;
+  while (read < 0.0)
+    read += (double)engine->efx_len;
+  size_t i0 = (size_t)read;
+  double frac = read - (double)i0;
+  size_t i1 = i0 + 1u >= engine->efx_len ? 0u : i0 + 1u;
+  const float *b = engine->efx_buf[channel];
+  return (float)((1.0 - frac) * b[i0] + frac * b[i1]);
+}
+
+/* The insert, in place: `stereo` holds the dry the effect was fed, and is
+   replaced by the balance of that dry against the effect's own output. */
+void efx_process(struct Engine *engine, const float *inL, const float *inR,
+                  float *wetL, float *wetR, size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    float l = efx_tap(engine, 0, engine->efx_delay[0]);
+    float r = efx_tap(engine, 1, engine->efx_delay[1]);
+    /* the damping one-pole, on the way round the loop */
+    for (unsigned c = 0; c < 2u; ++c) {
+      float x = c ? r : l;
+      engine->efx_damp_state[c] = x * (1.0f - engine->efx_damp) +
+        engine->efx_damp_state[c] * engine->efx_damp;
+    }
+    float dl = engine->efx_damp_state[0];
+    float dr = engine->efx_damp_state[1];
+    /* CROSS is the measured default shape: each line is fed by the OTHER
+       one's output, which is what puts the cepstrum's series on the even
+       multiples of the delay. */
+    engine->efx_buf[0][engine->efx_pos] =
+      inL[k] + engine->efx_feedback * (engine->efx_cross ? dr : dl);
+    engine->efx_buf[1][engine->efx_pos] =
+      inR[k] + engine->efx_feedback * (engine->efx_cross ? dl : dr);
+    if (++engine->efx_pos >= engine->efx_len)
+      engine->efx_pos = 0;
+    wetL[k] = engine->efx_phase[0] * l;
+    wetR[k] = engine->efx_phase[1] * r;
+  }
+}
+
+/* TRIPLE-TAP: one line, three taps. The centre tap is shared between the
+   two sides and the other two take one side each, which is what the labels
+   name them - a tap called L is on the left. */
+void efx_triple_tap_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxLongDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxLongDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  engine->efx_taps = 3u;
+  /* centre, left, right - the label order, which for this type IS the
+     stored order */
+  static const float kLeft[3] = { 0.5f, 1.0f, 0.0f };
+  static const float kRight[3] = { 0.5f, 0.0f, 1.0f };
+  for (unsigned t = 0; t < 3u; ++t) {
+    uint16_t samples = 0;
+    efx_table_value(&engine->rom, kEfxLongDelayTable, p[t], 0, &samples);
+    engine->efx_tap_delay[t] = (double)samples * scale;
+    double lvl = efx_unit(engine, kEfxLevelTableIndex, p[4u + t], 0);
+    engine->efx_tap_left[t] = (float)(lvl * kLeft[t]);
+    engine->efx_tap_right[t] = (float)(lvl * kRight[t]);
+  }
+  engine->efx_feedback =
+    (float)(((double)p[3] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  {
+    unsigned row = p[7];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0) : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[10], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[10], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[11], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+void efx_tap_process(struct Engine *engine, const float *inL,
+                      const float *inR, float *wetL, float *wetR,
+                      size_t frames)
+{
+  for (size_t k = 0; k < frames; ++k) {
+    float l = 0.0f, r = 0.0f, fb = 0.0f;
+    for (unsigned t = 0; t < engine->efx_taps; ++t) {
+      float v = efx_tap(engine, 0, engine->efx_tap_delay[t]);
+      l += engine->efx_tap_left[t] * v;
+      r += engine->efx_tap_right[t] * v;
+      fb += v;
+    }
+    fb /= (float)engine->efx_taps;
+    engine->efx_damp_state[0] = fb * (1.0f - engine->efx_damp) +
+      engine->efx_damp_state[0] * engine->efx_damp;
+    float in = 0.5f * (inL[k] + inR[k]);
+    engine->efx_buf[0][engine->efx_pos] =
+      in + engine->efx_feedback * engine->efx_damp_state[0];
+    if (++engine->efx_pos >= engine->efx_len)
+      engine->efx_pos = 0;
+    wetL[k] = l;
+    wetR[k] = r;
+  }
+}
+
+/* TIME-CONTROL: one line, one tap, settled value only. */
+void efx_time_control_refresh(struct Engine *engine)
+{
+  const uint8_t *p = engine->efx_parameter;
+  double scale = engine->output_rate / kXpNativeRate;
+  if (!engine->efx_buf[0]) {
+    unsigned n = 0;
+    efx_table_shape(&engine->rom, kEfxAccelDelayTable, &n, NULL);
+    uint16_t top = 0;
+    if (n)
+      efx_table_value(&engine->rom, kEfxAccelDelayTable, n - 1u, 0, &top);
+    engine->efx_len = (size_t)((double)top * scale) + 8u;
+    for (unsigned c = 0; c < 2u; ++c) {
+      engine->efx_buf[c] = (float *)std::calloc(engine->efx_len,
+                                                 sizeof **engine->efx_buf);
+      if (!engine->efx_buf[c])
+        return;
+    }
+    engine->efx_pos = 0;
+  }
+  engine->efx_taps = 1u;
+  uint16_t samples = 0;
+  efx_table_value(&engine->rom, kEfxAccelDelayTable, p[0], 0, &samples);
+  engine->efx_tap_delay[0] =
+    (double)samples * kEfxTimeControlScale * scale;
+  /* Pan places the single tap in the image; centre is the field's middle. */
+  double pan = (double)p[3] / 127.0;
+  engine->efx_tap_left[0] = (float)(1.0 - pan);
+  engine->efx_tap_right[0] = (float)pan;
+  engine->efx_feedback =
+    (float)(((double)p[2] - kEfxFeedbackZero) / kEfxFeedbackStep);
+  {
+    unsigned row = p[4];
+    unsigned rows = 0;
+    efx_table_shape(&engine->rom, kEfxDampTable, &rows, NULL);
+    double a = row + 1u < rows ? efx_unit(engine, kEfxDampTable, row, 0) : 0.0;
+    engine->efx_damp = (float)(a > 0.0 && a < 1.0 ? 1.0 - a : 0.0);
+  }
+  engine->efx_wet = (float)efx_unit(engine, kEfxBalanceTable, p[7], 0);
+  engine->efx_dry = (float)efx_unit(engine, kEfxBalanceTable, p[7], 1);
+  engine->efx_level = (float)efx_unit(engine, kEfxLevelTableIndex, p[8], 0);
+  engine->efx_ready = engine->efx_buf[0] && engine->efx_buf[1];
+}
+
+void efx_algorithm_refresh(struct Engine *engine)
+{
+  engine->efx_ready = false;
+  if (engine->efx_type == kEfxTypeStereoDelay)
+    efx_stereo_delay_refresh(engine);
+  else if (engine->efx_type == kEfxTypeTripleTap)
+    efx_triple_tap_refresh(engine);
+  else if (engine->efx_type == kEfxTypeTimeControl)
+    efx_time_control_refresh(engine);
+}
+
+/* The EFX output block: level, and the two sends the assign may mask out. */
+void efx_refresh(struct Engine *engine)
+{
+  unsigned assign = engine->common[kEfxOutputAssignField];
+  engine->efx_output_level = (float)
+    (efx_output_level(&engine->rom,
+                       engine->common[kEfxOutputLevelField]) / 8192.0);
+  engine->efx_chorus_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     engine->common[kEfxChorusSendField]) / 8192.0);
+  engine->efx_reverb_send = (float)
+    (efx_send_level(&engine->rom, assign,
+                     engine->common[kEfxReverbSendField]) / 8192.0);
 }
 
 void reverb_refresh(struct Engine *engine)
@@ -389,6 +991,15 @@ void reverb_refresh(struct Engine *engine)
   unsigned type = engine->common[kReverbTypeField];
   if (type >= profile->reverbCharacters)
     type = 0u;
+  if (type == kReverbTypeDelay || type == kReverbTypePanningDelay) {
+    if (engine->reverb_ready) {
+      reverb_destroy(&engine->reverb);
+      engine->reverb_ready = false;
+    }
+    delay_refresh(engine, type == kReverbTypePanningDelay);
+    return;
+  }
+  engine->delay_ready = false;
   if (!engine->reverb_ready || type != engine->reverb_character) {
     if (engine->reverb_ready)
       reverb_destroy(&engine->reverb);
@@ -416,6 +1027,23 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->patch_octave = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE
     ? 0
     : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
+}
+
+/* The part's assign, or the record's where the part defers to it. */
+unsigned voice_destination(const struct Engine *engine, unsigned part,
+                            const struct XpVoiceFieldMap *fields,
+                            const uint8_t *bytes)
+{
+  const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
+  if (prof->partFieldOutputAssign == XP_VOICE_FIELD_NONE)
+    return kOutputMix;
+  unsigned assign = engine->parts[part].part[prof->partFieldOutputAssign];
+  if (assign != prof->partOutputAssignPatch)
+    return assign > kOutputTwo ? kOutputMix : assign;
+  if (fields->outputAssign == XP_VOICE_FIELD_NONE)
+    return kOutputMix;
+  unsigned own = bytes[fields->outputAssign];
+  return own > kOutputTwo ? kOutputMix : own;
 }
 
 bool start_record(struct Engine *engine, unsigned part,
@@ -451,6 +1079,8 @@ bool start_record(struct Engine *engine, unsigned part,
   voice->part = (uint8_t)part;
   voice->reverb_send = 0.0f;
   voice->chorus_send = 0.0f;
+  voice->destination =
+    (uint8_t)voice_destination(engine, part, fields, bytes);
   {
     const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
     if (prof->partFieldReverbSend != XP_VOICE_FIELD_NONE)
@@ -581,6 +1211,9 @@ void engine_free(void *state)
     reverb_destroy(&engine->reverb);
   if (engine->chorus_ready)
     chorus_destroy(&engine->chorus);
+  std::free(engine->delay_buf);
+  std::free(engine->efx_buf[0]);
+  std::free(engine->efx_buf[1]);
   std::free(engine);
 }
 
@@ -601,6 +1234,9 @@ void engine_reset(void *state)
     reverb_reset(&engine->reverb);
   if (engine->chorus_ready)
     chorus_reset(&engine->chorus);
+  if (engine->delay_buf)
+    std::memset(engine->delay_buf, 0,
+                engine->delay_len * sizeof *engine->delay_buf);
   dc_blocker_init(&engine->dc_left, engine->output_rate);
   dc_blocker_init(&engine->dc_right, engine->output_rate);
   engine->serial = 0;
@@ -689,21 +1325,67 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
   }) != 0u;
 }
 
+/* Load a rhythm SET, which is what a program change does on the rhythm
+   part. A set is one packed record of a common block and sixty-four key
+   records, the same two groups the temporary-area SysEx writes reach, so
+   the voice path needs nothing new to play it.
+
+   A rhythm part does not read the patch source its bank select names. The
+   firmware keeps a per-part rhythm flag - `u8[0x09001D0C + part]`, 1 for a
+   rhythm part - and dispatches the SAME resolved group through the rhythm
+   loader table `0x058DB8` rather than the patch table `0x058D88`
+   (`04_protocol/program_bank.md`, FW-EXACT). Without this a bank select
+   and program change on the rhythm part loaded a MELODIC patch into a part
+   whose note-on path never reads one, which is silence. */
+bool load_rhythm_set(struct Engine *engine, unsigned bank, unsigned program)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  struct xp_packed_record record;
+  if (!packed_open(&engine->rom, bank, program, &record))
+    return false;
+  for (unsigned f = 0; f < kRhythmCommonFields; ++f) {
+    int value = 0;
+    if (!packed_common_field(&engine->rom, &record, f, &value))
+      return false;
+    engine->rhythm.common[f] = (uint8_t)value;
+  }
+  unsigned keys = record.part_count < kRhythmKeys
+    ? record.part_count : kRhythmKeys;
+  for (unsigned k = 0; k < keys; ++k)
+    for (unsigned f = 0; f < kRhythmNoteFields; ++f) {
+      int value = 0;
+      if (!packed_part_field(&engine->rom, &record, k, f, &value))
+        return false;
+      engine->rhythm.note[k][f] = (uint8_t)value;
+    }
+  for (unsigned k = keys; k < kRhythmKeys; ++k)
+    std::memset(engine->rhythm.note[k], 0, kRhythmNoteFields);
+  (void)profile;
+  return true;
+}
+
 bool engine_program_change_one(struct Engine *engine, unsigned part,
                                 unsigned program)
 {
   const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
   uint8_t msb = engine->parts[part].bank_msb;
   uint8_t lsb = engine->parts[part].bank_lsb;
+  bool rhythm = part == profile->rhythmPartIndex;
   /* Absent a bank select, the device's own reset state applies; here the
-     first listed pair stands in for it, which is this device's PR-A. */
+     first listed pair stands in for it, which is this device's PR-A. The
+     machine's own answer for an arbitrary external file is GM mode, which
+     latches CC0 81 / CC32 3 itself; that is TASK-344's to build. */
   for (unsigned i = 0; i < profile->packedBankSelectCount; ++i) {
     const struct XpBankSelect &select = profile->packedBankSelect[i];
     bool wildcard = msb == 0xffu;
     if ((wildcard && i) || (!wildcard && (select.msb != msb ||
                                           select.lsb != lsb)))
       continue;
-    return load_patch(engine, part, select.bank, program);
+    if (!rhythm)
+      return load_patch(engine, part, select.bank, program);
+    if (select.rhythmBank == XP_PACKED_BANK_NONE)
+      return false;              /* the group has no rhythm image here */
+    return load_rhythm_set(engine, select.rhythmBank, program);
   }
   return false;                  /* a card or expansion group, unheld */
 }
@@ -773,6 +1455,9 @@ bool engine_sysex_block(void *state, const uint8_t *address,
                              kPerfCommonFields);
     reverb_refresh(engine);
     chorus_refresh(engine);
+    efx_refresh(engine);
+    efx_block_refresh(engine);
+    efx_algorithm_refresh(engine);
     return true;
   }
   if (a1 == 0x03u)
@@ -855,6 +1540,10 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
   float send[kChunk];
   float csend[kChunk];
   float cwet[kChunk * 2u];
+  float efxL[kChunk];
+  float efxR[kChunk];
+  float efxWetL[kChunk];
+  float efxWetR[kChunk];
   size_t done = 0;
   while (done < frames) {
     size_t n = frames - done;
@@ -864,12 +1553,52 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
     std::memset(right, 0, n * sizeof *right);
     std::memset(send, 0, n * sizeof *send);
     std::memset(csend, 0, n * sizeof *csend);
+    std::memset(efxL, 0, n * sizeof *efxL);
+    std::memset(efxR, 0, n * sizeof *efxR);
     bool sending = false;
     for (unsigned i = 0; i < kMaxVoices; ++i) {
       struct Voice *voice = engine->voices + i;
       if (!voice->allocated)
         continue;
-      if ((engine->reverb_ready && voice->reverb_send > 0.0f) ||
+      /* A voice assigned to OUTPUT1 or OUTPUT2 leaves the machine by its
+         own jacks and is not on the MIX bus the chorus and reverb return
+         to, so it is rendered - it still holds its slot and runs its
+         envelopes - and then dropped. Whether its per-voice sends survive
+         that routing is NOT established, so it sends nothing rather than
+         sending something unverified.
+
+         MEASURED EXPOSURE, before this changed anything: across all three
+         factory demo songs exactly one record asks for OUTPUT1 - tone 1 of
+         part 1 in `1080 rave` - and that part's own assign reads EFX, so
+         the part decides and the tone's OUTPUT1 never applies. No voice in
+         any of the three is affected. */
+      if (voice->destination == kOutputOne ||
+          voice->destination == kOutputTwo) {
+        std::memset(vl, 0, n * sizeof *vl);
+        std::memset(vr, 0, n * sizeof *vr);
+        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+          free_voice(voice);
+        continue;
+      }
+      /* A voice bound for the insert goes to the insert's own bus, but
+         only while there is an insert to go to: an effect type this engine
+         does not render leaves its voices on the mix, where they have been
+         all along, rather than dropping them into a bus nothing reads. */
+      if (voice->destination == kOutputEfx && engine->efx_ready) {
+        std::memset(vl, 0, n * sizeof *vl);
+        std::memset(vr, 0, n * sizeof *vr);
+        if (!jv1080_voice_render(&voice->voice, vl, vr, n))
+          free_voice(voice);
+        for (size_t k = 0; k < n; ++k) {
+          efxL[k] += vl[k];
+          efxR[k] += vr[k];
+        }
+        continue;
+      }
+      /* The reverb bus is live whichever shape the module has taken: the
+         tank on types 0..5, the panning delay on type 7. */
+      bool reverbLive = engine->reverb_ready || engine->delay_ready;
+      if ((reverbLive && voice->reverb_send > 0.0f) ||
           (engine->chorus_ready && voice->chorus_send > 0.0f)) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
@@ -894,6 +1623,31 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
         dc_blocker_step(&engine->dc_left, left[k]);
       stereo[(done + k) * 2u + 1u] +=
         dc_blocker_step(&engine->dc_right, right[k]);
+    }
+    /* The insert returns to the mix through its own balance and level, and
+       feeds the chorus and reverb through the two sends the output assign
+       may have masked to zero. The dry side of the balance is the signal
+       the effect was fed, which is why the bus is kept rather than summed
+       into the mix on the way in. */
+    if (engine->efx_ready) {
+      if (engine->efx_type == kEfxTypeTripleTap ||
+          engine->efx_type == kEfxTypeTimeControl)
+        efx_tap_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      else
+        efx_process(engine, efxL, efxR, efxWetL, efxWetR, n);
+      for (size_t k = 0; k < n; ++k) {
+        float l = engine->efx_level *
+          (engine->efx_wet * efxWetL[k] + engine->efx_dry * efxL[k]);
+        float r = engine->efx_level *
+          (engine->efx_wet * efxWetR[k] + engine->efx_dry * efxR[k]);
+        stereo[(done + k) * 2u] += l;
+        stereo[(done + k) * 2u + 1u] += r;
+        float mono = 0.5f * (l + r);
+        csend[k] += engine->efx_chorus_send * mono;
+        send[k] += engine->efx_reverb_send * mono;
+        if (engine->efx_reverb_send > 0.0f)
+          sending = true;
+      }
     }
     /* The chorus's wet signal is formed once and then returned through up
        to two paths, because that is what the firmware does: the level
@@ -920,6 +1674,8 @@ void engine_render_jv(void *state, float *stereo, size_t frames)
        sending, or a note's reverb would stop with the note. */
     if (engine->reverb_ready && (sending || engine->reverb.active))
       reverb_process(&engine->reverb, send, stereo + done * 2u, n);
+    else if (engine->delay_ready && engine->delay_buf)
+      delay_process(engine, send, stereo + done * 2u, n);
     done += n;
   }
 }
