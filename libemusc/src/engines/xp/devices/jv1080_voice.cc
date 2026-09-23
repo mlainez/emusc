@@ -158,15 +158,21 @@ double square_law_gain(unsigned value)
   return v * v;
 }
 
-/* MEASURED (`M-081`): CC7 indexes the same square law, with a floor - the
-   values 0, 1 and 2 all read -81.7 dB, which is what the law gives for
-   1.15. Worst deviation 0.41 dB. */
+/* MEASURED (`M-081`, `closeout/cc7_residual`): CC7 indexes the same
+   square law from value 9 up, and below it the machine's own points: 0, 1
+   and 2 all read -81.7 dB, the floor, and 3, 4, 6 and 8 read -70.7, -62.8,
+   -54.2 and -48.7 dB, running 5.6, 2.8, 1.2 and 0.7 dB under the law as
+   they converge on it. Between those points the level is interpolated in
+   dB, which is not recovered. */
 double cc7_gain(unsigned value)
 {
-  double v = (double)(value > 127u ? 127u : value);
-  if (v < 1.15)
-    v = 1.15;
-  v /= 127.0;
+  static const double xs[] = { 2.0, 3.0, 4.0, 6.0, 8.0 };
+  static const double ys[] = { -81.7, -70.7, -62.8, -54.2, -48.7 };
+  if (value > 127u)
+    value = 127u;
+  if (value <= 8u)
+    return std::pow(10.0, interpolate_points(xs, ys, 5u, (double)value) / 20.0);
+  double v = (double)value / 127.0;
   return v * v;
 }
 
@@ -1104,7 +1110,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     std::pow(2.0, (double)controls->key_shift / 12.0) *
     std::pow(2.0, (double)controls->patch_octave) *
     std::pow(2.0, (double)controls->fine_tune / 1200.0) *
-    std::pow(2.0, (double)fine / 1200.0);
+    std::pow(2.0, (double)fine / 1200.0) *
+    std::pow(2.0, controls->tune_cents / 1200.0);
   double rootHz = 440.0 * std::pow(2.0,
                                     ((double)element.root_key - 69.0) / 12.0);
   /* MEASURED, from the ROM against itself: the wave-element record's
@@ -1150,14 +1157,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     sensed_velocity(velocity,
                     (int)(int8_t)(uint8_t)field_or(
                       fields, fields->ampVelocitySens, tone, 50u)));
-  voice->static_gain =
+  voice->gain_levels =
     square_law_gain(tone[fields->level]) *
     square_law_gain(controls->patch_level) *
-    square_law_gain(controls->part_level) *
-    cc7_gain(controls->volume) *
-    velocityGain *
-    wave_gain(field_or(fields, fields->waveGain, tone, 1u)) *
-    (profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0);
+    square_law_gain(controls->part_level);
+  voice->gain_velocity = velocityGain;
+  voice->gain_wave = wave_gain(field_or(fields, fields->waveGain, tone, 1u));
+  voice->gain_mix =
+    profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0;
+  jv1080_voice_set_volume(voice, controls->volume);
 
   /* Pan: the tone's and the patch's index one table and sum as offsets from
      centre (`M-002`, `M-048`). */
@@ -1273,6 +1281,19 @@ bool jv1080_voice_start(const struct xp_rom *rom,
 /* Time 4 names a rate, so the release's duration is how far the envelope
    has to travel at it. Sixty dB is taken as silent: the level table's own
    floor is the machine's noise floor and no field can ask for less. */
+/* MEASURED (`closeout/cc7_residual`): CC7 moves a note that is already
+   sounding - one note held through the whole take while CC7 steps 127, 0,
+   1, 2, 3, 4, 6, 8 and back, each step landing on the law. Whether the
+   machine eases the step rather than jumping is not measured; here it
+   jumps. */
+void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
+{
+  if (!voice)
+    return;
+  voice->static_gain = voice->gain_levels * cc7_gain(volume) *
+    voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+}
+
 void jv1080_voice_note_off(struct XpJv1080Voice *voice)
 {
   if (voice && voice->one_shot && voice->segment < 4u && !voice->releasing) {
