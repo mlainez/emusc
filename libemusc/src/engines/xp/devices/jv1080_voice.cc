@@ -723,6 +723,10 @@ double key_follow(const struct xp_rom *rom, uint16_t which,
   return sign * value / 100.0;
 }
 
+/* How far a release falls before the voice ends: the 60 dB
+   jv1080_voice_release sizes its duration for. */
+const double kReleaseSpan = 1e-3;
+
 /* A field this record type has, or `absent` where it does not have one. */
 unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                    const uint8_t *record, unsigned absent)
@@ -1266,7 +1270,10 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         } else {
           double from = voice->segment_start > 1e-9 ? voice->segment_start
                                                      : 1e-9;
-          double to = target > 1e-9 ? target : 1e-9;
+          /* The release covers the 60 dB its duration was sized for,
+             from wherever it began, and the voice ends there. */
+          double to = voice->releasing ? from * kReleaseSpan
+                                       : (target > 1e-9 ? target : 1e-9);
           voice->envelope = from * std::pow(to / from, done);
         }
         voice->segment_remaining -= voice->sample_period;

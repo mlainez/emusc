@@ -392,6 +392,49 @@ int main(void)
     }));
   }
 
+  /* The release, on PR-A 001's tone with its envelope squared to full
+     sustain and time 4 = 64: M-011's law is 675 ms per 20 dB, so the
+     level falls about 8.9 dB between 0.1-0.2 s and 0.4-0.5 s after the
+     note-off, on top of whatever the held note does over the same
+     stretch. */
+  {
+    auto drop = [&](bool release) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0);
+      for (uint8_t f = 0x6e; f <= 0x70; ++f)
+        tone_field(d, 1, f, 0);            /* times 1-3: straight to sustain */
+      for (uint8_t f = 0x72; f <= 0x74; ++f)
+        tone_field(d, 1, f, 127);          /* levels 1-3 */
+      tone_field(d, 1, 0x71, 64);          /* time 4 */
+      midi(d, 0x90, 60, 100);
+      std::vector<float> x(2 * 16000);
+      EmuSC::Xp::device_render(d, x.data(), 3200);        /* 0.1 s */
+      if (release)
+        midi(d, 0x80, 60, 0);
+      EmuSC::Xp::device_render(d, x.data(), 16000);       /* 0.5 s */
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      auto level = [&](size_t a, size_t b) {
+        double e = 0.0;
+        for (size_t i = 2 * a; i < 2 * b; ++i)
+          e += (double)x[i] * x[i];
+        return 10.0 * std::log10(e);
+      };
+      return level(3200, 6400) - level(12800, 16000);
+    };
+    double envelope = drop(true) - drop(false);
+    assert(std::fabs(envelope - 8.9) < 2.0);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {
