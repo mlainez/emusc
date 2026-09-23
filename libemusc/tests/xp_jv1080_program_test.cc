@@ -289,6 +289,50 @@ int main(void)
     assert(early_release(0) > 0.0);     /* NORMAL: sounds, postponed */
   }
 
+  /* The rhythm note's envelope mode, field 0x08. PR-A's kit is mode 0,
+     NO-SUSTAIN, on every key: a note-off inside the first three segments
+     waits for their end, so on key 59, whose time 2 is a long fall to
+     zero, a 10 ms gate and a 40 ms gate render the same hit. Written to
+     mode 1, SUSTAIN, the two differ. */
+  {
+    auto gated = [&](uint8_t mode, size_t gate) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0, 9);
+      if (mode != 0xff) {
+        uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x02, 0x09, 59, 0x08,
+                        mode, 0, 0xf7 };
+        unsigned sum = 0;
+        for (size_t i = 5; i + 2 < sizeof m; ++i)
+          sum += m[i];
+        m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+        assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+      }
+      std::vector<float> x(2 * kFrames);
+      midi(d, 0x99, 59, 100);
+      EmuSC::Xp::device_render(d, x.data(), gate);
+      midi(d, 0x89, 59, 0);
+      EmuSC::Xp::device_render(d, x.data() + 2 * gate, kFrames - gate);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return x;
+    };
+    const size_t ms10 = 320, ms40 = 1280;
+    std::vector<float> a = gated(0xff, ms10);
+    assert(energy(a) > 0.0);
+    assert(a == gated(0xff, ms40));
+    assert(a == gated(0, ms10));
+    assert(gated(1, ms10) != gated(1, ms40));
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {
