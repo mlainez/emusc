@@ -475,11 +475,8 @@ double wave_gain(unsigned raw)
    low cutoffs sits within 15 dB of its own noise floor, 100 dB and more
    under full scale.
 
-   NOT RESOLVED above cutoff 88: with resonance, the hardware's peak sits
-   0.22 octave under these points at cutoff 96 and 0.5 under at 112, and
-   at 112 it falls as the resonance rises - 7992 Hz at value 8 to 6129 at
-   112 (`M-118`). A two-pole section with a fixed natural frequency cannot
-   meet both that and M-012's resonance-0 corners; this keeps the corners.
+   These are the resonance-0 frequencies; with resonance the machine's
+   natural frequency moves, which tvf_natural_hz applies.
 
    Measured on the low-pass; the other three types take the same frequency,
    which is not measured. */
@@ -505,6 +502,52 @@ double tvf_cutoff_hz(double cutoff)
   return std::exp(std::log(kTvfNaturalHz[i - 1][1]) +
                   t * (std::log(kTvfNaturalHz[i][1]) -
                        std::log(kTvfNaturalHz[i - 1][1])));
+}
+
+/* MEASURED (`M-118`, `M-123`): with resonance the natural frequency falls
+   under the resonance-0 one, and further at higher cutoffs. As a factor on
+   tvf_cutoff_hz, per cutoff at resonance 32, 64, 96, 112 and 120:
+
+     cutoff 64   1 throughout - the noise fits read 290-293 Hz at every
+                 resonance.
+     cutoff 80   0.971 0.957 0.957 0.957 0.957 - two-pole fits to the
+                 white-noise resonance sweep (818, 806 Hz against 842).
+     96, 104, 112  sine sweeps, one note per semitone against the same
+                 file's filter-OFF sweep; the peak located by a log-parabola
+                 and taken to the natural frequency by the two-pole's own
+                 peak offset at the resonance's Q (0.968 at 32, 0.996 at 64,
+                 1 above):
+       96   0.890 0.865 0.857 0.856 0.856
+       104  0.773 0.732 0.724 0.722 0.721
+       112  0.797 0.713 0.697 0.693 0.691
+
+   At cutoff 96 the machine is a two-pole to within 0.3 dB rms and these
+   factors carry its response. AT 104 AND 112 IT IS NOT: a two-pole fit
+   there leaves 2 to 4.5 dB rms, so the peak lands where the machine's does
+   but the shape around it does not follow; the structure behind it is not
+   resolved (`L-05`). Resonance 127 takes 120's factor (its own peak reading
+   at 112 is not usable); cutoffs above 112 take 112's, and below 64 none.
+   Between resonance 0 and 32 nothing is measured and the factor runs
+   straight from 1. */
+const double kDriftCutoff[] = { 64.0, 80.0, 96.0, 104.0, 112.0 };
+const double kDriftResonance[] = { 0.0, 32.0, 64.0, 96.0, 112.0, 120.0 };
+const double kDrift[5][6] = {
+  { 1.0, 1.0,   1.0,   1.0,   1.0,   1.0   },
+  { 1.0, 0.971, 0.957, 0.957, 0.957, 0.957 },
+  { 1.0, 0.890, 0.865, 0.857, 0.856, 0.856 },
+  { 1.0, 0.773, 0.732, 0.724, 0.722, 0.721 },
+  { 1.0, 0.797, 0.713, 0.697, 0.693, 0.691 } };
+
+double tvf_natural_hz(double cutoff, unsigned resonance)
+{
+  double hz = tvf_cutoff_hz(cutoff);
+  if (cutoff <= kDriftCutoff[0] || !resonance)
+    return hz;
+  double r = (double)(resonance > 120u ? 120u : resonance);
+  double at[5];
+  for (unsigned c = 0; c < 5u; ++c)
+    at[c] = interpolate_points(kDriftResonance, kDrift[c], 6u, r);
+  return hz * interpolate_points(kDriftCutoff, at, 5u, cutoff);
 }
 
 /* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
@@ -1401,11 +1444,9 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* The part's key shift moves the pitch rather than the note number, so
      the zone the key chose is left alone. */
   const unsigned soundedKey = playback_key(fields, tone, key);
-  /* MEASURED on the device: the patch's octave shift is a third, independent
-     transposition term, exactly twelve semitones per unit, and it adds to
-     both coarse tunes rather than replacing either. Leaving it out is an
-     octave error on every patch that uses it - nine of the fourteen
-     sounding parts of the first factory song do. */
+  /* The patch's octave shift arrives in `key` itself (the engine shifts the
+     note it starts), so it is not a pitch term here. MEASURED on the
+     device: twelve semitones per unit, adding to both coarse tunes. */
   /* Key follow scales the key's distance from the pivot. The part's key
      shift below stays outside it: whether the machine scales a shift by
      key follow is not measured. */
@@ -1415,7 +1456,6 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   double keyHz = 440.0 * std::pow(2.0, (trackedKey - 69.0) / 12.0) *
     std::pow(2.0, (double)coarse / 12.0) *
     std::pow(2.0, (double)controls->key_shift / 12.0) *
-    std::pow(2.0, (double)controls->patch_octave) *
     std::pow(2.0, (double)controls->fine_tune / 1200.0) *
     std::pow(2.0, (double)fine / 1200.0) *
     std::pow(2.0, controls->tune_cents / 1200.0);
@@ -1542,6 +1582,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     10.0 * key_follow(rom, fields->cutoffKeyFollow, tone, 0.0) *
       ((double)soundedKey - kKeyFollowPivot) / 12.0;
   voice->resonance_base = tone[fields->resonance];
+  voice->resonance_value = voice->resonance_base;
   voice->resonance_q = tvf_q(voice->resonance_base);
   voice->resonance_q_base = voice->resonance_q;
   voice->matrix_cutoff = 0.0;
@@ -1648,7 +1689,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
 
   if (voice->filter_type)
     set_biquad(voice, voice->filter_type,
-                tvf_cutoff_hz(filter_env_cutoff(voice)),
+                tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
                 voice->resonance_q, outputRate);
 
   voice->active = true;
@@ -1750,12 +1791,14 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
     if (moveResonance) {
       double r = (double)voice->resonance_base + resonance;
       r = r < 0.0 ? 0.0 : (r > 127.0 ? 127.0 : r);
-      voice->resonance_q = tvf_q((unsigned)std::lround(r));
+      voice->resonance_value = (unsigned)std::lround(r);
+      voice->resonance_q = tvf_q(voice->resonance_value);
     } else {
+      voice->resonance_value = voice->resonance_base;
       voice->resonance_q = voice->resonance_q_base;
     }
     set_biquad(voice, voice->filter_type,
-                tvf_cutoff_hz(filter_env_cutoff(voice)),
+                tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
                 voice->resonance_q, voice->output_rate);
   }
 }
@@ -1804,7 +1847,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         lfo_update(voice, (double)voice->lfo_period * voice->sample_period);
         if (lfoFilter && !sweeping)
           set_biquad(voice, voice->filter_type,
-                      tvf_cutoff_hz(filter_env_cutoff(voice)),
+                      tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
                       voice->resonance_q, voice->output_rate);
         voice->lfo_countdown = voice->lfo_period;
       }
@@ -1819,7 +1862,7 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
         filter_env_advance(voice, (double)voice->control_period *
                                     voice->sample_period);
         set_biquad(voice, voice->filter_type,
-                    tvf_cutoff_hz(filter_env_cutoff(voice)),
+                    tvf_natural_hz(filter_env_cutoff(voice), voice->resonance_value),
                     voice->resonance_q, voice->output_rate);
         voice->control_countdown = voice->control_period;
       }

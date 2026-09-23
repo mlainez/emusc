@@ -90,7 +90,6 @@ struct XpJv1080PartControls {
   unsigned volume;
   int key_shift;
   int fine_tune;                 /* the part's own detune, in cents */
-  int patch_octave;              /* whole-patch transposition, in octaves */
   double tune_cents;             /* the RPN master coarse and fine tune */
   /* The engine's own running clock at note-on, which a free-running LFO
      takes its phase from, and a seed for the drawn LFO waveforms. */
@@ -153,6 +152,7 @@ struct XpJv1080Voice {
   double outer_level_gain;       /* the patch and part levels' */
   unsigned volume;               /* CC7, as the voice last received it */
   unsigned resonance_base;
+  unsigned resonance_value;      /* with the matrix's RES applied */
   double resonance_q_base;
   double lfo_base_cents[2];
   double lfo_base_frequency[2];
