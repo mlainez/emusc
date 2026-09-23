@@ -2017,8 +2017,10 @@ bool start_record(struct Engine *engine, unsigned part,
                    unsigned key, unsigned velocity, unsigned sounded)
 {
   size_t samples = 0;
+  int keyShift = (int)(int8_t)engine->parts[part]
+    .part[xp_profile(&engine->rom)->partFieldKeyShift];
   if (!jv1080_voice_span(&engine->rom, fields, bytes, sounded, velocity,
-                         &samples) || !samples)
+                         keyShift, &samples) || !samples)
     return false;
 
   struct Voice *voice = take_voice(engine);
