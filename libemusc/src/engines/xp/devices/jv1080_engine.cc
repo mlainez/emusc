@@ -577,6 +577,9 @@ struct Part {
   uint8_t rpn_msb;
   uint8_t rpn_lsb;
   int rpn_bend;
+  /* RPN 0/2 and 0/1: coarse tune in semitones and fine tune in cents. */
+  int rpn_coarse;
+  double rpn_fine;
 };
 
 struct Voice {
@@ -1922,6 +1925,7 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->patch_octave = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE
     ? 0
     : (int)(int8_t)p.common[profile->patchFieldOctaveShift];
+  out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
 }
 
 /* The part's assign, or the record's where the part defers to it. */
@@ -2487,6 +2491,21 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
          other receivers. */
       if (p.rpn_msb == 0u && p.rpn_lsb == 0u)
         p.rpn_bend = (int)(value > 12u ? 12u : value);
+      /* MEASURED (`M-084`): RPN 0/2 is coarse tune, `msb - 64` semitones
+         clamped to +-32, and RPN 0/1 fine tune, `(msb - 64) * 50/32`
+         cents clamped to +-50 - both exact on the device. A data entry of
+         0 changes neither, which is what the take shows; whether that is
+         the machine validating the value or treating 0 as unset is not
+         settled. They reach the notes that start after them; whether a
+         sounding note follows is not measured. */
+      if (p.rpn_msb == 0u && p.rpn_lsb == 2u && value) {
+        int semitones = (int)value - 64;
+        p.rpn_coarse = semitones < -32 ? -32 : (semitones > 32 ? 32 : semitones);
+      }
+      if (p.rpn_msb == 0u && p.rpn_lsb == 1u && value) {
+        double cents = ((double)value - 64.0) * 50.0 / 32.0;
+        p.rpn_fine = cents < -50.0 ? -50.0 : (cents > 50.0 ? 50.0 : cents);
+      }
       break;
     default: break;
     }

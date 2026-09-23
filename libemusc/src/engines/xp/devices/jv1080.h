@@ -91,6 +91,7 @@ struct XpJv1080PartControls {
   int key_shift;
   int fine_tune;                 /* the part's own detune, in cents */
   int patch_octave;              /* whole-patch transposition, in octaves */
+  double tune_cents;             /* the RPN master coarse and fine tune */
 };
 
 struct XpJv1080Voice {

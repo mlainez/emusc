@@ -616,6 +616,26 @@ int main(void)
     assert(std::fabs(10.0 * std::log10(e1 / e0) + 11.9) < 0.1);
   }
 
+  /* RPN 0/2 and 0/1 (`M-084`): coarse tune msb - 64 semitones, fine tune
+     (msb - 64) * 50/32 cents, on the notes that follow. */
+  {
+    auto tuned = [](uint8_t lsb, uint8_t msb) {
+      return [lsb, msb](EmuSC::Xp::Device *d) {
+        bank(d, 81, 0, 0);
+        midi(d, 0xb0, 101, 0);
+        midi(d, 0xb0, 100, lsb);
+        midi(d, 0xb0, 6, msb);
+      };
+    };
+    double base = strongest_hz(render(roms, tuned(2, 64), 0, 60));
+    double up = strongest_hz(render(roms, tuned(2, 76), 0, 60));
+    assert(std::fabs(1200.0 * std::log2(up / base) - 1200.0) < 5.0);
+    double fine = strongest_hz(render(roms, tuned(1, 96), 0, 60));
+    assert(std::fabs(1200.0 * std::log2(fine / base) - 50.0) < 5.0);
+    /* A data entry of 0 changes nothing. */
+    assert(render(roms, tuned(2, 0), 0, 60) == render(roms, tuned(2, 64), 0, 60));
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {
