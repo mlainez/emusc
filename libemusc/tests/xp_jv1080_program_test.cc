@@ -147,6 +147,32 @@ void tone_field(EmuSC::Xp::Device *d, unsigned tone, uint8_t field,
   assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
 }
 
+/* A tone's wave number, 0x03-0x04, as the two nibbles of one DT1: a wide
+   field is composed only from a write that carries both. */
+void tone_wave_number(EmuSC::Xp::Device *d, unsigned tone, uint8_t number)
+{
+  uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x02, 0x00,
+                  (uint8_t)(0x10 + 2 * tone), 0x03,
+                  (uint8_t)(number >> 4), (uint8_t)(number & 0x0f), 0, 0xf7 };
+  unsigned sum = 0;
+  for (size_t i = 5; i + 2 < sizeof m; ++i)
+    sum += m[i];
+  m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+  assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+}
+
+/* A DT1 of one byte to part 1's patch common, at `field`. */
+void common_field(EmuSC::Xp::Device *d, uint8_t field, uint8_t value)
+{
+  uint8_t m[] = { 0xf0, 0x41, 0x10, 0x6a, 0x12, 0x02, 0x00, 0x00, field,
+                  value, 0, 0xf7 };
+  unsigned sum = 0;
+  for (size_t i = 5; i + 2 < sizeof m; ++i)
+    sum += m[i];
+  m[sizeof m - 2] = (uint8_t)((0x80u - (sum & 0x7fu)) & 0x7fu);
+  assert(EmuSC::Xp::device_sysex(d, 0, m, sizeof m));
+}
+
 /* The strongest frequency between 150 Hz and 3 kHz in the left channel,
    scanned in one-cent steps. */
 double strongest_hz(const std::vector<float> &x)
@@ -921,6 +947,40 @@ int main(void)
   }) == render(roms, [](EmuSC::Xp::Device *d) {
     bank(d, 81, 0, 69);
   }));
+
+  /* A reversed element sounds from the note-on (`M-090`). INT-B wave 124
+     `REV Orch.Hit` holds the same span as wave 59 `Orch. Hit` with the
+     reverse flag set, so on PR-A 001's tone 2 alone, filter off and
+     envelope flat, the forward one starts on its attack and falls, and the
+     reversed one starts on the sample's tail and rises. */
+  {
+    auto wave = [](uint8_t number) {
+      return [number](EmuSC::Xp::Device *d) {
+        bank(d, 81, 0, 0);
+        tone_field(d, 1, 0x01, 0);
+        tone_field(d, 1, 0x02, 2);
+        tone_wave_number(d, 1, number);
+        for (unsigned t : {0u, 2u, 3u})
+          tone_field(d, t, 0x00, 0);        /* only tone 2 sounds */
+        common_field(d, 0x44, 0);           /* structure 1-2: type 1 */
+        tone_field(d, 1, 0x50, 0);          /* filter off */
+        tone_field(d, 1, 0x6e, 0);          /* A-ENV T1 0, L1-L3 127 */
+        for (uint8_t f = 0x72; f <= 0x74; ++f)
+          tone_field(d, 1, f, 127);
+      };
+    };
+    auto halves = [](const std::vector<float> &x, double *early,
+                     double *late) {
+      *early = energy(std::vector<float>(x.begin(), x.begin() + kFrames));
+      *late = energy(std::vector<float>(x.begin() + kFrames, x.end()));
+    };
+    double fe, fl, re, rl;
+    halves(render(roms, wave(59)), &fe, &fl);
+    halves(render(roms, wave(124)), &re, &rl);
+    assert(re > 0.0);
+    assert(fe > fl);
+    assert(rl > 4.0 * re);
+  }
 
   printf("ok\n");
   return 0;
