@@ -2421,10 +2421,29 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       : 12 * (int)(int8_t)engine->parts[part].common[profile->patchFieldOctaveShift];
     int shifted = (int)key + shift;
     unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
-    for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t)
-      started += start_record(engine, part, &profile->toneFields,
-                               engine->parts[part].tone[t], key,
+    /* MEASURED (`P-xxxx`, `velocity/vel_range_switch_on` and `_off`): with
+       the patch's velocity range switch off, a tone ranged 40-90 sounds at
+       every velocity from 8 to 127 (velocity 1 is at the take's floor on
+       the level law), and so do the `vel_range_low` (1-64) and `_high`
+       (65-127) takes, whose patches leave the switch off; on, only 40 to 88
+       sound. So off, the ranges are not read at all. */
+    const uint16_t sw = profile->patchFieldVelocityRangeSwitch;
+    const bool ranged = sw == XP_VOICE_FIELD_NONE ||
+      engine->parts[part].common[sw] != 0u;
+    const uint16_t vlo = profile->toneFields.velocityRangeLow;
+    const uint16_t vhi = profile->toneFields.velocityRangeHigh;
+    for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+      const uint8_t *bytes = engine->parts[part].tone[t];
+      uint8_t open[XP_JV1080_TONE_FIELDS];
+      if (!ranged && vlo != XP_VOICE_FIELD_NONE && vhi != XP_VOICE_FIELD_NONE) {
+        std::memcpy(open, bytes, sizeof open);
+        open[vlo] = 1u;
+        open[vhi] = 127u;
+        bytes = open;
+      }
+      started += start_record(engine, part, &profile->toneFields, bytes, key,
                                velocity, sounded) ? 1u : 0u;
+    }
   });
   return started != 0u;
 }

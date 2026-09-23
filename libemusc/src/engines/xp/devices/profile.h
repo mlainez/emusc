@@ -648,6 +648,9 @@ struct XpDeviceProfile {
   /* The sources of matrix controllers 2 and 3; controller 1's is fixed. */
   uint16_t patchFieldControlSource2;
   uint16_t patchFieldControlSource3;
+  /* The patch's velocity range switch: off, its tones' velocity ranges do
+     not gate them. */
+  uint16_t patchFieldVelocityRangeSwitch;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive
