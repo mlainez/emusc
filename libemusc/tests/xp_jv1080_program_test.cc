@@ -498,6 +498,43 @@ int main(void)
     assert(std::fabs(ratio_db(1.50) + 24.9) < 0.5);
   }
 
+  /* The A-ENV's velocity sensitivity, tone field 0x6A, wire value = the
+     setting + 50: at +50 velocity 20 reads the level law's
+     40 log10(20/127) = -32.1 dB below velocity 127, and at -50 the law
+     turns over, so velocity 108 - 128 less 20 - reads that far below
+     velocity 1. */
+  {
+    auto at_velocity = [&](uint8_t wire, uint8_t velocity) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bank(d, 81, 0, 0);
+      tone_field(d, 1, 0x6a, wire);
+      midi(d, 0x90, 60, velocity);
+      std::vector<float> x(2 * kFrames);
+      EmuSC::Xp::device_render(d, x.data(), kFrames);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return 10.0 * std::log10(energy(x));
+    };
+    /* Each against the same two velocities at sensitivity 0, which takes
+       out the patch's other velocity terms - its filter envelope opens
+       with velocity too. */
+    double up = (at_velocity(100, 20) - at_velocity(100, 127)) -
+                (at_velocity(50, 20) - at_velocity(50, 127));
+    assert(std::fabs(up + 32.1) < 0.3);
+    double down = (at_velocity(0, 108) - at_velocity(0, 1)) -
+                  (at_velocity(50, 108) - at_velocity(50, 1));
+    assert(std::fabs(down + 32.1) < 0.3);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

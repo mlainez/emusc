@@ -817,6 +817,44 @@ double amp_env_segment_seconds(double seconds_per_20db)
   return seconds_per_20db / fraction;
 }
 
+/* MEASURED (`envelopes/aenv_vel_sens_*`, four sensitivities by six
+   velocities, levels against each take's velocity-127 note): the A-ENV's
+   velocity sensitivity decides which velocity the level law above reads.
+
+     sensitivity   0: no velocity dependence at all - flat to 0.0 dB from
+                      velocity 1 to 127.
+     sensitivity +50: the velocity itself - -35.1, -23.6, -11.8, -4.8 dB at
+                      16, 32, 64, 96 against the law's -36.0, -23.9, -11.9,
+                      -4.9.
+     sensitivity -50: the law turned over, 128 - velocity - velocity 1 at
+                      full level, then -2.2, -4.9, -12.1, -24.3 dB at 16,
+                      32, 64, 96 against -2.2, -4.9, -11.9, -23.9, and 127
+                      at the floor.
+     sensitivity +75: twice the velocity's distance from 127 - 96 reads
+                      -11.5 dB against -11.6, and 64 and below reach the
+                      floor, where one and a half times the dB of +50 would
+                      have read -7.3 at 96.
+
+   So the sensitivity scales how far the velocity is taken from the end the
+   law starts at: 127 - k (127 - v) for positive settings and 127 - k (v - 1)
+   for negative ones, with k 0, 1 and 2 at 0, 50 and 75 and 1 at -50.
+   Between those points k is interpolated linearly, which is not
+   recovered: the takes hold these four settings only. */
+unsigned sensed_velocity(unsigned velocity, int sensitivity)
+{
+  double k;
+  if (sensitivity >= 0)
+    k = sensitivity <= 50 ? sensitivity / 50.0
+                          : 1.0 + (sensitivity - 50) / 25.0;
+  else
+    k = -sensitivity / 50.0;
+  double v = sensitivity >= 0 ? 127.0 - k * (127.0 - (double)velocity)
+                              : 127.0 - k * ((double)velocity - 1.0);
+  if (v <= 0.0)
+    return 0u;
+  return v >= 127.0 ? 127u : (unsigned)std::lround(v);
+}
+
 /* A field this record type has, or `absent` where it does not have one. */
 unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                    const uint8_t *record, unsigned absent)
@@ -1069,7 +1107,9 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      yet, so a tone selecting one of them is rendered on curve 0 and is
      WRONG BY UP TO 36 dB at velocity 64 (curve 2 reads -48.4 dB there
      against curve 0's -11.8). */
-  double velocityGain = square_law_gain(velocity);
+  double velocityGain = square_law_gain(sensed_velocity(
+    velocity, (int)(int8_t)(uint8_t)field_or(fields, fields->ampVelocitySens,
+                                             tone, 50u)));
   voice->static_gain =
     square_law_gain(tone[fields->level]) *
     square_law_gain(controls->patch_level) *
