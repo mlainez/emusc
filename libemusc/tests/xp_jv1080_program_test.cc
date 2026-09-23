@@ -600,6 +600,22 @@ int main(void)
     assert(before > 0.0 && after < before * 1e-10);
   }
 
+  /* CC7 reaches a note already sounding (`closeout/cc7_residual`): a
+     change to 64 halfway through a held note drops the second half by the
+     law's 40 log10(64/127) = -11.9 dB against the same note left alone. */
+  {
+    std::vector<float> alone = two_halves(nothing, nothing);
+    std::vector<float> ridden = two_halves(nothing, [](EmuSC::Xp::Device *d) {
+      midi(d, 0xb0, 7, 64);
+    });
+    double e0 = 0.0, e1 = 0.0;
+    for (size_t i = kFrames + 2 * 256; i < alone.size(); ++i) {
+      e0 += (double)alone[i] * alone[i];
+      e1 += (double)ridden[i] * ridden[i];
+    }
+    assert(std::fabs(10.0 * std::log10(e1 / e0) + 11.9) < 0.1);
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

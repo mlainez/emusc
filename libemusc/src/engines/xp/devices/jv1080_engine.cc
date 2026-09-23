@@ -2428,7 +2428,14 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
     switch (controller) {
     case 0: p.bank_msb = (uint8_t)value; break;
     case 32: p.bank_lsb = (uint8_t)value; break;
-    case 7: p.volume = (uint8_t)value; break;
+    case 7:
+      p.volume = (uint8_t)value;
+      for (unsigned i = 0; i < kMaxVoices; ++i) {
+        struct Voice *voice = engine->voices + i;
+        if (voice->allocated && voice->part == part)
+          jv1080_voice_set_volume(&voice->voice, p.volume);
+      }
+      break;
     case 1: p.modulation = (uint8_t)value; break;
     case 64: {
       /* HOLD-1, on at 64 and above (`04_protocol/controllers.md`). Its

@@ -124,9 +124,16 @@ struct XpJv1080Voice {
   bool ping_pong;
   bool in_cycle;
 
-  /* Amplitude. static_gain is everything that does not move: the level
-     fields' square law, the velocity curve and the wave gain. */
+  /* Amplitude. static_gain is everything but the envelope: the level
+     fields' square law, CC7, the velocity curve and the wave gain. Only
+     CC7 moves it once the note has started. */
   double static_gain;
+  /* The factors static_gain is the product of, around the CC7 one, so a
+     volume change can form it again in the same order. */
+  double gain_levels;
+  double gain_velocity;
+  double gain_wave;
+  double gain_mix;
   double gain_left;
   double gain_right;
 
@@ -218,6 +225,8 @@ bool jv1080_voice_span(const struct xp_rom *rom,
                         size_t *samples);
 
 void jv1080_voice_release(struct XpJv1080Voice *voice);
+/* A CC7 value reaching a voice that is already sounding. */
+void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume);
 /* The key coming up: a release, or on a NO-SUSTAIN voice still in its
    first three segments, a release deferred to their end. */
 void jv1080_voice_note_off(struct XpJv1080Voice *voice);
