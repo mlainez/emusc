@@ -713,14 +713,18 @@ double time_key_follow_scale(unsigned enumValue, unsigned key)
   return std::pow(2.0, -kf * ((double)key - 60.0) / 12.0);
 }
 
-/* MEASURED (`M-070`): velocity-time sensitivity is the same shape 27x
-   weaker, pivoting on velocity 64 - `t = t_64 * 2^(-vs*0.39*(vel-64)/63)`
-   with vs from -1 to +1 - and the pitch and filter envelopes measure the
-   same 1.30x span from velocity 1 to 127 to within 0.4 %. */
+/* MEASURED (`M-070`): velocity-time sensitivity pivots on velocity 64 and,
+   at the enum's extremes, spans a factor of 1.30 in time from velocity 1
+   to 127 - on the pitch and filter envelopes alike, to within 0.4 %. That
+   is 0.39 of an octave across the WHOLE range, half of it each side of 64:
+   `t = t_64 * 2^(-vs * 0.39 * (vel - 64) / 126)` with vs from -1 to +1.
+   Read on `closeout/penv_vel_t1_i{00,14}` at 4.5 s into a time-96 ramp,
+   the hardware travels 846 to 641 cents from velocity 1 to 127 at index 0
+   and 644 to 838 at index 14 - spans of 1.32 and 1.30. */
 double velocity_time_scale(unsigned enumValue, unsigned velocity)
 {
   double vs = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
-  return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 63.0);
+  return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 126.0);
 }
 
 /* Resonance as the two-pole section's Q, in dB. The peak gain of a
