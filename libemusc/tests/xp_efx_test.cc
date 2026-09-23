@@ -18,6 +18,8 @@
 #include "engines/xp/drive.h"
 #include "engines/xp/efx.h"
 #include "engines/xp/stereo_eq.h"
+#include "engines/xp/spectrum.h"
+#include "engines/xp/enhancer.h"
 #include "engines/xp/rom.h"
 
 #include <assert.h>
@@ -322,6 +324,96 @@ int main(void)
     assert(!stereo_eq_parameter_valid(5u, 5u));
     assert(!stereo_eq_set(&rom, &eq, p));
     assert(eq.param[5] == 0u);
+  }
+
+  /* SPECTRUM. The eight frequency index bytes are 250 .. 8000 Hz; with
+     every band flat the chain is the mono sum, panned and levelled; a bad
+     byte is refused and leaves the effect as it was. */
+  {
+    static const uint8_t kIndex[8] = { 1u, 4u, 7u, 8u, 10u, 12u, 13u, 16u };
+    for (unsigned i = 0; i < 4u; ++i) {
+      uint16_t w = 0;
+      assert(efx_table_value(&rom, 29u, 0u, i, &w));
+      assert((w >> 8) == kIndex[2u * i] && (w & 0xffu) == kIndex[2u * i + 1u]);
+    }
+    const uint8_t factory[XP_SPECTRUM_PARAMETERS] = {
+      19u, 20u, 19u, 18u, 21u, 20u, 21u, 20u, 4u, 64u, 114u
+    };
+    struct xp_spectrum sp;
+    memset(&sp, 0, sizeof sp);
+    assert(spectrum_set(&rom, &sp, factory));
+    assert(sp.ready && !sp.band[0].flat);
+    /* the pan pair at 64 is 377 and 380 of 512 */
+    assert(sp.pan_left == 377.0f / 512.0f && sp.pan_right == 380.0f / 512.0f);
+
+    uint8_t p[XP_SPECTRUM_PARAMETERS];
+    memcpy(p, factory, sizeof p);
+    for (unsigned i = 0; i < XP_SPECTRUM_BANDS; ++i)
+      p[i] = 15u;
+    p[9] = 0u;
+    p[10] = 127u;
+    assert(spectrum_set(&rom, &sp, p));
+    float inL[32] = { 1.0f }, inR[32] = { 0.5f }, outL[32], outR[32];
+    spectrum_process(&sp, inL, inR, outL, outR, 32);
+    assert(outL[0] == (511.0f / 512.0f) * (511.0f / 512.0f) * 0.75f);
+    assert(outR[0] == 0.0f);
+    for (unsigned k = 1; k < 32u; ++k)
+      assert(outL[k] == 0.0f && outR[k] == 0.0f);
+
+    p[8] = 5u;
+    assert(!spectrum_parameter_valid(8u, 5u));
+    assert(!spectrum_set(&rom, &sp, p));
+    assert(sp.param[8] == 4u && sp.param[9] == 0u);
+  }
+
+  /* ENHANCER. Slot 2's filter words are a highpass (-g, +g, a) with
+     g = (1 + a) / 2 and a lowpass (b, b, a) with 2b + a = 1, both to the
+     LSB, on each channel; the compound ENHANCER->DELAY (type 34) carries
+     the same four sections. With Mix 0 and both shelves flat the effect is
+     its Level. */
+  {
+    struct xp_efx_program en, compound;
+    assert(efx_program_load(&rom, 5u, &en) && en.slot == 2u);
+    assert(efx_program_load(&rom, 33u, &compound) && compound.slot == 20u);
+    static const unsigned kHigh[2] = { 22u, 51u }, kLow[2] = { 33u, 62u };
+    static const unsigned kCompoundHigh[2] = { 22u, 42u };
+    static const unsigned kCompoundLow[2] = { 33u, 53u };
+    for (unsigned c = 0; c < 2u; ++c) {
+      int g = (int)en.cram[kHigh[c] + 1u];
+      int minus_g = (int)en.cram[kHigh[c]] - 0x4000;
+      int a = (int)en.cram[kHigh[c] + 2u];
+      assert(minus_g == -g && abs(2 * g - (8192 + a)) <= 1);
+      int b = (int)en.cram[kLow[c]];
+      assert(en.cram[kLow[c] + 1u] == b &&
+             abs(2 * b + (int)en.cram[kLow[c] + 2u] - 8192) <= 1);
+      for (unsigned k = 0; k < 3u; ++k)
+        assert(compound.cram[kCompoundHigh[c] + k] == en.cram[kHigh[c] + k] &&
+               compound.cram[kCompoundLow[c] + k] == en.cram[kLow[c] + k]);
+    }
+    /* the corners are crossed: left's highpass pole is right's lowpass */
+    assert(en.cram[24] == en.cram[64] && en.cram[53] == en.cram[35]);
+    assert(en.cram[28] == 0xD000u && en.cram[30] == 0xD000u &&
+           en.cram[32] == 0x0400u);
+
+    const uint8_t factory[XP_ENHANCER_PARAMETERS] = { 88u, 97u, 20u, 23u, 111u };
+    struct xp_enhancer e;
+    memset(&e, 0, sizeof e);
+    assert(enhancer_set(&rom, &e, factory));
+    assert(e.ready && e.trim == 0.125f && e.drive > 0.0f);
+
+    const uint8_t dry[XP_ENHANCER_PARAMETERS] = { 88u, 0u, 15u, 15u, 127u };
+    assert(enhancer_set(&rom, &e, dry));
+    float in[32], outL[32], outR[32];
+    for (unsigned k = 0; k < 32u; ++k)
+      in[k] = (k % 2u) ? 0.25f : -0.5f;
+    enhancer_process(&e, in, in, outL, outR, 32);
+    for (unsigned k = 0; k < 32u; ++k)
+      assert(outL[k] == (511.0f / 512.0f) * in[k] && outR[k] == outL[k]);
+
+    uint8_t bad[XP_ENHANCER_PARAMETERS] = { 88u, 97u, 31u, 23u, 111u };
+    assert(!enhancer_parameter_valid(2u, 31u));
+    assert(!enhancer_set(&rom, &e, bad));
+    assert(e.param[1] == 0u);
   }
 
   printf("efx: %u types over %u slots, %u of them reaching delay memory; "

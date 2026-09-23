@@ -852,8 +852,11 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     { 0x039A52u,  85u,  3u },    /* 26 peaking boost (t1, t3, t4) */
     { 0x039C50u, 1275u, 1u },    /* 27 peaking boost gain word t6 */
     { 0x03A646u, 1275u, 4u },    /* 28 peaking cut (w0, w1, w2, w3) */
+    /* SPECTRUM's band frequency indices, the eight bytes `0x0A002AB8`
+       reads at 0x03CEF6, two to a word (engines/xp/spectrum.h). */
+    { 0x03CEF6u,   1u,  4u },    /* 29 SPECTRUM band frequency indices */
   },
-  .efxTableCount = 29u,
+  .efxTableCount = 30u,
 
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };

@@ -200,6 +200,26 @@ bool stereo_eq_parameter_valid(unsigned index, uint8_t value)
   return index < XP_STEREO_EQ_PARAMETERS && value <= kMax[index];
 }
 
+bool stereo_eq_band_set(const struct xp_rom *rom,
+                         struct xp_stereo_eq_band *band, uint8_t freq,
+                         uint8_t q, uint8_t gain, bool clear)
+{
+  const uint8_t kMaxFrequency = 16u, kMaxQ = 4u, kMaxGain = 30u;
+  if (!rom || !rom->bytes || !band || freq > kMaxFrequency || q > kMaxQ ||
+      gain > kMaxGain)
+    return false;
+  double t[7];
+  if (!peak_words(rom, freq, q, gain, t))
+    return false;
+  set_band(band, t, clear);
+  return true;
+}
+
+float stereo_eq_band_run(struct xp_stereo_eq_band *band, unsigned c, float x)
+{
+  return run_band(band, c, x);
+}
+
 void stereo_eq_clear(struct xp_stereo_eq *eq)
 {
   struct xp_stereo_eq_shelf *s[2] = { &eq->low_shelf, &eq->high_shelf };

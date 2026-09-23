@@ -30,6 +30,8 @@
 #include "../chorus.h"
 #include "../drive.h"
 #include "../stereo_eq.h"
+#include "../spectrum.h"
+#include "../enhancer.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -171,6 +173,10 @@ const unsigned kEfxTypeStereoDelay = 16u;
    engines/xp/drive.h. */
 /* STEREO-EQ, type 1 (0-based 0): engines/xp/stereo_eq.h. */
 const unsigned kEfxTypeStereoEq = 0u;
+/* SPECTRUM, type 5, and ENHANCER, type 6 (0-based 4 and 5):
+   engines/xp/spectrum.h and engines/xp/enhancer.h. */
+const unsigned kEfxTypeSpectrum = 4u;
+const unsigned kEfxTypeEnhancer = 5u;
 const unsigned kEfxTypeOverdrive = 1u;
 const unsigned kEfxTypeDistortion = 2u;
 const unsigned kEfxDriveParameters = 6u;
@@ -845,6 +851,8 @@ struct Engine {
   bool rv_gated;
   struct xp_drive efx_drive;
   struct xp_stereo_eq efx_eq;
+  struct xp_spectrum efx_spectrum;
+  struct xp_enhancer efx_enhancer;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -2015,9 +2023,63 @@ void efx_stereo_eq_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+/* SPECTRUM and ENHANCER, with the same per-byte discard. Pan and Level
+   are applied inside, in the firmware's registers. */
+void efx_spectrum_refresh(struct Engine *engine)
+{
+  bool previous = engine->efx_spectrum.ready;
+  uint8_t p[XP_SPECTRUM_PARAMETERS];
+  for (unsigned i = 0; i < XP_SPECTRUM_PARAMETERS; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!spectrum_parameter_valid(i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_spectrum.param[i];
+    }
+  }
+  if (!spectrum_set(&engine->rom, &engine->efx_spectrum, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
+void efx_enhancer_refresh(struct Engine *engine)
+{
+  bool previous = engine->efx_enhancer.ready;
+  uint8_t p[XP_ENHANCER_PARAMETERS];
+  for (unsigned i = 0; i < XP_ENHANCER_PARAMETERS; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!enhancer_parameter_valid(i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_enhancer.param[i];
+    }
+  }
+  if (!enhancer_set(&engine->rom, &engine->efx_enhancer, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
+  if (engine->efx_type != kEfxTypeSpectrum)
+    std::memset(&engine->efx_spectrum, 0, sizeof engine->efx_spectrum);
+  if (engine->efx_type != kEfxTypeEnhancer)
+    std::memset(&engine->efx_enhancer, 0, sizeof engine->efx_enhancer);
+  if (engine->efx_type == kEfxTypeSpectrum) {
+    efx_spectrum_refresh(engine);
+    return;
+  }
+  if (engine->efx_type == kEfxTypeEnhancer) {
+    efx_enhancer_refresh(engine);
+    return;
+  }
   if (engine->efx_type == kEfxTypeStereoEq) {
     efx_stereo_eq_refresh(engine);
     return;
@@ -3255,6 +3317,12 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
         drive_process(&engine->efx_drive, efxL, efxR, efxWetL, efxWetR, n);
       else if (engine->efx_type == kEfxTypeStereoEq)
         stereo_eq_process(&engine->efx_eq, efxL, efxR, efxWetL, efxWetR, n);
+      else if (engine->efx_type == kEfxTypeSpectrum)
+        spectrum_process(&engine->efx_spectrum, efxL, efxR, efxWetL,
+                         efxWetR, n);
+      else if (engine->efx_type == kEfxTypeEnhancer)
+        enhancer_process(&engine->efx_enhancer, efxL, efxR, efxWetL,
+                         efxWetR, n);
       else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))

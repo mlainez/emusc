@@ -108,6 +108,20 @@ bool stereo_eq_set(const struct xp_rom *rom, struct xp_stereo_eq *eq,
 /* Clears every section's state, as a type change clears IRAM3 16..37. */
 void stereo_eq_clear(struct xp_stereo_eq *eq);
 
+/* ONE PEAKING BAND, as the writer `0x0A0023F8` builds it, for the other
+ * updater that calls that writer (SPECTRUM, engines/xp/spectrum.h).
+ * `freq` indexes the 17-word frequency table, `q` the five Q values and
+ * `gain` 0..30 with 15 flat. `clear` zeroes the band's state, as the
+ * writer zeroes the band's two IRAM3 words. False, with `*band` left as it
+ * was, where the ROM lacks a table or an index is out of range. */
+bool stereo_eq_band_set(const struct xp_rom *rom,
+                         struct xp_stereo_eq_band *band, uint8_t freq,
+                         uint8_t q, uint8_t gain, bool clear);
+
+/* One sample of `band` on state channel `c` (0 or 1). */
+float stereo_eq_band_run(struct xp_stereo_eq_band *band, unsigned c,
+                          float x);
+
 /* The effect, per channel: `inL`/`inR` the insert's input bus, `outL`/
  * `outR` its return, levelled. */
 void stereo_eq_process(struct xp_stereo_eq *eq, const float *inL,
