@@ -453,6 +453,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x77u,
     .coarseTune = 0x3du,
     .fineTune = 0x3eu,
+    .benderSwitch = 0x13u,
+    .holdSwitch = 0x12u,
+    .benderRange = XP_VOICE_FIELD_NONE,
     .envelopeMode = XP_VOICE_FIELD_NONE,
     .toneDelayMode = 0x09u,
     .toneDelayTime = 0x0au,
@@ -491,6 +494,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .pan = 0x33u,
     .coarseTune = XP_VOICE_FIELD_NONE,
     .fineTune = 0x0du,
+    .benderSwitch = XP_VOICE_FIELD_NONE,
+    .holdSwitch = 0x0au,
+    .benderRange = 0x06u,
     .envelopeMode = 0x08u,
     .toneDelayMode = XP_VOICE_FIELD_NONE,
     .toneDelayTime = XP_VOICE_FIELD_NONE,
@@ -569,6 +575,11 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .patchFieldLevel = 0x2eu,
   .patchFieldPan = 0x2fu,
   .patchFieldOctaveShift = 0x41u,
+  /* MEASURED (`M-014`): bend is linear in the 14-bit value, scaled by the
+     range on its own side - +-200 cents at 2, +-1200 at 12, and -2400 at
+     half of an asymmetric down range of 48. */
+  .patchFieldBendUp = 0x31u,
+  .patchFieldBendDown = 0x32u,
 
   /* The performance-part group is index 5, and these four fields are the
      ones the voice path needs. Level and pan are measured: both index the

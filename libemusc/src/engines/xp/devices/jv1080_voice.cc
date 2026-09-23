@@ -965,6 +965,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   if (rootHz <= 0.0)
     return false;
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
+  voice->bend_ratio = 1.0;
 
   /* Amplitude. MEASURED (`M-029`): curve 0 fits `40*log10(v/127)` - the
      same square law the level fields use - to a worst 1.35 dB, and curve 0
@@ -1288,13 +1289,13 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     r[n] += (float)(value * voice->gain_right);
 
     if (voice->reverse) {
-      voice->position -= voice->increment;
+      voice->position -= voice->increment * voice->bend_ratio;
       if (voice->position < 1.0) {
         voice->active = false;
         break;
       }
     } else {
-      voice->position += voice->increment;
+      voice->position += voice->increment * voice->bend_ratio;
       if (voice->in_cycle) {
         /* Wrapped by the cycle, not by the loop's length: a full cycle is
            the reflected descending pass and the forward ascending one, so

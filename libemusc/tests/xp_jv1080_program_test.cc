@@ -333,6 +333,65 @@ int main(void)
     assert(gated(1, ms10) != gated(1, ms40));
   }
 
+  /* The bender, on PR-A 001, whose range is 2 up: full deflection before
+     the note sounds it 200 cents up (`M-014`), and a bend arriving while
+     the note sounds moves it. */
+  {
+    double centre = strongest_hz(render(roms, [](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+    }, 0, 72));
+    double up = strongest_hz(render(roms, [](EmuSC::Xp::Device *d) {
+      bank(d, 81, 0, 0);
+      midi(d, 0xe0, 0x7f, 0x7f);
+    }, 0, 72));
+    assert(std::fabs(1200.0 * std::log2(up / centre) - 200.0) < 5.0);
+  }
+
+  /* Live controllers, rendered in two halves around a message. */
+  auto two_halves = [&](const Setup &before, const Setup &between) {
+    const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+    size_t sizes[XP_WAVE_CHIP_COUNT];
+    for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+      chips[i] = roms.waves[i].data();
+      sizes[i] = roms.waves[i].size();
+    }
+    EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+    assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                      roms.control.size(), chips, sizes,
+                                      kRate, XP_WRAP_FULL_CARRY));
+    bank(d, 81, 0, 0);
+    before(d);
+    midi(d, 0x90, 60, 100);
+    std::vector<float> x(2 * kFrames);
+    EmuSC::Xp::device_render(d, x.data(), kFrames / 2);
+    between(d);
+    EmuSC::Xp::device_render(d, x.data() + kFrames, kFrames / 2);
+    EmuSC::Xp::device_destroy(d);
+    delete d;
+    return x;
+  };
+  Setup nothing = [](EmuSC::Xp::Device *) {};
+  assert(two_halves(nothing, [](EmuSC::Xp::Device *d) {
+    midi(d, 0xe0, 0x7f, 0x7f);
+  }) != two_halves(nothing, nothing));
+
+  /* The hold pedal: a note-off under it changes nothing until the pedal
+     comes up. */
+  {
+    Setup pedal = [](EmuSC::Xp::Device *d) { midi(d, 0xb0, 64, 127); };
+    std::vector<float> held = two_halves(pedal, nothing);
+    assert(held == two_halves(pedal, [](EmuSC::Xp::Device *d) {
+      midi(d, 0x80, 60, 0);
+    }));
+    assert(held != two_halves(nothing, [](EmuSC::Xp::Device *d) {
+      midi(d, 0x80, 60, 0);
+    }));
+    assert(held != two_halves(pedal, [](EmuSC::Xp::Device *d) {
+      midi(d, 0x80, 60, 0);
+      midi(d, 0xb0, 64, 0);
+    }));
+  }
+
   /* A part whose record names PR-B: a bare program change lands in PR-B,
      exactly as an explicit CC0 81 / CC32 1 does, and not in PR-A. */
   std::vector<float> prb69 = render(roms, [](EmuSC::Xp::Device *d) {

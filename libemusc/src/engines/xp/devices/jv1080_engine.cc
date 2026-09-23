@@ -564,6 +564,19 @@ struct Part {
      values 0, 1 and 2 all give what the law gives for 1.15. Held per part
      because it is received per channel. */
   uint8_t volume;
+  /* The performance controllers as received: the bender re-centred to
+     -8192..8191, modulation, channel aftertouch, and the hold pedal. The
+     modulation and aftertouch values are sources for the controller
+     matrix, which this engine does not run yet, so nothing reads them. */
+  int bend;
+  uint8_t modulation;
+  uint8_t pressure;
+  bool hold;
+  /* The RPN latch, 127/127 when none is selected, and the bend range RPN
+     0/0 set, -1 while it has set none. */
+  uint8_t rpn_msb;
+  uint8_t rpn_lsb;
+  int rpn_bend;
 };
 
 struct Voice {
@@ -592,7 +605,22 @@ struct Voice {
   size_t delay;
   size_t wait;
   size_t release_in;
+  /* The bend range this voice answers, in cents each way, and the hold
+     pedal: whether its record answers it, and a note-off it is holding. */
+  double bend_up;
+  double bend_down;
+  bool holdable;
+  bool sustained;
 };
+
+/* MEASURED (`M-014`): linear in the 14-bit value, scaled by the range on
+   its own side, the full down deflection reaching the whole range. */
+double bend_ratio(int bend, double up, double down)
+{
+  double cents = bend >= 0 ? (double)bend * up / 8192.0
+                           : (double)bend * down / 8192.0;
+  return cents == 0.0 ? 1.0 : std::pow(2.0, cents / 1200.0);
+}
 
 /* THE TONE DELAY, by the modes of the panel's own list at PRG `0x0573B7`:
    NORMAL, HOLD, PLAY-MATE, CLOCK-SYNC, TAP-SYNC, KEY-OFF-NORMAL,
@@ -788,6 +816,10 @@ void free_voice(struct Voice *voice)
   voice->delay = 0u;
   voice->wait = 0u;
   voice->release_in = 0u;
+  voice->bend_up = 0.0;
+  voice->bend_down = 0.0;
+  voice->holdable = false;
+  voice->sustained = false;
   std::memset(&voice->voice, 0, sizeof voice->voice);
 }
 
@@ -863,6 +895,9 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
   part->bank_lsb = 0xffu;
   seed_latch(rom, part);
   part->volume = 127u;
+  part->rpn_msb = 0x7fu;
+  part->rpn_lsb = 0x7fu;
+  part->rpn_bend = -1;
 }
 
 /* The oldest voice, or a free one if there is a free one. Returns null
@@ -1973,6 +2008,33 @@ bool start_record(struct Engine *engine, unsigned part,
     : (size_t)std::lround(tone_delay_ms(bytes[fields->toneDelayTime]) *
                           engine->output_rate / 1000.0);
   voice->release_in = 0u;
+  {
+    /* The bender reaches a record whose own switch lets it; a rhythm note
+       carries one range for both directions where a tone takes the
+       patch's two. RPN 0/0 sets the patch's range (`M-014`: 4 gives
+       +-400 cents); whether it reaches a rhythm note is not measured, and
+       it is not applied there. */
+    const struct XpDeviceProfile *prof = xp_profile(&engine->rom);
+    const struct Part &p = engine->parts[part];
+    double up = 0.0, down = 0.0;
+    bool bends = fields->benderSwitch == XP_VOICE_FIELD_NONE ||
+      bytes[fields->benderSwitch] != 0u;
+    if (bends && fields->benderRange != XP_VOICE_FIELD_NONE) {
+      up = down = (double)bytes[fields->benderRange];
+    } else if (bends && p.rpn_bend >= 0) {
+      up = down = (double)p.rpn_bend;
+    } else if (bends && prof->patchFieldBendUp != XP_VOICE_FIELD_NONE) {
+      up = (double)p.common[prof->patchFieldBendUp];
+      down = (double)p.common[prof->patchFieldBendDown];
+    }
+    voice->bend_up = 100.0 * up;
+    voice->bend_down = 100.0 * down;
+    voice->voice.bend_ratio = bend_ratio(p.bend, voice->bend_up,
+                                         voice->bend_down);
+    voice->holdable = fields->holdSwitch == XP_VOICE_FIELD_NONE ||
+      bytes[fields->holdSwitch] != 0u;
+    voice->sustained = false;
+  }
   switch (voice->delay_mode) {
   case kDelayNormal:
   case kDelayHold:
@@ -2235,6 +2297,36 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
   return started != 0u;
 }
 
+/* What the key coming up does to one voice, through its tone delay. The
+   hold pedal postpones this, whole, to the pedal's release. */
+static void key_off(struct Voice *voice)
+{
+  switch (voice->delay_mode) {
+  case kDelayNormal:
+    /* The note-off is postponed by the delay, as the start was: the
+       NORMAL take at delay 64 stops sounding 647 ms after its
+       note-off, against the 640 ms this gives. */
+    if (voice->delay)
+      voice->release_in = voice->delay;
+    else
+      jv1080_voice_note_off(&voice->voice);
+    break;
+  case kDelayHold:
+    /* HOLD releases at the key, and a key that comes up before the
+       delay has run cancels the tone: the hold take stops at the
+       note-off, and `tone_delay_hold_cancel` - delay 96, key held
+       400 ms - is silent from start to end. */
+    if (voice->wait)
+      free_voice(voice);
+    else
+      jv1080_voice_note_off(&voice->voice);
+    break;
+  default:
+    jv1080_voice_note_off(&voice->voice);
+    break;
+  }
+}
+
 bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
 {
   struct Engine *engine = (struct Engine *)state;
@@ -2248,30 +2340,13 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
           voice->key != key)
         continue;
       voice->key_down = false;
-      switch (voice->delay_mode) {
-      case kDelayNormal:
-        /* The note-off is postponed by the delay, as the start was: the
-           NORMAL take at delay 64 stops sounding 647 ms after its
-           note-off, against the 640 ms this gives. */
-        if (voice->delay)
-          voice->release_in = voice->delay;
-        else
-          jv1080_voice_note_off(&voice->voice);
-        break;
-      case kDelayHold:
-        /* HOLD releases at the key, and a key that comes up before the
-           delay has run cancels the tone: the hold take stops at the
-           note-off, and `tone_delay_hold_cancel` - delay 96, key held
-           400 ms - is silent from start to end. */
-        if (voice->wait)
-          free_voice(voice);
-        else
-          jv1080_voice_note_off(&voice->voice);
-        break;
-      default:
-        jv1080_voice_note_off(&voice->voice);
-        break;
-      }
+      /* The firmware's own note-off handler reads the part's hold byte
+         and leaves a held voice sounding (`04_protocol/midi.md`); a record
+         whose Hold-1 switch is off ignores the pedal. */
+      if (engine->parts[part].hold && voice->holdable)
+        voice->sustained = true;
+      else
+        key_off(voice);
       ++released;
     }
   });
@@ -2289,12 +2364,70 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
   if (!engine || channel >= kParts || value > 127u)
     return false;
   return for_each_part_on(engine, channel, [&](unsigned part) {
+    struct Part &p = engine->parts[part];
     switch (controller) {
-    case 0: engine->parts[part].bank_msb = (uint8_t)value; break;
-    case 32: engine->parts[part].bank_lsb = (uint8_t)value; break;
-    case 7: engine->parts[part].volume = (uint8_t)value; break;
+    case 0: p.bank_msb = (uint8_t)value; break;
+    case 32: p.bank_lsb = (uint8_t)value; break;
+    case 7: p.volume = (uint8_t)value; break;
+    case 1: p.modulation = (uint8_t)value; break;
+    case 64: {
+      /* HOLD-1, on at 64 and above (`04_protocol/controllers.md`). Its
+         release hands every note-off it held to the voice at once. */
+      bool hold = value >= 64u;
+      if (p.hold && !hold)
+        for (unsigned i = 0; i < kMaxVoices; ++i) {
+          struct Voice *voice = engine->voices + i;
+          if (voice->allocated && voice->part == part && voice->sustained) {
+            voice->sustained = false;
+            key_off(voice);
+          }
+        }
+      p.hold = hold;
+      break;
+    }
+    case 101: p.rpn_msb = (uint8_t)value; break;
+    case 100: p.rpn_lsb = (uint8_t)value; break;
+    case 6:
+      /* RPN 0/0, the bend range, in semitones (`M-014`). The up field's
+         own ceiling is 12 and nothing above it has been measured through
+         this path. What the manual's RPN RESET, 127/127, does to a range
+         set here is not measured; it is taken as the deselect it is on
+         other receivers. */
+      if (p.rpn_msb == 0u && p.rpn_lsb == 0u)
+        p.rpn_bend = (int)(value > 12u ? 12u : value);
+      break;
     default: break;
     }
+  }) != 0u;
+}
+
+bool engine_pitch_bend(void *state, unsigned channel, unsigned value)
+{
+  struct Engine *engine = (struct Engine *)state;
+  if (!engine || channel >= kParts || value > 16383u)
+    return false;
+  return for_each_part_on(engine, channel, [&](unsigned part) {
+    struct Part &p = engine->parts[part];
+    p.bend = (int)value - 8192;
+    /* Every sounding voice of the part follows at once: the firmware's
+       bend handler stores the value and calls its recompute-affected-
+       voices routine directly (`04_protocol/controllers.md`). */
+    for (unsigned i = 0; i < kMaxVoices; ++i) {
+      struct Voice *voice = engine->voices + i;
+      if (voice->allocated && voice->part == part)
+        voice->voice.bend_ratio =
+          bend_ratio(p.bend, voice->bend_up, voice->bend_down);
+    }
+  }) != 0u;
+}
+
+bool engine_channel_pressure(void *state, unsigned channel, unsigned value)
+{
+  struct Engine *engine = (struct Engine *)state;
+  if (!engine || channel >= kParts || value > 127u)
+    return false;
+  return for_each_part_on(engine, channel, [&](unsigned part) {
+    engine->parts[part].pressure = (uint8_t)value;
   }) != 0u;
 }
 
@@ -2753,6 +2886,8 @@ const struct XpVoiceEngineOps JV1080_VOICE_ENGINE = {
   EmuSC::Xp::engine_set_max_voices_jv,
   EmuSC::Xp::engine_active_voices,
   EmuSC::Xp::engine_gm_system_on,
+  EmuSC::Xp::engine_pitch_bend,
+  EmuSC::Xp::engine_channel_pressure,
 };
 
 }  // extern "C"

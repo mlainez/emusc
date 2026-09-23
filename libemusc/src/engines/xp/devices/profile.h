@@ -140,6 +140,10 @@ struct XpVoiceEngineOps {
   unsigned (*active_voices)(const void *state);
   /* The universal GM System On. Null on a device with no GM mode. */
   bool (*gm_system_on)(void *state);
+  /* Pitch bend as its 14-bit value, 8192 the centre, and channel
+     aftertouch. Null on a device that does not act on them. */
+  bool (*pitch_bend)(void *state, unsigned channel, unsigned value);
+  bool (*channel_pressure)(void *state, unsigned channel, unsigned value);
 };
 
 /* Where a record type keeps each field a voice needs, by role. A device's
@@ -159,6 +163,11 @@ struct XpVoiceFieldMap {
   uint16_t pan;
   uint16_t coarseTune;
   uint16_t fineTune;
+  /* Whether the record answers the bender and the hold pedal, and the
+     bend range a record carries itself where it has no patch around it. */
+  uint16_t benderSwitch;
+  uint16_t holdSwitch;
+  uint16_t benderRange;
   /* The rhythm note's envelope mode: 0 NO-SUSTAIN, 1 SUSTAIN. */
   uint16_t envelopeMode;
   /* The tone delay: which mode it runs in, and its time. */
@@ -609,6 +618,9 @@ struct XpDeviceProfile {
   uint16_t patchFieldLevel;
   uint16_t patchFieldPan;
   uint16_t patchFieldOctaveShift;
+  /* The patch's bend range, up and down, in semitones. */
+  uint16_t patchFieldBendUp;
+  uint16_t patchFieldBendDown;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive
