@@ -155,6 +155,7 @@ struct XpJv1080Voice {
   double matrix_depth[12];
   double tone_level_gain;        /* the tone level's own square law */
   double velocity_gain;          /* the velocity curve's own gain */
+  double fade_gain;              /* the velocity cross fade's own gain */
   double outer_level_gain;       /* the patch and part levels' */
   unsigned volume;               /* CC7, as the voice last received it */
   unsigned resonance_base;

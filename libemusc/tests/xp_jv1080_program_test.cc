@@ -832,6 +832,35 @@ int main(void)
     };
     assert(std::fabs(10.0 * std::log10(lev(127, 50) / lev(0, 50)) - 13.98) < 0.1);
     assert(std::fabs(10.0 * std::log10(lev(127, 100) / lev(0, 100)) - 17.45) < 0.1);
+    /* The velocity cross fade scales the tone term before the LEV sum, as
+       velocity does: range 113-127 at depth 40 puts velocity 100 at
+       f = (27/40)^2, so full CC1 reads (0.0635 f + 0.254) / (0.0635 f) =
+       +19.81 dB at sensitivity 0 and, with velocity's 0.620 in the tone
+       term, +23.61 dB at +50. Faded after the sum both would read the
+       unfaded +13.98 and +17.45. */
+    auto levFaded = [&](uint8_t cc1, uint8_t sensWire) {
+      return energy(render(roms, [&, cc1, sensWire](EmuSC::Xp::Device *d) {
+        bench(d);
+        common_field(d, 0x40, 1);
+        tone_field(d, 1, 0x0b, 40);
+        tone_field(d, 1, 0x0c, 113);
+        tone_field(d, 1, 0x0d, 127);
+        tone_field(d, 1, 0x65, 32);
+        tone_field(d, 1, 0x69, 0);
+        tone_field(d, 1, 0x6a, sensWire);
+        tone_field(d, 1, 0x1d, 4);
+        tone_field(d, 1, 0x1e, 63 + 16);
+        midi(d, 0xb0, 1, cc1);
+      }));
+    };
+    assert(std::fabs(10.0 * std::log10(levFaded(127, 50) / levFaded(0, 50)) -
+                     19.81) < 0.1);
+    assert(std::fabs(10.0 * std::log10(levFaded(127, 100) / levFaded(0, 100)) -
+                     23.61) < 0.1);
+    /* Without CC1 the fade alone still applies: (27/40)^2 of the unfaded
+       tone, -6.83 dB. */
+    assert(std::fabs(10.0 * std::log10(levFaded(0, 50) / lev(0, 50)) +
+                     6.83) < 0.1);
     /* Controller 3 on SYS-CTRL2 answers CC11, whose matrix source starts
        at 0 and returns to 0 on RESET ALL CONTROLLERS (`P-xxxx`,
        TASK-424): no CC11 reads as CC11 0, and CC11 64 then CC121 does too. */

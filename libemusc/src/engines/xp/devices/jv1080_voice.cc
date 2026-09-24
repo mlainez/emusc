@@ -2079,7 +2079,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     square_law_gain(element.attenuation);
   voice->gain_mix =
     profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0;
-  voice->gain_fade = velocity_fade_gain(fields, tone, velocity);
+  voice->fade_gain = velocity_fade_gain(fields, tone, velocity);
+  voice->gain_fade = voice->fade_gain;
   jv1080_voice_set_volume(voice, controls->volume);
 
   /* Pan: the tone's and the patch's index one table and sum as offsets from
@@ -2390,6 +2391,20 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           untouched slots reads -4.67 to -0.74 dB with velocity after the
           sum and -0.51 to +0.06 with it before). Only velocity 100 is
           measured this way. Patch and part level scale after the sum.
+          The velocity cross fade (velocity_fade_gain) scales the tone
+          term before the sum too. MEASURED (`M-169`, TASK-428) on a
+          dedicated hardware capture, isolating the order directly: one
+          tone ranged 65-127 with fade depth 64 against a fixed reference
+          tone, matrix LEV +20 via CC1, at sensitivity 0 and +50, read at
+          nine velocities down to 9. With the fade before the sum, the
+          predicted L-R level tracks the hardware capture within about
+          0.4 dB at every depth and both sensitivities; fading it after
+          the sum instead diverges with depth, reaching 28-42 dB off at
+          the deepest points measured. The factory sweep first suggested
+          this order (TASK-375's own key-60/velocity-100/CC11-127 sweep,
+          `M-159`, TASK-421, confirmed the same order for the velocity
+          term itself); the dedicated capture confirms it directly for
+          the fade term too.
      CUT  2.3 cutoff units per step, from depths -16 to +16 read against the
           cutoff field itself, +-2 units.
      RES  about 2 resonance units per step: APPROXIMATE, the four readings
@@ -2476,10 +2491,12 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
   voice->matrix_pitch_ratio = std::pow(2.0, cents / 1200.0);
   double tone = voice->tone_level_gain;
   voice->gain_velocity = voice->velocity_gain;
+  voice->gain_fade = voice->fade_gain;
   if (moveLevel) {
-    tone = tone * voice->velocity_gain + level;
+    tone = tone * voice->velocity_gain * voice->fade_gain + level;
     tone = tone < 0.0 ? 0.0 : (tone > 1.0 ? 1.0 : tone);
     voice->gain_velocity = 1.0;
+    voice->gain_fade = 1.0;
   }
   voice->gain_levels = tone * voice->outer_level_gain;
   jv1080_voice_set_volume(voice, voice->volume);
