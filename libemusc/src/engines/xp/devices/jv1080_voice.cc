@@ -2040,6 +2040,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->outer_level_gain = square_law_gain(controls->patch_level) *
     square_law_gain(controls->part_level);
   voice->gain_levels = voice->tone_level_gain * voice->outer_level_gain;
+  voice->velocity_gain = velocityGain;
   voice->gain_velocity = velocityGain;
   /* MEASURED (`P-xxxx`, `basic/wave_number_map_g2` and `_g3`: 142 waves,
      one note each at key 60 against our render of the same files): the
@@ -2355,9 +2356,14 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           4 %; above 40 the law is extrapolated.
      LEV  adds d/63 of full-scale amplitude to the tone level's own square
           law, the sum clamped to 0..1 - within 0.2 dB at tone levels 32, 64,
-          96 and 127, both signs. Measured with the tone level only: whether
-          velocity, patch and part level scale before or after the sum is
-          not, and here they scale after it.
+          96 and 127, both signs, at velocity sensitivity 0. Velocity
+          scales the tone level BEFORE the sum and is not applied again
+          after it (`M-159`, TASK-421: TASK-375's factory sweep, key 60,
+          velocity 100, CC11 127 - on the 227 slots where the two orders
+          differ, binned by predicted difference, level against the
+          untouched slots reads -4.67 to -0.74 dB with velocity after the
+          sum and -0.51 to +0.06 with it before). Only velocity 100 is
+          measured this way. Patch and part level scale after the sum.
      CUT  2.3 cutoff units per step, from depths -16 to +16 read against the
           cutoff field itself, +-2 units.
      RES  about 2 resonance units per step: APPROXIMATE, the four readings
@@ -2443,9 +2449,11 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
   }
   voice->matrix_pitch_ratio = std::pow(2.0, cents / 1200.0);
   double tone = voice->tone_level_gain;
+  voice->gain_velocity = voice->velocity_gain;
   if (moveLevel) {
-    tone += level;
+    tone = tone * voice->velocity_gain + level;
     tone = tone < 0.0 ? 0.0 : (tone > 1.0 ? 1.0 : tone);
+    voice->gain_velocity = 1.0;
   }
   voice->gain_levels = tone * voice->outer_level_gain;
   jv1080_voice_set_volume(voice, voice->volume);
