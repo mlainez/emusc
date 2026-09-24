@@ -1244,6 +1244,47 @@ int main(void)
     assert(sync({ 3, 12, 15, 15 }) == sync({ 3, 12 }));
   }
 
+  /* A program change cuts the part's sounding voices unless Patch Remain
+     (system common `00 0B`) is on; a bank select alone only latches. The
+     note is held across the change, so only a cut silences it; what is
+     left after one is the effect tails. */
+  {
+    const uint8_t remain[4] = { 0x00, 0x00, 0x00, 0x0b };
+    auto change = [&](int patchRemain, bool program) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      if (patchRemain >= 0)
+        dt1(d, remain, { (uint8_t)patchRemain });
+      bank(d, 81, 0, 0);
+      midi(d, 0x90, 60, 100);
+      std::vector<float> out(2 * kFrames);
+      EmuSC::Xp::device_render(d, out.data(), kFrames / 2);
+      midi(d, 0xb0, 0, 81);
+      midi(d, 0xb0, 32, 1);
+      if (program)
+        midi(d, 0xc0, 0);
+      EmuSC::Xp::device_render(d, out.data() + kFrames, kFrames / 2);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return std::vector<float>(out.begin() + kFrames + kFrames / 2,
+                                out.end());
+    };
+    std::vector<float> held = change(-1, false);
+    assert(energy(held) > 0.0);
+    assert(change(0, false) == held);
+    assert(change(1, true) == held);
+    assert(change(-1, true) == change(0, true));
+    assert(energy(change(0, true)) < 1e-3 * energy(held));
+  }
+
   printf("ok\n");
   return 0;
 }

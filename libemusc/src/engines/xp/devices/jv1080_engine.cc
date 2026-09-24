@@ -841,6 +841,9 @@ struct Engine {
   /* System Control Source 1 and 2 (System common `00 12`, `00 13`): 0-95
      a controller number, 96 BENDER, 97 AFTERTOUCH. */
   uint8_t sys_ctrl[2];
+  /* System common `00 0B`, Patch Remain: whether a program change leaves
+     the part's sounding voices alone. */
+  bool patch_remain;
   struct Rhythm rhythm;
   struct Voice voices[kMaxVoices];
   struct DcBlocker dc_left;
@@ -2767,6 +2770,9 @@ bool engine_create(void **state, const struct xp_rom *rom,
      value in range, so what a factory reset leaves is not established. */
   engine->sys_ctrl[0] = 97u;
   engine->sys_ctrl[1] = 11u;
+  /* Patch Remain as the owner's unit reads it back: OFF (system common
+     byte `0B` of the corpus session's state probe). */
+  engine->patch_remain = false;
   /* The manual's default for Default tempo; the unit's own power-on value
      is not read back. */
   engine->tempo_bpm = 120.0;
@@ -3231,6 +3237,28 @@ bool engine_program_change_one(struct Engine *engine, unsigned part,
     p.part[profile->partFieldPatchNumber] = (uint8_t)program;
     p.part[profile->partFieldPatchNumber + 1u] = (uint8_t)program;
   }
+  /* A PROGRAM CHANGE CUTS THE PART'S SOUNDING VOICES. After the load,
+     `0x0A018A0C` calls `0x0A0193D4(part)` (`0x0A01955C` for the rhythm
+     part, the same code on part 9); every program-change path reaches the
+     same routine. With Patch Remain (`u8[0x090138F1]`, system common `0B`)
+     off, it calls the internal-ROM routine 0x3F38(part) and resets the
+     per-voice state of every voice the part owns; with it on, it only
+     marks those voices and leaves them sounding. A number that fails
+     validation returns before the load and cuts nothing. A bank select
+     only latches (`0x0A0118F4`), so it never cuts.
+
+     0x3F38's body is not in the PRG image. What it does is measured: on
+     the factory-patch corpus, 228 of 229 slots with a voice still over
+     15 dB above the floor at the next program change fall to the floor,
+     about 30 dB inside 0.5 ms - a hard cut, not a release. The cut lands
+     5-31 ms (median 11) after the program change on hardware, the time
+     the load takes; that delay is not modelled. */
+  if (loaded && !engine->patch_remain)
+    for (unsigned v = 0; v < kMaxVoices; ++v) {
+      struct Voice *voice = engine->voices + v;
+      if (voice->allocated && voice->part == part)
+        free_voice(voice);
+    }
   return loaded;
 }
 
@@ -3383,12 +3411,17 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     efx_algorithm_refresh(engine);
     return true;
   }
-  /* System common, `00 00 00 xx`: only the two System Control Sources are
-     held, one byte each on the wire as the readback shows them. */
+  /* System common, `00 00 00 xx`: Patch Remain and the two System Control
+     Sources are held, one byte each on the wire as the readback shows
+     them. */
   if (a1 == 0x00u && part == 0x00u && block == 0x00u) {
     bool held = false;
     for (size_t i = 0; i < count; ++i) {
       unsigned at = within + (unsigned)i;
+      if (at == 0x0bu && data[i] <= 1u) {
+        engine->patch_remain = data[i] != 0u;
+        held = true;
+      }
       if ((at == 0x12u || at == 0x13u) && data[i] <= 97u) {
         engine->sys_ctrl[at - 0x12u] = data[i];
         held = true;
