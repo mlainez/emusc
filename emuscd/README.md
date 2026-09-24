@@ -57,6 +57,10 @@ emuscd --device sc88 --name "My Synth"
 --rate HZ           Requested audio sample rate (default: 48000)
 --latency MS        Requested output buffer size in ms (default: 20)
 --block N           Audio frames per ALSA write (default: 256)
+--gain-db DB        Output gain in dB, linear multiplier 10^(DB/20) applied
+                    to the final samples (default: 0, no change - a
+                    listening-convenience knob only, see emusc-render's
+                    own README for details)
 --help              Show full help
 ```
 
@@ -129,6 +133,10 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 --rate HZ            Audio sample rate (default: 48000)
 --block N            Audio frames per wave buffer (default: 256)
 --latency MS         Requested output buffer size in ms (default: 20)
+--gain-db DB         Output gain in dB, linear multiplier 10^(DB/20) applied
+                     to the final samples (default: 0, no change - a
+                     listening-convenience knob only, see emusc-render's
+                     own README for details)
 --help               Show full help
 ```
 

@@ -15,6 +15,7 @@
 #include "version.h"
 #include "mxcsr_ftz.h"
 #include "rom_paths.h"
+#include "gain.h"
 
 #include "synth.h"          // libEmuSC public API (emusc/libemusc/src)
 #include "control_rom.h"
@@ -132,6 +133,18 @@ Rendering:
                          than 16 bits does, which matters when the top octave
                          of a reverb tail is being measured.
   --float                Same as --bits 32.
+  --gain-db DB           Output gain in decibels, applied as a linear
+                         multiplier (10^(DB/20)) to the final samples, right
+                         before they are quantized to 16-bit (or clamped to
+                         +-1.0 for --float output). Default: 0, which is no
+                         change at all - a render without this flag is
+                         byte-identical to one with --gain-db 0. A listening-
+                         convenience knob only: it runs after everything
+                         libEmuSC itself computes, never feeds back into the
+                         synth, and does not change any hardware-fidelity
+                         measurement. Full-scale samples this produces are
+                         reported the same way as full-scale samples from the
+                         engine itself (see the exit-time summary).
   --verbose              Let libEmuSC's own stdout diagnostics through
   --version              Print tool and libEmuSC version and exit
   --help                 This text
@@ -148,6 +161,7 @@ struct Options {
   std::string reset = "gs";
   double tail = 2.0;
   unsigned seed = 1;
+  double gain_db = 0.0;
   bool as_float = false;
   bool verbose = false;
   bool play = false;
@@ -208,6 +222,7 @@ Options parse_args(int argc, char **argv) {
     else if (a == "--reset")       o.reset = need("--reset");
     else if (a == "--tail")        o.tail = std::stod(need("--tail"));
     else if (a == "--seed")        o.seed = static_cast<unsigned>(std::stoul(need("--seed")));
+    else if (a == "--gain-db")     o.gain_db = std::stod(need("--gain-db"));
     else if (a == "--float")       o.as_float = true;
     else if (a == "--bits") {
       std::string bits = need("--bits");
@@ -584,6 +599,11 @@ int main(int argc, char **argv) {
     const float kFullScale = 32766.5f / 32767.0f;
     uint64_t full_scale = 0, first_full_scale = 0, last_full_scale = 0;
 
+    // --gain-db 0 (the default) converts to exactly 1.0f, and apply_gain()
+    // then never touches a sample, so leaving the flag unset renders
+    // byte-identically to a build without this option at all.
+    const float gain_lin = emusc_tools::gain_db_to_linear(o.gain_db);
+
     size_t next = 0;
     for (uint64_t fr = 0; fr < total_frames; fr++) {
       while (next < sched.size() && sched[next].frame <= fr + EVENT_LEAD_FRAMES) {
@@ -609,6 +629,15 @@ int main(int argc, char **argv) {
       }
       float l = 0.0f, r = 0.0f;
       synth.get_next_frame(l, r);
+      emusc_tools::apply_gain(l, r, gain_lin);
+      // Float output has no quantization step of its own to clamp it, so a
+      // requested gain that pushes a sample past +-1.0 is clamped here
+      // explicitly; skipped along with apply_gain() itself when no gain was
+      // requested, so a default render's float samples are never touched.
+      if (o.gain_db != 0.0 && o.as_float) {
+        if (l > 1.0f) l = 1.0f; else if (l < -1.0f) l = -1.0f;
+        if (r > 1.0f) r = 1.0f; else if (r < -1.0f) r = -1.0f;
+      }
       for (float v : {l, r})
         if (std::fabs(v) >= kFullScale) {
           if (!full_scale++) first_full_scale = fr;

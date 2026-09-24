@@ -449,7 +449,13 @@ this project has not verified, and each run that falls back to it says so.
 ```
 No output file is required with `--play`; give both `--play` and `--out`/`output.wav` to render and listen at the same time. Audio goes straight to the sound card - ALSA on Linux, WinMM on Windows, including the 32-bit Windows binaries - so no OS or user MIDI player needs to sit in the way. The run is paced by the audio device itself and takes as long as the song does, rather than rendering as fast as possible.
 
-See `emusc-render --help` for all options: `--reset` (GM/GS mode), `--tail` (trailing silence), `--seed`, `--bits` (16-bit or 32-bit float), `--float`, `--play`, `--verbose`, and more.
+See `emusc-render --help` for all options: `--reset` (GM/GS mode), `--tail` (trailing silence), `--seed`, `--bits` (16-bit or 32-bit float), `--float`, `--gain-db` (output gain, see below), `--play`, `--verbose`, and more.
+
+**Turn a quiet render up, `--gain-db`:** a linear multiplier (10^(DB/20)) applied to the final samples right before they're quantized to 16-bit (or clamped to ±1.0 for `--float`). Default `0` (no change at all - a render without this flag is byte-identical to one with `--gain-db 0`). It is a listening-convenience knob only, applied after everything libEmuSC itself computes; it never changes libEmuSC's own signal path or any hardware-fidelity measurement, and `emuscd`/`emusc-winmidi` accept the same flag with the same meaning for real-time playback.
+```bash
+./build/libemusc/tools/emusc-render --gain-db 6 input.mid louder.wav
+```
+Push it too far and the same "N samples at full scale" warning that reports the engine's own clipping reports this too, rather than clipping silently.
 
 ---
 

@@ -57,6 +57,7 @@ class EmuscdDaemon {
   snd_pcm_t* pcm_out = nullptr;
   unsigned int sample_rate;
   unsigned int block_frames;
+  float gain_lin;
 
   std::unique_ptr<EmuSC::ControlRom> ctrl_rom;
   std::unique_ptr<EmuSC::WaveRom> wave_rom;
@@ -73,8 +74,9 @@ public:
   EmuscdDaemon(const std::string& dev, const std::string& port_name,
                const std::string& pcm_device, const std::string& rom_directory,
                unsigned int requested_rate, unsigned int latency_ms,
-               unsigned int block)
-      : sample_rate(requested_rate), block_frames(block), rom_dir(rom_directory) {
+               unsigned int block, double gain_db)
+      : sample_rate(requested_rate), block_frames(block),
+        gain_lin(gain_db_to_linear(gain_db)), rom_dir(rom_directory) {
     init_alsa_midi(port_name);
     init_alsa_audio(pcm_device, latency_ms);
     if (!load_device(dev)) {
@@ -232,6 +234,7 @@ public:
       if (synth && pcm_out) {
         float left = 0.0f, right = 0.0f;
         synth->get_next_frame(left, right);
+        apply_gain(left, right, gain_lin);
         out_buf.push_back(to_i16(left));
         out_buf.push_back(to_i16(right));
         if (out_buf.size() >= block_frames * 2) {
@@ -340,6 +343,7 @@ int main(int argc, char* argv[]) {
   unsigned int rate = 48000;
   unsigned int latency_ms = 20;
   unsigned int block = 256;
+  double gain_db = 0.0;
 
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
@@ -371,6 +375,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "emuscd: --block must be >= 1" << std::endl;
         return 1;
       }
+    } else if (arg == "--gain-db") {
+      gain_db = std::stod(need("--gain-db"));
     } else if (arg == "--help" || arg == "-h") {
       std::cout
           << "emuscd - Roland Sound Canvas daemon\n"
@@ -387,6 +393,9 @@ int main(int argc, char* argv[]) {
           << "  --rate HZ           Requested audio sample rate (default: 48000)\n"
           << "  --latency MS        Requested output buffer size (default: 20)\n"
           << "  --block N           Audio frames per ALSA write (default: 256)\n"
+          << "  --gain-db DB        Output gain in dB, linear multiplier 10^(DB/20)\n"
+          << "                       applied to the final samples (default: 0, no\n"
+          << "                       change - a listening-convenience knob only)\n"
           << "  --help              Show this help\n"
           << "\n"
           << "ROM files are named <device>_control.bin, <device>_cpu.bin\n"
@@ -409,7 +418,7 @@ int main(int argc, char* argv[]) {
 
   try {
     EmuscdDaemon daemon(device, port_name, pcm_device, rom_dir, rate,
-                         latency_ms, block);
+                         latency_ms, block, gain_db);
     daemon.run();
   } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << std::endl;

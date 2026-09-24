@@ -45,6 +45,9 @@ const char *USAGE =
 "  --rate HZ            Audio sample rate (default: 48000)\n"
 "  --block N            Audio frames per wave buffer (default: 256)\n"
 "  --latency MS         Requested output buffer size (default: 20)\n"
+"  --gain-db DB         Output gain in dB, linear multiplier 10^(DB/20)\n"
+"                        applied to the final samples (default: 0, no\n"
+"                        change - a listening-convenience knob only)\n"
 "  --help               Show this help\n"
 "\n"
 "ROM files are named <device>_control.bin, <device>_cpu.bin\n"
@@ -95,8 +98,9 @@ class WinMidiDaemon {
 public:
   WinMidiDaemon(const std::string &dev, const std::string &romDir,
                 int midiInId, int waveOutId, unsigned rate, unsigned block,
-                unsigned latencyMs)
-      : _sampleRate(rate), _blockFrames(block), _romDir(romDir) {
+                unsigned latencyMs, double gainDb)
+      : _sampleRate(rate), _blockFrames(block), _romDir(romDir),
+        _gainLin(gain_db_to_linear(gainDb)) {
     InitializeCriticalSection(&_midiLock);
     InitializeCriticalSection(&_sysexLock);
     if (!load_device(dev)) {
@@ -267,6 +271,7 @@ private:
     for (unsigned i = 0; i < _blockFrames; i++) {
       float l = 0.0f, r = 0.0f;
       if (_synth) _synth->get_next_frame(l, r);
+      apply_gain(l, r, _gainLin);
       b.data[i * 2]     = to_i16(l);
       b.data[i * 2 + 1] = to_i16(r);
     }
@@ -369,6 +374,7 @@ private:
 
   unsigned _sampleRate, _blockFrames;
   std::string _romDir;
+  float _gainLin = 1.0f;
   std::atomic<bool> _running{false};
 
   std::unique_ptr<EmuSC::ControlRom> _ctrlRom;
@@ -402,6 +408,7 @@ int main(int argc, char **argv) {
   unsigned rate = 48000;
   unsigned block = 256;
   unsigned latency = 20;
+  double gainDb = 0.0;
 
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
@@ -419,6 +426,7 @@ int main(int argc, char **argv) {
     else if (a == "--rate")          rate = static_cast<unsigned>(std::stoul(need("--rate")));
     else if (a == "--block")         block = static_cast<unsigned>(std::stoul(need("--block")));
     else if (a == "--latency")       latency = static_cast<unsigned>(std::stoul(need("--latency")));
+    else if (a == "--gain-db")       gainDb = std::stod(need("--gain-db"));
     else if (a == "--list-midi-in")  { list_midi_in_devices(); return 0; }
     else if (a == "--list-wave-out") { list_wave_out_devices(); return 0; }
     else if (a == "--help" || a == "-h") { std::printf("%s", USAGE); return 0; }
@@ -440,7 +448,7 @@ int main(int argc, char **argv) {
 
   if (romDir.empty()) romDir = default_rom_dir();
 
-  WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency);
+  WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency, gainDb);
   daemon.run();
   return 0;
 }
