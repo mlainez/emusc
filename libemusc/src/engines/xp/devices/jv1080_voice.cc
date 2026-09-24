@@ -1780,10 +1780,37 @@ bool resolve_element(const struct xp_rom *rom,
     wave_element_open(rom, zone.directory, zone.element, element);
 }
 
-/* The record's own gates. One that is off, or whose key or velocity range
-   excludes this note, does not sound - which is not an error: a patch's
-   four tones routinely split the keyboard between them. A record type with
-   no range fields gates on its switch alone. */
+/* How much of a tone its velocity range lets through, 0..1. Outside the
+   range a tone with a velocity cross fade depth fades out over that many
+   velocity steps rather than stopping at the edge; depth 0 is the hard
+   gate. MEASURED (`P-xxxx`, TASK-425), APPROXIMATE, on the factory
+   sweep's velocity-100 slots against the hardware takes: R&R Chunk
+   (PR-B 003, tones 3-4 ranged 113-127, depth 40) reads 16 dB quiet with
+   the hard gate and within about 1 dB with the amplitude falling
+   linearly; Waterhodes (PR-A 014, tone 2 ranged 127-127, depth 48)
+   leaves its tone alone in 1.5-4.8 kHz, where the hardware reads it at
+   -6.5 dB, the line giving -7.2. The square of the line misses those two
+   by 3.3 and 7.9 dB. R&R Chunk's sustain against its own attack instead
+   sits 2.5 dB under the line, so the shape is not settled to better than
+   a few dB; the lower edge alone is measured and the upper edge is taken
+   as the same line. */
+double velocity_fade_gain(const struct XpVoiceFieldMap *fields,
+                          const uint8_t *record, unsigned velocity)
+{
+  unsigned lo = field_or(fields, fields->velocityRangeLow, record, 1);
+  unsigned hi = field_or(fields, fields->velocityRangeHigh, record, 127);
+  unsigned d = velocity < lo ? lo - velocity
+    : (velocity > hi ? velocity - hi : 0u);
+  if (!d)
+    return 1.0;
+  unsigned depth = field_or(fields, fields->velocityCrossFade, record, 0u);
+  return d >= depth ? 0.0 : 1.0 - (double)d / (double)depth;
+}
+
+/* The record's own gates. One that is off, or whose key range or velocity
+   fade excludes this note, does not sound - which is not an error: a
+   patch's four tones routinely split the keyboard between them. A record
+   type with no range fields gates on its switch alone. */
 bool record_sounds(const struct XpVoiceFieldMap *fields,
                     const uint8_t *record, unsigned key, unsigned velocity)
 {
@@ -1792,8 +1819,7 @@ bool record_sounds(const struct XpVoiceFieldMap *fields,
   if (key < field_or(fields, fields->keyRangeLow, record, 0) ||
       key > field_or(fields, fields->keyRangeHigh, record, 127))
     return false;
-  return velocity >= field_or(fields, fields->velocityRangeLow, record, 1) &&
-    velocity <= field_or(fields, fields->velocityRangeHigh, record, 127);
+  return velocity_fade_gain(fields, record, velocity) > 0.0;
 }
 
 }  // namespace
@@ -2026,6 +2052,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     square_law_gain(element.attenuation);
   voice->gain_mix =
     profile->voiceMixScale > 0.0 ? profile->voiceMixScale : 1.0;
+  voice->gain_fade = velocity_fade_gain(fields, tone, velocity);
   jv1080_voice_set_volume(voice, controls->volume);
 
   /* Pan: the tone's and the patch's index one table and sum as offsets from
@@ -2310,12 +2337,12 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
     return;
   voice->volume = volume;
   voice->static_gain_unwaved = voice->gain_levels * cc7_gain(volume) *
-    voice->gain_velocity * voice->gain_mix;
+    voice->gain_velocity * voice->gain_fade * voice->gain_mix;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
-    voice->gain_velocity * voice->gain_wave * voice->gain_mix;
+    voice->gain_velocity * voice->gain_fade * voice->gain_wave * voice->gain_mix;
   voice->tone_gain = (voice->outer_level_gain > 0.0
                         ? voice->gain_levels / voice->outer_level_gain : 0.0) *
-    voice->gain_velocity * voice->gain_wave;
+    voice->gain_velocity * voice->gain_fade * voice->gain_wave;
 }
 
 /* THE CONTROLLER MATRIX. Each slot's effective depth is its depth times its

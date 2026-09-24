@@ -514,6 +514,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .keyRangeHigh = 0x0fu,
     .velocityRangeLow = 0x0cu,
     .velocityRangeHigh = 0x0du,
+    .velocityCrossFade = 0x0bu,
     .muteGroup = XP_VOICE_FIELD_NONE,
   },
   .rhythmNoteFields = {
@@ -584,6 +585,7 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .keyRangeHigh = XP_VOICE_FIELD_NONE,
     .velocityRangeLow = XP_VOICE_FIELD_NONE,
     .velocityRangeHigh = XP_VOICE_FIELD_NONE,
+    .velocityCrossFade = XP_VOICE_FIELD_NONE,
     .muteGroup = 0x07u,
   },
 

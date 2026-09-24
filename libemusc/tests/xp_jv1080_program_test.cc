@@ -1304,6 +1304,34 @@ int main(void)
     assert(energy(change(0, true)) < 1e-3 * energy(held));
   }
 
+  /* Velocity cross fade depth, tone field 0x0B, with the patch's velocity
+     range switch on: velocity 100 thirteen steps outside a range with depth
+     40 sounds at 1 - 13/40 of the in-range amplitude, on either edge; at
+     depth 0, or with the fade used up, the tone is silent. */
+  {
+    auto ranged = [](uint8_t lo, uint8_t hi, uint8_t depth) {
+      return [lo, hi, depth](EmuSC::Xp::Device *d) {
+        bank(d, 81, 0, 0);
+        common_field(d, 0x40, 1);
+        tone_field(d, 1, 0x0b, depth);
+        tone_field(d, 1, 0x0c, lo);
+        tone_field(d, 1, 0x0d, hi);
+      };
+    };
+    double full = energy(render(roms, ranged(1, 127, 40)));
+    assert(full > 0.0);
+    double expect = 20.0 * std::log10(1.0 - 13.0 / 40.0);
+    for (auto r : { std::make_pair(113, 127), std::make_pair(1, 87) }) {
+      double e = energy(render(roms, ranged((uint8_t)r.first,
+                                            (uint8_t)r.second, 40)));
+      assert(std::fabs(10.0 * std::log10(e / full) - expect) < 0.1);
+      assert(energy(render(roms, ranged((uint8_t)r.first,
+                                        (uint8_t)r.second, 0))) == 0.0);
+      assert(energy(render(roms, ranged((uint8_t)r.first,
+                                        (uint8_t)r.second, 13))) == 0.0);
+    }
+  }
+
   printf("ok\n");
   return 0;
 }

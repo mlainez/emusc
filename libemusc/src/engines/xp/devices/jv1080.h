@@ -201,6 +201,7 @@ struct XpJv1080Voice {
   double gain_velocity;
   double gain_wave;
   double gain_mix;
+  double gain_fade;
   double gain_left;
   double gain_right;
 

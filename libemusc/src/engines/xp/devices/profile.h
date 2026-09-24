@@ -246,6 +246,7 @@ struct XpVoiceFieldMap {
   uint16_t keyRangeHigh;
   uint16_t velocityRangeLow;
   uint16_t velocityRangeHigh;
+  uint16_t velocityCrossFade;
   uint16_t muteGroup;
 };
 
