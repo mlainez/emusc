@@ -266,6 +266,19 @@ int main(void)
            a.low_shelf.b0 == b.low_shelf.b0);
     /* the row gain is 12 dB apart and of opposite sign */
     assert(a.gain > 0.0f && b.gain < 0.0f && -b.gain == 4.0f * a.gain);
+    /* the input block: a DC blocker whose pole is 1 - 2^-8 */
+    assert(a.dc_block.b0 == 1.0f && a.dc_block.b1 == -1.0f &&
+           a.dc_block.a1 == 1.0f - 1.0f / 256.0f &&
+           b.dc_block.a1 == a.dc_block.a1);
+    {
+      struct xp_drive c = a;
+      float in[64], outL[64], outR[64];
+      for (unsigned i = 0; i < 64u; ++i)
+        in[i] = 0.001f;
+      for (unsigned i = 0; i < 100u; ++i)
+        drive_process(&c, in, in, outL, outR, 64u);
+      assert(fabsf(outL[63]) < 1e-6f && fabsf(outR[63]) < 1e-6f);
+    }
     /* the stage: identity inside full scale, clamped outside, odd */
     assert(drive_curve(&a, 0.0f) == 0.0f);
     assert(drive_curve(&a, 0.5f) == 0.5f);

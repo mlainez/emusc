@@ -28,6 +28,41 @@ const unsigned kImageGainA = 28u;
 const unsigned kImageGainB = 30u;
 const unsigned kDriveSlotType = 1u;  /* OVERDRIVE; DISTORTION loads the same slot */
 
+/* THE INPUT DC BLOCKER: the rate word of the slot image's input block.
+
+   WHAT IS IN THE ROM (FW-EXACT). CRAM 7..10 of slot 29's image read
+   0x1FF0 0x0009 0x3FE0 0x0009, ahead of S1 at 14. The same four words sit
+   near the head of 25 of the 32 programs in the EFX bank - twice, one per
+   channel, in slots 1, 2, 10, 15, 16, 19 and 20 - and they are CRAM
+   107..110 at the head of the system chorus's program.
+
+   WHAT THEY ARE (FW-STRUCT, not decoded: `U-R5-02`). Read as a leaky
+   integrator subtracted from its own input, `y = x - m`, `m += k y`, the
+   0x3FE0 word is k = 2^-8, which is a one-pole highpass with its pole at
+   1 - 2^-8: 19.93 Hz at 32 kHz. On the system chorus a 19.97 +- 0.04 Hz
+   one-pole highpass is measured inside the feedback loop
+   (`chorusLoopHighpassHz`, devices/profile.h), which is where an
+   input-stage filter sits when the feedback is summed into the input. The
+   0x1FF0 word (1 - 2^-9) read as the pole instead gives 9.95 Hz, which the
+   chorus measurement does not allow.
+
+   WHY IT MATTERS HERE. In front of a linear effect a 20 Hz highpass is
+   close to inaudible; in front of the clamp it is not. A symmetric clamp's
+   even harmonics are set by where its input crosses zero, and the ROM
+   `Sine` carries its own second harmonic at -35.5 dB, so the phase of that
+   harmonic against the fundamental decides them. This section turns it by
+   +6.6 degrees at key 60 (+4.4 at 262 Hz, +2.2 at 523), which is the
+   difference between a second harmonic at -55 dB and one at -70. Checked,
+   not fitted (`P-xxxx`, `efx_transfer/efx02`, `efx03`,
+   `closing/efx_sweep_02`, `_03`): on OVERDRIVE's top step harmonics
+   2/4/6/8/10 read -68.9/-64.5/-60.5/-56.9/-53.8 dB against the machine's
+   -70.5/-64.2/-60.0/-56.9/-54.0, where the chain without it read
+   -55.5/-54.5/-53.1/-51.3/-49.6; DISTORTION's saturated steps read a
+   second harmonic of -70 to -71 against -69 to -70 (-55 without). The odd
+   series does not move. The 9.95 Hz reading leaves the top steps' even
+   sum 1.3 (OVERDRIVE) and 5.3 dB (DISTORTION) above the machine's. */
+const unsigned kImageInputRate = 10u;
+
 /* CRAM[0x5F] as `0x0A002704` writes it: 0x5000 for AmpType 0, else 0x9000. */
 const uint16_t kAmpTypeZeroGain = 0x5000u;
 const uint16_t kAmpTypeOtherGain = 0x9000u;
@@ -219,6 +254,13 @@ bool drive_set(const struct xp_rom *rom, struct xp_drive *out, unsigned row,
     set_fo(&dr->pre[s], r + 3u * s);
     set_fo(&dr->post[s], r + 9u + 3u * s);
   }
+  {
+    const double k = -xp(prog.cram[kImageInputRate]);
+    if (!(k > 0.0 && k < 1.0))
+      return false;
+    const double block[3] = { 1.0, -1.0, 1.0 - k };
+    set_fo(&dr->dc_block, block);
+  }
   dr->gain = (float)(r[18] * xp(prog.cram[kImageGainA]) *
                      xp(prog.cram[kImageGainB]));
   dr->trim = (float)r[19];
@@ -246,7 +288,7 @@ void drive_process(struct xp_drive *dr, const float *inL, const float *inR,
 {
   for (size_t k = 0; k < frames; ++k) {
     /* One pan pair for the output, so the effect runs mono. */
-    float x = 0.5f * (inL[k] + inR[k]) * dr->drive;
+    float x = fo(&dr->dc_block, 0.5f * (inL[k] + inR[k]) * dr->drive);
     for (unsigned s = 0; s < 3u; ++s)
       x = fo(&dr->pre[s], x);
     float w = drive_curve(dr, x * dr->gain) * dr->trim;

@@ -32,6 +32,8 @@ extern "C" {
  *                         21-word CRAM block"). Value order is (b0, b1, a1)
  *                         per section, for `y = b0 x + b1 x' + a1 y'`
  *   slot image CRAM 28/30 `0xD000` = +8.0 each; the row leaves them alone
+ *   slot image CRAM 10    `0x3FE0`, the rate of the input DC blocker in
+ *                         front of S1 (drive.cc says how it is read)
  *   Drive   p1            `0x038832[v] >> 4` into the 9-bit register
  *                         `XP 0x3330`: 51..8191, linear
  *   Pan     p2            the pair at `0x0392A0 + 4v`, each `>> 4` into
@@ -99,6 +101,7 @@ struct xp_drive_bq {
 
 struct xp_drive {
   float drive;
+  struct xp_drive_fo dc_block;   /* the image's input block (drive.cc) */
   struct xp_drive_fo pre[3];
   float gain;                    /* row gain times the two image gains */
   float trim;
