@@ -93,6 +93,8 @@ set(EMUSC_SOURCES
   engines/xp/spectrum.h
   engines/xp/phaser.cc
   engines/xp/phaser.h
+  engines/xp/rotary.cc
+  engines/xp/rotary.h
   engines/xp/stereo_eq.cc
   engines/xp/stereo_eq.h
   engines/xp/efx.cc
@@ -179,6 +181,7 @@ set(XP_JV1080_SOURCES
   engines/xp/reverb.cc
   engines/xp/enhancer.cc
   engines/xp/phaser.cc
+  engines/xp/rotary.cc
   engines/xp/spectrum.cc
   engines/xp/stereo_eq.cc
   engines/xp/wave.cc)
@@ -280,6 +283,10 @@ if(BUILD_TESTING)
   xp_test(xp_dynamics_test ${XP_JV1080_SOURCES}
     engines/xp/devices/sc88.cc engines/xp/rom.cc)
   set_property(TEST xp_dynamics_test PROPERTY SKIP_RETURN_CODE 77)
+  # ROTARY on its own: binding, crossover, speed law and ramp, tap sides.
+  xp_test(xp_rotary_test ${XP_JV1080_SOURCES}
+    engines/xp/devices/sc88.cc engines/xp/rom.cc)
+  set_property(TEST xp_rotary_test PROPERTY SKIP_RETURN_CODE 77)
   # The filter envelope's measured tables and laws, checked as arithmetic:
   # no ROM is involved, so this one never reports skipped.
   xp_test(xp_filter_env_test ${XP_JV1080_SOURCES}

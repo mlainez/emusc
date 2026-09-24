@@ -907,8 +907,12 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     /* SPECTRUM's band frequency indices, the eight bytes `0x0A002AB8`
        reads at 0x03CEF6, two to a word (engines/xp/spectrum.h). */
     { 0x03CEF6u,   1u,  4u },    /* 29 SPECTRUM band frequency indices */
+    /* ROTARY's acceleration words, `0x03EEE8[v]` for bytes 5 and 6 into
+       the ramp registers XP 0x3928/0x392A (`0x0A002F94`; engines/xp/
+       rotary.h): 1..10, 12, 16, 32, 64, 128, 256. */
+    { 0x03EEE8u,  16u,  1u },    /* 30 ROTARY acceleration */
   },
-  .efxTableCount = 30u,
+  .efxTableCount = 31u,
 
   .voiceEngine = &JV1080_VOICE_ENGINE,
 };
