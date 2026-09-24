@@ -172,6 +172,7 @@ struct XpJv1080Voice {
   size_t pcm_count;
   double position;               /* fractional index into pcm */
   double increment;              /* wave samples per output sample */
+  double step_ceiling;           /* the most the read head may advance */
   double bend_ratio;             /* the bender's share, 1 at centre */
   /* Portamento: the glide's pitch factor, 1 at rest on the voice's own
      key. porta_cents is the same offset in key cents (a key is 100),
