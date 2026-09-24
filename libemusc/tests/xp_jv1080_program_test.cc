@@ -952,6 +952,95 @@ int main(void)
     double alone = held([](EmuSC::Xp::Device *) {});
     double lifted = held([](EmuSC::Xp::Device *d) { midi(d, 0xb0, 1, 127); });
     assert(std::fabs(10.0 * std::log10(lifted / alone) - 13.98) < 0.1);
+
+    /* Matrix PAN moving under a sounding note slews (`P-xxxx`, TASK-434):
+       PAN +63 at full CC1 holds the note hard right from its first sample;
+       CC1 to 0 then walks each channel's gain toward centre by 0.0948 per
+       10 ms tick, 2/3 of that on the first, on the tick grid that starts at
+       the note-on. Dry, so L/R is the two pan gains' ratio exactly. */
+    {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      bench(d);
+      tone_field(d, 1, 0x77, 64);        /* tone pan centre */
+      tone_field(d, 1, 0x7d, 0);         /* output MIX */
+      tone_field(d, 1, 0x7f, 0);         /* chorus send */
+      const uint8_t reverbSend[] = { 0x02, 0x00, 0x13, 0x00 };
+      dt1(d, reverbSend, { 0 });
+      tone_field(d, 1, 0x15, 5);         /* CC1 -> PAN */
+      tone_field(d, 1, 0x16, 63 + 63);
+      midi(d, 0xb0, 1, 127);
+      midi(d, 0x90, 60, 100);
+      const size_t before = 4096, after = 4096;
+      const size_t tick = (size_t)std::lround(kRate * 0.010);
+      std::vector<float> x(2 * (before + after));
+      EmuSC::Xp::device_render(d, x.data(), before);
+      midi(d, 0xb0, 1, 0);
+      EmuSC::Xp::device_render(d, x.data() + 2 * before, after);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      auto ratio = [&](size_t n) {
+        return std::fabs(x[2 * n + 1]) > 1e-4f
+          ? (double)x[2 * n] / (double)x[2 * n + 1] : -1.0;
+      };
+      /* L/R over a stretch, as the ratio of the two channels' energy: the
+         output stage's resampler smears each tick's edge, so a tick is
+         read over its middle half. */
+      auto band = [&](size_t from, size_t to) {
+        double l = 0.0, r = 0.0;
+        for (size_t n = from; n < to; ++n) {
+          l += (double)x[2 * n] * x[2 * n];
+          r += (double)x[2 * n + 1] * x[2 * n + 1];
+        }
+        return std::sqrt(l / r);
+      };
+      /* Hard right from the start: 65 dB down on the left. */
+      for (size_t n = 0; n < before; ++n) {
+        double q = ratio(n);
+        assert(q < 0.0 || std::fabs(q - 0.000562) < 0.00005);
+      }
+      /* The ratio the note settles on, and the gains either end of the
+         move, which the pan table makes a constant-power pair. */
+      double end = band(before + after - 1024, before + after);
+      double tl = end / std::sqrt(1.0 + end * end), tr = tl / end;
+      double gr = 1.0 / std::sqrt(1.0 + 0.000562 * 0.000562);
+      double gl = 0.000562 * gr;
+      /* The move starts on the first tick after the CC and each tick's
+         ratio holds until the next. */
+      size_t first = (before + tick - 1) / tick * tick;
+      for (size_t n = before; n < first; ++n) {
+        double q = ratio(n);
+        assert(q < 0.0 || std::fabs(q - 0.000562) < 0.00005);
+      }
+      unsigned ticks = 0;
+      bool movingL = false, movingR = false;
+      for (size_t at = first; at + tick <= before + after; at += tick) {
+        auto slew = [](double g, double t, bool *moving) {
+          if (g == t) { *moving = false; return g; }
+          double s = *moving ? 0.0948 : 0.0948 * 2.0 / 3.0;
+          *moving = true;
+          return std::fabs(t - g) <= s ? t : (t > g ? g + s : g - s);
+        };
+        double wasL = gl, wasR = gr;
+        gl = slew(gl, tl, &movingL);
+        gr = slew(gr, tr, &movingR);
+        if (gl != wasL || gr != wasR)
+          ++ticks;
+        double q = band(at + tick / 4, at + 3 * tick / 4);
+        assert(std::fabs(q / (gl / gr) - 1.0) < 0.01);
+      }
+      /* Centre is 0.707 of full scale away on the quiet side: 0.063, then
+         six whole steps, then the rest - eight ticks. */
+      assert(ticks == 8u);
+    }
   }
 
   /* A part whose record names PR-B: a bare program change lands in PR-B,

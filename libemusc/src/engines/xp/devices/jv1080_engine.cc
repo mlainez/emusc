@@ -3545,7 +3545,8 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
 }
 
 /* A matrix source moved: every sounding voice of the part follows at once,
-   as the bender's do. Whether the machine eases the change is not
+   as the bender's do. The pan then slews to its new place (the voice's
+   set_pan); whether the machine eases the other destinations is not
    measured. */
 void matrix_refresh(struct Engine *engine, unsigned part)
 {
