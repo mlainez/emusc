@@ -382,7 +382,8 @@ int main(int argc, char* argv[]) {
           << "  --pcm DEVICE        ALSA PCM output device (default: default)\n"
           << "  --list-pcm          List ALSA PCM devices and exit\n"
           << "  --rom-dir DIR       Directory holding device ROM files (default:\n"
-          << "                       $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)\n"
+          << "                       $EMUSCD_ROM_DIR, else ./roms if it exists,\n"
+          << "                       else /usr/share/emuscd/roms)\n"
           << "  --rate HZ           Requested audio sample rate (default: 48000)\n"
           << "  --latency MS        Requested output buffer size (default: 20)\n"
           << "  --block N           Audio frames per ALSA write (default: 256)\n"
@@ -404,10 +405,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (rom_dir.empty()) {
-    const char *env_dir = std::getenv("EMUSCD_ROM_DIR");
-    rom_dir = (env_dir && *env_dir) ? env_dir : "/usr/share/emuscd/roms";
-  }
+  if (rom_dir.empty()) rom_dir = default_rom_dir();
 
   try {
     EmuscdDaemon daemon(device, port_name, pcm_device, rom_dir, rate,

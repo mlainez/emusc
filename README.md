@@ -88,9 +88,9 @@ All five supported devices use the same unified naming scheme:
 `<device>` is one of: `sc55`, `sc55mkii`, `sc88`, `jv880`, `jv1080`.
 
 `emusc-render`, `emuscd` and `emusc-winmidi` all resolve ROM files using this
-same naming convention, given a directory via `--device X --rom-dir DIR` or
-`--device X` with `$EMUSCD_ROM_DIR` set - all three tools read that variable,
-and `--rom-dir` overrides it in all three.
+same naming convention, in the same directory: `--rom-dir DIR` if given, else
+`$EMUSCD_ROM_DIR` if set, else `./roms` if it exists, else
+`/usr/share/emuscd/roms` (`.\roms` on Windows).
 
 ### Verified ROM dumps
 
@@ -396,7 +396,18 @@ This research fork is actively exploring:
 
 ## Example: Render a MIDI File
 
-Once ROMs are obtained and placed in a directory, use `emusc-render` to render a Standard MIDI File to WAV:
+Once ROMs are obtained and placed in a directory, use `emusc-render` to render a Standard MIDI File to WAV.
+
+**With one device's ROMs in `./roms` (or `$EMUSCD_ROM_DIR`), only the input is needed:**
+```bash
+./build/libemusc/tools/emusc-render input.mid
+```
+This writes `input.wav` to the current directory. The device is the one whose
+`<device>_control.bin` is in the ROM directory; if there is more than one, or
+none, it stops and lists what it found, and `--device` picks one. The output
+rate defaults to 32000 Hz. For the SC-88 and JV-1080 that is the device's own
+rate; for the SC-55, SC-55mkII and JV-880 it is a commonly published figure
+this project has not verified, and each run that falls back to it says so.
 
 **Render an SC-88 MIDI file:**
 ```bash
@@ -455,12 +466,13 @@ export EMUSCD_ROM_DIR=/path/to/roms
 Common options:
 
 ```
-  --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880
+  --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
   --name NAME         ALSA MIDI port name (default: emuscd)
   --pcm DEVICE        ALSA PCM output device (default: default)
   --list-pcm          List ALSA PCM devices and exit
   --rom-dir DIR       Directory holding device ROM files (default:
-                      $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)
+                      $EMUSCD_ROM_DIR, else ./roms if it exists,
+                      else /usr/share/emuscd/roms)
   --rate HZ           Requested audio sample rate (default: 48000)
   --latency MS        Requested output buffer size in ms (default: 20)
   --block N           Audio frames per ALSA write (default: 256)
@@ -501,7 +513,7 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 Common options:
 
 ```
-  --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880
+  --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
   --midi-in N          MIDI input device index (default: 0)
   --wave-out N         Wave output device index (default: system default)
   --list-midi-in       List MIDI input devices and exit

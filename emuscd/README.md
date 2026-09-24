@@ -22,12 +22,15 @@ Both binaries need Roland ROM files for the devices they emulate. Set
 - `sc55mkii_control.bin`, `sc55mkii_cpu.bin`, `sc55mkii_waverom{1,2}.bin` (SC-55mkII)
 - `sc88_control.bin`, `sc88_waverom{1,2,3,4}.bin` (SC-88; no separate CPU ROM)
 - `jv880_control.bin`, `jv880_waverom{1,2}.bin` (JV-880)
+- `jv1080_control.bin`, `jv1080_waverom{1,2,3,4}.bin` (JV-1080)
 
 See the top-level [README.md](../README.md) for exact file sizes and
 SHA1/MD5 hashes of known-good ROM dumps.
 
-If `$EMUSCD_ROM_DIR` is unset: `emuscd` looks in `/usr/share/emuscd/roms`;
-`emusc-winmidi` looks in `.\roms`, relative to its working directory.
+If `$EMUSCD_ROM_DIR` is unset, both use `roms` relative to the working
+directory if it exists. Otherwise `emuscd` uses `/usr/share/emuscd/roms`, and
+`emusc-winmidi`, which has no such location on Windows, stays with `.\roms`.
+`emusc-render` follows the same rule.
 
 ---
 
@@ -44,12 +47,13 @@ emuscd --device sc88 --name "My Synth"
 ### Options
 
 ```
---device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880
+--device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
 --name NAME         ALSA MIDI port name (default: emuscd)
 --pcm DEVICE        ALSA PCM output device (default: default)
 --list-pcm          List ALSA PCM devices and exit
 --rom-dir DIR       Directory holding device ROM files (default:
-                    $EMUSCD_ROM_DIR, or /usr/share/emuscd/roms if unset)
+                    $EMUSCD_ROM_DIR, else ./roms if it exists,
+                    else /usr/share/emuscd/roms)
 --rate HZ           Requested audio sample rate (default: 48000)
 --latency MS        Requested output buffer size in ms (default: 20)
 --block N           Audio frames per ALSA write (default: 256)
@@ -115,7 +119,7 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 ### Options
 
 ```
---device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880
+--device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
 --midi-in N          MIDI input device index (default: 0)
 --wave-out N         Wave output device index (default: system default)
 --list-midi-in       List MIDI input devices and exit

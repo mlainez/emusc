@@ -11,11 +11,12 @@
 #include <vector>
 
 #include "../libemusc/src/synth.h"
+#include "../libemusc/tools/rom_paths.h"
 
 namespace emuscd {
 
-inline const char *SUPPORTED_DEVICES[] = { "sc55", "sc55mkii", "sc88",
-                                           "jv880", "jv1080" };
+using emusc_tools::SUPPORTED_DEVICES;
+using emusc_tools::default_rom_dir;
 
 // The sound map emuscd runs in. Named once so that the value handed to the
 // Synth constructor and the value handed to its power-on reset cannot drift

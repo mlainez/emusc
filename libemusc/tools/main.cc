@@ -14,11 +14,13 @@
 #include "audio_out.h"
 #include "version.h"
 #include "mxcsr_ftz.h"
+#include "rom_paths.h"
 
 #include "synth.h"          // libEmuSC public API (emusc/libemusc/src)
 #include "control_rom.h"
 #include "wave_rom.h"
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -50,15 +52,22 @@ static const char *const kNullDevice = "/dev/null";
 
 namespace {
 
-const char *USAGE = R"(usage: emusc-render [options] <input.mid> <output.wav>
+const char *USAGE = R"(usage: emusc-render [options] <input.mid> [<output.wav>]
+       emusc-render [options] --midi <input.mid> [--out <output.wav>]
 
 Renders a Standard MIDI File through libEmuSC to a 16-bit stereo WAV.
+The input file is the only thing that must be given; every option below has
+a default.
 
-Input/output (either the two positional paths, or these two flags - for
-scripts that drive emusc-render and another renderer with the same options):
-  --midi FILE            Input Standard MIDI File
-  --out FILE             Output WAV. Not required if --play is given; give
-                         both to render a file and listen at the same time.
+Input/output (either positional paths, or these two flags - for scripts that
+drive emusc-render and another renderer with the same options):
+  --midi FILE            Input Standard MIDI File (required)
+  --out FILE             Output WAV (default: the input's file name with its
+                         extension replaced by .wav, or .wav appended if it
+                         has none, written to the current directory - so
+                         dir/song.mid renders to ./song.wav). With --play and
+                         no --out, nothing is written: audio only. Give both
+                         to render a file and listen at the same time.
   --play                 Straight to the sound card as it renders - ALSA on
                          Linux, WinMM on Windows - instead of relying on an
                          OS or user MIDI player. Always 16-bit regardless of
@@ -77,13 +86,19 @@ scripts that drive emusc-render and another renderer with the same options):
                          too slow to sustain the worst case (default: the
                          device's own ceiling - this can only lower it)
 
-ROM selection (either --device with --rom-dir, or the three explicit options):
-  --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880, jv1080)
+ROM selection (--device and --rom-dir, both defaulted, or the explicit
+--control-rom/--wave-rom/--cpu-rom files, which bypass both):
+  --device DEVICE        Device preset (sc55, sc55mkii, sc88, jv880, jv1080).
+                         Default: the one device whose <device>_control.bin
+                         is in the ROM directory; an error listing what was
+                         found if there is none or more than one.
   --rom-dir DIR          Directory holding device ROM files, named
                          <device>_control.bin, <device>_cpu.bin (SC-55 and
                          SC-55mkII only) and <device>_waverom1.bin upward.
-                         Falls back to $EMUSCD_ROM_DIR (same variable emuscd
-                         and emusc-winmidi read) if not given:
+                         Default, the same in emuscd and emusc-winmidi:
+                         $EMUSCD_ROM_DIR if set, else ./roms if it exists,
+                         else /usr/share/emuscd/roms (./roms on Windows).
+                         File names per device:
                            sc55:     sc55_control.bin sc55_cpu.bin
                                      sc55_waverom{1,2,3}.bin
                            sc55mkii: sc55mkii_control.bin sc55mkii_cpu.bin
@@ -100,8 +115,11 @@ ROM selection (either --device with --rom-dir, or the three explicit options):
 Rendering:
   --rate HZ              Output sample rate (e.g. 44100, 48000). Defaults to
                          the device's own rate where that is established -
-                         32000 for sc88 and jv1080 - and is required for
-                         sc55, sc55mkii and jv880, whose rates are not
+                         32000 for sc88 and jv1080. For sc55, sc55mkii and
+                         jv880, whose own rates are not established, it
+                         falls back to 32000, a commonly published figure
+                         for them that this project has not verified, and
+                         says so on stderr.
   --reset gm|gs|none     Initial sound-map / reset state (default: gs).
                          none skips the power-on reset call entirely.
                          The JV-1080 has no GS mode: gs and gm both put it
@@ -142,6 +160,32 @@ struct Options {
 [[noreturn]] void die(int code, const std::string &msg) {
   std::fprintf(stderr, "emusc-render: %s\n", msg.c_str());
   std::exit(code);
+}
+
+// The --out default: the input's last path component, with its extension
+// replaced by .wav, in the current directory. Only the directory is dropped,
+// so dir/song.mid and song.mid both give song.wav. The extension is whatever
+// follows the last '.' of that component, unless the '.' is its first
+// character (".mid" is a name, not an extension): "song" gives song.wav,
+// "song.v2.mid" gives song.v2.wav, ".mid" gives .mid.wav. An input already
+// named *.wav (any case) has no default, since the result could be the input
+// itself; the empty string is returned and the caller asks for --out.
+std::string default_out_path(const std::string &in) {
+  size_t slash = in.find_last_of('/');
+#ifdef _WIN32
+  size_t bslash = in.find_last_of("\\:");
+  if (bslash != std::string::npos && (slash == std::string::npos || bslash > slash))
+    slash = bslash;
+#endif
+  std::string name = (slash == std::string::npos) ? in : in.substr(slash + 1);
+  size_t dot = name.find_last_of('.');
+  if (dot != std::string::npos && dot > 0) {
+    std::string ext = name.substr(dot);
+    for (char &c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".wav") return "";
+    name.resize(dot);
+  }
+  return name + ".wav";
 }
 
 Options parse_args(int argc, char **argv) {
@@ -200,23 +244,22 @@ Options parse_args(int argc, char **argv) {
     else positional.push_back(a);
   }
   if (!positional.empty()) {
-    if (!o.in.empty() || !o.out.empty())
-      die(1, std::string("give either <input.mid> <output.wav>, or --midi and --out, not a mix\n") + USAGE);
-    if (positional.size() == 2) {
-      o.in = positional[0];
-      o.out = positional[1];
-    } else if (positional.size() == 1 && o.play) {
-      // <input.mid> alone is only unambiguous with --play: something has to
-      // consume the audio, and --out isn't there to be the mix partner it
-      // would be otherwise.
-      o.in = positional[0];
-    } else {
-      die(1, std::string("give either <input.mid> <output.wav>, or --midi and --out, not a mix\n") + USAGE);
-    }
+    if (!o.in.empty() || !o.out.empty() || positional.size() > 2)
+      die(1, std::string("give either <input.mid> [<output.wav>], or --midi [--out], not a mix\n") + USAGE);
+    o.in = positional[0];
+    if (positional.size() == 2) o.out = positional[1];
   }
-  if (o.in.empty() || (o.out.empty() && !o.play))
-    die(1, std::string("expected <input.mid> <output.wav>, or --midi and --out; "
-                        "--out may be omitted only with --play\n") + USAGE);
+  if (o.in.empty())
+    die(1, std::string("no input: give <input.mid> or --midi\n") + USAGE);
+  // Without --play the render has to go somewhere, so the output file is
+  // defaulted; with --play and no output named, the run is audio-only and no
+  // file is written.
+  if (o.out.empty() && !o.play) {
+    o.out = default_out_path(o.in);
+    if (o.out.empty())
+      die(1, "the input is named .wav, so the default output could overwrite it; give --out");
+    std::fprintf(stderr, "emusc-render: --out defaulted to %s\n", o.out.c_str());
+  }
 
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
     die(1, "--reset must be gm, gs or none");
@@ -225,9 +268,36 @@ Options parse_args(int argc, char **argv) {
   if (o.max_voices_set && o.max_voices < 1)
     die(1, "--max-voices must be >= 1");
 
+  // Explicit --control-rom and --wave-rom together bypass the ROM directory
+  // and device defaults entirely. Otherwise the directory is defaulted, and
+  // the device is taken from it when exactly one device's control ROM is
+  // there: this only saves typing a name the directory already implies, so
+  // anything else is reported rather than resolved by picking one.
+  bool explicit_roms = !o.control_rom.empty() && !o.wave_roms.empty();
+  if (o.device.empty() && !explicit_roms) {
+    std::string dir = o.rom_dir.empty() ? emusc_tools::default_rom_dir() : o.rom_dir;
+    std::vector<std::string> found = emusc_tools::devices_in_rom_dir(dir);
+    if (found.size() == 1) {
+      o.device = found[0];
+      std::fprintf(stderr, "emusc-render: --device defaulted to %s, the only "
+                   "device with a control ROM in %s\n", o.device.c_str(), dir.c_str());
+    } else if (found.empty()) {
+      die(1, "no device given and no <device>_control.bin found in ROM directory " +
+             dir + "; give --device with --rom-dir, or --control-rom and --wave-rom");
+    } else {
+      std::string list;
+      for (auto &d : found) list += (list.empty() ? "" : ", ") + d;
+      die(1, "no device given and ROM directory " + dir + " holds control ROMs for " +
+             std::to_string(found.size()) + " devices (" + list +
+             "); choose one with --device");
+    }
+  }
+
   if (!o.device.empty()) {
-    if (o.device != "sc55" && o.device != "sc55mkii" && o.device != "sc88" &&
-        o.device != "jv880" && o.device != "jv1080")
+    bool known = false;
+    for (const char *d : emusc_tools::SUPPORTED_DEVICES)
+      if (o.device == d) known = true;
+    if (!known)
       die(1, "--device must be sc55, sc55mkii, sc88, jv880, or jv1080");
     // One naming convention for all four devices: <device>_control.bin is
     // always the control/program ROM, <device>_cpu.bin is the internal CPU
@@ -235,15 +305,9 @@ Options parse_args(int argc, char **argv) {
     // and JV-880's second physical ROM chip (DeviceProfile::romSize in
     // engines/gp/devices/jv880.cc) is what "control" means for it; JV-880 has no
     // <device>_cpu.bin because its other chip is never read at all.
-    std::string dir = o.rom_dir;
-    if (dir.empty()) {
-      // Same $EMUSCD_ROM_DIR emuscd and emusc-winmidi already read, so all
-      // three tools share one ROM-location convention.
-      const char *env_dir = std::getenv("EMUSCD_ROM_DIR");
-      if (env_dir && *env_dir) dir = env_dir;
-    }
-    if (dir.empty())
-      die(1, "--device given without --rom-dir or $EMUSCD_ROM_DIR set");
+    // The same default emuscd and emusc-winmidi use, so all three tools
+    // share one ROM-location convention.
+    std::string dir = o.rom_dir.empty() ? emusc_tools::default_rom_dir() : o.rom_dir;
     if (o.control_rom.empty())
       o.control_rom = dir + "/" + o.device + "_control.bin";
     if (o.cpu_rom.empty() && (o.device == "sc55" || o.device == "sc55mkii"))
@@ -358,18 +422,20 @@ int main(int argc, char **argv) {
   // `M-166`, and its 24.576 MHz crystal divides to it by 768), and the
   // JV-1080 carries the same sound-generator part on the same crystal. The
   // SC-55, SC-55mkII and JV-880 run three different engine clocks and none
-  // of their rates is settled (scdb `01_hardware/hardware.md` for each), so
-  // a default there would be a guess.
+  // of their rates is settled (scdb `01_hardware/hardware.md` for each).
+  // For those the default is a convenience fallback only: 32000 Hz is the
+  // figure commonly published for them, which may describe a nominal output
+  // rather than the engine's own rate and has not been verified here, so
+  // every run that uses it says so.
   if (o.rate == 0) {
     auto gen = ctrl->generation();
-    if (gen == EmuSC::ControlRom::SynthGen::SC88 ||
-        gen == EmuSC::ControlRom::SynthGen::JV1080) {
-      o.rate = 32000;
-    } else {
-      restore_cout();
-      die(1, "--rate is required for the " + ctrl->model() +
-             ": its own sample rate is not established");
-    }
+    o.rate = 32000;
+    if (gen != EmuSC::ControlRom::SynthGen::SC88 &&
+        gen != EmuSC::ControlRom::SynthGen::JV1080)
+      std::fprintf(stderr, "emusc-render: note: --rate defaulted to 32000 Hz - "
+                   "a commonly published spec for the %s, not independently "
+                   "verified by this project; pass --rate explicitly if you "
+                   "need a different one\n", ctrl->model().c_str());
   }
 
   std::fprintf(stderr, "emusc-render: control ROM %s v%s (%s), wave ROM v%s (%s)\n",

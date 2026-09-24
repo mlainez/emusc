@@ -35,7 +35,7 @@ const char *USAGE =
 "Usage: emusc-winmidi [options]\n"
 "Options:\n"
 "  --device NAME       Device to emulate (default: sc88)\n"
-"                       Supported: sc55, sc55mkii, sc88, jv880\n"
+"                       Supported: sc55, sc55mkii, sc88, jv880, jv1080\n"
 "  --midi-in N          MIDI input device index (default: 0)\n"
 "  --wave-out N         Wave output device index (default: system default)\n"
 "  --list-midi-in       List MIDI input devices and exit\n"
@@ -121,7 +121,7 @@ public:
   bool load_device(const std::string &dev) {
     if (!device_supported(dev)) {
       std::fprintf(stderr, "emusc-winmidi: unsupported device '%s' (supported: "
-                   "sc55, sc55mkii, sc88, jv880)\n", dev.c_str());
+                   "sc55, sc55mkii, sc88, jv880, jv1080)\n", dev.c_str());
       return false;
     }
 
@@ -430,7 +430,7 @@ int main(int argc, char **argv) {
 
   if (!device_supported(device)) {
     std::fprintf(stderr, "emusc-winmidi: unsupported device '%s' (supported: "
-                 "sc55, sc55mkii, sc88, jv880)\n", device.c_str());
+                 "sc55, sc55mkii, sc88, jv880, jv1080)\n", device.c_str());
     return 1;
   }
   if (block < 1) {
@@ -438,10 +438,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (romDir.empty()) {
-    const char *envDir = std::getenv("EMUSCD_ROM_DIR");
-    romDir = (envDir && *envDir) ? envDir : "roms";
-  }
+  if (romDir.empty()) romDir = default_rom_dir();
 
   WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency);
   daemon.run();
