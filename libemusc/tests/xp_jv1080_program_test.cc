@@ -1219,20 +1219,25 @@ int main(void)
       double mean = 0.0;
       for (double v : e)
         mean += v / (double)e.size();
-      size_t best = 0;
+      /* The fundamental: the first local maximum of the autocorrelation
+         within 10 % of its best. A periodic level correlates almost
+         equally at every multiple of its period, so the best lag alone
+         can land on a multiple. */
+      const size_t lo = (size_t)(0.08 * kRate / hop);
+      const size_t hi = (size_t)(0.4 * kRate / hop);
+      std::vector<double> c(hi + 1, 0.0);
       double bestC = -1e300;
-      for (size_t lag = (size_t)(0.08 * kRate / hop);
-           lag < (size_t)(0.4 * kRate / hop); ++lag) {
-        double c = 0.0;
+      for (size_t lag = lo; lag <= hi; ++lag) {
         for (size_t i = 0; i + lag < e.size(); ++i)
-          c += (e[i] - mean) * (e[i + lag] - mean);
-        c /= (double)(e.size() - lag);
-        if (c > bestC) {
-          bestC = c;
-          best = lag;
-        }
+          c[lag] += (e[i] - mean) * (e[i + lag] - mean);
+        c[lag] /= (double)(e.size() - lag);
+        bestC = std::max(bestC, c[lag]);
       }
-      return (double)best * hop / kRate;
+      for (size_t lag = lo + 1; lag < hi; ++lag)
+        if (c[lag] >= c[lag - 1] && c[lag] >= c[lag + 1] &&
+            c[lag] >= 0.9 * bestC)
+          return (double)lag * hop / kRate;
+      return 0.0;
     };
     std::vector<float> fast = sync({});
     float peak = 0.0f;
