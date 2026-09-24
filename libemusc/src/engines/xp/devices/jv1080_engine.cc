@@ -690,6 +690,28 @@ struct Part {
   /* RPN 0/2 and 0/1: coarse tune in semitones and fine tune in cents. */
   int rpn_coarse;
   double rpn_fine;
+  /* The keys held down on this part, by their note-on velocity, zero for
+     up - the hold pedal does not keep a key here. A SOLO part returns to
+     one of them, and portamento's LEGATO mode asks whether any is. */
+  uint8_t held_velocity[128];
+  /* The key a SOLO part is sounding, -1 for none. */
+  int solo_key;
+  /* Portamento's part state as the part's next note sees it: the key of
+     the last note-on it took in, -1 for none yet, and the glide that note
+     started, in key cents (a key is 100), from `porta_frame` for
+     `porta_frames` frames. A note-on is taken in kPortaSeenFrames after it
+     arrives; until then it waits in `porta_pending`. */
+  int porta_key;
+  double porta_from;
+  double porta_to;
+  uint64_t porta_frame;
+  double porta_frames;
+  struct PortaNote {
+    uint64_t frame;
+    int key;
+    double from, to, frames;
+  } porta_pending[8];
+  unsigned porta_pending_count;
 };
 
 struct Voice {
@@ -699,6 +721,9 @@ struct Voice {
   uint64_t serial;
   uint8_t part;
   uint8_t key;
+  /* The key the voice was started on. `key` is the key its note-off
+     matches, which a SOLO legato note moves on to without a new voice. */
+  uint8_t start_key;
   /* Nonzero on a rhythm voice, and the group it belongs to: striking
      another key of the same group stops this one, which is what a hi-hat
      pair does. */
@@ -1156,6 +1181,8 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
   part->cc[7] = 127u;
   part->cc[10] = 64u;
   part->cc[11] = 0u;
+  part->solo_key = -1;
+  part->porta_key = -1;
 }
 
 /* A controller's value as a source, 0..1. CC7 is read from the part's
@@ -2560,6 +2587,7 @@ struct Voice *start_record(struct Engine *engine, unsigned part,
         (float)engine->parts[part].part[prof->partFieldChorusSend] / 127.0f;
   }
   voice->key = (uint8_t)key;
+  voice->start_key = (uint8_t)key;
   voice->mute_group = fields->muteGroup == XP_VOICE_FIELD_NONE
     ? 0u : bytes[fields->muteGroup];
   voice->allocated = true;
@@ -2922,6 +2950,378 @@ void engine_reset(void *state)
   engine->serial = 0;
 }
 
+/* PORTAMENTO, patch common 0x35..0x39. MEASURED (`P-xxxx`, TASK-364's
+   rig capture `jv1080-porta-capture`: nineteen takes on the bench Sine at
+   pitch key follow 100 %, read as the instantaneous frequency by two
+   independent readers, analytic phase and zero crossings, which agree on
+   every slope below to within 1 %):
+
+     shape      a glide is a straight line in cents from where it starts to
+                the new key (residual 0.1 to 8 cents rms), up or down alike.
+     RATE       the time field names a rate, whatever the interval: v 16
+                glides 11321 c/s up and 11398 down, v 64 702 and 710, and at
+                v 80 to 127 the rate reads 330.0, 160.0, 70.0 and 40.0 c/s
+                over 8 s holds. kPortaRate below is each measured value.
+     TIME       the time field names the glide's duration, whatever the
+                interval: at v 40 every interval from 12 to 48 semitones,
+                up or down, arrives in 0.494 to 0.515 s. kPortaTimeMs below.
+                The two laws agree to 1 % from v 10 to 56 (1200 cents per
+                the RATE is the TIME) and part from 64 up: 1700 against
+                1681 ms at 64, 30.0 against 32.8 s at 127. So they are two
+                tables, not one.
+     DOWNWARD   a glide down starts at most 2400 cents above its key: from
+                26, 30 and 36 semitones above, at RATE v 40, the pitch
+                arrives in 0.991 to 1.005 s, as from 24 (TIME: the same
+                plateau as 24 at 36). Upward nothing is clamped - a
+                48-semitone rise arrives in 2.015 s, 4775 cents at 2370.
+                The audible cap a downward glide also shows is the wave's
+                playback ceiling, not portamento's (see step_ceiling).
+     START      PITCH (0): the next glide starts where the part's glide
+                stands, and that glide runs on after its note-off - 1.5 s
+                of silence carries it 10.7 semitones on (predicted 62.75,
+                read 62.8). NOTE (1): the next glide starts on the key of
+                the previous note-on, wherever its glide had got to.
+     MODE       NORMAL (0) glides every note; LEGATO (1) only a note played
+                while another key of the part is held.
+     POLY       each voice glides on its own from the part's source to its
+                own key; a held note never moves. A chord's keys all glide
+                from the same source, not each from the key sent before it:
+                60, 67 and 76 over a held 48 stand at 0.60 of the way at
+                +0.35 s alike, in either order.
+     SEEN LATE  a note-on is not seen by the notes that follow it for a
+                while: three keys 6 ms after a fourth glide from the key
+                before it, and in LEGATO mode do not count it as held (the
+                bench chord and Amazon Moon's own 6 ms pairs), where a key
+                87 ms after one does. How long "a while" is, is NOT
+                RECOVERED: the machine's control tick is not known
+                (`L-09`). kPortaSeenFrames is 10 ms, a guess of the order -
+                a few milliseconds, one processing cycle - bounded by 6 and
+                87 ms, and every portamento note in the demo songs but four
+                of SinusoidRave's (79-91 ms) falls outside that range.
+
+   NOT MEASURED: CC5 (portamento time), CC65 (portamento switch) and CC84
+   (portamento control), none of which is read; the glide at any pitch key
+   follow but 100 %; PITCH start in POLY mode, where the part's glide is
+   taken to be its newest note's; what a program change does to the part
+   state (nothing, here). */
+const unsigned kPortaRatePoints = 24u;
+const unsigned kPortaRateValue[kPortaRatePoints] = {
+  0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 27, 32, 40, 48, 56, 64,
+  80, 96, 112, 127 };
+/* Cents per second. Values 0 and 1 are too fast to fit a slope to: 4800
+   cents arrive in 14 to 18 ms at both, which is what is written. */
+const double kPortaRate[kPortaRatePoints] = {
+  300000.0, 300000.0, 142000.0, 91500.0, 60100.0, 48100.0, 38500.0,
+  27900.0, 21100.0, 16670.0, 13600.0, 11350.0, 8220.0, 6180.0, 5060.0,
+  3720.0, 2370.0, 1560.0, 1050.0, 706.0, 330.0, 160.0, 70.0, 40.0 };
+const unsigned kPortaTimePoints = 21u;
+const unsigned kPortaTimeValue[kPortaTimePoints] = {
+  3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 27, 32, 40, 48, 56, 64, 80, 96,
+  112, 127 };
+/* Milliseconds per glide. 3 to 8 are arrival times, good to about 3 ms;
+   0 to 2 are instant (the first period after the note-on is on the key). */
+const double kPortaTimeMs[kPortaTimePoints] = {
+  12.0, 15.0, 23.0, 29.0, 40.0, 54.0, 70.0, 88.0, 106.0, 146.0, 195.0,
+  237.0, 322.0, 506.0, 767.0, 1142.0, 1681.0, 3562.0, 7448.0, 15604.0,
+  32764.0 };
+const double kPortaDownClampCents = 2400.0;
+const double kPortaSeenSeconds = 0.010;
+
+/* Between measured values the law is interpolated in log, which is NOT
+   MEASURED at the values in between. */
+double porta_law(const unsigned *at, const double *law, unsigned n,
+                 unsigned value)
+{
+  if (value <= at[0])
+    return law[0];
+  for (unsigned i = 1; i < n; ++i)
+    if (value <= at[i]) {
+      double t = (double)(value - at[i - 1]) / (double)(at[i] - at[i - 1]);
+      return std::exp(std::log(law[i - 1]) +
+                      t * (std::log(law[i]) - std::log(law[i - 1])));
+    }
+  return law[n - 1];
+}
+
+double porta_rate_cents(unsigned value)
+{
+  return porta_law(kPortaRateValue, kPortaRate, kPortaRatePoints, value);
+}
+
+double porta_time_seconds(unsigned value)
+{
+  if (value < kPortaTimeValue[0])
+    return 0.0;
+  return porta_law(kPortaTimeValue, kPortaTimeMs, kPortaTimePoints, value) /
+    1000.0;
+}
+
+/* Take in every note-on the part has had for kPortaSeenSeconds. */
+void porta_catch_up(const struct Engine *engine, struct Part &p)
+{
+  const double seen = kPortaSeenSeconds * engine->output_rate;
+  unsigned taken = 0;
+  while (taken < p.porta_pending_count &&
+         (double)p.porta_pending[taken].frame + seen <= (double)engine->frames) {
+    const struct Part::PortaNote &n = p.porta_pending[taken++];
+    p.porta_key = n.key;
+    p.porta_from = n.from;
+    p.porta_to = n.to;
+    p.porta_frame = n.frame;
+    p.porta_frames = n.frames;
+  }
+  for (unsigned i = taken; i < p.porta_pending_count; ++i)
+    p.porta_pending[i - taken] = p.porta_pending[i];
+  p.porta_pending_count -= taken;
+}
+
+/* Where the part's glide stands now, in key cents. */
+double porta_pitch(const struct Engine *engine, const struct Part &p)
+{
+  double into = (double)(engine->frames - p.porta_frame);
+  if (!(p.porta_frames > into))
+    return p.porta_to;
+  return p.porta_to + (p.porta_from - p.porta_to) * (1.0 - into / p.porta_frames);
+}
+
+/* Whether a key of the part other than `key` is held and has been seen. */
+bool porta_key_held(const struct Engine *engine, const struct Part &p,
+                    unsigned key)
+{
+  const double seen = kPortaSeenSeconds * engine->output_rate;
+  for (unsigned k = 0; k < 128u; ++k)
+    if (k != key && p.held_velocity[k] && p.key_on_frame[k] &&
+        (double)(p.key_on_frame[k] - 1u) + seen <= (double)engine->frames)
+      return true;
+  return false;
+}
+
+/* What a note on `key` glides from, in key cents, and at what rate; a rate
+   of zero is no glide. `legato` is whether it is played over a held key. */
+struct PortaGlide {
+  double from;
+  double rate;
+};
+
+struct PortaGlide porta_glide(const struct Engine *engine,
+                              const struct Part &p, unsigned key, bool legato)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  struct PortaGlide g = { 100.0 * (double)key, 0.0 };
+  if (profile->patchFieldPortamentoSwitch == XP_VOICE_FIELD_NONE ||
+      !p.common[profile->patchFieldPortamentoSwitch] || p.porta_key < 0)
+    return g;
+  if (p.common[profile->patchFieldPortamentoMode] && !legato)
+    return g;
+  double to = 100.0 * (double)key;
+  double from = p.common[profile->patchFieldPortamentoStart]
+    ? 100.0 * (double)p.porta_key : porta_pitch(engine, p);
+  if (from - to > kPortaDownClampCents)
+    from = to + kPortaDownClampCents;
+  unsigned time = p.common[profile->patchFieldPortamentoTime];
+  double rate;
+  if (p.common[profile->patchFieldPortamentoType]) {
+    double seconds = porta_time_seconds(time);
+    rate = seconds > 0.0 ? std::fabs(to - from) / seconds : 0.0;
+  } else {
+    rate = porta_rate_cents(time);
+  }
+  if (from != to && rate > 0.0) {
+    g.from = from;
+    g.rate = rate;
+  }
+  return g;
+}
+
+/* A note-on the part will take in kPortaSeenSeconds from now. */
+void porta_note(const struct Engine *engine, struct Part &p, unsigned key,
+                const struct PortaGlide &g)
+{
+  if (p.porta_pending_count == sizeof p.porta_pending / sizeof *p.porta_pending) {
+    /* Eight notes inside the window: the oldest is taken in early. */
+    struct Part::PortaNote first = p.porta_pending[0];
+    for (unsigned i = 1; i < p.porta_pending_count; ++i)
+      p.porta_pending[i - 1] = p.porta_pending[i];
+    --p.porta_pending_count;
+    p.porta_key = first.key;
+    p.porta_from = first.from;
+    p.porta_to = first.to;
+    p.porta_frame = first.frame;
+    p.porta_frames = first.frames;
+  }
+  struct Part::PortaNote &n = p.porta_pending[p.porta_pending_count++];
+  n.frame = engine->frames;
+  n.key = (int)key;
+  n.to = 100.0 * (double)key;
+  n.from = g.rate > 0.0 ? g.from : n.to;
+  n.frames = g.rate > 0.0
+    ? std::fabs(n.to - n.from) / g.rate * engine->output_rate : 0.0;
+}
+
+/* One note-on on one melodic part. `returning` is a SOLO part going back
+   to a key still held after the key it sounded came up: no note-on was
+   received, so the key's own note-on time and the alternate pan are left
+   alone. Returns how many voices sound the note. */
+static unsigned part_note_on(struct Engine *engine, unsigned part,
+                             unsigned key, unsigned velocity, bool returning)
+{
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
+  /* MEASURED (`M-124`): the patch's octave shift moves the NOTE, not
+     just the pitch - the zone a key selects is the shifted key's. PR-A
+     057 at key 60 with its octave shift of +1 reads harmonics 1-8 within
+     1.6 dB of our key 72 with no shift, and 14.6 dB off at harmonic 2
+     with the pitch doubled on key 60's zone. What the machine does with
+     a shift that carries a note past 0 or 127 is not measured; it is
+     clamped here. */
+  int shift = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE ? 0
+    : 12 * (int)(int8_t)engine->parts[part].common[profile->patchFieldOctaveShift];
+  int shifted = (int)key + shift;
+  unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
+  /* SOLO, key assign mode 1 (patch common 0x33): one note per part, the
+     newest. MEASURED (`M-164`), `voice_allocation/key_assign_solo`,
+     keys 60, 64 and 67 struck 800 ms apart and all held: each note-on
+     replaces the note before it within ~4 ms with no gap in level, and
+     the older keys' note-offs, while the newest still sounds, change
+     nothing. The cut is the steal's own kill; the hardware's few
+     milliseconds of overlap are not reproduced. It cuts a note already
+     in its release too: MEASURED (`P-xxxx`, `solo_release_leg0/1` R3),
+     a 60 released 300 ms before a 67 falls from 36 to -44 dB at the 67's
+     onset, where the same phrase in POLY keeps decaying, 33, 30, 27 dB.
+
+     SOLO LEGATO (0x34) WITH PORTAMENTO ON continues the sounding note
+     onto the new key: MEASURED (`P-xxxx`, `solo_porta_leg1_normal` and
+     `_legato`), a note over a held key and a return to a held key glide
+     with no dip in level (+15 ms at -28..-30 dB against a -29 dB
+     sustain, A-ENV attack 0.2 s), where Solo Legato off restarts the
+     attack (-42..-47 dB) and still glides. The continued voices keep the
+     wave and zone of the key they started on; whether the machine
+     changes either is NOT MEASURED, the Sine cannot show it.
+
+     SOLO LEGATO WITH PORTAMENTO OFF restarts the note here, whatever 0x34
+     says. MEASURED (`M-164`) on the `1_rise` hardware take, whose PR-B
+     009 Pick Bass is SOLO with Solo Legato on and portamento off: the
+     80-400 Hz level rises at each of its 142 overlapping note-ons by a
+     median 9.7 dB against 12.6 at its 277 detached ones, where a render
+     that restarts every note reads 11.7 and 13.9, and it rises as much
+     at overlaps over 40 ms (9.4 dB, 39 notes) as under 15 (9.8, 50). A
+     note that continued the sounding voice would not rise at all.
+     UNRESOLVED against `solo_release_leg1` (`P-xxxx`), the bench Sine in
+     that same setting, whose A-ENV does not dip at a note over held
+     keys nor at a return (-31 dB throughout against -55 with Solo Legato
+     off): both hold if the machine restarts the wave and keeps the
+     envelopes, which the Sine cannot show and nothing here models.
+
+     The part is the unit, so a part layered on the same channel keeps
+     its own notes. */
+  struct Part &p = engine->parts[part];
+  porta_catch_up(engine, p);
+  const uint16_t keyAssign = profile->patchFieldKeyAssign;
+  const bool solo = keyAssign != XP_VOICE_FIELD_NONE && p.common[keyAssign] != 0u;
+  const bool soloLegato =
+    profile->patchFieldSoloLegato != XP_VOICE_FIELD_NONE &&
+    p.common[profile->patchFieldSoloLegato] != 0u;
+  const bool portamento =
+    profile->patchFieldPortamentoSwitch != XP_VOICE_FIELD_NONE &&
+    p.common[profile->patchFieldPortamentoSwitch] != 0u;
+  const bool legato = returning || porta_key_held(engine, p, key);
+  const struct PortaGlide glide = porta_glide(engine, p, key, legato);
+  unsigned started = 0;
+  if (solo && soloLegato && portamento && legato) {
+    for (unsigned i = 0; i < kMaxVoices; ++i) {
+      struct Voice *voice = engine->voices + i;
+      if (!voice->allocated || voice->part != part || !voice->key_down ||
+          voice->voice.releasing)
+        continue;
+      double base = 100.0 * (double)voice->start_key;
+      jv1080_voice_glide(&voice->voice, glide.from - base,
+                         100.0 * (double)key - base, glide.rate);
+      voice->key = (uint8_t)key;
+      ++started;
+    }
+  }
+  if (started) {
+    porta_note(engine, p, key, glide);
+    p.solo_key = (int)key;
+    if (!returning) {
+      p.held_velocity[key] = (uint8_t)velocity;
+      p.alternate_next = -p.alternate_next;
+      p.key_on_frame[key] = engine->frames + 1u;
+    }
+    return started;
+  }
+  if (solo)
+    for (unsigned i = 0; i < kMaxVoices; ++i) {
+      struct Voice *other = engine->voices + i;
+      if (other->allocated && other->part == part)
+        free_voice(other);
+    }
+  /* MEASURED (`P-xxxx`, `velocity/vel_range_switch_on` and `_off`): with
+     the patch's velocity range switch off, a tone ranged 40-90 sounds at
+     every velocity from 8 to 127 (velocity 1 is at the take's floor on
+     the level law), and so do the `vel_range_low` (1-64) and `_high`
+     (65-127) takes, whose patches leave the switch off; on, only 40 to 88
+     sound. So off, the ranges are not read at all. */
+  const uint16_t sw = profile->patchFieldVelocityRangeSwitch;
+  const bool ranged = sw == XP_VOICE_FIELD_NONE ||
+    engine->parts[part].common[sw] != 0u;
+  const uint16_t vlo = profile->toneFields.velocityRangeLow;
+  const uint16_t vhi = profile->toneFields.velocityRangeHigh;
+  struct Voice *toneVoice[XP_JV1080_TONES_PER_PATCH] = {};
+  for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
+    const uint8_t *bytes = engine->parts[part].tone[t];
+    uint8_t open[XP_JV1080_TONE_FIELDS];
+    if (!ranged && vlo != XP_VOICE_FIELD_NONE && vhi != XP_VOICE_FIELD_NONE) {
+      std::memcpy(open, bytes, sizeof open);
+      open[vlo] = 1u;
+      open[vhi] = 127u;
+      bytes = open;
+    }
+    toneVoice[t] = start_record(engine, part, &profile->toneFields, bytes, key,
+                             velocity, sounded);
+    started += toneVoice[t] ? 1u : 0u;
+  }
+  /* THE STRUCTURES, types 2 to 10: a pair both of whose tones sound
+     renders as one voice through the second tone (see `render_pair`),
+     which carries the pair's output, pan and sends - the manual's own
+     rule. A pair with one tone silent plays as type 1, as the manual
+     says, and so, here, does a pair either of whose tones waits on a
+     tone delay: how a delayed tone joins its pair is not measured. */
+  const uint16_t structField[2] = {profile->patchFieldStructure12,
+                                   profile->patchFieldStructure34};
+  const uint16_t boostField[2] = {profile->patchFieldBooster12,
+                                  profile->patchFieldBooster34};
+  for (unsigned k = 0; k < 2u; ++k) {
+    if (structField[k] == XP_VOICE_FIELD_NONE)
+      continue;
+    unsigned type = (unsigned)engine->parts[part].common[structField[k]] + 1u;
+    struct Voice *first = toneVoice[2u * k];
+    struct Voice *second = toneVoice[2u * k + 1u];
+    if (type < 2u || type > 10u || !first || !second || first->wait ||
+        second->wait || first->muted || second->muted)
+      continue;
+    unsigned boosted = boostField[k] == XP_VOICE_FIELD_NONE ? 0u
+      : (unsigned)engine->parts[part].common[boostField[k]];
+    first->pair = second;
+    first->pair_feed = true;
+    second->pair = first;
+    jv1080_voice_pair(&first->voice, &second->voice, type, boosted);
+  }
+  /* The glide, on every tone the note started. */
+  if (glide.rate > 0.0)
+    for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t)
+      if (toneVoice[t])
+        jv1080_voice_glide(&toneVoice[t]->voice,
+                           glide.from - 100.0 * (double)key, 0.0, glide.rate);
+  porta_note(engine, p, key, glide);
+  p.solo_key = solo ? (int)key : -1;
+  if (!returning) {
+    p.held_velocity[key] = (uint8_t)velocity;
+    p.alternate_next = -p.alternate_next;
+    p.key_on_frame[key] = engine->frames + 1u;
+  }
+  return started;
+}
+
 bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
                         unsigned velocity)
 {
@@ -2963,101 +3363,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
       return;
     }
-    /* MEASURED (`M-124`): the patch's octave shift moves the NOTE, not
-       just the pitch - the zone a key selects is the shifted key's. PR-A
-       057 at key 60 with its octave shift of +1 reads harmonics 1-8 within
-       1.6 dB of our key 72 with no shift, and 14.6 dB off at harmonic 2
-       with the pitch doubled on key 60's zone. What the machine does with
-       a shift that carries a note past 0 or 127 is not measured; it is
-       clamped here. */
-    int shift = profile->patchFieldOctaveShift == XP_VOICE_FIELD_NONE ? 0
-      : 12 * (int)(int8_t)engine->parts[part].common[profile->patchFieldOctaveShift];
-    int shifted = (int)key + shift;
-    unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
-    /* SOLO, key assign mode 1 (patch common 0x33): one note per part, the
-       newest. MEASURED (`M-164`), `voice_allocation/key_assign_solo`,
-       keys 60, 64 and 67 struck 800 ms apart and all held: each note-on
-       replaces the note before it within ~4 ms with no gap in level, and
-       the older keys' note-offs, while the newest still sounds, change
-       nothing. The cut is the steal's own kill; the hardware's few
-       milliseconds of overlap are not reproduced.
-
-       SOLO LEGATO (0x34) DOES NOT STOP THE ATTACK when portamento is off.
-       MEASURED (`M-164`) on the `1_rise` hardware take, whose PR-B 009
-       Pick Bass is SOLO with Solo Legato on and portamento off: the
-       80-400 Hz level rises at each of its 142 overlapping note-ons by a
-       median 9.7 dB against 12.6 at its 277 detached ones, where a render
-       that restarts every note reads 11.7 and 13.9, and it rises as much
-       at overlaps over 40 ms (9.4 dB, 39 notes) as under 15 (9.8, 50). A
-       note that continued the sounding voice would not rise at all. So
-       the new note starts afresh here whatever 0x34 says.
-
-       NOT MEASURED: whether the machine also cuts a note already in its
-       release (here it does - the part keeps no voice of an older note),
-       what releasing the newest key does while an older one is still held,
-       and what Solo Legato does with portamento on. The part is the unit,
-       so a part layered on the same channel keeps its own notes. */
-    const uint16_t keyAssign = profile->patchFieldKeyAssign;
-    if (keyAssign != XP_VOICE_FIELD_NONE &&
-        engine->parts[part].common[keyAssign] != 0u)
-      for (unsigned i = 0; i < kMaxVoices; ++i) {
-        struct Voice *other = engine->voices + i;
-        if (other->allocated && other->part == part)
-          free_voice(other);
-      }
-    /* MEASURED (`P-xxxx`, `velocity/vel_range_switch_on` and `_off`): with
-       the patch's velocity range switch off, a tone ranged 40-90 sounds at
-       every velocity from 8 to 127 (velocity 1 is at the take's floor on
-       the level law), and so do the `vel_range_low` (1-64) and `_high`
-       (65-127) takes, whose patches leave the switch off; on, only 40 to 88
-       sound. So off, the ranges are not read at all. */
-    const uint16_t sw = profile->patchFieldVelocityRangeSwitch;
-    const bool ranged = sw == XP_VOICE_FIELD_NONE ||
-      engine->parts[part].common[sw] != 0u;
-    const uint16_t vlo = profile->toneFields.velocityRangeLow;
-    const uint16_t vhi = profile->toneFields.velocityRangeHigh;
-    struct Voice *toneVoice[XP_JV1080_TONES_PER_PATCH] = {};
-    for (unsigned t = 0; t < XP_JV1080_TONES_PER_PATCH; ++t) {
-      const uint8_t *bytes = engine->parts[part].tone[t];
-      uint8_t open[XP_JV1080_TONE_FIELDS];
-      if (!ranged && vlo != XP_VOICE_FIELD_NONE && vhi != XP_VOICE_FIELD_NONE) {
-        std::memcpy(open, bytes, sizeof open);
-        open[vlo] = 1u;
-        open[vhi] = 127u;
-        bytes = open;
-      }
-      toneVoice[t] = start_record(engine, part, &profile->toneFields, bytes, key,
-                               velocity, sounded);
-      started += toneVoice[t] ? 1u : 0u;
-    }
-    /* THE STRUCTURES, types 2 to 10: a pair both of whose tones sound
-       renders as one voice through the second tone (see `render_pair`),
-       which carries the pair's output, pan and sends - the manual's own
-       rule. A pair with one tone silent plays as type 1, as the manual
-       says, and so, here, does a pair either of whose tones waits on a
-       tone delay: how a delayed tone joins its pair is not measured. */
-    const uint16_t structField[2] = {profile->patchFieldStructure12,
-                                     profile->patchFieldStructure34};
-    const uint16_t boostField[2] = {profile->patchFieldBooster12,
-                                    profile->patchFieldBooster34};
-    for (unsigned k = 0; k < 2u; ++k) {
-      if (structField[k] == XP_VOICE_FIELD_NONE)
-        continue;
-      unsigned type = (unsigned)engine->parts[part].common[structField[k]] + 1u;
-      struct Voice *first = toneVoice[2u * k];
-      struct Voice *second = toneVoice[2u * k + 1u];
-      if (type < 2u || type > 10u || !first || !second || first->wait ||
-          second->wait || first->muted || second->muted)
-        continue;
-      unsigned boosted = boostField[k] == XP_VOICE_FIELD_NONE ? 0u
-        : (unsigned)engine->parts[part].common[boostField[k]];
-      first->pair = second;
-      first->pair_feed = true;
-      second->pair = first;
-      jv1080_voice_pair(&first->voice, &second->voice, type, boosted);
-    }
-    engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
-    engine->parts[part].key_on_frame[key] = engine->frames + 1u;
+    started += part_note_on(engine, part, key, velocity, false);
   });
   return started != 0u;
 }
@@ -3122,8 +3428,34 @@ bool engine_note_off_jv(void *state, unsigned channel, unsigned key)
   struct Engine *engine = (struct Engine *)state;
   if (!engine || channel >= kParts || key > 127u)
     return false;
+  const struct XpDeviceProfile *profile = xp_profile(&engine->rom);
   unsigned released = 0;
   for_each_part_on(engine, channel, [&](unsigned part) {
+    struct Part &p = engine->parts[part];
+    p.held_velocity[key] = 0u;
+    /* A SOLO part whose sounding key comes up while others are held goes
+       back to the HIGHEST of them. MEASURED (`P-xxxx`,
+       `solo_release_leg0/1`, portamento off): keys pressed 64 60 72 67,
+       then 69 on and off, return to 72, and 72 released to 64; pressed 67
+       72 60 64 they return to 72, then 67 - neither the newest held key
+       nor the first. With portamento on the return glides from the key
+       that came up (`solo_porta_*` S2 and S5: 60 to 48, 60 to 55, 55 to
+       48, each over the TIME law's own duration), and it retriggers or
+       not as a note over a held key does. NOT MEASURED: what the hold
+       pedal changes - with it down nothing returns here - and the
+       velocity of the returning note, which is its own note-on's. */
+    if (part != profile->rhythmPartIndex && (int)key == p.solo_key && !p.hold) {
+      int back = -1;
+      for (int k = 127; k >= 0 && back < 0; --k)
+        if (p.held_velocity[k])
+          back = k;
+      if (back >= 0) {
+        released += part_note_on(engine, part, (unsigned)back,
+                                 p.held_velocity[back], true);
+        return;
+      }
+      p.solo_key = -1;
+    }
     for (unsigned i = 0; i < kMaxVoices; ++i) {
       struct Voice *voice = engine->voices + i;
       if (!voice->allocated || !voice->key_down || voice->part != part ||
@@ -3203,6 +3535,8 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
         if (voice->allocated && voice->part == part)
           free_voice(voice);
       }
+      std::memset(p.held_velocity, 0, sizeof p.held_velocity);
+      p.solo_key = -1;
       break;
     case 123:
     case 124:
@@ -3217,6 +3551,8 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
         if (voice->allocated && voice->key_down && voice->part == part)
           voice_note_off(engine, voice);
       }
+      std::memset(p.held_velocity, 0, sizeof p.held_velocity);
+      p.solo_key = -1;
       break;
     case 121:
       /* RESET ALL CONTROLLERS runs the part reset `0x0A0137C0`; of what

@@ -667,6 +667,12 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .patchFieldControlSource3 = 0x3bu,
   .patchFieldVelocityRangeSwitch = 0x40u,
   .patchFieldKeyAssign = 0x33u,
+  .patchFieldSoloLegato = 0x34u,
+  .patchFieldPortamentoSwitch = 0x35u,
+  .patchFieldPortamentoMode = 0x36u,
+  .patchFieldPortamentoType = 0x37u,
+  .patchFieldPortamentoStart = 0x38u,
+  .patchFieldPortamentoTime = 0x39u,
 
   /* The performance-part group is index 5, and these four fields are the
      ones the voice path needs. Level and pan are measured: both index the

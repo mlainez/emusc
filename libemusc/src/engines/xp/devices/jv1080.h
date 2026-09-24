@@ -172,7 +172,21 @@ struct XpJv1080Voice {
   size_t pcm_count;
   double position;               /* fractional index into pcm */
   double increment;              /* wave samples per output sample */
+  double step_ceiling;           /* the most the read head may advance */
   double bend_ratio;             /* the bender's share, 1 at centre */
+  /* Portamento: the glide's pitch factor, 1 at rest on the voice's own
+     key. porta_cents is the same offset in key cents (a key is 100),
+     before the tone's pitch key follow, porta_kf, turns it into pitch.
+     While porta_left samples remain both move by one step per sample;
+     on arrival they are set to the end values exactly. */
+  double porta_ratio;
+  double porta_cents;
+  double porta_factor;
+  double porta_cents_step;
+  double porta_end_ratio;
+  double porta_end_cents;
+  double porta_kf;
+  size_t porta_left;
   size_t loop_first;
   size_t loop_last;
   bool looping;
@@ -353,6 +367,14 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
 /* The key coming up: a release, or on a NO-SUSTAIN voice still in its
    first three segments, a release deferred to their end. */
 void jv1080_voice_note_off(struct XpJv1080Voice *voice);
+/* A portamento glide: from `fromCents` to `toCents`, both key cents
+   relative to the key the voice was started on, moving linearly at
+   `centsPerSecond`. A rate of zero or less, or no distance, sets the end
+   at once. */
+void jv1080_voice_glide(struct XpJv1080Voice *voice, double fromCents,
+                        double toCents, double centsPerSecond);
+/* Where the voice's glide stands now, in the same key cents. */
+double jv1080_voice_glide_cents(const struct XpJv1080Voice *voice);
 
 /* The filter envelope's two measured pieces, exposed so a test can check
  * them against the takes they come from without a ROM.

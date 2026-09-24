@@ -1407,6 +1407,110 @@ int main(void)
                                        power(poly, f60))) < 1.0);
   }
 
+  /* Portamento, patch common 0x35..0x39, on PR-A 001 part 1. The pitch is
+     read as the strongest partial over the 256 ms window that follows the
+     last event, against the same key played with portamento off. Glides
+     start from key 60 so that the fundamental stays inside the 150 Hz
+     floor of strongest_hz. */
+  {
+    auto play = [&roms](const std::function<void(EmuSC::Xp::Device *)> &fn) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      part_record(d, 0, 0, 3, 0);
+      bank(d, 81, 0, 0);
+      fn(d);
+      std::vector<float> out(2 * kFrames);
+      EmuSC::Xp::device_render(d, out.data(), kFrames);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return out;
+    };
+    auto wait = [](EmuSC::Xp::Device *d, double seconds) {
+      std::vector<float> scratch(2 * 1024);
+      for (size_t n = (size_t)(seconds * kRate); n;) {
+        size_t k = n > 1024u ? 1024u : n;
+        EmuSC::Xp::device_render(d, scratch.data(), k);
+        n -= k;
+      }
+    };
+    auto porta = [](EmuSC::Xp::Device *d, uint8_t mode, uint8_t type,
+                    uint8_t start, uint8_t time) {
+      common_field(d, 0x35, 1);
+      common_field(d, 0x36, mode);
+      common_field(d, 0x37, type);
+      common_field(d, 0x38, start);
+      common_field(d, 0x39, time);
+    };
+    auto cents = [](const std::vector<float> &a, const std::vector<float> &b) {
+      return 1200.0 * std::log2(strongest_hz(a) / strongest_hz(b));
+    };
+    std::vector<float> plain = play([](EmuSC::Xp::Device *d) {
+      midi(d, 0x90, 72, 100);
+    });
+    /* RATE at 127 is 40 cents a second, so a glide up from 60 stands
+       1195 cents under key 72 at the middle of the window. */
+    std::vector<float> rate = play([&](EmuSC::Xp::Device *d) {
+      porta(d, 0, 0, 1, 127);
+      midi(d, 0x90, 60, 100);
+      wait(d, 0.1);
+      midi(d, 0x80, 60, 0);
+      wait(d, 0.05);
+      midi(d, 0x90, 72, 100);
+    });
+    assert(std::fabs(cents(rate, plain) + 1195.0) < 8.0);
+    /* TIME at 64 is 1.681 s for any interval: 1109 cents under at the
+       middle of the window. */
+    std::vector<float> time = play([&](EmuSC::Xp::Device *d) {
+      porta(d, 0, 1, 1, 64);
+      midi(d, 0x90, 60, 100);
+      wait(d, 0.1);
+      midi(d, 0x80, 60, 0);
+      wait(d, 0.05);
+      midi(d, 0x90, 72, 100);
+    });
+    assert(std::fabs(cents(time, plain) + 1109.0) < 10.0);
+    /* LEGATO mode glides a note played over a held key, but a key struck
+       6 ms before is not yet held; 50 ms before, it is. */
+    std::vector<float> soon = play([&](EmuSC::Xp::Device *d) {
+      porta(d, 1, 0, 1, 127);
+      midi(d, 0x90, 60, 100);
+      wait(d, 0.006);
+      midi(d, 0x90, 72, 100);
+      midi(d, 0x80, 60, 0);
+    });
+    assert(std::fabs(cents(soon, plain)) < 8.0);
+    std::vector<float> held = play([&](EmuSC::Xp::Device *d) {
+      porta(d, 1, 0, 1, 127);
+      midi(d, 0x90, 60, 100);
+      wait(d, 0.05);
+      midi(d, 0x90, 72, 100);
+      midi(d, 0x80, 60, 0);
+    });
+    assert(cents(held, plain) < -1150.0);
+    /* SOLO, portamento off: the sounding key coming up returns the part
+       to the highest key still held - 72 over 64, whichever came first -
+       and a held key that is not sounding comes up with no effect. */
+    std::vector<float> back = play([&](EmuSC::Xp::Device *d) {
+      common_field(d, 0x33, 1);
+      midi(d, 0x90, 72, 100);
+      midi(d, 0x90, 64, 100);
+      midi(d, 0x90, 60, 100);
+      wait(d, 0.1);
+      midi(d, 0x80, 64, 0);
+      wait(d, 0.1);
+      midi(d, 0x80, 60, 0);
+    });
+    assert(std::fabs(cents(back, plain)) < 5.0);
+  }
+
   printf("ok\n");
   return 0;
 }

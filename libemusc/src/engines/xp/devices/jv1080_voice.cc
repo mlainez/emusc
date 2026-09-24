@@ -2025,7 +2025,29 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   if (rootHz <= 0.0)
     return false;
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
+  /* THE PLAYBACK CEILING: a wave is never read faster than four times its
+     own rate, two octaves above the root its zone was recorded at,
+     whatever asks for more. MEASURED on three zones of the `Sine`, each
+     against the root and fine tune its element record gives: M-005's
+     keys 120 and 121 both sound 7998 Hz, four times the top zone's
+     1999.4 Hz root; and in TASK-364's `porta_cap_rate` (`P-xxxx`) a
+     glide down to key 48 holds at key 70.04 until its own law carries it
+     below, on the zone whose root stands at 46.04, and one down to key
+     72 holds at 94.43 on the zone rooted at 70.41 - both +24.00 keys.
+     This is `H-012`, the mechanism M-005 left open. NOT MEASURED: where
+     in the pitch sum the ceiling bites relative to FXM, which is applied
+     after it here, and whether a reversed wave has the same one. */
+  voice->step_ceiling = 4.0 * (kXpNativeRate / outputRate);
   voice->bend_ratio = 1.0;
+  /* A glide moves the key, so the tone's pitch key follow scales it as it
+     scales the key: at 100 % a key is 100 cents. NOT MEASURED at any other
+     key follow - every portamento take is on the bench Sine at 100 %. */
+  voice->porta_kf = key_follow(rom, fields->pitchKeyFollow, tone, 1.0);
+  voice->porta_ratio = voice->porta_end_ratio = 1.0;
+  voice->porta_cents = voice->porta_end_cents = 0.0;
+  voice->porta_factor = 1.0;
+  voice->porta_cents_step = 0.0;
+  voice->porta_left = 0u;
 
   /* Amplitude. MEASURED (`M-029`): curve 0 fits `40*log10(v/127)` - the
      same square law the level fields use - to a worst 1.35 dB, and curve 0
@@ -2493,6 +2515,34 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
   }
 }
 
+void jv1080_voice_glide(struct XpJv1080Voice *voice, double fromCents,
+                        double toCents, double centsPerSecond)
+{
+  voice->porta_end_cents = toCents;
+  voice->porta_end_ratio =
+    std::pow(2.0, toCents * voice->porta_kf / 1200.0);
+  double distance = std::fabs(toCents - fromCents);
+  double samples = centsPerSecond > 0.0
+    ? distance / centsPerSecond * voice->output_rate : 0.0;
+  if (!(samples >= 1.0)) {
+    voice->porta_left = 0u;
+    voice->porta_ratio = voice->porta_end_ratio;
+    voice->porta_cents = toCents;
+    return;
+  }
+  voice->porta_left = (size_t)std::ceil(samples);
+  voice->porta_cents = fromCents;
+  voice->porta_ratio = std::pow(2.0, fromCents * voice->porta_kf / 1200.0);
+  voice->porta_cents_step = (toCents - fromCents) / samples;
+  voice->porta_factor =
+    std::pow(2.0, voice->porta_cents_step * voice->porta_kf / 1200.0);
+}
+
+double jv1080_voice_glide_cents(const struct XpJv1080Voice *voice)
+{
+  return voice->porta_cents;
+}
+
 void jv1080_voice_note_off(struct XpJv1080Voice *voice)
 {
   if (voice && voice->one_shot && voice->segment < 4u && !voice->releasing) {
@@ -2742,11 +2792,23 @@ double fxm_step(struct XpJv1080Voice *voice)
 bool voice_advance(struct XpJv1080Voice *voice)
 {
   const double fxm = fxm_step(voice);
+  if (voice->porta_left) {
+    if (--voice->porta_left) {
+      voice->porta_ratio *= voice->porta_factor;
+      voice->porta_cents += voice->porta_cents_step;
+    } else {
+      voice->porta_ratio = voice->porta_end_ratio;
+      voice->porta_cents = voice->porta_end_cents;
+    }
+  }
   if (voice->reverse) {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
+      voice->matrix_pitch_ratio * voice->penv_ratio * voice->porta_ratio;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
+    if (step > voice->step_ceiling)
+      step = voice->step_ceiling;
+    step *= fxm;
     voice->position -= step;
     if (voice->position < 1.0) {
       voice->active = false;
@@ -2754,9 +2816,12 @@ bool voice_advance(struct XpJv1080Voice *voice)
     }
   } else {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
+      voice->matrix_pitch_ratio * voice->penv_ratio * voice->porta_ratio;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
+    if (step > voice->step_ceiling)
+      step = voice->step_ceiling;
+    step *= fxm;
     voice->position += step;
     if (voice->in_cycle) {
       /* Wrapped by the cycle, not by the loop's length: a full cycle is
