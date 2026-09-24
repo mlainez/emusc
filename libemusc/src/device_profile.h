@@ -1150,9 +1150,12 @@ struct DeviceProfile
   // reset to enter. Omitted, false: the Sound Canvas receivers act on both.
   bool rolandSysExOnly;
 
-  // Whether the GS model-ID (0x42) handler ignores the GS Reset, 40 00 7F.
-  // Omitted, false: a Sound Canvas resets on it.
-  bool ignoresGsReset;
+  // Whether the GS model-ID (0x42) DT1 handler acts on GS Scale Tuning only -
+  // address 40 0x 40 or 40 1x 40, x = 0-7, with exactly 12 data bytes - and
+  // drops every other GS DT1, the GS Reset 40 00 7F among them. x names part
+  // ((x - 1) & 7), so x = 0 is the eighth part. Omitted, false: a Sound Canvas
+  // acts on the whole GS map.
+  bool gsScaleTuningOnly;
 };
 
 // The Sound Canvas family's shared behaviour, for a generation whose ROM layout

@@ -1376,6 +1376,22 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
     return;
   }
 
+  if (model == 0x42 && _ctrlRom.device()->gsScaleTuningOnly) {
+    // Scale Tuning is the only GS DT1 such a device acts on (DeviceProfile).
+    if (length != 3 + 12 || data[0] != 0x40 || (data[1] & 0xe8) ||
+        data[2] != 0x40)
+      return;
+
+    const int part = ((data[1] & 0x0f) - 1) & 0x07;
+    for (int i = 0; i < 12; i++)
+      _settings->set_param((PatchParam) ((int) PatchParam::ScaleTuningC + i),
+                           (uint8_t) (data[3 + i] & 0x7f), part);
+
+    for (const auto &cb : _partMidiModCallbacks)
+      cb(part);
+    return;
+  }
+
   if (model == 0x42) {
 
     // System parameters
@@ -1383,8 +1399,7 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 
       // First handle the special case: Reset to the GSstandard mode message
       if (data[2] == 0x7f) {
-	if (!_ctrlRom.device()->ignoresGsReset)
-	  reset(SoundMap::GS, true);
+	reset(SoundMap::GS, true);
 	return;
       }
 
