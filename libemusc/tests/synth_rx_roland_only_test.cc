@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 
 /* A device whose SysEx receiver takes Roland messages only
- * (DeviceProfile::rolandSysExOnly, ignoresGsReset): the JV-880.
+ * (DeviceProfile::rolandSysExOnly, gsScaleTuningOnly): the JV-880.
  *
  * Its firmware drops GM System On, universal Master Volume and the GS Reset
- * (ROM1 0x6EBF, ROM2 0x2F817), so none of them may touch a part. The part's
+ * (ROM1 0x6EBF, ROM2 0x2F817), so none of them may touch a part. Of the GS
+ * DT1 map it acts on Scale Tuning alone (ROM2 0x2F7DE): 40 0x/1x 40 with
+ * x = 0-7 and 12 data bytes, landing on part ((x - 1) & 7). The part's
  * bank flag is the sensitive state: CC0 81 sets it, it persists across
  * program changes, and a reset would put the part back on the reset
  * Performance's patch and - through the GM path - switch Rx Bank Select off.
@@ -69,6 +71,35 @@ void program(EmuSC::Synth &synth, uint8_t pc)
 {
   synth.midi_input(0xc0, pc, 0);
   run(synth);
+}
+
+/* A GS (model 0x42) DT1 to address a0 a1 a2, checksum appended. */
+std::vector<uint8_t> gs_dt1(uint8_t a0, uint8_t a1, uint8_t a2,
+                            const std::vector<uint8_t> &data)
+{
+  std::vector<uint8_t> m = { 0xf0, 0x41, 0x10, 0x42, 0x12, a0, a1, a2 };
+  int sum = a0 + a1 + a2;
+  for (uint8_t d : data) {
+    m.push_back(d);
+    sum += d;
+  }
+  m.push_back((uint8_t) ((128 - (sum & 0x7f)) & 0x7f));
+  m.push_back(0xf7);
+  return m;
+}
+
+uint8_t scale(EmuSC::Synth &s, int part, int note)
+{
+  return s.get_param((EmuSC::PatchParam)
+                     ((int) EmuSC::PatchParam::ScaleTuningC + note), part);
+}
+
+bool scale_is(EmuSC::Synth &s, int part, const std::vector<uint8_t> &v)
+{
+  for (int n = 0; n < 12; n++)
+    if (scale(s, part, n) != v[n])
+      return false;
+  return true;
 }
 
 uint8_t bank(EmuSC::Synth &s)
@@ -142,6 +173,52 @@ int main(void)
     const uint8_t volume = synth.get_param(EmuSC::SystemParam::Volume);
     sysex(synth, masterVolume);
     assert(synth.get_param(EmuSC::SystemParam::Volume) == volume);
+
+    /* No GS DT1 but Scale Tuning acts: not master volume, reverb macro,
+       chorus level or a part's level. */
+    sysex(synth, gs_dt1(0x40, 0x00, 0x04, { (uint8_t) (volume ^ 0x40) }));
+    assert(synth.get_param(EmuSC::SystemParam::Volume) == volume);
+
+    const uint8_t revMacro = synth.get_param(EmuSC::PatchParam::ReverbMacro);
+    const uint8_t revChar = synth.get_param(EmuSC::PatchParam::ReverbCharacter);
+    sysex(synth, gs_dt1(0x40, 0x01, 0x30, { (uint8_t) (revChar ^ 0x07) }));
+    assert(synth.get_param(EmuSC::PatchParam::ReverbMacro) == revMacro);
+    assert(synth.get_param(EmuSC::PatchParam::ReverbCharacter) == revChar);
+
+    const uint8_t chorus = synth.get_param(EmuSC::PatchParam::ChorusLevel);
+    sysex(synth, gs_dt1(0x40, 0x01, 0x3a, { (uint8_t) (chorus ^ 0x40) }));
+    assert(synth.get_param(EmuSC::PatchParam::ChorusLevel) == chorus);
+
+    const uint8_t level = synth.get_param(EmuSC::PatchParam::PartLevel, 0);
+    sysex(synth, gs_dt1(0x40, 0x11, 0x19, { (uint8_t) (level ^ 0x40) }));
+    assert(synth.get_param(EmuSC::PatchParam::PartLevel, 0) == level);
+
+    /* Scale Tuning, 40 1x 40: x = 1 is part 1. */
+    const std::vector<uint8_t> flat(12, 0x40);
+    const std::vector<uint8_t> tuneA =
+      { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b };
+    const std::vector<uint8_t> tuneB =
+      { 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b };
+    for (int p = 0; p < 8; p++)
+      assert(scale_is(synth, p, flat));
+    sysex(synth, gs_dt1(0x40, 0x11, 0x40, tuneA));
+    assert(scale_is(synth, 0, tuneA));
+    for (int p = 1; p < 8; p++)
+      assert(scale_is(synth, p, flat));
+
+    /* 40 0x 40 is accepted too, and x = 0 is the eighth part, not part 10. */
+    sysex(synth, gs_dt1(0x40, 0x00, 0x40, tuneB));
+    assert(scale_is(synth, 7, tuneB));
+    assert(scale_is(synth, 9, flat));
+
+    /* x = 8-F fails the firmware's 0xE8 mask; so does a wrong length. */
+    sysex(synth, gs_dt1(0x40, 0x18, 0x40, tuneA));
+    sysex(synth, gs_dt1(0x40, 0x1a, 0x40, tuneA));
+    assert(scale_is(synth, 7, tuneB));
+    assert(scale_is(synth, 9, flat));
+    sysex(synth, gs_dt1(0x40, 0x12, 0x40,
+                        std::vector<uint8_t>(tuneA.begin(), tuneA.end() - 1)));
+    assert(scale_is(synth, 1, flat));
   }
 
   {
@@ -153,7 +230,8 @@ int main(void)
       assert(synth.get_param(EmuSC::PatchParam::RxBankSelect, p) != 0);
   }
 
-  std::cout << "GM System On, GS Reset and Master Volume ignored" << std::endl;
+  std::cout << "GM System On, GS Reset, Master Volume and non-Scale-Tuning "
+               "GS DT1 ignored" << std::endl;
 
   delete waveRom;
   delete ctrlRom;

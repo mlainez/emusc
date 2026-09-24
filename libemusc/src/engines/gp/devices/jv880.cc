@@ -1123,10 +1123,15 @@ const DeviceProfile JV880_PROFILE = {
   // 04_protocol/program_bank.md).
   true,   // rolandSysExOnly
 
-  // Model 0x42 dispatches to ROM2 0x2F7DE, which takes a DT1 only at address
-  // 40 0x/1x 40 (0x2F80F-0x2F826) - the GS Scale Tuning block. The GS Reset
-  // 40 00 7F fails the third-byte test at 0x2F817 and is ignored.
-  true    // ignoresGsReset
+  // Model 0x42 dispatches to ROM2 0x2F7DE, the GS Scale Tuning handler and
+  // nothing else. It requires command 0x12 (0x2F7DE), a body of 16 bytes -
+  // three address bytes, 12 data bytes, the checksum - (0x2F7E7-0x2F7F5),
+  // first and third address bytes 0x40 (0x2F80F, 0x2F817) and the second
+  // clear of mask 0xE8 (0x2F81F), i.e. 00-07 or 10-17. Part ((x - 1) & 7)
+  // takes the 12 bytes (0x2F82B-0x2F837). Every other GS DT1 - the GS Reset
+  // 40 00 7F, the reverb/chorus block 40 01 xx, the part blocks 40 1x yy with
+  // yy != 40 - fails one of those tests and is dropped.
+  true    // gsScaleTuningOnly
 };
 
 }
