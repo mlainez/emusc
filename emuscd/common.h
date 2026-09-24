@@ -12,11 +12,14 @@
 
 #include "../libemusc/src/synth.h"
 #include "../libemusc/tools/rom_paths.h"
+#include "../libemusc/tools/gain.h"
 
 namespace emuscd {
 
 using emusc_tools::SUPPORTED_DEVICES;
 using emusc_tools::default_rom_dir;
+using emusc_tools::gain_db_to_linear;
+using emusc_tools::apply_gain;
 
 // The sound map emuscd runs in. Named once so that the value handed to the
 // Synth constructor and the value handed to its power-on reset cannot drift
