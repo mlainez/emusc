@@ -1067,13 +1067,17 @@ struct Engine {
    `M-052`), so a voice carries its part's send from note-on. */
 void free_voice(struct Voice *voice)
 {
+  /* A pair goes as one, whichever half is freed. Only a steal frees the
+     first tone alone, and a second tone left behind would fall back to
+     the one-tone path mid-note with its TVF state built on the pair's
+     signal: in type 9 that filter runs ahead of the TVA, so its state is
+     at the unattenuated wave's scale, and at high resonance it rings out
+     at full scale (`1080 rave` at 92.03 s). What the machine steals when
+     it takes one tone of a pair is NOT MEASURED. */
   if (struct Voice *other = voice->pair) {
     voice->pair = nullptr;
     other->pair = nullptr;
-    if (voice->pair_feed)
-      other->voice.partner = nullptr;
-    else
-      free_voice(other);
+    free_voice(other);
   }
   voice->pair_feed = false;
   std::free(voice->pcm);

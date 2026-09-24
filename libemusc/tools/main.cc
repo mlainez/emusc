@@ -578,6 +578,12 @@ int main(int argc, char **argv) {
     auto window_start = play_start;
     uint64_t window_start_frame = 0;
 
+    // Samples at full scale, counted here on what the tool writes rather
+    // than taken from the library's own report: anything that rounds to
+    // the 16-bit ceiling, the level a clip leaves in the file.
+    const float kFullScale = 32766.5f / 32767.0f;
+    uint64_t full_scale = 0, first_full_scale = 0, last_full_scale = 0;
+
     size_t next = 0;
     for (uint64_t fr = 0; fr < total_frames; fr++) {
       while (next < sched.size() && sched[next].frame <= fr + EVENT_LEAD_FRAMES) {
@@ -603,6 +609,11 @@ int main(int argc, char **argv) {
       }
       float l = 0.0f, r = 0.0f;
       synth.get_next_frame(l, r);
+      for (float v : {l, r})
+        if (std::fabs(v) >= kFullScale) {
+          if (!full_scale++) first_full_scale = fr;
+          last_full_scale = fr;
+        }
       if (wav) {
         if (o.as_float) {
           fbuf.push_back(l);
@@ -651,6 +662,15 @@ int main(int argc, char **argv) {
                    (unsigned long long) wav->frames(), o.out.c_str(),
                    synth.get_num_clipped_samples(false));
     }
+    if (full_scale)
+      std::fprintf(stderr,
+                   "emusc-render: %llu samples at full scale, frames "
+                   "%llu-%llu (%.3f-%.3f s)\n",
+                   (unsigned long long) full_scale,
+                   (unsigned long long) first_full_scale,
+                   (unsigned long long) last_full_scale,
+                   (double) first_full_scale / o.rate,
+                   (double) last_full_scale / o.rate);
     if (audio_out) {
       if (!play_buf.empty()) audio_out->write(play_buf.data(), play_buf.size() / 2);
       if (!wav)

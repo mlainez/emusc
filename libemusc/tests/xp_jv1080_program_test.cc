@@ -1511,6 +1511,64 @@ int main(void)
     assert(std::fabs(cents(back, plain)) < 5.0);
   }
 
+  /* A steal that takes the first tone of a structured pair takes the pair.
+     Part 1 holds one key on PR-A 001 with tones 1 and 2 paired as type 9,
+     tone 2's filter at full resonance; part 2, turned down by CC7 0, then
+     fills the pool and asks for one voice more, which steals part 1's
+     tone 1 - the oldest voice. The second tone must not carry on alone:
+     through the one-tone path its filter state, built ahead of the TVA on
+     the pair's unattenuated signal, rings out at full scale - the 92.03 s
+     clip of `1080 rave`. */
+  {
+    auto pairSteal = [&roms](int extra, float *before, float *after) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      part_record(d, 0, 0, 3, 0);
+      part_record(d, 1, 0, 3, 0);
+      bank(d, 81, 0, 0, 0);
+      bank(d, 81, 0, 0, 1);
+      const uint8_t reserves[] = { 0x01, 0x00, 0x00, 0x30 };
+      dt1(d, reserves, std::vector<uint8_t>(16, 0));
+      for (unsigned t : {0u, 1u})
+        tone_field(d, t, 0x00, 1);
+      for (unsigned t : {2u, 3u})
+        tone_field(d, t, 0x00, 0);
+      common_field(d, 0x44, 8);             /* structure 1-2: type 9 */
+      tone_field(d, 1, 0x50, 3);            /* tone 2: HPF */
+      tone_field(d, 1, 0x53, 127);          /* full resonance */
+      midi(d, 0xb1, 7, 0);
+      midi(d, 0x90, 43, 100);
+      const size_t held = 8192, tail = 4096;
+      std::vector<float> out(2 * (held + tail));
+      EmuSC::Xp::device_render(d, out.data(), held);
+      for (int k = 0; k < 62 + extra; ++k)
+        midi(d, 0x91, (uint8_t)(40 + k), 100);
+      EmuSC::Xp::device_render(d, out.data() + 2 * held, tail);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      *before = *after = 0.0f;
+      for (size_t i = 2 * (held - tail); i < 2 * held; ++i)
+        *before = std::max(*before, std::fabs(out[i]));
+      for (size_t i = 2 * held; i < out.size(); ++i)
+        *after = std::max(*after, std::fabs(out[i]));
+    };
+    float before, after;
+    /* The pool full with the pair intact: it sounds on as it did. */
+    pairSteal(0, &before, &after);
+    assert(before > 0.0f && after > 0.25f * before && after < 4.0f * before);
+    /* One voice more: the pair goes, and nothing louder takes its place. */
+    pairSteal(1, &before, &after);
+    assert(before > 0.0f && after < before);
+  }
+
   printf("ok\n");
   return 0;
 }

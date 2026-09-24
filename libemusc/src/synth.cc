@@ -924,9 +924,11 @@ int Synth::get_next_frame(float &lOut, float &rOut)
     midiMutex.unlock();
     lOut = std::clamp(frame[0], -1.0f, 1.0f);
     rOut = std::clamp(frame[1], -1.0f, 1.0f);
-    if (frame[0] > 1.0f || frame[0] < -1.0f ||
-        frame[1] > 1.0f || frame[1] < -1.0f)
-      _numClippedSamples.fetch_add(1, std::memory_order_relaxed);
+    // Per sample, as the other engine's path below counts: a frame over
+    // full scale on both channels is two clipped samples.
+    for (float v : frame)
+      if (v > 1.0f || v < -1.0f)
+        _numClippedSamples.fetch_add(1, std::memory_order_relaxed);
     _framesDelivered++;
     return 0;
   }
