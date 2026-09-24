@@ -231,13 +231,13 @@ struct XpJv1080Voice {
 
      cutoff_offset is the whole sweep at full envelope level, signed by the
      depth; fenv_value is the fraction of it the envelope currently stands
-     at. fenv_time[] is a full 0-to-127 traverse, so a segment's own
-     duration is how far it has to go. */
+     at. fenv_time[] is each segment's duration, whatever levels it runs
+     between. */
   double cutoff_base;
   double cutoff_offset;
   double resonance_q;
   double fenv_level[4];          /* fraction of full scale per segment */
-  double fenv_time[4];           /* seconds for a full traverse */
+  double fenv_time[4];           /* seconds per segment */
   unsigned fenv_segment;
   double fenv_value;
   double fenv_start;
@@ -360,12 +360,12 @@ void jv1080_voice_note_off(struct XpJv1080Voice *voice);
  * jv1080_filter_env_offset is this record's whole sweep at full envelope
  * level, in CUTOFF-PARAMETER units and signed by the depth field.
  *
- * jv1080_filter_env_traverse_seconds is how long a segment with time field
- * `value` takes to cross the whole 0-to-127 level range, before key and
- * velocity scaling.
+ * jv1080_filter_env_segment_seconds is how long a segment with time field
+ * `value` lasts, whatever levels it runs between, before key and velocity
+ * scaling.
  */
 double jv1080_filter_env_curve(unsigned curve, unsigned velocity);
-double jv1080_filter_env_traverse_seconds(unsigned value);
+double jv1080_filter_env_segment_seconds(unsigned value);
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
                                  const uint8_t *record, unsigned velocity);
 

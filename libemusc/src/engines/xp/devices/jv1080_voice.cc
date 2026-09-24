@@ -705,9 +705,9 @@ double filter_env_velocity_scale(int sensitivity, double fraction)
   return std::pow(1.0 - fraction, (double)(-sensitivity) / 50.0);
 }
 
-/* MEASURED (`P-xxxx`, TASK-403): a filter envelope segment moves the
-   cutoff parameter at a constant rate, and a FULL 0-to-127 traverse takes
-   2.50 times the amplitude envelope's 20 dB fall time at the same value.
+/* MEASURED (`P-xxxx`, TASK-403): a filter envelope segment lasts 2.50
+   times the amplitude envelope's 20 dB fall time at the same value, and
+   moves the cutoff parameter linearly over that time.
 
    Read as the resonant peak's position in cutoff units (resonance 90 on
    `Synth Saw 2`, the peak located on the saw's harmonic comb and taken
@@ -720,7 +720,7 @@ double filter_env_velocity_scale(int sensitivity, double fraction)
        twice the rate at twice the depth, so the segment's duration does not
        depend on how far it moves.
    Each line is straight to 0.5-0.9 units rms. At kFilterEnvDepthScale
-   (174.6 units at depth +63) those are full traverses of 0.32, 0.76, 1.66
+   (174.6 units at depth +63) those are segments of 0.32, 0.76, 1.66
    and 7.46 s for T1, 0.33, 0.77 and 1.66 s for T4 and 1.35 and 1.33 s for
    T2 at 60: 2.42 to 2.57 times kAmpEnvFallTable at every one of the nine,
    and 2.50 is their middle. The times 1, 2 and 4 read one table. Values below
@@ -735,10 +735,26 @@ double filter_env_velocity_scale(int sensitivity, double fraction)
 
    `M-040`'s ratio of 1.64 to 1.92 is a different quantity: it compares
    20 dB falls in the energy above 1 kHz, which depend on how far the corner
-   has to travel to take that energy away, not the envelope's traverse. */
+   has to travel to take that energy away, not the envelope's own time.
+
+   Every take above runs a segment over the whole 0-to-127 range. A segment
+   that runs over PART of it lasts the same time (`P-xxxx`, TASK-416). Read
+   on the factory patches whose decay stops short of level 0, as octave
+   band levels in 5 ms steps on their corpus slots, the upper bands reach
+   their held value where the segment's WHOLE time says, not its share of
+   the range: Synth Bass 1 (T2 20, level 127 to 50) at about 160 ms, where
+   the whole time is 145 and the share 88; Euro Bass (T2 15, 127 to 42,
+   then T3 0) at 100 to 120 ms against 100 and 67; Moist Bass (T2 12 then
+   T3 10, 97 to 53 to 0) at about 145 ms against 135 and 51. Rendered this
+   way, those two and BritelowBass (T2 17, 127 to 72) follow the takes'
+   band levels to within 1 to 3 dB through the decay. The amplitude
+   envelope (amp_env_segment_seconds) and the pitch envelope
+   (pitch_env_seconds) are measured to follow the same law, and the pitch
+   envelope's times are these same numbers: 322, 767, 1681 and 7447 ms at
+   32, 48, 64 and 96. */
 inline constexpr double kFilterEnvTimeScale = 2.50;
 
-double filter_env_full_traverse_seconds(unsigned value)
+double filter_env_segment_seconds(unsigned value)
 {
   return kFilterEnvTimeScale * amp_env_fall_seconds_per_20db(value);
 }
@@ -987,15 +1003,13 @@ void set_filter(struct XpJv1080Voice *voice, double rate)
              voice->resonance_q, rate, voice->resonance_value);
 }
 
-/* Enter a segment, from wherever the envelope currently stands. The time
-   field names a FULL 0-to-127 traverse, so a segment that has less far to
-   go takes proportionally less of it. */
+/* Enter a segment, from wherever the envelope currently stands. It lasts
+   its own time however far it has to go. */
 void filter_env_enter(struct XpJv1080Voice *voice, unsigned segment)
 {
   voice->fenv_segment = segment;
   voice->fenv_start = voice->fenv_value;
-  voice->fenv_total = voice->fenv_time[segment] *
-    std::fabs(voice->fenv_level[segment] - voice->fenv_start);
+  voice->fenv_total = voice->fenv_time[segment];
   voice->fenv_remaining = voice->fenv_total;
 }
 
@@ -1680,9 +1694,9 @@ double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
   return filter_env_curve_fraction(curve, velocity);
 }
 
-double jv1080_filter_env_traverse_seconds(unsigned value)
+double jv1080_filter_env_segment_seconds(unsigned value)
 {
-  return filter_env_full_traverse_seconds(value);
+  return filter_env_segment_seconds(value);
 }
 
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
@@ -1995,7 +2009,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       voice->fenv_level[i] =
         (double)tone[fields->filterEnvLevel1 + i] / 127.0;
       voice->fenv_time[i] =
-        filter_env_full_traverse_seconds(tone[fields->filterEnvTime1 + i]);
+        filter_env_segment_seconds(tone[fields->filterEnvTime1 + i]);
       /* `M-066` measured on the amplitude envelope that time key follow
          does not scale the attack; the filter envelope's own attack was
          not measured separately and follows that rule here. */

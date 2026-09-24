@@ -143,13 +143,13 @@ int main()
     { 32u, 0.325 }, { 48u, 0.764 }, { 64u, 1.663 }, { 96u, 7.46 },
   };
   for (const auto &p : kTraverse) {
-    double t = jv1080_filter_env_traverse_seconds(p.value);
+    double t = jv1080_filter_env_segment_seconds(p.value);
     assert(std::fabs(t / p.seconds - 1.0) < 0.04);
   }
   /* And a longer time field is never faster. */
   for (unsigned v = 1u; v <= 127u; ++v)
-    assert(jv1080_filter_env_traverse_seconds(v) >=
-           jv1080_filter_env_traverse_seconds(v - 1u));
+    assert(jv1080_filter_env_segment_seconds(v) >=
+           jv1080_filter_env_segment_seconds(v - 1u));
 
   std::printf("xp_filter_env_test: ok\n");
   return 0;
