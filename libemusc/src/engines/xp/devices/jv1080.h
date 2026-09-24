@@ -396,6 +396,13 @@ double jv1080_filter_env_segment_seconds(unsigned value);
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
                                  const uint8_t *record, unsigned velocity);
 
+/* The magnitude, in dB, of the filter section a voice of filter type `type`
+ * (0 OFF, 1 LPF, 2 BPF, 3 HPF, 4 PKG) runs at cutoff parameter `cutoff` and
+ * resonance `resonance`, output rate `rate`, at frequency `hz` - exposed
+ * so a test can check the section against the takes without a ROM. */
+double jv1080_tvf_response_db(int type, double cutoff, unsigned resonance,
+                              double rate, double hz);
+
 /* The factor the A-ENV's velocity-time sensitivity (enum 0..14) puts on its
  * attack time at note-on velocity `velocity`. */
 double jv1080_amp_env_velocity_time_scale(unsigned enumValue,

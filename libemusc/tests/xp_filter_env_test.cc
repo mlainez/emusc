@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 /*
- *  The JV-1080's filter envelope, and the amplitude envelope's velocity-time
- *  law, against the takes they were read from.
+ *  The JV-1080's filter envelope, the PKG section at the top of the cutoff
+ *  range, and the amplitude envelope's velocity-time law, against the takes
+ *  they were read from.
  *
  *  None of this needs a ROM: what it checks is arithmetic over the measured
  *  tables, so it runs unskipped and a regression in the laws cannot hide
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 using namespace EmuSC::Xp;
 
@@ -180,6 +182,33 @@ int main()
                     r, 1e-12));
     assert(jv1080_amp_env_velocity_time_scale(7u, p.velocity) == 1.0);
   }
+
+  /* PKG at the saturated top, resonance 0 (P-xxxx, TASK-429): the machine's
+     `tvf/cutoff_pkg_res000` slots at 112, 120 and 127, each against the
+     same take's cutoff-0 slot (the filter OFF), in sixth-octave bands at
+     its 32 kHz. A high shelf, still climbing at 12.8 kHz; each point
+     within 0.25 dB. */
+  static const struct { double hz; double db; } kPkgTop[] = {
+    { 504.0, 0.08 }, { 1008.0, 0.34 }, { 2016.0, 1.26 }, { 4032.0, 4.08 },
+    { 6400.0, 7.56 }, { 8063.0, 9.63 }, { 10159.0, 11.66 },
+    { 12800.0, 13.22 },
+  };
+  for (double cutoff : { 112.0, 120.0, 127.0 })
+    for (const auto &p : kPkgTop)
+      assert(close_to(jv1080_tvf_response_db(4, cutoff, 0u, 32000.0, p.hz),
+                      p.db, 0.25));
+  /* Unity at DC: the shelf lifts the top, not the level. */
+  assert(close_to(jv1080_tvf_response_db(4, 127.0, 0u, 32000.0, 20.0), 0.0,
+                  0.05));
+  /* Below 112, and with resonance, PKG stays the two-pole bump, which
+     returns toward 0 dB above its peak: the take has no slot between 104
+     and 112, and the resonance-0 shelf is not applied past what it
+     measured. */
+  assert(jv1080_tvf_response_db(4, 111.0, 0u, 32000.0, 12800.0) < 6.0);
+  assert(jv1080_tvf_response_db(4, 127.0, 1u, 32000.0, 12800.0) < 6.0);
+  /* The low-pass at the same settings is still the filter OFF. */
+  assert(close_to(jv1080_tvf_response_db(1, 127.0, 0u, 32000.0, 12800.0),
+                  0.0, 1e-9));
 
   std::printf("xp_filter_env_test: ok\n");
   return 0;
