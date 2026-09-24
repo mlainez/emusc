@@ -2174,6 +2174,8 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
   if (!voice)
     return;
   voice->volume = volume;
+  voice->static_gain_unwaved = voice->gain_levels * cc7_gain(volume) *
+    voice->gain_velocity * voice->gain_mix;
   voice->static_gain = voice->gain_levels * cc7_gain(volume) *
     voice->gain_velocity * voice->gain_wave * voice->gain_mix;
   voice->tone_gain = (voice->outer_level_gain > 0.0
@@ -2574,13 +2576,13 @@ void jv1080_voice_pair(struct XpJv1080Voice *first, struct XpJv1080Voice *second
 
 namespace {
 
-/* THE STRUCTURE TYPES, as the owner's manual draws them (pp. 43-44): W is a
-   tone's wave generator, F its TVF, A its TVA, R the ring modulator, B the
-   booster.
+/* THE STRUCTURE TYPES, as the owner's manual draws them (pp. 43-44) except
+   for 3 and 4, which are as measured (`M-143`, below): W is a tone's wave
+   generator, F its TVF, A its TVA, R the ring modulator, B the booster.
 
      2   A2 F2 F1 (A1 W1 + W2)
-     3   A2 F2 F1 B(A1 W1 + W2)
-     4   A2 F2 B(F1 (A1 W1 + W2))
+     3   A2 F2 B(F1 (A1 W1 + W2))
+     4   A2 F2 F1 B(A1 W1 + W2)
      5   A2 F2 F1 R(A1 W1, W2)
      6   A2 F2 (F1 R(A1 W1, W2) + W2)
      7   A2 F2 R(A1 F1 W1, W2)
@@ -2607,24 +2609,35 @@ namespace {
    part the wrong way, f2 + f1 1.4 dB over f2 - f1 against 1.4 dB under on
    the machine; that is not resolved.
 
-   The booster is a gain into a hard clip. The type 3 takes, set sample
-   against sample on the type 2 take - the booster's own input, through A2
-   alone, and the same waveform to a correlation of 0.996 - rise at slopes
-   1.00, 1.98 and 3.90 for boosts 0, 1 and 2, flat into one ceiling at all
-   four. Boost 3's slope is lost to the output's band limit (5.7 at the
-   crossing); clipping the type 2 take at gains 2 and 4 lands on boosts 1
-   and 2's third-octave spectra within 0.9 dB, and boost 3 lies between 8
-   and 10, so the doubling's 8 is taken, not resolved. The ceiling, 18.1
-   thousandths of the take's full scale, is 0.33 in the units below on the
-   same gauge. Whether it moves with tone 1's level, which scales half its
-   input, is not measured.
+   THE BOOSTER (`M-143`, `P-xxxx`: a sine on tone 2 of a type 3 or 4 pair,
+   tone 1 at level 1, drive set by wave gain and booster together, filters
+   on and off; confirming `M-134`'s reading of the `booster_1_2` takes) is a
+   gain of exactly 2^boost - 1, 2, 4, 8, read two independent ways at boosts
+   1 and 2 to 0.01 dB - into a symmetric hard clip (h2 absent at -74 dB)
+   shared by both tones: two sines through it intermodulate. Its ceiling
+   stands 0.2 dB above the peak of a wave-gain-0 `Sine`, so wave gain alone
+   reaches it at boost 0, and that one ceiling places h1 at all six drives
+   within 0.03 dB. h3 and h5 run a steady ~0.6 dB under a hard clip's, not
+   resolved. Tone 2's wave gain drives the clip; its level scales the
+   output after it (the level's square law holds at two depths of clip);
+   the rest of A2, envelope and velocity, is taken to follow it there, not
+   measured. Type 3 filters tone 1's TVF before the clip
+   and tone 2's after it; type 4 puts both after it, and with the filters
+   off the two are one stage. Tone 2 passes tone 1's TVF in both.
+
+   The ceiling below is that sine's peak here, 0.4849 (the probe read at
+   wave gain +12: 1.9303 over 3.9811), and 0.2 dB over it. Rendered against
+   the capture's own takes, every slot of all four files - both types,
+   boosts 0-3, drives -6 to +30 dB, each filter on and off, pair 3&4 - lies
+   a steady 1.0-1.7 dB under the machine on h1, the same as its type-1
+   control slots, so the offset is the sine's own level, not the booster.
 
    WHICH FILTER EACH SIGNAL PASSES THROUGH - all that separates 5 from 7
-   from 9, 6 from 8 from 10, and 3 from 4 - rests on the diagrams alone:
-   the takes run with the filters off and cannot see it. */
+   from 9, and 6 from 8 from 10 - rests on the diagrams alone: the takes
+   run with the filters off and cannot see it. */
 const double kRingScale = 1.87;
 const double kBoostGain[4] = {1.0, 2.0, 4.0, 8.0};
-const double kBoostCeiling = 0.33;
+const double kBoostCeiling = 0.496;
 
 double boost(double x, unsigned setting)
 {
@@ -2669,14 +2682,20 @@ bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
     if (!voice_envelope(v2))
       break;
     double x;
+    bool boosted = false;
     switch (v2->structure) {
     case 2: x = voice_tvf(v2, voice_tvf(v1, g1 * w1 + w2)); break;
     case 3:
-      x = voice_tvf(v2, voice_tvf(v1, boost(g1 * w1 + w2, v2->booster)));
+    case 4: {
+      /* Tone 2's wave gain goes in before the clip, the rest of its TVA
+         after. */
+      double in = g1 * w1 + v2->gain_wave * w2;
+      x = v2->structure == 3u
+        ? voice_tvf(v2, boost(voice_tvf(v1, in), v2->booster))
+        : voice_tvf(v2, voice_tvf(v1, boost(in, v2->booster)));
+      boosted = true;
       break;
-    case 4:
-      x = voice_tvf(v2, boost(voice_tvf(v1, g1 * w1 + w2), v2->booster));
-      break;
+    }
     case 5: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2)); break;
     case 6: x = voice_tvf(v2, voice_tvf(v1, kRingScale * g1 * w1 * w2) + w2); break;
     case 7: x = voice_tvf(v2, kRingScale * g1 * voice_tvf(v1, w1) * w2); break;
@@ -2688,7 +2707,14 @@ bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
       break;
     }
     }
-    double value = voice_tva(v2, x);
+    double value;
+    if (boosted) {
+      value = x * v2->envelope * v2->static_gain_unwaved;
+      if (v2->lfo_active)
+        value *= v2->lfo_gain;
+    } else {
+      value = voice_tva(v2, x);
+    }
     l[n] += (float)(value * v2->gain_left);
     r[n] += (float)(value * v2->gain_right);
     if (!v1->wave_done && !v1->envelope_done && !voice_advance(v1)) {

@@ -190,6 +190,9 @@ struct XpJv1080Voice {
      fields' square law, CC7, the velocity curve and the wave gain. Only
      CC7 moves it once the note has started. */
   double static_gain;
+  /* static_gain without the wave gain: what a booster pair's second tone
+     applies after the clip, its wave gain having gone in before it. */
+  double static_gain_unwaved;
   /* The factors static_gain is the product of, around the CC7 one, so a
      volume change can form it again in the same order. */
   double gain_levels;

@@ -2898,13 +2898,12 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
                                velocity, sounded);
       started += toneVoice[t] ? 1u : 0u;
     }
-    /* THE STRUCTURES, types 2 and 5 to 10: a pair both of whose tones sound
+    /* THE STRUCTURES, types 2 to 10: a pair both of whose tones sound
        renders as one voice through the second tone (see `render_pair`),
        which carries the pair's output, pan and sends - the manual's own
        rule. A pair with one tone silent plays as type 1, as the manual
        says, and so, here, does a pair either of whose tones waits on a
-       tone delay: how a delayed tone joins its pair is not measured.
-       Types 3 and 4, the booster's, play as type 1. */
+       tone delay: how a delayed tone joins its pair is not measured. */
     const uint16_t structField[2] = {profile->patchFieldStructure12,
                                      profile->patchFieldStructure34};
     const uint16_t boostField[2] = {profile->patchFieldBooster12,
@@ -2915,9 +2914,8 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       unsigned type = (unsigned)engine->parts[part].common[structField[k]] + 1u;
       struct Voice *first = toneVoice[2u * k];
       struct Voice *second = toneVoice[2u * k + 1u];
-      if (type < 2u || type > 10u || type == 3u || type == 4u || !first ||
-          !second || first->wait || second->wait || first->muted ||
-          second->muted)
+      if (type < 2u || type > 10u || !first || !second || first->wait ||
+          second->wait || first->muted || second->muted)
         continue;
       unsigned boosted = boostField[k] == XP_VOICE_FIELD_NONE ? 0u
         : (unsigned)engine->parts[part].common[boostField[k]];
