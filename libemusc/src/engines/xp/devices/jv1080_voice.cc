@@ -2341,17 +2341,17 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           the same depth; that gap is not recovered and not fitted.
      L1R  0.198 Hz per step, linear in hertz rather than in rate units, and
           clamped at 0 Hz - three points 5, 20, 63 at rate 64.
-     PAN  2 pan-table units of distance per step, both signs (`P-xxxx`, the
+     PAN  2 pan-table units of distance per step, both signs (`M-155`, the
           corpus `routing/matrix_dest_all_{pos,neg}` takes: at effective
           depths 8.9, 17.9 and 26.8 the channel difference reads 18.6,
           35.3, 53.3 units right and 17.8, 34.8, 51.9 left through the pan
           table, 1.94-2.08 per step; 35.7 and above are hard). It adds to
           the voice's own pan and the tone's pan LFO, and the sum is clamped
-          to the table once (`P-xxxx`, `pan_clamp`: tone pan 64, PAN +63 and
+          to the table once (`M-155`, `pan_clamp`: tone pan 64, PAN +63 and
           a pan LFO of +63 on a square stay hard right through both halves
           at CC1 127, and at CC1 64 the bottom half lands on centre, 0.0 dB).
      FL1  2.3 cutoff units per step, LINEAR, added to the tone's own filter
-          LFO swing (`P-xxxx`, `fl_law`/`fl_sum`: White Noise through LPF 86
+          LFO swing (`M-155`, `fl_law`/`fl_sum`: White Noise through LPF 86
           resonance 80 under a key-triggered TRI at rate 64, the resonant
           peak read at the triangle's tops and bottoms). The corner moves
           0.41, 0.80, 1.61, 2.48 and 3.18 octaves at depths 2, 4, 8, 12 and
