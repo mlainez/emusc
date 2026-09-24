@@ -70,37 +70,66 @@ model `6a` with a four-byte one.
 
 ## What JV-1080 does not do yet
 
-It plays end to end through `emusc-render` and `emuscd`. The gaps are
-listed here rather than left to be discovered as silence:
+It plays end to end through `emusc-render` and `emuscd`. This list moved
+fast this session and will again, so where a fraction or a count would be
+stale within days, it names what to check in the source instead of
+asserting a number.
 
-- **The insert, chorus and reverb effects are bypassed**, not
-  approximated, and so is the output stage - `output.cc` is the other
-  device's measured analogue front end, not this one's. All forty insert
-  types are characterised behaviourally in the research, but their DSP
-  topology needs the chip's instruction set and is open; a bypass is
-  honest where a guessed topology would not be.
-- **The two LFOs, the pitch and filter envelopes, FXM, the booster, the
-  ten structures, tone delay, the TVA bias and every key-follow field**
-  are not modelled. Nor are TVA velocity curves 1 to 6, which are
-  measured but not yet transcribed here, so a tone selecting one is
-  rendered on curve 0. The filter envelope is the one with a measured
-  spectral cost: against a hardware take of the first factory song, this
-  renders 1.8 % of its energy between 2 and 8 kHz where the machine puts
-  35.5 % there, and a static cutoff where the machine sweeps one is the
-  obvious candidate.
-- **A ping-pong loop is read forward.** The sibling device's own measured
-  answer is in `wave.cc`: the turn in a differential format is a
-  reflection, not a time reversal, and reading such a loop forward jumps
-  the phase once per traversal. Whether this device's loop-type 1 means
-  the same thing is an open question in the research, so the carry-over
-  is not made. It falls on this device's cymbals - Crash, Ride, Ride
-  Bell, China Cym and the open hi-hat are all loop type 1.
-- **Performances are read only for their part blocks** - receive channel,
-  level, pan and key shift. A part's patch comes from a program change or
-  from the device's own temporary-patch parameter writes, which is what
-  its factory demo songs use.
-- **Voice stealing has no reserve.** The order is the measured one,
-  oldest first; the measured exemption for a part still inside its voice
-  reserve needs a performance loaded and has nothing to act on yet.
+- **The insert effect is dry for any type its own dispatch does not
+  name** - `efx_algorithm_refresh` in `jv1080_engine.cc` resets
+  `efx_ready` to false and only a matched type sets it back, so an
+  unmatched one bypasses rather than approximates, same as before. What
+  changed is how much is matched: by display number, STEREO-EQ 1,
+  OVERDRIVE 2, DISTORTION 3, PHASER 4, SPECTRUM 5, ENHANCER 6, ROTARY 8,
+  COMPRESSOR 9, LIMITER 10, HEXA-CHORUS 11, TREMOLO-CHORUS 12, SPACE-D 13,
+  STEREO-CHORUS 14, STEREO-FLANGER 15, STEREO-DELAY 17, MODULATION-DELAY
+  18, TRIPLE-TAP-DELAY 19, TIME-CONTROL-DELAY 21, REVERB 24 and
+  GATE-REVERB 25 now run real, measured DSP; the rest of the forty do
+  not. This roster will itself be behind by the time it is read - the
+  `kEfxType*` constants and `efx_algorithm_refresh` just above them in
+  `devices/jv1080_engine.cc` are the live list. The output stage is a
+  separate gap that does not move with this one: `output.cc` is the
+  other device's measured analogue front end, and `device.cc`'s early
+  return for a device with its own voice path (`device->voice_ops`)
+  never reaches it.
+- **The chorus and reverb sends are no longer bypassed** - each is this
+  device's own parameter mapping over the shared runtime, read from its
+  own tables in `jv1080_engine.cc`, not routed through `device.cc`'s
+  generic path. (These are the always-on sends; REVERB and GATE-REVERB
+  above are two of the insert effect's forty types and a different
+  thing.) What is still open is the modulation matrix's own source list:
+  `matrix_source()` answers the CC-backed sources but reads BENDER,
+  LFO1, LFO2, VELOCITY, KEYFOLLOW and PLAY-MATE as a flat, unmeasured
+  zero - not to be confused with the per-parameter pitch/cutoff/pan/time
+  key-follow fields, which are modelled (`XpDeviceProfile::keyFollowTable`,
+  `...::timeKeyFollowTable`) and read by every field that names one.
+- **The two LFOs, the pitch and filter envelopes, FXM, the booster and
+  all ten structures are modelled**, each against its own measurement id
+  in `jv1080_voice.cc` and `jv1080_engine.cc`. So is the TVA key bias, and
+  so are the A-ENV and F-ENV velocity curves - a record naming curve 1 to
+  6 no longer renders on curve 0.
+- **The tone delay runs all seven panel modes**, each against its own
+  measurement and its own documented residual (the `kDelay*` constants
+  and the switch that follows them in `jv1080_engine.cc`) - except
+  CLOCK-SYNC and TAP-SYNC, which still start at once because this engine
+  keeps no clock to time them against.
+- **A ping-pong loop turns as a reflection**, not read forward: the
+  sibling device's law was carried over as a labelled cross-device lead
+  and then confirmed directly on this device, from where the reflected
+  and forward reads disagree on hardware-recorded rhythm-kit keys (ten of
+  eleven favour the reflected reading; the eleventh does not resolve
+  either way).
+- **Performances are read well past their part blocks now** - a loaded
+  performance's common block supplies the effect source, type and
+  parameters, the reverb and chorus sends, and the voice reserves. The
+  part block itself stays narrow: it is twenty decoded bytes and the
+  engine still reads four of them by role, keeping the rest so a write is
+  not discarded.
+- **Voice stealing has its reserve exemption**: a part sitting at or
+  under its own reserve is skipped in the first pass, per the measured
+  law. One constant in it is not recovered - the threshold a part must
+  clear past its reserve before the first pass will touch it, bounded 0
+  to 7 by the same measurement, is taken as 0 here and stated as a guess
+  rather than fitted quietly.
 - **The voice-to-mix scale is not recovered**, only its order; see
   `XpDeviceProfile::voiceMixScale` for what bounds it and why.
