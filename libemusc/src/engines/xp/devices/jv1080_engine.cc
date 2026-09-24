@@ -31,6 +31,7 @@
 #include "../spectrum.h"
 #include "../enhancer.h"
 #include "../phaser.h"
+#include "../rotary.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -182,6 +183,9 @@ const unsigned kEfxTypeSpectrum = 4u;
 const unsigned kEfxTypeEnhancer = 5u;
 /* PHASER, type 4 (0-based 3): engines/xp/phaser.h. */
 const unsigned kEfxTypePhaser = 3u;
+
+/* ROTARY, type 8 (0-based 7): engines/xp/rotary.h. */
+const unsigned kEfxTypeRotary = 7u;
 const unsigned kEfxTypeOverdrive = 1u;
 const unsigned kEfxTypeDistortion = 2u;
 const unsigned kEfxDriveParameters = 6u;
@@ -1049,6 +1053,7 @@ struct Engine {
   struct xp_spectrum efx_spectrum;
   struct xp_enhancer efx_enhancer;
   struct xp_phaser efx_phaser;
+  struct xp_rotary efx_rotary;
   /* The output shelves (THE OUTPUT SHELVES), low then high, and the gains
      they were built from - a gain past 30 is discarded and the previous
      one kept, as on every other byte. `efx_shelf_type` is the type they
@@ -2335,6 +2340,28 @@ void efx_phaser_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+/* ROTARY, with the same per-byte discard. Level is applied inside, in the
+   firmware's register. Byte 11 is not read by the updater. */
+void efx_rotary_refresh(struct Engine *engine)
+{
+  bool previous = engine->efx_rotary.ready;
+  uint8_t p[XP_ROTARY_PARAMETERS];
+  for (unsigned i = 0; i < XP_ROTARY_PARAMETERS; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!rotary_parameter_valid(i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_rotary.param[i];
+    }
+  }
+  if (!rotary_set(&engine->rom, &engine->efx_rotary, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 /* The output shelves for the type in force, or none. */
 void efx_shelf_refresh(struct Engine *engine)
 {
@@ -2373,6 +2400,12 @@ void efx_algorithm_refresh(struct Engine *engine)
     std::memset(&engine->efx_phaser, 0, sizeof engine->efx_phaser);
   if (engine->efx_type == kEfxTypePhaser) {
     efx_phaser_refresh(engine);
+    return;
+  }
+  if (engine->efx_type != kEfxTypeRotary)
+    std::memset(&engine->efx_rotary, 0, sizeof engine->efx_rotary);
+  if (engine->efx_type == kEfxTypeRotary) {
+    efx_rotary_refresh(engine);
     return;
   }
   if (engine->efx_type != kEfxTypeSpectrum)
@@ -4123,6 +4156,8 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
                          efxWetR, n);
       else if (engine->efx_type == kEfxTypePhaser)
         phaser_process(&engine->efx_phaser, efxL, efxR, efxWetL, efxWetR, n);
+      else if (engine->efx_type == kEfxTypeRotary)
+        rotary_process(&engine->efx_rotary, efxL, efxR, efxWetL, efxWetR, n);
       else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))
