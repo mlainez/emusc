@@ -658,6 +658,14 @@ struct XpDeviceProfile {
   uint8_t keyFollowCount;
   uint8_t keyFollowWidth;
 
+  /* The value list the envelopes' time key follow indexes, in the same
+     format: each a signed percentage, +-100 % being one doubling of time
+     per octave of key. Zero where a device has none, and then envelope
+     times do not follow the key. */
+  uint32_t timeKeyFollowTable;
+  uint8_t timeKeyFollowCount;
+  uint8_t timeKeyFollowWidth;
+
   /* The rhythm set: which packed groups its common and per-key records
      are, which part index addresses it, and the first key it holds. */
   uint8_t packedRhythmCommonGroup;

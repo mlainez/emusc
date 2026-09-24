@@ -779,14 +779,14 @@ double filter_env_segment_seconds(unsigned value)
 }
 
 /* MEASURED (`M-069`): time key follow is one law on all three envelopes -
-   a factor of two per octave of key, pivoting exactly on key 60, with the
-   15-entry enum running -1 to +1. `M-066` measured on the A-ENV that it
+   a factor of two per octave of key at +-100 %, pivoting exactly on key
+   60. `kf` is the field's percentage as a fraction, read from the device's
+   own list by time_key_follow(). `M-066` measured on the A-ENV that it
    does NOT scale the attack; whether the filter envelope's own attack is
    likewise exempt was not measured, and this follows the amplitude
    envelope's rule. */
-double time_key_follow_scale(unsigned enumValue, unsigned key)
+double time_key_follow_scale(double kf, unsigned key)
 {
-  double kf = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
   return std::pow(2.0, -kf * ((double)key - 60.0) / 12.0);
 }
 
@@ -1222,21 +1222,19 @@ const double kKeyFollowPivot = 60.0;
    parsed: of one semitone per key for pitch, of one octave of corner per
    octave of key for cutoff. `absent` where the record has no such field or
    the device no list. */
-double key_follow(const struct xp_rom *rom, uint16_t which,
-                  const uint8_t *record, double absent)
+/* Entry `index` of a list of `count` fixed-width signed percentage strings
+   at `table`, as a fraction; `absent` where there is no such entry. */
+double percent_list_entry(const struct xp_rom *rom, uint32_t table,
+                          unsigned count, unsigned width, unsigned index,
+                          double absent)
 {
-  const struct XpDeviceProfile *profile = xp_profile(rom);
-  if (which == XP_VOICE_FIELD_NONE || !profile->keyFollowTable ||
-      !profile->keyFollowWidth)
+  if (!table || !width || index >= count)
     return absent;
-  unsigned index = record[which];
-  uint32_t at = profile->keyFollowTable +
-    (uint32_t)index * profile->keyFollowWidth;
-  if (index >= profile->keyFollowCount ||
-      at + profile->keyFollowWidth > rom->size)
+  uint32_t at = table + (uint32_t)index * width;
+  if (at + width > rom->size)
     return absent;
   int sign = 1, value = 0;
-  for (unsigned c = 0; c < profile->keyFollowWidth; ++c) {
+  for (unsigned c = 0; c < width; ++c) {
     char ch = (char)rom->bytes[at + c];
     if (ch == '-')
       sign = -1;
@@ -1244,6 +1242,30 @@ double key_follow(const struct xp_rom *rom, uint16_t which,
       value = value * 10 + (ch - '0');
   }
   return sign * value / 100.0;
+}
+
+double key_follow(const struct xp_rom *rom, uint16_t which,
+                  const uint8_t *record, double absent)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (which == XP_VOICE_FIELD_NONE)
+    return absent;
+  return percent_list_entry(rom, profile->keyFollowTable,
+                            profile->keyFollowCount, profile->keyFollowWidth,
+                            record[which], absent);
+}
+
+/* An envelope's time key follow as a fraction, the device's own value
+   string parsed; none where the record has no such field. */
+double time_key_follow(const struct xp_rom *rom, uint16_t which,
+                       const uint8_t *record)
+{
+  const struct XpDeviceProfile *profile = xp_profile(rom);
+  if (which == XP_VOICE_FIELD_NONE)
+    return 0.0;
+  return percent_list_entry(rom, profile->timeKeyFollowTable,
+                            profile->timeKeyFollowCount,
+                            profile->timeKeyFollowWidth, record[which], 0.0);
 }
 
 /* MEASURED: a fall, a decay or a release lasts ONE DURATION for its time
@@ -2011,7 +2033,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      the sounded one, as theirs is; whether the patch's octave shift counts
      toward it is not measured - `M-066`'s takes have none, and the factory
      patches that carry one do not separate the two readings. */
-  unsigned ampTimeKf = field_or(fields, fields->ampEnvTimeKeyFollow, tone, 7u);
+  double ampTimeKf = time_key_follow(rom, fields->ampEnvTimeKeyFollow, tone);
   for (unsigned i = 1; i < 4u; ++i)
     voice->time[i] =
       amp_env_fall_seconds_per_20db(tone[fields->ampTime1 + i]) *
@@ -2063,7 +2085,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      to the sum once per control block. */
   voice->cutoff_offset = jv1080_filter_env_offset(fields, tone, velocity);
   if (voice->cutoff_offset != 0.0) {
-    unsigned timeKf = field_or(fields, fields->filterEnvTimeKeyFollow, tone, 7u);
+    double timeKf = time_key_follow(rom, fields->filterEnvTimeKeyFollow, tone);
     unsigned velT1 = field_or(fields, fields->filterEnvVelTime1, tone, 7u);
     unsigned velT4 = field_or(fields, fields->filterEnvVelTime4, tone, 7u);
     for (unsigned i = 0; i < 4u; ++i) {
@@ -2194,7 +2216,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     double reach = (double)sensed_velocity(velocity,
       (int)(int8_t)(uint8_t)field_or(fields, fields->pitchEnvVelSens, tone, 0u));
     reach = reach <= 1.0 ? 0.0 : (reach - 1.0) / 126.0;
-    unsigned timeKf = field_or(fields, fields->pitchEnvTimeKeyFollow, tone, 7u);
+    double timeKf = time_key_follow(rom, fields->pitchEnvTimeKeyFollow, tone);
     bool moves = false;
     for (unsigned i = 0; i < 4u; ++i) {
       voice->penv_level[i] = depth * 100.0 * reach *

@@ -606,6 +606,24 @@ const struct XpDeviceProfile JV1080_PROFILE = {
   .keyFollowCount = 16u,
   .keyFollowWidth = 4u,
 
+  /* TIME KEY FOLLOW, the P-ENV's, F-ENV's and A-ENV's fields 0x45, 0x5A
+     and 0x6D (0..14), indexes the fifteen-entry list at PRG `0x057582` -
+     `-100-70 -50 -40 -30 -20 -10 0   +10 +20 +30 +40 +50 +70 +100`, the
+     only fifteen-entry list among the panel's strings - and the displayed
+     percentage is taken as the law: MEASURED (`M-066`, `M-069`) exact at
+     indices 0, 7 and 14 as -1, 0 and +1 doublings of time per octave of
+     key about key 60. The entries between are not measured in isolation.
+     On the factory-patch takes (`P-xxxx`), where octave-shifted patches
+     carry indices 2, 5, 8 to 13, the level's slope 0.1-0.68 s into the
+     key-60 note is nearer the hardware on 49 of 71 slots with this list than with a straight line from
+     -1 to +1 - Slap Bass 4 (A-ENV 11) falls 11.4 dB/s on the hardware,
+     12.8 with the list, 16.2 with the line. The pitch key follow's own
+     list above is likewise the law at an index between its measured
+     ones. */
+  .timeKeyFollowTable = 0x057582u,
+  .timeKeyFollowCount = 15u,
+  .timeKeyFollowWidth = 4u,
+
   /* The rhythm set is groups 8 and 9, addressed as part index 9 - which is
      MIDI part 10 - and holds the 64 keys 35 to 98. */
   .packedRhythmCommonGroup = 8u,
