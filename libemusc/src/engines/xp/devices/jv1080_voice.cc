@@ -559,8 +559,9 @@ const double kDrift[5][6] = {
    The low-pass at resonance 0 from 112 up is the filter OFF, to 0.0 dB
    (tvf_bypassed). The other three types there are not reproduced by these
    sections at any natural frequency: at the extension's 8440 Hz the HPF
-   reads within 2.7 dB from 350 Hz up, the BPF 5 to 10 dB and the PKG up to
-   13 dB under the machine; that regime is not resolved. */
+   reads within 2.7 dB from 350 Hz up and the BPF 5 to 10 dB under the
+   machine; that regime is not resolved. The PKG at resonance 0 there is a
+   high shelf, not any section at a natural frequency (set_pkg_top_shelf). */
 const double kTvfPeakCeilingHz = 7809.0;
 
 double tvf_natural_hz(double cutoff, unsigned resonance)
@@ -918,7 +919,8 @@ double tvf_q(unsigned resonance)
      PKG  as below; the one-zero variant reads 0.82 and 0.72 against this
           form's 1.23 and 0.49, so neither is preferred and this one stays.
           Both stay under the machine above its peak at 96 and 104, by up
-          to 6.6 dB at 14 kHz.
+          to 6.6 dB at 14 kHz. From cutoff 112 up at resonance 0 the PKG
+          is a high shelf instead (set_pkg_top_shelf).
    These are the outputs of a state-variable section, the topology the
    sibling engine's own chip runs (tvf.cc). The poles are the cookbook
    biquad's at the natural frequency and Q below for HPF, BPF and PKG, and
@@ -1075,6 +1077,66 @@ double filter_env_cutoff(const struct XpJv1080Voice *voice)
   return cutoff > 127.0 ? 127.0 : cutoff;
 }
 
+/* PKG AT THE SATURATED TOP, RESONANCE 0, MEASURED (`P-xxxx`, TASK-429):
+   from cutoff 112 up the machine's PKG is not a bump but a HIGH SHELF.
+   On `tvf/cutoff_pkg_res000` (White Noise, key 60, velocity 100), each
+   slot against the same take's cutoff-0 slot - which reads as the filter
+   OFF on the machine, to 0.1 dB against `filter_type_all_res000`'s OFF
+   slot, so the interface's own response cancels - the slots at 112, 120
+   and 127 are identical to 0.01 dB and rise +0.34 dB at 1 kHz, +1.26 at
+   2 kHz, +4.08 at 4 kHz, +7.56 at 6.4 kHz, +9.63 at 8 kHz, +11.66 at
+   10.2 kHz and +13.22 at 12.8 kHz, still climbing at the top of the
+   machine's 16 kHz band. The two-pole bump set_biquad builds reaches
+   +4.5 dB there, 13 dB under.
+
+   A shelf of the audio-EQ cookbook's form - corner 5850 Hz, +13.7 dB,
+   slope 0.60 - designed at the machine's 32 kHz reproduces the take's
+   37 sixth-octave bands from 200 Hz to 12.8 kHz to 0.05 dB rms (worst
+   0.1 dB). Those three numbers are a fit of that form to the take, not
+   values read from the ROM; the chip's own coefficients are internal
+   (`L-05`). At another output rate the same corner, gain and slope are
+   designed at that rate.
+
+   The factory songs carry it: STORM's own rhythm set puts PKG, cutoff
+   127, resonance 0 on most of the keys it plays, and with this shelf on
+   those keys alone its 2-16 kHz reads within about 1.5 dB of both
+   hardware takes where the bump left it 3 to 9 dB dark.
+
+   NOT RESOLVED: the machine's PKG between cutoffs 104 and 112, where the
+   take has no slot - at 96 and 104 it is a bump that settles to a plateau
+   of +3.3 and +6.8 dB above its peak rather than returning to 0 dB, which
+   set_biquad does not reproduce - and resonance above 0 at the top, which
+   `cutoff_pkg_res064` holds and this does not read. Both stay on
+   set_biquad's section. */
+inline constexpr double kPkgTopShelfHz = 5850.0;
+inline constexpr double kPkgTopShelfDb = 13.7;
+inline constexpr double kPkgTopShelfSlope = 0.60;
+
+bool pkg_top_shelf(int type, double cutoff, unsigned resonance)
+{
+  return type == 4 && !resonance && cutoff >= 112.0;
+}
+
+void set_pkg_top_shelf(struct XpJv1080Voice *voice, double rate)
+{
+  double fc = kPkgTopShelfHz;
+  if (fc > rate * 0.5 * 0.99)
+    fc = rate * 0.5 * 0.99;
+  double a = std::pow(10.0, kPkgTopShelfDb / 40.0);
+  double w = 2.0 * 3.14159265358979323846 * fc / rate;
+  double cs = std::cos(w);
+  double alpha = std::sin(w) / 2.0 *
+    std::sqrt((a + 1.0 / a) * (1.0 / kPkgTopShelfSlope - 1.0) + 2.0);
+  double sq = 2.0 * std::sqrt(a) * alpha;
+  double a0 = (a + 1.0) - (a - 1.0) * cs + sq;
+  voice->b0 = a * ((a + 1.0) + (a - 1.0) * cs + sq) / a0;
+  voice->b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cs) / a0;
+  voice->b2 = a * ((a + 1.0) + (a - 1.0) * cs - sq) / a0;
+  voice->a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cs) / a0;
+  voice->a2 = ((a + 1.0) - (a - 1.0) * cs - sq) / a0;
+  set_svf(voice);
+}
+
 /* The section for where the voice's cutoff and resonance now stand. */
 void set_filter(struct XpJv1080Voice *voice, double rate)
 {
@@ -1083,6 +1145,10 @@ void set_filter(struct XpJv1080Voice *voice, double rate)
     voice->b0 = 1.0;
     voice->b1 = voice->b2 = voice->a1 = voice->a2 = 0.0;
     set_svf(voice);
+    return;
+  }
+  if (pkg_top_shelf(voice->filter_type, cutoff, voice->resonance_value)) {
+    set_pkg_top_shelf(voice, rate);
     return;
   }
   set_biquad(voice, voice->filter_type,
@@ -1859,6 +1925,24 @@ double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
     (int8_t)(uint8_t)field_or(fields, fields->filterEnvVelSens, record, 0u);
   return kFilterEnvDepthScale * (double)depth *
     filter_env_sensed_fraction(curve, sensitivity, velocity);
+}
+
+double jv1080_tvf_response_db(int type, double cutoff, unsigned resonance,
+                              double rate, double hz)
+{
+  struct XpJv1080Voice *voice = new XpJv1080Voice();
+  voice->filter_type = type;
+  voice->cutoff_base = cutoff;
+  voice->resonance_value = resonance;
+  voice->resonance_q = tvf_q(resonance);
+  set_filter(voice, rate);
+  double w = 2.0 * 3.14159265358979323846 * hz / rate;
+  double nr = voice->b0 + voice->b1 * std::cos(w) + voice->b2 * std::cos(2.0 * w);
+  double ni = -voice->b1 * std::sin(w) - voice->b2 * std::sin(2.0 * w);
+  double dr = 1.0 + voice->a1 * std::cos(w) + voice->a2 * std::cos(2.0 * w);
+  double di = -voice->a1 * std::sin(w) - voice->a2 * std::sin(2.0 * w);
+  delete voice;
+  return 10.0 * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
 }
 
 bool jv1080_voice_span(const struct xp_rom *rom,
