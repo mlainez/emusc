@@ -1783,17 +1783,15 @@ bool resolve_element(const struct xp_rom *rom,
 /* How much of a tone its velocity range lets through, 0..1. Outside the
    range a tone with a velocity cross fade depth fades out over that many
    velocity steps rather than stopping at the edge; depth 0 is the hard
-   gate. MEASURED (`P-xxxx`, TASK-425), APPROXIMATE, on the factory
-   sweep's velocity-100 slots against the hardware takes: R&R Chunk
-   (PR-B 003, tones 3-4 ranged 113-127, depth 40) reads 16 dB quiet with
-   the hard gate and within about 1 dB with the amplitude falling
-   linearly; Waterhodes (PR-A 014, tone 2 ranged 127-127, depth 48)
-   leaves its tone alone in 1.5-4.8 kHz, where the hardware reads it at
-   -6.5 dB, the line giving -7.2. The square of the line misses those two
-   by 3.3 and 7.9 dB. R&R Chunk's sustain against its own attack instead
-   sits 2.5 dB under the line, so the shape is not settled to better than
-   a few dB; the lower edge alone is measured and the upper edge is taken
-   as the same line. */
+   gate. The amplitude d steps outside the range is (1 - d/depth)^2.
+   MEASURED (`P-xxxx`, TASK-425) on a dedicated hardware capture: two
+   tones ranged 1-64 and 65-127, stepped velocities at depths 32, 64 and
+   127. A free exponent fits 1.999 over all 75 points (1.98-2.005 per
+   depth and edge), 0.04 dB RMS from the square against 4.41 dB from the
+   straight line. The gain depends on d/depth alone - the same fraction
+   reads the same dB at every depth - and the two edges agree to 0.02 dB.
+   Not explained: at depth 127 the two tones differ by 0.1-0.3 dB, which
+   a /128 divisor does not remove. */
 double velocity_fade_gain(const struct XpVoiceFieldMap *fields,
                           const uint8_t *record, unsigned velocity)
 {
@@ -1804,7 +1802,10 @@ double velocity_fade_gain(const struct XpVoiceFieldMap *fields,
   if (!d)
     return 1.0;
   unsigned depth = field_or(fields, fields->velocityCrossFade, record, 0u);
-  return d >= depth ? 0.0 : 1.0 - (double)d / (double)depth;
+  if (d >= depth)
+    return 0.0;
+  double g = 1.0 - (double)d / (double)depth;
+  return g * g;
 }
 
 /* The record's own gates. One that is off, or whose key range or velocity
