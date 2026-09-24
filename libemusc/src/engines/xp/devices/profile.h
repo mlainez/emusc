@@ -700,6 +700,15 @@ struct XpDeviceProfile {
   uint16_t patchFieldVelocityRangeSwitch;
   /* The patch's key assign mode: 0 POLY, 1 SOLO. */
   uint16_t patchFieldKeyAssign;
+  /* SOLO legato, 0 OFF, 1 ON, and portamento: switch, mode (0 NORMAL,
+     1 LEGATO), type (0 RATE, 1 TIME), start (0 PITCH, 1 NOTE) and time
+     0..127. */
+  uint16_t patchFieldSoloLegato;
+  uint16_t patchFieldPortamentoSwitch;
+  uint16_t patchFieldPortamentoMode;
+  uint16_t patchFieldPortamentoType;
+  uint16_t patchFieldPortamentoStart;
+  uint16_t patchFieldPortamentoTime;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive

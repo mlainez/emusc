@@ -2026,6 +2026,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     return false;
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
   voice->bend_ratio = 1.0;
+  /* A glide moves the key, so the tone's pitch key follow scales it as it
+     scales the key: at 100 % a key is 100 cents. NOT MEASURED at any other
+     key follow - every portamento take is on the bench Sine at 100 %. */
+  voice->porta_kf = key_follow(rom, fields->pitchKeyFollow, tone, 1.0);
+  voice->porta_ratio = voice->porta_end_ratio = 1.0;
+  voice->porta_cents = voice->porta_end_cents = 0.0;
+  voice->porta_factor = 1.0;
+  voice->porta_cents_step = 0.0;
+  voice->porta_left = 0u;
 
   /* Amplitude. MEASURED (`M-029`): curve 0 fits `40*log10(v/127)` - the
      same square law the level fields use - to a worst 1.35 dB, and curve 0
@@ -2493,6 +2502,34 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
   }
 }
 
+void jv1080_voice_glide(struct XpJv1080Voice *voice, double fromCents,
+                        double toCents, double centsPerSecond)
+{
+  voice->porta_end_cents = toCents;
+  voice->porta_end_ratio =
+    std::pow(2.0, toCents * voice->porta_kf / 1200.0);
+  double distance = std::fabs(toCents - fromCents);
+  double samples = centsPerSecond > 0.0
+    ? distance / centsPerSecond * voice->output_rate : 0.0;
+  if (!(samples >= 1.0)) {
+    voice->porta_left = 0u;
+    voice->porta_ratio = voice->porta_end_ratio;
+    voice->porta_cents = toCents;
+    return;
+  }
+  voice->porta_left = (size_t)std::ceil(samples);
+  voice->porta_cents = fromCents;
+  voice->porta_ratio = std::pow(2.0, fromCents * voice->porta_kf / 1200.0);
+  voice->porta_cents_step = (toCents - fromCents) / samples;
+  voice->porta_factor =
+    std::pow(2.0, voice->porta_cents_step * voice->porta_kf / 1200.0);
+}
+
+double jv1080_voice_glide_cents(const struct XpJv1080Voice *voice)
+{
+  return voice->porta_cents;
+}
+
 void jv1080_voice_note_off(struct XpJv1080Voice *voice)
 {
   if (voice && voice->one_shot && voice->segment < 4u && !voice->releasing) {
@@ -2742,9 +2779,18 @@ double fxm_step(struct XpJv1080Voice *voice)
 bool voice_advance(struct XpJv1080Voice *voice)
 {
   const double fxm = fxm_step(voice);
+  if (voice->porta_left) {
+    if (--voice->porta_left) {
+      voice->porta_ratio *= voice->porta_factor;
+      voice->porta_cents += voice->porta_cents_step;
+    } else {
+      voice->porta_ratio = voice->porta_end_ratio;
+      voice->porta_cents = voice->porta_end_cents;
+    }
+  }
   if (voice->reverse) {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
+      voice->matrix_pitch_ratio * voice->penv_ratio * voice->porta_ratio * fxm;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
     voice->position -= step;
@@ -2754,7 +2800,7 @@ bool voice_advance(struct XpJv1080Voice *voice)
     }
   } else {
     double step = voice->increment * voice->bend_ratio *
-      voice->matrix_pitch_ratio * voice->penv_ratio * fxm;
+      voice->matrix_pitch_ratio * voice->penv_ratio * voice->porta_ratio * fxm;
     if (voice->lfo_active)
       step *= voice->lfo_pitch_ratio;
     voice->position += step;
