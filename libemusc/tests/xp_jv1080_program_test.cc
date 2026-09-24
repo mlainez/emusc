@@ -832,6 +832,29 @@ int main(void)
     };
     assert(std::fabs(10.0 * std::log10(lev(127, 50) / lev(0, 50)) - 13.98) < 0.1);
     assert(std::fabs(10.0 * std::log10(lev(127, 100) / lev(0, 100)) - 17.45) < 0.1);
+    /* Controller 3 on SYS-CTRL2 answers CC11, whose matrix source starts
+       at 0 and returns to 0 on RESET ALL CONTROLLERS (`P-xxxx`,
+       TASK-424): no CC11 reads as CC11 0, and CC11 64 then CC121 does too. */
+    auto sys2 = [&](const Setup &controls) {
+      return energy(render(roms, [&](EmuSC::Xp::Device *d) {
+        bench(d);
+        tone_field(d, 1, 0x65, 32);
+        tone_field(d, 1, 0x69, 0);
+        tone_field(d, 1, 0x6a, 50);
+        tone_field(d, 1, 0x25, 4);
+        tone_field(d, 1, 0x26, 63 + 16);
+        controls(d);
+      }));
+    };
+    double none = sys2([](EmuSC::Xp::Device *) {});
+    double zero = sys2([](EmuSC::Xp::Device *d) { midi(d, 0xb0, 11, 0); });
+    double full = sys2([](EmuSC::Xp::Device *d) { midi(d, 0xb0, 11, 127); });
+    double reset = sys2([](EmuSC::Xp::Device *d) {
+      midi(d, 0xb0, 11, 64);
+      midi(d, 0xb0, 121, 0);
+    });
+    assert(none == zero && reset == zero);
+    assert(std::fabs(10.0 * std::log10(full / zero) - 13.98) < 0.1);
     /* Controller 1 is CC1, fixed: PCH +20 at full CC1 is 0.31 * 400 = 124
        cents, and channel aftertouch does not move it. */
     auto pitch = [&](uint8_t slot, uint8_t status, uint8_t a, uint8_t b) {
@@ -1206,6 +1229,9 @@ int main(void)
       for (size_t i = 0; i + 1 < tempo.size(); i += 2)
         dt1(d, at, { tempo[i], tempo[i + 1] });
       bank(d, 81, 1, 54);
+      /* The factory sweep's state: its C2 slots ride SYS-CTRL2, CC11,
+         whose matrix source starts at 0. */
+      midi(d, 0xb0, 11, 127);
       midi(d, 0x90, 60, 100);
       const size_t frames = (size_t)(1.5 * kRate);
       std::vector<float> out(2 * frames);

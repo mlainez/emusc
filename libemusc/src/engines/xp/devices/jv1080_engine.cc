@@ -1143,12 +1143,18 @@ void reset_part(const struct xp_rom *rom, struct Part *part, unsigned index)
   part->rpn_lsb = 0x7fu;
   part->rpn_bend = -1;
   part->alternate_next = 1;
-  /* NOT MEASURED: the controllers' values before any is received. Pan
-     centred, volume and expression full, the rest zero - the usual
-     reset state, and the one every corpus stimulus writes. */
+  /* Pan centred and volume full before either is received. CC11 starts
+     at 0 as a matrix source, read off the PRG and MEASURED (`P-xxxx`,
+     TASK-424): the per-part reset `0x0A0137C0`, which machine init runs,
+     writes 0 to both bytes the matrix reads CC11 through - EXPRESSION's
+     `0x09001391 + p` and SYS-CTRL2's `0x09000A67 + p` when SYS-CTRL2 is
+     11 - and 127 only to `0x090013A2 + p`, which no matrix source reads.
+     On the device, a part reset by CC121, by a change of its receive
+     channel or by its receive switch going off and on reads 0.0 on both
+     sources, against a calibration of CC11 0 to 127 in the same take. */
   part->cc[7] = 127u;
   part->cc[10] = 64u;
-  part->cc[11] = 127u;
+  part->cc[11] = 0u;
 }
 
 /* A controller's value as a source, 0..1. CC7 is read from the part's
@@ -3180,6 +3186,13 @@ bool engine_control_change(void *state, unsigned channel, unsigned controller,
           voice_note_off(engine, voice);
       }
       break;
+    case 121:
+      /* RESET ALL CONTROLLERS runs the part reset `0x0A0137C0`; of what
+         that routine writes, only CC11's matrix source is modelled here:
+         MEASURED at 0.0 after CC11 64 (`P-xxxx`, TASK-424). */
+      p.cc[11] = 0u;
+      matrix_refresh(engine, part);
+      break;
     case 101: p.rpn_msb = (uint8_t)value; break;
     case 100: p.rpn_lsb = (uint8_t)value; break;
     case 6:
@@ -3457,11 +3470,20 @@ bool engine_sysex_block(void *state, const uint8_t *address,
     unsigned index = block & 0x0fu;
     if (index >= kParts || within >= kPartFields)
       return false;
+    uint8_t channel = engine->parts[index].part[profile->partFieldReceiveChannel];
     packed_apply_wire_block(&engine->rom,
                              xp_profile(&engine->rom)
                                ->packedPerformancePartGroup,
                              within, data, count, engine->parts[index].part,
                              kPartFields);
+    /* A part whose receive channel changes is reset by `0x0A011104`
+       through `0x0A0137C0`, and its CC11 matrix source reads 0 after it
+       (`P-xxxx`, TASK-424); a write of the same channel leaves it. */
+    if (engine->parts[index].part[profile->partFieldReceiveChannel] !=
+        channel) {
+      engine->parts[index].cc[11] = 0u;
+      matrix_refresh(engine, index);
+    }
     /* A write that completes the patch number re-points the part's latch
        at the record's group: the two DT1 sites that assemble the number
        from its nibbles both call `0x0A0140FA`, which seeds the latch
