@@ -674,6 +674,9 @@ struct Part {
   bool hold;
   /* The sign the part's next note throws its alternate pan with. */
   int alternate_next;
+  /* When each key last had a note-on on this part, as the engine frame
+     plus one; zero for never. What a KEY-INTERVAL tone delay times. */
+  uint64_t key_on_frame[128];
   /* The RPN latch, 127/127 when none is selected, and the bend range RPN
      0/0 set, -1 while it has set none. */
   uint8_t rpn_msb;
@@ -739,6 +742,7 @@ double bend_ratio(int bend, double up, double down)
    KEY-OFF-DECAY. */
 const uint8_t kDelayNormal = 0u;
 const uint8_t kDelayHold = 1u;
+const uint8_t kDelayKeyInterval = 2u;
 const uint8_t kDelayKeyOffNormal = 5u;
 const uint8_t kDelayKeyOffDecay = 6u;
 const size_t kWaitForKeyOff = SIZE_MAX;
@@ -2412,6 +2416,13 @@ struct Voice *start_record(struct Engine *engine, unsigned part,
                          keyShift, &samples) || !samples)
     return nullptr;
 
+  /* A KEY-INTERVAL tone with nothing to time against never sounds
+     (`M-020`), so it takes no voice. */
+  if (fields->toneDelayMode != XP_VOICE_FIELD_NONE &&
+      bytes[fields->toneDelayMode] == kDelayKeyInterval &&
+      !engine->parts[part].key_on_frame[key])
+    return nullptr;
+
   struct Voice *voice = take_voice(engine);
   if (!voice)
     return nullptr;
@@ -2518,10 +2529,35 @@ struct Voice *start_record(struct Engine *engine, unsigned part,
     voice->wait = 0u;
     voice->muted = true;
     break;
+  case kDelayKeyInterval:
+    /* MEASURED (`M-020`): the panel's PLAY-MATE delays the tone by the
+       interval since the previous note-on, exactly, to at least 4 s,
+       ignoring the delay time field; a note with no previous note-on never
+       sounds (handled before the voice is taken). The tone outlives its
+       note-off - M-020's notes are gated 300 ms and still sound 4 s later -
+       so the release is postponed by the same interval, NORMAL's rule;
+       how long the machine lets it sound is NOT MEASURED. That the tone
+       does not start at its note-on is seen on a factory patch too: PR-A
+       105 Dulcimer's tones are thrown to opposite sides by alternate pan,
+       and its `patches` take is at the floor on the side of its
+       KEY-INTERVAL tone.
+
+       NOT MEASURED BY M-020, which played key 60 alone: whether "previous"
+       means the same key or any key of the part. This takes the same key.
+       It is the reading the hardware's `3_stormwarning` take supports:
+       Amazon Moon's tone 4 is KEY-INTERVAL, the song opens with a chord of
+       four keys struck within 6 ms, and the take has none of tone 4 at any
+       of their four pitches for the first 3 s - where any-key timing would
+       have sounded three of them within 6 ms of the note-on. A rule that
+       treats an interval of a few milliseconds as none would fit the take
+       as well; a two-key stimulus separates the two. */
+    voice->wait = (size_t)(engine->frames -
+                           (engine->parts[part].key_on_frame[key] - 1u));
+    voice->delay = voice->wait;
+    break;
   default:
-    /* PLAY-MATE, CLOCK-SYNC and TAP-SYNC: `M-016` and `M-020` time them
-       against things this engine does not keep - a previous note-on, a
-       clock - so they start at once, as every mode did before. */
+    /* CLOCK-SYNC and TAP-SYNC: `M-016` times them against a clock this
+       engine does not keep, so they start at once. */
     voice->wait = 0u;
     break;
   }
@@ -2879,6 +2915,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       jv1080_voice_pair(&first->voice, &second->voice, type, boosted);
     }
     engine->parts[part].alternate_next = -engine->parts[part].alternate_next;
+    engine->parts[part].key_on_frame[key] = engine->frames + 1u;
   });
   return started != 0u;
 }
@@ -2889,6 +2926,7 @@ static void key_off(struct Voice *voice)
 {
   switch (voice->delay_mode) {
   case kDelayNormal:
+  case kDelayKeyInterval:
     /* The note-off is postponed by the delay, as the start was: the
        NORMAL take at delay 64 stops sounding 647 ms after its
        note-off, against the 640 ms this gives. */

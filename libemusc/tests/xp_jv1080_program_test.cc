@@ -338,6 +338,48 @@ int main(void)
         early += (double)out[i] * out[i];
       assert(early == 0.0);
     }
+
+    /* KEY-INTERVAL, mode 2 (`M-020`): a note with no previous note-on is
+       silent, and a later note is delayed by the interval since it,
+       whatever the delay time field says. Two notes 2000 frames apart:
+       nothing sounds before frame 4000, then the second note's tone does.
+       The previous note-on is the same key's; another key's does not
+       count (the modelled choice, see the engine). */
+    assert(energy(render(roms, delay(2, 64))) == 0.0);
+    auto two_notes = [&](uint8_t firstKey) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      delay(2, 64)(d);
+      std::fill(out.begin(), out.end(), 0.0f);
+      midi(d, 0x90, firstKey, 100);
+      EmuSC::Xp::device_render(d, out.data(), 512);
+      midi(d, 0x80, firstKey, 0);
+      EmuSC::Xp::device_render(d, out.data() + 2 * 512, 2000 - 512);
+      midi(d, 0x90, 60, 100);
+      EmuSC::Xp::device_render(d, out.data() + 2 * 2000, kFrames - 2000);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+    };
+    two_notes(60);
+    {
+      double before = 0.0, after = 0.0;
+      for (size_t i = 0; i < 2 * 4000; ++i)
+        before += (double)out[i] * out[i];
+      for (size_t i = 2 * 4000; i < 2 * 4064; ++i)
+        after += (double)out[i] * out[i];
+      assert(before == 0.0);
+      assert(after > 0.0);
+    }
+    two_notes(62);
+    assert(energy(out) == 0.0);
   }
 
   /* The rhythm note's envelope mode, field 0x08. PR-A's kit is mode 0,
