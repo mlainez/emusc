@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 /*
- *  The JV-1080's filter envelope, against the takes it was read from.
+ *  The JV-1080's filter envelope, and the amplitude envelope's velocity-time
+ *  law, against the takes they were read from.
  *
  *  None of this needs a ROM: what it checks is arithmetic over the measured
  *  tables, so it runs unskipped and a regression in the laws cannot hide
@@ -159,6 +160,26 @@ int main()
   for (unsigned v = 1u; v <= 127u; ++v)
     assert(jv1080_filter_env_segment_seconds(v) >=
            jv1080_filter_env_segment_seconds(v - 1u));
+
+  /* The A-ENV's velocity-time sensitivity (P-xxxx, TASK-402): tone byte
+     0x6B, the rhythm note's 0x2B. The time-4 field (0x6C) is measured not
+     to follow the note-on velocity and is not mapped. */
+  assert(tone.ampEnvVelTime1 == 0x6bu);
+  assert(rhythm.ampEnvVelTime1 == 0x2bu);
+  /* `envelopes/aenv_vel_t1_i14` as a ratio to index 7's 1.042 s rise, at
+     velocities 1, 16, 32, 64, 96 and 127; index 0 is its mirror about 64
+     and index 7 is flat. Each within 6 %. */
+  static const struct { unsigned velocity; double ratio; } kIndex14[] = {
+    { 1u, 1.541 }, { 16u, 1.420 }, { 32u, 1.276 },
+    { 64u, 0.987 }, { 96u, 0.683 }, { 127u, 0.415 },
+  };
+  for (const auto &p : kIndex14) {
+    double r = jv1080_amp_env_velocity_time_scale(14u, p.velocity);
+    assert(std::fabs(r / p.ratio - 1.0) < 0.06);
+    assert(close_to(jv1080_amp_env_velocity_time_scale(0u, 128u - p.velocity),
+                    r, 1e-12));
+    assert(jv1080_amp_env_velocity_time_scale(7u, p.velocity) == 1.0);
+  }
 
   std::printf("xp_filter_env_test: ok\n");
   return 0;

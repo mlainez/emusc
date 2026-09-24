@@ -369,6 +369,11 @@ double jv1080_filter_env_segment_seconds(unsigned value);
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
                                  const uint8_t *record, unsigned velocity);
 
+/* The factor the A-ENV's velocity-time sensitivity (enum 0..14) puts on its
+ * attack time at note-on velocity `velocity`. */
+double jv1080_amp_env_velocity_time_scale(unsigned enumValue,
+                                          unsigned velocity);
+
 /* Adds this voice's output into l/r and, when `unpanned` is given, the same
  * output before the pan into it. Returns false once it has finished,
  * having written whatever it had left. */

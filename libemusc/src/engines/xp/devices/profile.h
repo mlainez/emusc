@@ -241,6 +241,7 @@ struct XpVoiceFieldMap {
   uint16_t ampTime1;             /* four times run from here */
   uint16_t ampLevel1;            /* three levels run from here */
   uint16_t ampEnvTimeKeyFollow;
+  uint16_t ampEnvVelTime1;
   uint16_t keyRangeLow;
   uint16_t keyRangeHigh;
   uint16_t velocityRangeLow;

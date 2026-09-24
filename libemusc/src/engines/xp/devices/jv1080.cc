@@ -507,6 +507,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .ampTime1 = 0x6eu,
     .ampLevel1 = 0x72u,
     .ampEnvTimeKeyFollow = 0x6du,
+    /* 0x6C, the time-4 velocity sensitivity, is not mapped: the note-on
+       velocity is measured NOT to drive it (amp_env_velocity_time_scale). */
+    .ampEnvVelTime1 = 0x6bu,
     .keyRangeLow = 0x0eu,
     .keyRangeHigh = 0x0fu,
     .velocityRangeLow = 0x0cu,
@@ -574,6 +577,9 @@ const struct XpDeviceProfile JV1080_PROFILE = {
     .ampTime1 = 0x2cu,
     .ampLevel1 = 0x30u,
     .ampEnvTimeKeyFollow = XP_VOICE_FIELD_NONE,
+    /* The rhythm note's one A-ENV velocity-time sensitivity, given to time
+       1 as its filter envelope's is. */
+    .ampEnvVelTime1 = 0x2bu,
     .keyRangeLow = XP_VOICE_FIELD_NONE,
     .keyRangeHigh = XP_VOICE_FIELD_NONE,
     .velocityRangeLow = XP_VOICE_FIELD_NONE,

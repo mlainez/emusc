@@ -804,6 +804,41 @@ double velocity_time_scale(unsigned enumValue, unsigned velocity)
   return std::pow(2.0, -vs * 0.39 * ((double)velocity - 64.0) / 126.0);
 }
 
+/* MEASURED (`P-xxxx`, TASK-402): the A-ENV's velocity-time sensitivity
+   scales the attack LINEARLY in time with velocity, pivoting on 64:
+   `t = t_64 * (1 - vs * 0.0090 * (vel - 64))`, vs from -1 to +1 across the
+   15-entry enum. At the extremes that is x1.57 at velocity 1 and x0.43 at
+   127 - a span of 3.7, not the 1.30 `M-070` measured on the pitch and
+   filter envelopes' own fields, which `closeout/fenv_vel_t1_i*` confirm
+   (the band-crossing times span 1.30 there too).
+
+   Read on `envelopes/aenv_vel_t1_i{00,07,14}` (A-ENV T1 64, level velocity
+   sensitivity 0, filter off) as the 10-90 % amplitude rise: index 7 is
+   1.042 s at all six velocities; index 14 gives 1.606, 1.480, 1.330,
+   1.028, 0.712 and 0.432 s at velocities 1, 16, 32, 64, 96 and 127, and
+   index 0 their mirror about 64 (0.436 ... 1.610). As a ratio to index 7
+   the points lie on one straight line in velocity to 0.017 rms, and not on
+   one in log time (log2 ratio 0.62, 0.51, 0.35, -0.02, -0.55, -1.27). A
+   free line puts the pivot at 63.6 and the slope at 0.0090 per velocity;
+   the index-14 and index-0 end points alone give 0.0091.
+
+   NOT RECOVERED: every take is time 1 = 64, so that the scale is a factor
+   on the time (rather than an offset in seconds) at other values is
+   assumed, as for the other envelopes; indices between 0, 7 and 14 are
+   interpolated linearly; and the rhythm note's one field is unmeasured.
+   The time-4 field is NOT applied: `envelopes/aenv_vel_t4_i{00,07,14}`
+   (T4 64, each note released at 800 ms) fall 10, 20 and 40 dB in 0.34,
+   0.68 and 1.28 s at every velocity and index, within 1.5 %. Their
+   note-offs all carry velocity 64, so whether the note-OFF velocity
+   drives that field is not measured. */
+inline constexpr double kAmpEnvVelocityTimeSlope = 0.0090;
+
+double amp_env_velocity_time_scale(unsigned enumValue, unsigned velocity)
+{
+  double vs = ((double)(enumValue > 14u ? 14u : enumValue) - 7.0) / 7.0;
+  return 1.0 - vs * kAmpEnvVelocityTimeSlope * ((double)velocity - 64.0);
+}
+
 /* Resonance as the two-pole section's Q, in dB. The peak gain of a
    two-pole section is its Q for a Q well above unity; the chip's own
    coefficient form is unknown (`L-05`) and is not what this reproduces.
@@ -1713,6 +1748,12 @@ double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
   return filter_env_curve_fraction(curve, (double)velocity);
 }
 
+double jv1080_amp_env_velocity_time_scale(unsigned enumValue,
+                                          unsigned velocity)
+{
+  return amp_env_velocity_time_scale(enumValue, velocity);
+}
+
 double jv1080_filter_env_segment_seconds(unsigned value)
 {
   return filter_env_segment_seconds(value);
@@ -1961,7 +2002,9 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   }
   voice->level_units[3] = 0.0;
   voice->level[3] = 0.0;
-  voice->time[0] = amp_env_attack_seconds(tone[fields->ampTime1]);
+  voice->time[0] = amp_env_attack_seconds(tone[fields->ampTime1]) *
+    amp_env_velocity_time_scale(
+      field_or(fields, fields->ampEnvVelTime1, tone, 7u), velocity);
   /* MEASURED (`M-066`): time key follow scales times 2-4 by a factor of
      two per octave of the key about key 60, and leaves the attack alone -
      the same law the filter and pitch envelopes take (`M-069`). The key is
