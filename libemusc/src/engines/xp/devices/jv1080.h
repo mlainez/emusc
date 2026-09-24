@@ -353,9 +353,9 @@ void jv1080_voice_note_off(struct XpJv1080Voice *voice);
 /* The filter envelope's two measured pieces, exposed so a test can check
  * them against the takes they come from without a ROM.
  *
- * jv1080_filter_env_curve is `M-082`'s velocity curve `curve` (0..6) at
- * `velocity`, as the fraction of the envelope's travel - zero at the
- * bottom of the curve's own range and one at velocity 127.
+ * jv1080_filter_env_curve is velocity curve `curve` (0..6) at `velocity`,
+ * as the fraction of the envelope's travel in cutoff units at velocity
+ * sensitivity +50 - one at velocity 127.
  *
  * jv1080_filter_env_offset is this record's whole sweep at full envelope
  * level, in CUTOFF-PARAMETER units and signed by the depth field.

@@ -586,32 +586,42 @@ bool tvf_bypassed(int type, double cutoff, unsigned resonance)
   return (type == 1 || type > 4) && !resonance && cutoff >= 112.0;
 }
 
-/* MEASURED (`M-082`): the seven F-ENV velocity curves, ten points each, as
-   functions of velocity onto the fraction of the envelope's travel - and
-   the travel is in CUTOFF-PARAMETER units, not in hertz, which is what
-   curve 0 coming out linear in the normalised OCTAVE fraction says. The
-   take was built for this reading: depth +30 from cutoff 24 keeps the whole
-   sweep below the 7891 Hz ceiling that clipped five of the seven in
-   `M-078`.
+/* MEASURED (`M-082`, P-xxxx TASK-407): the seven F-ENV velocity curves,
+   ten points each, as the fraction of the envelope's travel IN CUTOFF
+   UNITS - each note's resonant peak taken back through tvf_natural_hz at
+   resonance 80, less the record's cutoff, over kFilterEnvDepthScale times
+   the depth.
+
+   Both takes behind the table are recorded at velocity sensitivity +50
+   (their generators set it; one stimulus description says 74, which is
+   not what the take carries), so this IS the response at +50 - the case
+   filter_env_sensed_fraction reads without moving the velocity. Read from
+   `closeout/fenv_vel_curve_shallow_c0..c6` (cutoff 24, depth +30, nothing
+   saturates) and `tvf/fenv_vel_curve_c0..c6` (cutoff 40, depth +63, which
+   resolves the low velocities the shallow take loses under the rig's
+   33 Hz floor, and is clipped against the 7809 Hz ceiling above them).
+   Where both resolve a point they agree within 0.01 - curve 0 at 32 and
+   48 reads 0.264/0.258 and 0.382/0.382, curve 1 at 64 and 80 0.240/0.241
+   and 0.356/0.362 - and the table takes their mean; elsewhere the one
+   take that resolves it. Curve 0 is linear in velocity: 0.124 per 16 from
+   32 up.
 
    Between the ten velocities this interpolates linearly, which is
-   interpolation and not a recovered law. THE BOTTOM OF EACH CURVE IS SOFT:
-   the take's velocity-1 note read 41 Hz where cutoff 24 predicts about
-   23 Hz, so the rig's own low-frequency roll-off (`M-012`: below 33 Hz it
-   cannot place a corner) is what the zeros at velocities 1 and 8 rest on,
-   and the real curve may leave zero earlier than this table does. */
+   interpolation and not a recovered law. The zeros at the bottom of
+   curves 0, 1, 2 and 5 are the deep take's readings at the record's own
+   cutoff, within 1.5 units of it. */
 const uint8_t kFilterEnvCurveVelocity[10] = {
   1u, 8u, 16u, 32u, 48u, 64u, 80u, 96u, 112u, 127u,
 };
 
 const double kFilterEnvCurve[7][10] = {
-  { 0.0, 0.0,   0.024, 0.164, 0.301, 0.443, 0.579, 0.721, 0.864, 1.0 },
-  { 0.0, 0.0,   0.0,   0.005, 0.046, 0.144, 0.277, 0.452, 0.700, 1.0 },
-  { 0.0, 0.0,   0.0,   0.0,   0.0,   0.0,   0.005, 0.155, 0.452, 1.0 },
-  { 0.0, 0.098, 0.252, 0.459, 0.608, 0.718, 0.801, 0.875, 0.943, 1.0 },
-  { 0.0, 0.397, 0.541, 0.694, 0.781, 0.849, 0.900, 0.937, 0.968, 1.0 },
-  { 0.0, 0.0,   0.0,   0.0,   0.046, 0.452, 0.844, 0.941, 0.980, 1.0 },
-  { 0.0, 0.183, 0.277, 0.366, 0.410, 0.441, 0.471, 0.511, 0.605, 1.0 },
+  { 0.0,   0.070, 0.130, 0.261, 0.382, 0.510, 0.634, 0.758, 0.882, 1.0 },
+  { 0.0,   0.023, 0.034, 0.090, 0.157, 0.240, 0.359, 0.522, 0.734, 1.0 },
+  { 0.0,   0.0,   0.0,   0.0,   0.034, 0.062, 0.121, 0.247, 0.510, 1.0 },
+  { 0.034, 0.206, 0.330, 0.522, 0.643, 0.748, 0.829, 0.893, 0.952, 1.0 },
+  { 0.208, 0.522, 0.634, 0.758, 0.828, 0.877, 0.918, 0.950, 0.977, 1.0 },
+  { 0.0,   0.0,   0.023, 0.054, 0.151, 0.522, 0.864, 0.950, 0.985, 1.0 },
+  { 0.062, 0.271, 0.359, 0.437, 0.465, 0.504, 0.529, 0.566, 0.648, 1.0 },
 };
 
 /* MEASURED ON THE DEVICE - a depth sweep with the filter's corner read
@@ -650,16 +660,14 @@ const double kFilterEnvCurve[7][10] = {
 
    Measured with the SENSITIVITY AT ZERO, and that case is confirmed
    rather than assumed: at depth +30 with sensitivity 0 the corner sits at
-   8003.9, 8001.0 and 8003.9 Hz for velocities 1, 64 and 127. Sensitivity
-   zero means full depth at every velocity, which is what the exponent form
-   below was built to satisfy. What is still NOT measured is the
-   sensitivity's own shape between 0 and its limits. */
+   8003.9, 8001.0 and 8003.9 Hz for velocities 1, 64 and 127: sensitivity
+   zero is full depth at every velocity (filter_env_sensed_fraction). */
 inline constexpr double kFilterEnvDepthScale = 2.771;
 
-/* The record's velocity curve, interpolated between `M-082`'s ten points.
-   A record type with no curve field is rendered on curve 0; which curve
-   such a record uses is not established. */
-double filter_env_curve_fraction(unsigned curve, unsigned velocity)
+/* The record's velocity curve, interpolated between the table's ten
+   points. A record type with no curve field is rendered on curve 0; which
+   curve such a record uses is not established. */
+double filter_env_curve_fraction(unsigned curve, double velocity)
 {
   if (curve > 6u)
     curve = 0u;
@@ -668,41 +676,52 @@ double filter_env_curve_fraction(unsigned curve, unsigned velocity)
     xs[i] = kFilterEnvCurveVelocity[i];
     ys[i] = kFilterEnvCurve[curve][i];
   }
-  return interpolate_points(xs, ys, 10u, (double)velocity);
+  return interpolate_points(xs, ys, 10u, velocity);
 }
 
-/* How far velocity is allowed to move the envelope, from the record's
-   velocity sensitivity field (decoded -50..+75).
+/* How far velocity lets the envelope travel, from the record's velocity
+   curve and its velocity sensitivity (decoded -50..+75).
 
-   MEASURED, IN PART, AND THE FORM IS THIS MODEL'S OWN. Two things are
-   measured and both are reproduced exactly here: at sensitivity 0 velocity
-   does not move the envelope at all - the corpus states it as the
-   `fenv_vel_sens_000` stimulus's own hypothesis, "sensitivity 0 must be
-   flat" - and at the top of the field the curve spans the whole travel
-   (`M-082` at 74). A THIRD fact rules out the obvious interpolation
-   between those two: `M-078` at sensitivity +50 reads its velocity-1 note
-   at 72 Hz, which is the unmodulated cutoff 40 and not the third of full
-   depth that a linear blend predicts (that would put it near 1.4 kHz).
+   MEASURED at four settings (P-xxxx, TASK-407), each note's resonant peak
+   read as above, `White Noise` through the LPF at cutoff 40, resonance 80,
+   depth +63, curve 0:
+     sensitivity   0 (`tvf/fenv_vel_sens_000`): flat - every velocity at
+                      the peak ceiling, as `M-146`'s depth +30 check reads
+                      at 8 kHz for velocities 1, 64 and 127.
+     sensitivity +50 (the curve takes above): the curve itself.
+     sensitivity +75 (`tvf/fenv_vel_sens_p75`): velocities 1, 16 and 32 at
+                      the record's cutoff, 64 at 41.5, 96 and 127 at the
+                      ceiling. That is the curve read at 127 - 2 (127 - v):
+                      64 maps to 1 (predicted 41.6), 96 to 65 (0.518 of
+                      the travel, past the ceiling). Scaling the +50 result
+                      by one and a half instead would put 64 at 1.1 kHz.
+     sensitivity -50 (`tvf/fenv_vel_sens_m50`): the +50 result turned
+                      over - 1 minus the curve - 96 at 82.1 against 82.2
+                      predicted, 127 at the record's cutoff, 64 and below
+                      at the ceiling.
 
-   So the sensitivity is applied as an exponent on the curve rather than as
-   a blend with it, which is 1 at sensitivity 0 for every velocity, is the
-   bare curve at the top of the field, and vanishes at velocity 1 for every
-   positive setting - the three measured facts, in that order. The negative
-   half inverts the curve over its own half-range. THE EXPONENT IS THIS
-   MODEL'S CHOICE: it is the simplest form consistent with all three, not a
-   recovered law, and the `fenv_vel_sens_{000,m50,p75}` takes have never
-   been read. */
-double filter_env_velocity_scale(int sensitivity, double fraction)
+   That is the A-ENV's law (sensed_velocity) - k 0, 1 and 2 at 0, 50 and
+   75, the curve read at the velocity 127 - k (127 - v) - with the negative
+   half taken as one minus the positive result at the same magnitude.
+
+   NOT RECOVERED: k between the four settings is interpolated linearly as
+   the A-ENV's is, and the factory library sits mostly between them (30 to
+   75); and every take here is curve 0, which is linear, so whether a
+   curve other than 0 is read at the moved velocity (this form) or has its
+   result scaled about 1 (the 512-slot sweep scores the two within 0.1 dB
+   median) is not settled by them. A velocity mapped below 1 reads the
+   curve at 1. */
+double filter_env_sensed_fraction(unsigned curve, int sensitivity,
+                                  unsigned velocity)
 {
   if (!sensitivity)
     return 1.0;
-  if (fraction < 0.0)
-    fraction = 0.0;
-  if (fraction > 1.0)
-    fraction = 1.0;
-  if (sensitivity > 0)
-    return std::pow(fraction, (double)sensitivity / 75.0);
-  return std::pow(1.0 - fraction, (double)(-sensitivity) / 50.0);
+  int magnitude = sensitivity < 0 ? -sensitivity : sensitivity;
+  double k = magnitude <= 50 ? magnitude / 50.0
+                             : 1.0 + (magnitude - 50) / 25.0;
+  double v = 127.0 - k * (127.0 - (double)velocity);
+  double g = filter_env_curve_fraction(curve, v < 1.0 ? 1.0 : v);
+  return sensitivity > 0 ? g : 1.0 - g;
 }
 
 /* MEASURED (`P-xxxx`, TASK-403): a filter envelope segment lasts 2.50
@@ -1691,7 +1710,7 @@ bool record_sounds(const struct XpVoiceFieldMap *fields,
 
 double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
 {
-  return filter_env_curve_fraction(curve, velocity);
+  return filter_env_curve_fraction(curve, (double)velocity);
 }
 
 double jv1080_filter_env_segment_seconds(unsigned value)
@@ -1712,9 +1731,8 @@ double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
   unsigned curve = field_or(fields, fields->filterEnvVelCurve, record, 0u);
   int sensitivity =
     (int8_t)(uint8_t)field_or(fields, fields->filterEnvVelSens, record, 0u);
-  double fraction = filter_env_curve_fraction(curve, velocity);
   return kFilterEnvDepthScale * (double)depth *
-    filter_env_velocity_scale(sensitivity, fraction);
+    filter_env_sensed_fraction(curve, sensitivity, velocity);
 }
 
 bool jv1080_voice_span(const struct xp_rom *rom,
