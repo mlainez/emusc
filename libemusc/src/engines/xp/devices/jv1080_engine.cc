@@ -2975,7 +2975,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
     int shifted = (int)key + shift;
     unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
     /* SOLO, key assign mode 1 (patch common 0x33): one note per part, the
-       newest. MEASURED (`P-xxxx`), `voice_allocation/key_assign_solo`,
+       newest. MEASURED (`M-164`), `voice_allocation/key_assign_solo`,
        keys 60, 64 and 67 struck 800 ms apart and all held: each note-on
        replaces the note before it within ~4 ms with no gap in level, and
        the older keys' note-offs, while the newest still sounds, change
@@ -2983,7 +2983,7 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
        milliseconds of overlap are not reproduced.
 
        SOLO LEGATO (0x34) DOES NOT STOP THE ATTACK when portamento is off.
-       MEASURED (`P-xxxx`) on the `1_rise` hardware take, whose PR-B 009
+       MEASURED (`M-164`) on the `1_rise` hardware take, whose PR-B 009
        Pick Bass is SOLO with Solo Legato on and portamento off: the
        80-400 Hz level rises at each of its 142 overlapping note-ons by a
        median 9.7 dB against 12.6 at its 277 detached ones, where a render
