@@ -80,27 +80,25 @@ int main()
     assert(close_to(slope, 0.00872, 0.0006));
   }
 
-  /* THE DEPTH SCALE, now measured directly on the device at 2.545 cutoff
-     units per depth unit: depth +30 at a velocity that reaches the top of
-     the curve must travel 30 * 2.545 = 76.35 cutoff units.
+  /* THE DEPTH SCALE, measured directly on the device at 2.771 cutoff
+     units per depth unit in this engine's own frequency law: depth +30 at
+     a velocity that reaches the top of the curve must travel
+     30 * 2.771 = 83.13 cutoff units.
 
      `M-082`'s own take - cutoff 24, depth +30, velocity sensitivity 74,
-     curve 0 - reads 6.80 octaves, i.e. 68 units, and that is a LOWER BOUND
-     rather than a disagreement: its velocity-1 note sits at 41 Hz where
-     cutoff 24 predicts 21.3, and `M-012` says that rig cannot place a
-     corner below about 33 Hz, so the bottom of the travel is the
-     interface's roll-off. 41 Hz is cutoff 33.4, which is 9.4 units above
-     the true bottom; adding them back puts M-082's travel at 77.4 units
-     and its scale at 2.58, against the 2.545 measured with the sensitivity
-     held at zero. The two agree to 1.4 %, and they are the two anchors
-     that do not rest on that floor-limited bottom point. */
+     curve 0, resonance 80 - puts its velocity-127 peak 6.80 octaves over a
+     velocity-1 note at 41 Hz, i.e. at 4569 Hz, which tvf_natural_hz places
+     at cutoff 107.07: 83.07 units over the record's cutoff 24, within
+     0.1 unit of this. (Its velocity-1 note itself sits on the interface's
+     roll-off, which `M-012` says cannot place a corner below about 33 Hz,
+     so the travel is taken from the record's cutoff, not from that note.) */
   uint8_t record[XP_JV1080_TONE_FIELDS];
   std::memset(record, 0, sizeof record);
   record[tone.filterEnvDepth] = (uint8_t)(int8_t)30;
   record[tone.filterEnvVelSens] = (uint8_t)(int8_t)74;
   record[tone.filterEnvVelCurve] = 0u;
   double travel = jv1080_filter_env_offset(&tone, record, 127u);
-  assert(close_to(travel, 76.35, 0.5));
+  assert(close_to(travel, 83.13, 0.5));
   /* And the same take's velocity-1 note sits at the record's own cutoff:
      with the sensitivity near the top of its range, velocity 1 leaves the
      envelope closed. */
@@ -124,7 +122,7 @@ int main()
      which is the case that must keep a voice on the unswept path. */
   record[tone.filterEnvVelSens] = (uint8_t)(int8_t)74;
   record[tone.filterEnvDepth] = (uint8_t)(int8_t)-30;
-  assert(close_to(jv1080_filter_env_offset(&tone, record, 127u), -76.35, 0.5));
+  assert(close_to(jv1080_filter_env_offset(&tone, record, 127u), -83.13, 0.5));
   record[tone.filterEnvDepth] = 0u;
   assert(jv1080_filter_env_offset(&tone, record, 127u) == 0.0);
 
@@ -134,8 +132,24 @@ int main()
   std::memset(note, 0, sizeof note);
   note[rhythm.filterEnvDepth] = (uint8_t)(int8_t)30;
   note[rhythm.filterEnvVelSens] = (uint8_t)(int8_t)74;
-  assert(close_to(jv1080_filter_env_offset(&rhythm, note, 127u), 76.35, 0.5));
+  assert(close_to(jv1080_filter_env_offset(&rhythm, note, 127u), 83.13, 0.5));
   assert(close_to(jv1080_filter_env_offset(&rhythm, note, 1u), 0.0, 1e-9));
+
+  /* THE TIME LAW. The rate each segment moves the resonant peak at, read
+     on `tvf/fenv_t1_sweep` and `gaps/fenv_t4_hold` at depth +63, is a
+     full traverse of 174.6 units in these times (T1 and T4 averaged at 32,
+     48 and 64; T1 alone at 96) - each within 4 % here. */
+  static const struct { unsigned value; double seconds; } kTraverse[] = {
+    { 32u, 0.325 }, { 48u, 0.764 }, { 64u, 1.663 }, { 96u, 7.46 },
+  };
+  for (const auto &p : kTraverse) {
+    double t = jv1080_filter_env_traverse_seconds(p.value);
+    assert(std::fabs(t / p.seconds - 1.0) < 0.04);
+  }
+  /* And a longer time field is never faster. */
+  for (unsigned v = 1u; v <= 127u; ++v)
+    assert(jv1080_filter_env_traverse_seconds(v) >=
+           jv1080_filter_env_traverse_seconds(v - 1u));
 
   std::printf("xp_filter_env_test: ok\n");
   return 0;

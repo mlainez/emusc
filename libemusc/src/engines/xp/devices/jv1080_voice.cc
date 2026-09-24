@@ -196,19 +196,11 @@ double cc7_gain(unsigned value)
 
 /* MEASURED (`M-011`): the A-ENV's times 2, 3 and 4 index one exponential
    table - the same table to within 5 % - and a 20 dB fall takes 50 ms at
-   value 16, 675 ms at 64 and 4.3 s at 104, doubling every 13.2 value steps.
-   So the field is a RATE in dB per second, and a segment's duration is how
-   far it has to travel at that rate.
+   value 16, 675 ms at 64 and 4.3 s at 104, doubling every 13.2 value steps
+   as a fit. So the field is a RATE in dB per second, and a segment's
+   duration is how far it has to travel at that rate.
 
-   That doubling interval is a fit, and the filter envelope's scale
-   (`kFilterEnvTimeScale`) was measured against it, so the filter envelope
-   keeps reading it. */
-double amp_env_fitted_seconds_per_20db(unsigned value)
-{
-  return 0.675 * std::pow(2.0, ((double)value - 64.0) / 13.2);
-}
-
-/* MEASURED, the table the fit above stands for: the time for a 20 dB fall
+   MEASURED, the table that fit stands for: the time for a 20 dB fall
    read off every take on disk that holds one segment, `aenv_t2_short`,
    `aenv_t3_short` and `aenv_t4_*` for values 0 to 64 in eights and
    `aenv_t2_080/104/127` and `aenv_t4_096/127` above, on an envelope
@@ -623,8 +615,7 @@ const double kFilterEnvCurve[7][10] = {
 };
 
 /* MEASURED ON THE DEVICE - a depth sweep with the filter's corner read
-   directly, which is what the three indirect anchors below could never
-   agree on.
+   directly.
 
    The stimulus isolates the scale from everything it used to be tangled
    with: the internal `White Noise` wave at its own root key, so the source
@@ -633,44 +624,37 @@ const double kFilterEnvCurve[7][10] = {
    127 and time 1 at 0; and - the point of it - THE VELOCITY SENSITIVITY AT
    ZERO, so the depth's own scale is observed rather than its product with
    the sensitivity's. The corner is read as the peak of the note's spectrum
-   divided by the same wave's spectrum with the filter switched off, and
-   converted through `M-012`'s `fc = 341 * 2^((cutoff-64)/10)`.
+   divided by the same wave's spectrum with the filter switched off.
 
-   Depths +6, +12, +18 and +24 put the corner at 181.6, 521.5, 1502.9 and
-   4347.7 Hz, i.e. cutoff 54.91, 70.13, 85.40 and 100.72. The consecutive
-   differences are 2.537, 2.545 and 2.553 cutoff units per depth unit and a
-   least-squares line through the four fits with residuals of +-0.025
-   cutoff units, so the relation is linear and the slope is
+   Depths +6, +12, +18 and +24 put the peak at 181.6, 521.5, 1502.9 and
+   4347.7 Hz. The scale is in the units THIS ENGINE turns into a frequency,
+   so the peaks are taken back through tvf_natural_hz at resonance 100
+   (P-xxxx, TASK-403): cutoff 56.67, 73.05, 89.98 and 106.44, a straight
+   line of
 
-       2.545 cutoff units per unit of depth.
+       2.771 cutoff units per unit of depth
 
-   The line's intercept comes out at 39.62 against the 40 the cutoff was
-   set to, and the depth-0 note reads 39.29 - so the method carries about
-   half a cutoff unit of its own bias, which the SLOPE does not care about.
-   A fifth point at depth +30 is deliberately excluded: its corner lands at
-   12 kHz where the machine's own 32 kHz output and its reconstruction
-   filter flatten the peak, and it reads 2.32 for that reason alone.
+   whose intercept, 39.98, is the 40 the cutoff was set to. A fifth point
+   at depth +30 is excluded: its corner lands at 12 kHz where the machine's
+   own 32 kHz output and its reconstruction filter flatten the peak.
 
-   THE THREE OLD ANCHORS AND WHY THEY DISAGREED, kept because the
-   disagreement is the lesson: `M-082`'s whole travel gave 2.27, its
-   velocity-127 endpoint alone 2.58, and `M-078`'s two unclipped points
-   2.16 and 2.17. All three are products of this scale with the velocity
-   sensitivity's, read off takes whose sensitivity was at 74 or +50, and
-   `M-082`'s own velocity-1 note sits on the interface's roll-off (41 Hz
-   where cutoff 24 predicts 21, against a rig `M-012` says cannot place a
-   corner below about 33 Hz), which tilts the travel it normalises on. The
-   measured 2.545 sits at the top of that spread, nearest the endpoint
-   anchor - the one of the three that does not depend on the bad bottom
-   point. The code used 2.27, so this opens the filter about a third of an
-   octave further at a depth of 30 than it did.
+   Three readings on other takes, all converted the same way, agree:
+   `M-082`'s velocity-127 endpoint (depth +30 from cutoff 24, resonance
+   80, 6.80 octaves over a velocity-1 note at 41 Hz) gives 2.769; the
+   resonant peak of `tvf/fenv_level_sweep` (depth +63, levels 48 and 64
+   held) 2.75 and 2.77; and where the attack and decay lines of
+   `tvf/fenv_depth_p32` and `_p63` meet, 2.80 and 2.79. Read through
+   `M-012`'s `fc = 341 * 2^((cutoff-64)/10)` instead, the same four peaks
+   give 2.545 - a law of ten units per octave that tvf_cutoff_hz does not
+   follow above cutoff 80, where it runs eight to ten.
 
-   Measured with the SENSITIVITY AT ZERO, and that case is now confirmed
+   Measured with the SENSITIVITY AT ZERO, and that case is confirmed
    rather than assumed: at depth +30 with sensitivity 0 the corner sits at
    8003.9, 8001.0 and 8003.9 Hz for velocities 1, 64 and 127. Sensitivity
    zero means full depth at every velocity, which is what the exponent form
    below was built to satisfy. What is still NOT measured is the
    sensitivity's own shape between 0 and its limits. */
-inline constexpr double kFilterEnvDepthScale = 2.545;
+inline constexpr double kFilterEnvDepthScale = 2.771;
 
 /* The record's velocity curve, interpolated between `M-082`'s ten points.
    A record type with no curve field is rendered on curve 0; which curve
@@ -721,28 +705,42 @@ double filter_env_velocity_scale(int sensitivity, double fraction)
   return std::pow(1.0 - fraction, (double)(-sensitivity) / 50.0);
 }
 
-/* MEASURED (`M-040`): the filter envelope reads the amplitude envelope's
-   time table, scaled. Read as a 20 dB fall on both sides - which needed an
-   amplitude envelope outliving the filter, and `gaps/fenv_t4_hold` was
-   written for it - F-ENV time 4 falls in 25, 95, 250, 540 and 1125 ms
-   against the A-ENV's 25, 50, 130, 310 and 685, a ratio running 1.90,
-   1.92, 1.74 and 1.64 over values 16 to 64.
+/* MEASURED (`P-xxxx`, TASK-403): a filter envelope segment moves the
+   cutoff parameter at a constant rate, and a FULL 0-to-127 traverse takes
+   2.50 times the amplitude envelope's 20 dB fall time at the same value.
 
-   1.75 is `M-040`'s own figure for that scale. WHICH OF THE TWO IT IS -
-   a per-envelope scale on one table, or a second table of the same shape -
-   IS NOT SEPARABLE from seven points, and M-040 says so; the single
-   constant also flattens a ratio that measures 1.64 to 1.92 across the
-   field.
+   Read as the resonant peak's position in cutoff units (resonance 90 on
+   `Synth Saw 2`, the peak located on the saw's harmonic comb and taken
+   through tvf_natural_hz), fitted as a line over cutoff 66 to 115:
+     attack, `tvf/fenv_t1_sweep` (depth +63): T1 32, 48, 64, 96 climb 545,
+       230, 105 and 23.4 units per second;
+     release, `gaps/fenv_t4_hold` (depth +63, the A-ENV held open): T4 32,
+       48, 64 fall 531, 227 and 105;
+     decay, `tvf/fenv_depth_p32` and `_p63`: T2 60 falls 65.6 and 131 -
+       twice the rate at twice the depth, so the segment's duration does not
+       depend on how far it moves.
+   Each line is straight to 0.5-0.9 units rms. At kFilterEnvDepthScale
+   (174.6 units at depth +63) those are full traverses of 0.32, 0.76, 1.66
+   and 7.46 s for T1, 0.33, 0.77 and 1.66 s for T4 and 1.35 and 1.33 s for
+   T2 at 60: 2.42 to 2.57 times kAmpEnvFallTable at every one of the nine,
+   and 2.50 is their middle. The times 1, 2 and 4 read one table. Values below
+   32 are faster than a 32 ms analysis window resolves and are not
+   measured here; they take the same ratio, and value 0 is instant as the
+   table's is.
 
-   The value returned is a FULL 0-to-127 traverse, so a segment that has
-   less far to go takes proportionally less - which is linear in the cutoff
-   parameter and therefore a constant rate in octaves per second, the form
-   `M-069` read the F-ENV's own glide as. */
-inline constexpr double kFilterEnvTimeScale = 1.75;
+   What is observed is the RATE, which is depth scale over time: the 2.50
+   is correct together with kFilterEnvDepthScale and would move with it.
+   The exact constant is not recovered - the nine readings spread 6 % -
+   and the machine's own time table is in its internal ROM.
+
+   `M-040`'s ratio of 1.64 to 1.92 is a different quantity: it compares
+   20 dB falls in the energy above 1 kHz, which depend on how far the corner
+   has to travel to take that energy away, not the envelope's traverse. */
+inline constexpr double kFilterEnvTimeScale = 2.50;
 
 double filter_env_full_traverse_seconds(unsigned value)
 {
-  return kFilterEnvTimeScale * amp_env_fitted_seconds_per_20db(value);
+  return kFilterEnvTimeScale * amp_env_fall_seconds_per_20db(value);
 }
 
 /* MEASURED (`M-069`): time key follow is one law on all three envelopes -
@@ -1680,6 +1678,11 @@ bool record_sounds(const struct XpVoiceFieldMap *fields,
 double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
 {
   return filter_env_curve_fraction(curve, velocity);
+}
+
+double jv1080_filter_env_traverse_seconds(unsigned value)
+{
+  return filter_env_full_traverse_seconds(value);
 }
 
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,

@@ -359,8 +359,13 @@ void jv1080_voice_note_off(struct XpJv1080Voice *voice);
  *
  * jv1080_filter_env_offset is this record's whole sweep at full envelope
  * level, in CUTOFF-PARAMETER units and signed by the depth field.
+ *
+ * jv1080_filter_env_traverse_seconds is how long a segment with time field
+ * `value` takes to cross the whole 0-to-127 level range, before key and
+ * velocity scaling.
  */
 double jv1080_filter_env_curve(unsigned curve, unsigned velocity);
+double jv1080_filter_env_traverse_seconds(unsigned value);
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
                                  const uint8_t *record, unsigned velocity);
 
