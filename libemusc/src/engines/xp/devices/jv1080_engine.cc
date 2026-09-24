@@ -815,6 +815,87 @@ float dc_blocker_step(struct DcBlocker *dc, double x)
   return (float)y;
 }
 
+/* THE ANALOGUE OUTPUT STAGE LIFTS THE BASS: A FIRST-ORDER LOW SHELF.
+ *
+ *   MEASURED (`P-xxxx`), no new capture: hardware against our render of the
+ *   identical files. On `key_scaling/key_sweep_saw2`, 1492 harmonic lines
+ *   over keys 0-127, the hardware-minus-ours level of each line splits into
+ *   a term in the note and a term in the line's own frequency: frequency
+ *   alone leaves 0.18 dB rms, the note alone 0.88, and the note term is flat
+ *   to +-0.2 dB over the whole keyboard. `key_sweep_piano` gives the same
+ *   frequency term. So this is a response in OUTPUT FREQUENCY and not a gain
+ *   on the note - which is why a single sine reads it against its sounded
+ *   pitch, whether the pitch comes from the key (`key_sweep_sine`, every key
+ *   on its own element), coarse tune (`pitch/coarse_octaves`,
+ *   `coarse_semitones`), part coarse tune (`part_coarse`) or a key follow of
+ *   -100 % (`pitch_kf_i00`): relative to 261.6 Hz the sine is +4.9 dB at
+ *   16 Hz, +3.8 at 33, +2.6 at 65, +1.0 at 131, -0.4 at 523 and -0.55 from
+ *   2 kHz up, identical in all five to 0.1 dB.
+ *
+ *   The capture chain is not the source: the same interface recorded a
+ *   JV-880 within 0.4 dB of an independent archival chain from 40 Hz to
+ *   6.4 kHz (JV-880 `M-109`).
+ *
+ *   The shape is a single pole and a single zero, 6 dB per octave between
+ *   two plateaus, and it is realised as one: a least-squares fit over
+ *   20 Hz-6 kHz puts the zero at 108.0 Hz and the pole at 58.1 Hz (5.39 dB
+ *   of lift), leaving 0.14 dB rms (0.55 worst) on the saw's frequency term
+ *   and 0.09 dB rms (0.28 worst) on the sine sweep. The two sets alone give
+ *   100.8/51.4 and 112.3/61.9 Hz. Both corners are FITTED, not read off a
+ *   component: which part of the board makes this shelf is not traced.
+ *
+ *   The stage is unity at 261.6 Hz, key 60's pitch, where this engine's
+ *   level laws were measured, so none of them moves. That is a convention:
+ *   the recordings fix the shape, not the board's absolute gain. It runs on
+ *   the finished mix, effects included, because that is where an analogue
+ *   board is; the dry takes above cannot show that the returns pass through
+ *   it. Above 6 kHz the saw reads a further 0.3-1.5 dB of loss by 12.6 kHz,
+ *   which this stage does not carry.
+ */
+const double kOutputShelfZeroHz = 108.0;
+const double kOutputShelfPoleHz = 58.1;
+const double kOutputShelfUnityHz = 261.6;
+
+struct OutputShelf {
+  double b0, b1, a1;
+  double x1[2], y1[2];
+  bool active;
+};
+
+void output_shelf_init(struct OutputShelf *sh, double rate)
+{
+  const double pi = 3.14159265358979323846;
+  sh->x1[0] = sh->x1[1] = sh->y1[0] = sh->y1[1] = 0.0;
+  sh->active = !std::getenv("EMUSC_NO_ANALOG_STAGE");
+  /* H(s) = (s + wz) / (s + wp) through the bilinear transform, the corners
+     prewarped so they land where they were measured. */
+  const double k = 2.0 * rate;
+  const double wz = k * std::tan(pi * kOutputShelfZeroHz / rate);
+  const double wp = k * std::tan(pi * kOutputShelfPoleHz / rate);
+  double b0 = (k + wz) / (k + wp), b1 = (wz - k) / (k + wp);
+  sh->a1 = (wp - k) / (k + wp);
+  const double w = 2.0 * pi * kOutputShelfUnityHz / rate;
+  const double nr = b0 + b1 * std::cos(w), ni = -b1 * std::sin(w);
+  const double dr = 1.0 + sh->a1 * std::cos(w), di = -sh->a1 * std::sin(w);
+  const double g = std::sqrt((dr * dr + di * di) / (nr * nr + ni * ni));
+  sh->b0 = b0 * g;
+  sh->b1 = b1 * g;
+}
+
+void output_shelf_run(struct OutputShelf *sh, float *stereo, size_t frames)
+{
+  if (!sh->active)
+    return;
+  for (size_t k = 0; k < frames; ++k)
+    for (unsigned c = 0; c < 2u; ++c) {
+      const double x = stereo[k * 2u + c];
+      const double y = sh->b0 * x + sh->b1 * sh->x1[c] - sh->a1 * sh->y1[c];
+      sh->x1[c] = x;
+      sh->y1[c] = y;
+      stereo[k * 2u + c] = (float)y;
+    }
+}
+
 struct Rhythm {
   uint8_t common[kRhythmCommonFields];
   uint8_t note[kRhythmKeys][kRhythmNoteFields];
@@ -848,6 +929,7 @@ struct Engine {
   struct Voice voices[kMaxVoices];
   struct DcBlocker dc_left;
   struct DcBlocker dc_right;
+  struct OutputShelf output_shelf;
   /* The performance common block, which carries this device's reverb
      parameters, and the reverb itself. */
   uint8_t common[kPerfCommonFields];
@@ -2762,6 +2844,7 @@ bool engine_create(void **state, const struct xp_rom *rom,
   }
   dc_blocker_init(&engine->dc_left, engine->output_rate);
   dc_blocker_init(&engine->dc_right, engine->output_rate);
+  output_shelf_init(&engine->output_shelf, engine->output_rate);
   engine->max_voices = xp_profile(rom)->defaultMaxVoices;
   if (!engine->max_voices || engine->max_voices > kMaxVoices)
     engine->max_voices = kMaxVoices;
@@ -2826,6 +2909,7 @@ void engine_reset(void *state)
                 engine->delay_len * sizeof *engine->delay_buf);
   dc_blocker_init(&engine->dc_left, engine->output_rate);
   dc_blocker_init(&engine->dc_right, engine->output_rate);
+  output_shelf_init(&engine->output_shelf, engine->output_rate);
   if (engine->resampling)
     jv_resampler_reset(&engine->resampler);
   engine->serial = 0;
@@ -3703,6 +3787,9 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
       reverb_process(&engine->reverb, send, stereo + done * 2u, n);
     else if (engine->delay_ready && engine->delay_buf)
       delay_process(engine, send, stereo + done * 2u, n);
+    /* The block is the finished mix here: the caller hands it over zeroed
+       (device_render), so nothing but this engine's output is filtered. */
+    output_shelf_run(&engine->output_shelf, stereo + done * 2u, n);
     done += n;
   }
 }

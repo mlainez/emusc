@@ -1206,13 +1206,27 @@ int main(void)
       delete d;
       return out;
     };
-    auto period = [](const std::vector<float> &x) {
+    /* The level is read above 40 Hz. The square's filter throws leave a
+       sub-audio offset in the mix that the output stage's bass lift
+       carries at several times its level, and its phase, not the tone's
+       level, would otherwise set the frame energies. */
+    auto period = [](const std::vector<float> &in) {
       const size_t hop = 64, skip = (size_t)(0.1 * kRate) / hop;
+      const double pole = std::exp(-2.0 * 3.14159265358979323846 * 40.0 / kRate);
+      std::vector<double> x(in.size());
+      for (unsigned c = 0; c < 2u; ++c) {
+        double x1 = 0.0, y1 = 0.0;
+        for (size_t j = c; j < in.size(); j += 2) {
+          y1 = (double)in[j] - x1 + pole * y1;
+          x1 = in[j];
+          x[j] = y1;
+        }
+      }
       std::vector<double> e;
       for (size_t i = 0; (i + 1) * hop * 2 <= x.size(); ++i) {
         double s = 0.0;
         for (size_t j = i * hop; j < (i + 1) * hop; ++j)
-          s += (double)x[2 * j] * x[2 * j] + (double)x[2 * j + 1] * x[2 * j + 1];
+          s += x[2 * j] * x[2 * j] + x[2 * j + 1] * x[2 * j + 1];
         e.push_back(std::log(s + 1e-12));
       }
       e.erase(e.begin(), e.begin() + (long)skip);
