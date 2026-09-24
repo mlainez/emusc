@@ -1111,7 +1111,22 @@ const DeviceProfile JV880_PROFILE = {
     {     0,  2418, 65535, 65535, 65535,  4874,  4874,
       19502, 19502, 65535, 65535, 65535, 65535 },
     {     0,  1200, 32767, 32767, 32767,  2418,  2418,
-       9675,  9675, 32767, 32767, 32767, 32767 } }
+       9675,  9675, 32767, 32767, 32767, 32767 } },
+
+  false,  // variationFallback
+
+  // The SysEx front-end, ROM1 0x6EB3: once three data bytes are in, 0x6EBF
+  // requires the first to be 0x41 and otherwise clears the handler pointer
+  // @0x4BCE at 0x6F4A, so the rest of the message and its EOX (0x6F5C wants
+  // @0x4BCE == 0x6F51) are discarded. GM System On, F0 7E 7F 09 01 F7, never
+  // reaches any handler: the JV-880 has no GM mode (scdb devices/jv880
+  // 04_protocol/program_bank.md).
+  true,   // rolandSysExOnly
+
+  // Model 0x42 dispatches to ROM2 0x2F7DE, which takes a DT1 only at address
+  // 40 0x/1x 40 (0x2F80F-0x2F826) - the GS Scale Tuning block. The GS Reset
+  // 40 00 7F fails the third-byte test at 0x2F817 and is ignored.
+  true    // ignoresGsReset
 };
 
 }

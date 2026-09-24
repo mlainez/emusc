@@ -781,10 +781,11 @@ void Synth::_apply_midi_sysex(uint8_t *data, uint16_t length)
   //
   // What it leaves behind differs from the GS reset below only in the two
   // receive switches Settings::set_gm_mode() handles -- see the comment
-  // there.
+  // there. A device whose receiver takes Roland messages only never sees it.
   if (length == 6 && data[1] == 0x7e && data[2] == 0x7f &&
       data[3] == 0x09 && data[4] == 0x01) {
-    if (!_settings->get_param(SystemParam::RxGMOn))
+    if (!_settings->get_param(SystemParam::RxGMOn) ||
+        _ctrlRom.device()->rolandSysExOnly)
       return;
 
     midiMutex.lock();
@@ -813,10 +814,12 @@ void Synth::_apply_midi_sysex(uint8_t *data, uint16_t length)
   // The SC-55 ignores this message while honouring the GS parameter, so it is
   // gated on the generation (P-0109). Its manual is consistent: it lists
   // MASTER VOLUME 40 00 04 with no universal equivalent (SC-55 OM p.78) and
-  // its exclusive section covers manufacturer ID 41H only (p.77).
+  // its exclusive section covers manufacturer ID 41H only (p.77). A device
+  // whose receiver takes Roland messages only drops it as well.
   if (length == 8 && data[1] == 0x7f && data[2] == 0x7f &&
       data[3] == 0x04 && data[4] == 0x01) {
-    if (_ctrlRom.generation() == ControlRom::SynthGen::SC55)
+    if (_ctrlRom.generation() == ControlRom::SynthGen::SC55 ||
+        _ctrlRom.device()->rolandSysExOnly)
       return;
 
     midiMutex.lock();
@@ -1380,7 +1383,8 @@ void Synth::_midi_input_sysex_DT1(uint8_t model, uint8_t *data, uint16_t length)
 
       // First handle the special case: Reset to the GSstandard mode message
       if (data[2] == 0x7f) {
-	reset(SoundMap::GS, true);
+	if (!_ctrlRom.device()->ignoresGsReset)
+	  reset(SoundMap::GS, true);
 	return;
       }
 

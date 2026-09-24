@@ -1143,6 +1143,16 @@ struct DeviceProfile
   // provenance). Last and omitted everywhere else, so it defaults to false -
   // the correct, no-fallback behaviour for every other profile.
   bool variationFallback;
+
+  // Whether the SysEx receiver acts on Roland (manufacturer 0x41) messages
+  // only, dropping every universal message - GM System On and Master Volume
+  // among them. Such a device has no GM mode for GM System On or a GS_GM host
+  // reset to enter. Omitted, false: the Sound Canvas receivers act on both.
+  bool rolandSysExOnly;
+
+  // Whether the GS model-ID (0x42) handler ignores the GS Reset, 40 00 7F.
+  // Omitted, false: a Sound Canvas resets on it.
+  bool ignoresGsReset;
 };
 
 // The Sound Canvas family's shared behaviour, for a generation whose ROM layout

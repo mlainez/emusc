@@ -686,6 +686,11 @@ void Settings::set_gm_mode(void)
   if (_ctrlRom.generation() == ControlRom::SynthGen::SC55)
     return;
 
+  // A device that cannot receive GM System On has no GM mode: a GS_GM host
+  // reset leaves it exactly as a GS one does, receive switches included.
+  if (_ctrlRom.device()->rolandSysExOnly)
+    return;
+
   for (int p = 0; p < 16; p ++) {           // TODO: Support SC-88 with 32 parts
     uint8_t partAddr = _convert_to_roland_part_id_LUT[p];
     _patchParams[(int) PatchParam::RxNRPN       | (partAddr << 8)] = 0x0;

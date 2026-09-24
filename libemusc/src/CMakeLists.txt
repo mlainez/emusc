@@ -386,4 +386,18 @@ if(BUILD_TESTING)
   set_target_properties(synth_reset_performance_test PROPERTIES CXX_EXTENSIONS OFF)
   add_test(NAME synth_reset_performance_test COMMAND synth_reset_performance_test)
   set_property(TEST synth_reset_performance_test PROPERTY SKIP_RETURN_CODE 77)
+
+  # A receiver that takes Roland SysEx only ignores GM System On, universal
+  # Master Volume and the GS Reset. Needs the JV-880 ROMs, as above.
+  add_executable(synth_rx_roland_only_test ../tests/synth_rx_roland_only_test.cc)
+  target_include_directories(synth_rx_roland_only_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(synth_rx_roland_only_test PRIVATE emusc_static)
+  if(MSVC)
+    target_compile_options(synth_rx_roland_only_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(synth_rx_roland_only_test PRIVATE -UNDEBUG)
+  endif()
+  set_target_properties(synth_rx_roland_only_test PROPERTIES CXX_EXTENSIONS OFF)
+  add_test(NAME synth_rx_roland_only_test COMMAND synth_rx_roland_only_test)
+  set_property(TEST synth_rx_roland_only_test PROPERTY SKIP_RETURN_CODE 77)
 endif()
