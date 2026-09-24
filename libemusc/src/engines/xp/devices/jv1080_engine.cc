@@ -676,7 +676,8 @@ struct Part {
   uint8_t pressure;
   uint8_t cc[128];
   bool hold;
-  /* The sign the part's next note throws its alternate pan with. */
+  /* The sign the part's next note throws its alternate pan with: flipped
+     by every note-on, reset to +1 by a program change. */
   int alternate_next;
   /* When each key last had a note-on on this part, as the engine frame
      plus one; zero for never. What a KEY-INTERVAL tone delay times. */
@@ -3356,6 +3357,12 @@ bool engine_program_change_one(struct Engine *engine, unsigned part,
       if (voice->allocated && voice->part == part)
         free_voice(voice);
     }
+  /* A program change puts the part's alternate pan back on its "+" side
+     (`P-xxxx`, see `note_pan_offset`). A bank select alone does not. That
+     a failed load leaves the counter alone, and that the rhythm part
+     resets too, are not measured. */
+  if (loaded)
+    p.alternate_next = 1;
   return loaded;
 }
 

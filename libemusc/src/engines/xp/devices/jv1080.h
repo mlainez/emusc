@@ -100,7 +100,7 @@ struct XpJv1080PartControls {
   /* The three matrix controllers' sources as they stand, 0..1. */
   double matrix_source[3];
   /* Which way this note's alternate pan throws: +1 on the part's first
-     note, then flipping on each note after it. */
+     note after a program change, then flipping on each note-on after it. */
   int alternate_phase;
 };
 

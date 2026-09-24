@@ -1691,12 +1691,15 @@ unsigned field_or(const struct XpVoiceFieldMap *fields, uint16_t which,
                      notes at pan 1 and 127 in turn (+44.5 / -65.4 dB), 127
                      the reverse, 64 all at centre. Only the ends and the
                      middle are measured; between them it is taken as
-                     linear. WHAT THE MACHINE COUNTS IS NOT RESOLVED: here
-                     one counter per part flips on each note. On the
-                     factory-patch takes, where each slot follows a program
-                     change, that counter's sign matches the hardware on
-                     some slots and not others, and a counter per tone
-                     started does worse; neither is the machine's.
+                     linear. THE COUNTER (`P-xxxx`, 164 notes over eleven
+                     files, none contradicting it): one per part, flipped
+                     once by every note-on - whatever number of tones it
+                     starts, none included, so all of a note's tones throw
+                     the same way and a chord's keys alternate - and put
+                     back on "+" by a program change on that part. Other
+                     parts' notes and program changes, a bank select alone,
+                     DT1 writes to tone, patch or part, and idle time up to
+                     8 s leave it where it is.
      random pan      a fresh draw uniform across twice the depth each way:
                      depth 32 spreads its sixteen notes from 60 units left to
                      60 right; depth 63 puts eleven of sixteen on a rail (9
