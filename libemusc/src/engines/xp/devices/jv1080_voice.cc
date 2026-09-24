@@ -894,7 +894,10 @@ double tvf_q(unsigned resonance)
    64 to 104, in third-octave bands to 14 kHz:
      LPF  no zeros, unity at DC. Within 0.6 dB at 80, 88 and 96, where a
           bilinear section (a double zero at Nyquist) is 26 dB under at
-          14 kHz; up to 2.7 dB bright between 5 and 9 kHz at 104.
+          14 kHz. On the cookbook's poles it read up to 2.7 dB bright
+          between 5 and 9 kHz at 104; its poles are the matched ones in
+          set_biquad, which read up to 1.5 dB bright there (2.4 at
+          11 kHz, where the filter-off slots read 1.6 bright as well).
      HPF  a double zero at DC and no scaling, so the passband rises over
           0 dB toward Nyquist as the machine's does (+5.6 dB at 9 kHz at
           104): 1.06 and 0.82 dB rms at resonance 0 and 64, against 2.61
@@ -918,8 +921,10 @@ double tvf_q(unsigned resonance)
           to 6.6 dB at 14 kHz.
    These are the outputs of a state-variable section, the topology the
    sibling engine's own chip runs (tvf.cc). The poles are the cookbook
-   biquad's at the natural frequency and Q below, which is this model's
-   choice; the chip's own coefficient form is internal (`L-05`).
+   biquad's at the natural frequency and Q below for HPF, BPF and PKG, and
+   the analog section's mapped by z = e^(sT) for the LPF (set_biquad),
+   which is this model's choice; the chip's own coefficient form is
+   internal (`L-05`).
 
    This writes the coefficients and leaves the delay line alone, because
    the filter envelope re-solves it while the note is sounding and
@@ -1019,11 +1024,39 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
     voice->b1 = (-2.0 * cs) / a0;
     voice->b2 = (1.0 - 2.0 * alpha * q) / a0;
     break;
-  default:                       /* LPF */
-    voice->b0 = 1.0 + a1 + a2;
+  default: {                     /* LPF */
+    /* THE LOW-PASS POLES ARE THE ANALOG SECTION'S, MAPPED BY z = e^(sT),
+       not the cookbook's. MEASURED (`P-xxxx`, TASK-420): the two mappings
+       agree to 0.2 dB up to cutoff 96 and part as the corner nears the
+       7.8 kHz ceiling, where the cookbook poles over-peak a low-Q section.
+       `tvf/resonance_cut112` (White Noise, each slot against the same
+       take's resonance-0 slot, which is the filter off on both): at
+       resonance 8 the machine peaks +2.9 dB at 7.5-8.5 kHz, cookbook
+       poles +7.8, these +4.3. Third-octave rms ours-hw over 1-12 kHz,
+       cookbook -> these, with nothing adjusted:
+         resonance_cut112     res 8 2.39 -> 0.98, 16 2.01 -> 0.72,
+                              24 1.83 -> 0.77, 32 1.40 -> 0.64
+         cutoff_lpf_res000    cutoff 104 1.98 -> 1.05
+         cutoff_lpf_res032    112 1.39 -> 0.64, 120 1.33 -> 0.47
+         cutoff_lpf_res064    120 0.92 -> 0.59
+       and no slot of those takes, `resonance_cut096` or
+       `cutoff_lpf_res096` reads worse. At resonance 64 and above the two
+       mappings are within 1 dB and both match the machine. The residual at
+       cutoff 112 resonance 8 (+1.4 dB at the peak) says the machine's own
+       form is still not this one (`L-05`). The other three types keep the
+       cookbook poles: their high-cutoff regime is not resolved either way. */
+    double r = std::exp(-w / (2.0 * q));
+    double wd = w * std::sqrt(1.0 - 1.0 / (4.0 * q * q));
+    double m1 = -2.0 * r * std::cos(wd);
+    double m2 = r * r;
+    voice->b0 = 1.0 + m1 + m2;
     voice->b1 = 0.0;
     voice->b2 = 0.0;
-    break;
+    voice->a1 = m1;
+    voice->a2 = m2;
+    set_svf(voice);
+    return;
+  }
   }
   voice->a1 = a1;
   voice->a2 = a2;
