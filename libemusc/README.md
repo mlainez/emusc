@@ -8,6 +8,7 @@
 - **SC-55mkII** (firmware 1.01) — Enhanced SC-55 with GM mode support
 - **SC-88** — Full ROM-driven engine with 64-voice polyphony and dedicated synthesis path
 - **JV-880** — Sampled synth module; device profile and synthesis in progress
+- **JV-1080** — 64-voice synth module; behavioural model of its voice path (synthesis firmware undumped), not firmware-exact; no GS mode, powers on in patch mode
 
 See the top-level [README.md](../README.md) for the full project overview and emulation status.
 

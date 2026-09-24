@@ -24,20 +24,44 @@ This is a separate fork of [skjelten/emusc](https://github.com/skjelten/emusc) f
 
 **emuscd** (the library `libEmuSC` + headless tools) emulates the low-level synthesis behavior of Roland's Sound Canvas family of synthesizers. It extracts and reimplements ROM-based voice engines, including oscillator waveforms, TVA (Time Variant Amplifier) envelopes, effects processing, and MIDI voice allocation.
 
-This fork exists to push emulation fidelity as high as it can go across the whole device family - SC-55 and SC-55mkII as much as SC-88 and JV-880, not any one of them in particular - by leveraging AI assistance for the reverse engineering that matching real hardware behavior requires: ROM structure analysis, envelope dynamics, and oscillator characteristics among them.
+This fork exists to push emulation fidelity as high as it can go across the whole device family - SC-55 and SC-55mkII as much as SC-88, JV-880 and JV-1080, not any one of them in particular - by leveraging AI assistance for the reverse engineering that matching real hardware behavior requires: ROM structure analysis, envelope dynamics, and oscillator characteristics among them.
 
 ---
 
 ## Supported Devices
 
-The following Roland Sound Canvas and synthesizer modules are emulated:
+The following Roland Sound Canvas and synthesizer modules are emulated. None
+of them is complete; the Engine column says which synthesis path each one
+runs on and how that path was derived, which says more about what to expect
+from it than a completeness label would.
 
-| Device | Status | Details |
+| Device | Engine | Details |
 |--------|--------|---------|
-| **SC-55** | Partial | Firmware 1.21; oscillator and TVA working; TVF/reverb incomplete |
-| **SC-55mkII** | Partial | Firmware 1.01; enhanced from SC-55; GM mode support |
-| **SC-88** | Partial | Full ROM-driven engine with 64-voice polyphony; SC-88's own synthesis path |
-| **JV-880** | Partial | Sampled sound module; device profile extracted; synthesis in progress |
+| **SC-55** | Class G shared pipeline | Firmware 1.21; oscillator and TVA working; TVF/reverb incomplete |
+| **SC-55mkII** | Class G shared pipeline | Firmware 1.01; enhanced from SC-55; GM mode support |
+| **SC-88** | Class X, firmware port | Full ROM-driven engine with 64-voice polyphony; SC-88's own synthesis path |
+| **JV-880** | Class G shared pipeline | Sampled sound module; device profile extracted; synthesis in progress |
+| **JV-1080** | Class X, behavioural model | 64-voice synth module; its synthesis firmware sits in an undumped mask ROM, so presets and effect data are read exactly from the ROM but the voice path is fitted to measurements of real hardware and is not firmware-exact; plays end to end with reverb, chorus and part of its forty insert-effect types |
+
+Class G and Class X are Roland's two sound-generator chip designs; SC-88 and
+JV-1080 share one. `libemusc/src/engines/xp/README.md` explains the split,
+and why one Class X device is a port of its firmware while the other is a
+model of its measured behaviour.
+
+### Device quirks
+
+Behaviour that differs from what a General MIDI file expects:
+
+- **JV-1080: no GS mode, and it does not power on in GM mode.** It boots into
+  its own patch mode, with one patch on channel 1. `emusc-render --reset gm`
+  and `--reset gs` both put it in GM mode (so does the default), `--reset
+  none` leaves it in patch mode. `emuscd` and `emusc-winmidi` always reset
+  the device on startup, so they leave it in GM mode.
+- **JV-880: powers on in a layered performance, not a multitimbral one.** Its
+  boot performance stacks copies of one patch on channel 1 and leaves most
+  other channels silent. A host reset selects the Preset B performance "for
+  CompuMix" instead, the multitimbral setup the ROM's own demo songs select;
+  `emusc-render --reset none` skips that and keeps the layered boot state.
 
 ## Expectations
 
@@ -55,13 +79,13 @@ ROMs are never distributed with this project — you must supply your own dumps 
 
 ### Naming convention
 
-All four supported devices use the same unified naming scheme:
+All five supported devices use the same unified naming scheme:
 
 - **Control/program ROM:** `<device>_control.bin` (required for all devices)
 - **CPU ROM:** `<device>_cpu.bin` (required only for SC-55 and SC-55mkII)
 - **Wave/PCM ROMs:** `<device>_waverom1.bin`, `<device>_waverom2.bin`, etc., in bank order (required for all devices)
 
-`<device>` is one of: `sc55`, `sc55mkii`, `sc88`, `jv880`.
+`<device>` is one of: `sc55`, `sc55mkii`, `sc88`, `jv880`, `jv1080`.
 
 `emusc-render`, `emuscd` and `emusc-winmidi` all resolve ROM files using this
 same naming convention, given a directory via `--device X --rom-dir DIR` or
@@ -104,6 +128,15 @@ You can verify your ROM dumps match known-good versions by checking their SHA1 a
 | `jv880_control.bin` | 262144 | `282116e8e8471053cf159d22675931592b7f7c8f` | `06d10ee0657359e030e2cb0e5b1a4a20` |
 | `jv880_waverom1.bin` | 2097152 | `37e28498351fb502f6d43398d288a026c02b446d` | `da2349eee9a070af536479ddb2a6b259` |
 | `jv880_waverom2.bin` | 2097152 | `963ce75b6668dab377d3a2fd895630a745491be5` | `357f717bba6ea84028ec53d6d35c2d6d` |
+
+#### JV-1080 (no separate CPU ROM)
+| File | Size | SHA1 | MD5 |
+|---|---|---|---|
+| `jv1080_control.bin` | 1048576 | `77f09efecf267def69b4e8f851cf124798347c03` | `6a950fe278c88d33b3b60f936abcedca` |
+| `jv1080_waverom1.bin` | 2097152 | `6b9a177f3ac6560e27befbcb9e907cf369f0f28a` | `3a2b61cf66ed3edc447a762accd5fc40` |
+| `jv1080_waverom2.bin` | 2097152 | `0dffa4ab4b9ea86c338fe146d902810f66c36cfd` | `ab91066ef997237039655ad676195746` |
+| `jv1080_waverom3.bin` | 2097152 | `21eff48c6efe434ffce89c3bc61fe2b6d1584d00` | `d42c1efacde5cff241e9e5be0d183d4e` |
+| `jv1080_waverom4.bin` | 2097152 | `a1732be64e9c86c559df9c715703bcabc2a83440` | `f6448c563ce0df27d18bb59abc58ab72` |
 
 ---
 
