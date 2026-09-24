@@ -1702,6 +1702,33 @@ double pan_difference_db_at(double offset)
   return pan_difference_asymmetric(offset);
 }
 
+/* THE PAN SLEWS (`P-xxxx`, TASK-434). A pan that changes under a sounding
+   note does not jump: each channel's gain walks toward its new value in a
+   staircase, a fixed amount per 10 ms tick, and the two channels walk
+   independently - hard right to centre, the right channel (1 -> 0.71)
+   arrives in 4 ticks while the left (0 -> 0.71) takes 8. MEASURED, read in
+   linear amplitude per channel off one period of the tone:
+
+     closeout/matrix3 pan_clamp   square pan LFO + matrix PAN, centre <->
+                                  hard right, six edges each way
+     routing/matrix_dest_all_*    matrix PAN under CC1 stepped every 200 ms,
+                                  moves of about 18 units, both directions
+     sysex/dt1_sounding_tone_pan  a DT1 to tone pan, centre <-> hard left
+
+   The step is 0.0948 of full-scale pan gain (0.0946-0.0950 across the three
+   takes, each channel read against its own hard-panned level), and the tick
+   10.0 ms (per-edge means 9.97-10.11 ms). The step is a fraction of the pan
+   gain, not of the output: voices 12 dB apart give the same fraction. The
+   first tick of a move from rest is 2/3 of a step (0.664-0.669 on all
+   thirteen matrix and LFO moves read), then whole steps, and the last stops
+   on the target. The DT1 path's first tick is 4/3 of a step instead; that path
+   does not reach a sounding voice in this engine. The tick's phase against
+   the note-on is not measured; here it runs from the note-on. A note starts
+   on its pan at once (pan_clamp's onset lands hard right within 2 ms). */
+const double kPanSlewTickSeconds = 0.010;
+const double kPanSlewStep = 0.0948;
+const double kPanSlewFirstStep = kPanSlewStep * 2.0 / 3.0;
+
 void set_pan(struct XpJv1080Voice *voice, double offset)
 {
   if (offset < -64.0)
@@ -1710,8 +1737,38 @@ void set_pan(struct XpJv1080Voice *voice, double offset)
     offset = 63.0;
   double ratio = std::pow(10.0, pan_difference_db_at(offset) / 20.0);
   double left = std::sqrt(1.0 / (1.0 + ratio * ratio));
-  voice->gain_left = left;
-  voice->gain_right = ratio * left;
+  voice->pan_target_left = left;
+  voice->pan_target_right = ratio * left;
+}
+
+double pan_slew(double gain, double target, bool *moving)
+{
+  double d = target - gain;
+  if (d == 0.0) {
+    *moving = false;
+    return gain;
+  }
+  double step = *moving ? kPanSlewStep : kPanSlewFirstStep;
+  *moving = true;
+  if (std::fabs(d) <= step)
+    return target;
+  return d > 0.0 ? gain + step : gain - step;
+}
+
+/* One pan tick: the first snaps to the note's pan, every later one takes
+   each channel one slew step toward its target. */
+void pan_tick(struct XpJv1080Voice *voice)
+{
+  if (!voice->pan_started) {
+    voice->gain_left = voice->pan_target_left;
+    voice->gain_right = voice->pan_target_right;
+    voice->pan_started = true;
+    return;
+  }
+  voice->gain_left = pan_slew(voice->gain_left, voice->pan_target_left,
+                              &voice->pan_moving_left);
+  voice->gain_right = pan_slew(voice->gain_right, voice->pan_target_right,
+                               &voice->pan_moving_right);
 }
 
 /* Once per control block: advance both LFOs and form what they do to the
@@ -2247,6 +2304,15 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   double left = std::sqrt(1.0 / (1.0 + ratio * ratio));
   voice->gain_left = left;
   voice->gain_right = ratio * left;
+  voice->pan_target_left = voice->gain_left;
+  voice->pan_target_right = voice->gain_right;
+  voice->pan_moving_left = false;
+  voice->pan_moving_right = false;
+  voice->pan_started = false;
+  voice->pan_period = (size_t)std::lround(outputRate * kPanSlewTickSeconds);
+  if (!voice->pan_period)
+    voice->pan_period = 1u;
+  voice->pan_countdown = 0u;
 
   /* The envelope's three level fields plus its implicit final zero. */
   for (unsigned i = 0; i < 3u; ++i) {
@@ -2567,6 +2633,7 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           to the table once (`M-155`, `pan_clamp`: tone pan 64, PAN +63 and
           a pan LFO of +63 on a square stay hard right through both halves
           at CC1 127, and at CC1 64 the bottom half lands on centre, 0.0 dB).
+          A move then slews rather than jumps (see set_pan).
      FL1  2.3 cutoff units per step, LINEAR, added to the tone's own filter
           LFO swing (`M-155`, `fl_law`/`fl_sum`: White Noise through LPF 86
           resonance 80 under a key-triggered TRI at rate 64, the resonant
@@ -2773,7 +2840,13 @@ void voice_controls(struct XpJv1080Voice *voice, bool sweeping, bool lfoFilter)
     }
     --voice->control_countdown;
   }
-
+  /* The pan, after the LFOs so that the first tick snaps to a pan their
+     first update has already moved. */
+  if (!voice->pan_countdown) {
+    pan_tick(voice);
+    voice->pan_countdown = voice->pan_period;
+  }
+  --voice->pan_countdown;
 }
 
 bool voice_wave(struct XpJv1080Voice *voice, double *out)

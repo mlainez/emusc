@@ -220,6 +220,15 @@ struct XpJv1080Voice {
   double gain_fade;
   double gain_left;
   double gain_right;
+  /* The pan gains a move is heading for. gain_left and gain_right reach
+     them by the pan slew, one step per pan tick (see pan_tick). */
+  double pan_target_left;
+  double pan_target_right;
+  bool pan_moving_left;
+  bool pan_moving_right;
+  bool pan_started;              /* false until the first tick snaps */
+  size_t pan_period;             /* samples per pan tick */
+  size_t pan_countdown;
 
   /* The four-segment amplitude envelope. level[] is linear amplitude and
      level_units[] the same levels as the record's own 0-127 values;
