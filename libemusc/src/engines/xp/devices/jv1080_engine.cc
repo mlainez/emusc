@@ -32,6 +32,7 @@
 #include "../enhancer.h"
 #include "../phaser.h"
 #include "../rotary.h"
+#include "../dynamics.h"
 #include "../efx.h"
 #include "../common/constants.h"
 
@@ -186,6 +187,10 @@ const unsigned kEfxTypePhaser = 3u;
 
 /* ROTARY, type 8 (0-based 7): engines/xp/rotary.h. */
 const unsigned kEfxTypeRotary = 7u;
+/* COMPRESSOR and LIMITER, types 9 and 10 (0-based 8 and 9):
+   engines/xp/dynamics.h. */
+const unsigned kEfxTypeCompressor = 8u;
+const unsigned kEfxTypeLimiter = 9u;
 const unsigned kEfxTypeOverdrive = 1u;
 const unsigned kEfxTypeDistortion = 2u;
 const unsigned kEfxDriveParameters = 6u;
@@ -1054,6 +1059,7 @@ struct Engine {
   struct xp_enhancer efx_enhancer;
   struct xp_phaser efx_phaser;
   struct xp_rotary efx_rotary;
+  struct xp_dynamics efx_dynamics;
   /* The output shelves (THE OUTPUT SHELVES), low then high, and the gains
      they were built from - a gain past 30 is discarded and the previous
      one kept, as on every other byte. `efx_shelf_type` is the type they
@@ -2362,6 +2368,31 @@ void efx_rotary_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+/* COMPRESSOR and LIMITER, with the same per-byte discard. Pan and Level
+   are applied inside, in the firmware's registers. */
+void efx_dynamics_refresh(struct Engine *engine)
+{
+  bool limiter = engine->efx_type == kEfxTypeLimiter;
+  bool previous = engine->efx_dynamics.ready &&
+    engine->efx_dynamics.limiter == limiter;
+  unsigned n = limiter ? XP_LIMITER_PARAMETERS : XP_COMPRESSOR_PARAMETERS;
+  uint8_t p[XP_DYNAMICS_PARAMETERS];
+  for (unsigned i = 0; i < n; ++i) {
+    p[i] = engine->efx_parameter[i];
+    if (!dynamics_parameter_valid(&engine->rom, limiter, i, p[i])) {
+      if (!previous)
+        return;
+      p[i] = engine->efx_dynamics.param[i];
+    }
+  }
+  if (!dynamics_set(&engine->rom, &engine->efx_dynamics, limiter, p))
+    return;
+  engine->efx_wet = 1.0f;
+  engine->efx_dry = 0.0f;
+  engine->efx_level = 1.0f;
+  engine->efx_ready = true;
+}
+
 /* The output shelves for the type in force, or none. */
 void efx_shelf_refresh(struct Engine *engine)
 {
@@ -2406,6 +2437,14 @@ void efx_algorithm_refresh(struct Engine *engine)
     std::memset(&engine->efx_rotary, 0, sizeof engine->efx_rotary);
   if (engine->efx_type == kEfxTypeRotary) {
     efx_rotary_refresh(engine);
+    return;
+  }
+  if (engine->efx_type != kEfxTypeCompressor &&
+      engine->efx_type != kEfxTypeLimiter)
+    std::memset(&engine->efx_dynamics, 0, sizeof engine->efx_dynamics);
+  if (engine->efx_type == kEfxTypeCompressor ||
+      engine->efx_type == kEfxTypeLimiter) {
+    efx_dynamics_refresh(engine);
     return;
   }
   if (engine->efx_type != kEfxTypeSpectrum)
@@ -4158,6 +4197,10 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
         phaser_process(&engine->efx_phaser, efxL, efxR, efxWetL, efxWetR, n);
       else if (engine->efx_type == kEfxTypeRotary)
         rotary_process(&engine->efx_rotary, efxL, efxR, efxWetL, efxWetR, n);
+      else if (engine->efx_type == kEfxTypeCompressor ||
+               engine->efx_type == kEfxTypeLimiter)
+        dynamics_process(&engine->efx_dynamics, efxL, efxR, efxWetL,
+                         efxWetR, n);
       else if (insert_reverb_spec(engine->efx_type))
         insert_reverb_process(engine, efxL, efxR, efxWetL, efxWetR, n);
       else if (efx_mod_spec(engine->efx_type))
