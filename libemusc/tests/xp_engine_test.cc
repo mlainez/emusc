@@ -421,6 +421,60 @@ int main()
     control[0x40000 + 34 + 0x2a] = 0;
   }
 
+  /* The TVF arm of the same block, `58da` and `58df..58e7`: an ordinary
+     tone's filter envelope stops at stage 4 where the key left it and the
+     release ramp covers the distance from there to the release level, so
+     the two words `6967` adds end on the release level. A `+0x15` tone
+     keeps its envelope running and ramps toward the release level itself.
+
+     Depth 0x4000 with a zero stage-1 rate opens the envelope at stage 1,
+     standing on the stage-1 target, so it is nonzero at note off. */
+  {
+    struct xp_render_component *released;
+    put16(control + 0x40000 + 34 + 0x48, 0x4000);
+    put16(control + 0x40000 + 34 + 0x4a, 0x4000);
+    put16(control + 0x40000 + 34 + 0x52, 0xc000);
+
+    assert(engine_init(&engine, &renderer));
+    assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
+    int16_t standing = engine.slots[0].component.tvf_envelope.current;
+    int16_t level = engine.slots[0].component.tvf_release.target;
+    assert(engine.slots[0].component.tvf_envelope.active);
+    assert(standing != 0 && level < 0);
+    assert(engine_note_off(&engine, 0, 60));
+    released = &engine.slots[0].component;
+    assert(released->tvf_release.active);
+    assert(released->tvf_envelope.stage == 4);
+    assert(!released->tvf_envelope.active);
+    assert(released->tvf_envelope.current == standing);
+    assert(released->tvf_release.target ==
+           (int16_t)((uint16_t)level - (uint16_t)standing));
+    for (unsigned i = 0; i < 4096 && released->tvf_release.active; ++i)
+      (void)tvf_release_advance(&released->tvf_release, 1);
+    assert(!released->tvf_release.active);
+    assert((int16_t)((uint16_t)released->tvf_envelope.current +
+                     (uint16_t)released->tvf_release.current) == level);
+    engine_destroy(&engine);
+
+    control[0x40000 + 0x15] = 1;
+    assert(engine_init(&engine, &renderer));
+    assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
+                               XP_SAME_NOTE_FULL_MULTI, 1.0f));
+    assert(engine_note_off(&engine, 0, 60));
+    released = &engine.slots[0].component;
+    assert(released->tvf_release.active);
+    assert(released->tvf_envelope.stage != 4);
+    assert(released->tvf_envelope.active);
+    assert(released->tvf_release.target == level);
+    engine_destroy(&engine);
+
+    control[0x40000 + 0x15] = 0;
+    put16(control + 0x40000 + 34 + 0x48, 0);
+    put16(control + 0x40000 + 34 + 0x4a, 0);
+    put16(control + 0x40000 + 34 + 0x52, 0);
+  }
+
   /* The send combination law, on its own: the firmware's rounded product
      maps a full note send to the part's own control and a zero note send
      to silence, and 127 against 127 must not overflow to 0. */

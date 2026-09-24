@@ -302,11 +302,7 @@ void startRelease(struct xp_engine *engine, uint8_t noteIndex)
 
          `58f5..58f7` guards the TVA arm a second time, on Hold 1 being
          up. It is unreachable from here: a note released under a held
-         pedal is `hold_retained` and this function has returned above.
-
-         The TVF arm, `58da` and `58df`, has nothing here to guard - this
-         engine forces no TVF stage and computes no TVF release delta at
-         all, for any tone. */
+         pedal is `hold_retained` and this function has returned above. */
       if (!component->continuous_hold_release) {
         /* `58c9`, and `58ce..58d6`: the word that carried the release
            destination becomes the distance the ramp has left to cover. */
@@ -315,6 +311,18 @@ void startRelease(struct xp_engine *engine, uint8_t noteIndex)
         component->pitch_release.delta = (int16_t)(
           (uint16_t)component->pitch_release.destination -
           (uint16_t)component->pitch_envelope.current);
+        /* `58da`, and `58df..58e7`: the same for the filter. Stage 4 makes
+           `6e6b` return before the envelope clock, so `0x335a` holds where
+           the key left it, and the release ramp `0x36da` - which `6967`
+           adds beside it - covers the distance from there to the release
+           level. The composed offset therefore ends on the release level
+           itself. A tone with envelope depth 0 never runs `6e6b` and has
+           both words at zero, which the zero target below reproduces. */
+        component->tvf_envelope.stage = 4;
+        component->tvf_envelope.active = false;
+        component->tvf_release.target = (int16_t)(
+          (uint16_t)component->tvf_release.target -
+          (uint16_t)component->tvf_envelope.current);
         /* `58f9`: TVA stage 4, which is this envelope standing still. */
         tva_envelope_freeze(
           &engine->renderer->rom, &component->envelope,
