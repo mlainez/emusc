@@ -698,6 +698,8 @@ struct XpDeviceProfile {
   /* The patch's velocity range switch: off, its tones' velocity ranges do
      not gate them. */
   uint16_t patchFieldVelocityRangeSwitch;
+  /* The patch's key assign mode: 0 POLY, 1 SOLO. */
+  uint16_t patchFieldKeyAssign;
 
   /* The performance-part group, and the fields of it that decide where a
      note goes and how loud it is. A part is addressed by its own receive
