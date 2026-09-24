@@ -34,4 +34,4 @@ See [../README.md](../README.md) for build instructions and examples.
 
 ## License
 
-libEmuSC is released under the LGPLv2.1+ license. See [COPYING](COPYING) for the full text and detailed attribution of original code vs. new contributions to this fork.
+libEmuSC is released under the LGPL-2.1-or-later license. See [COPYING](COPYING) (and [COPYING.LESSER](COPYING.LESSER)) for the full license text. For how this directory's LGPL license relates to the rest of this fork (which is separately CC0-licensed new code), see the top-level [LICENSE.md](../LICENSE.md).
