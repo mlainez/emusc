@@ -1671,7 +1671,7 @@ void lfo_update(struct XpJv1080Voice *voice, double seconds)
   voice->lfo_gain = std::pow(10.0, db / 20.0);
   voice->lfo_cutoff = cutoff;
   if (voice->lfo_pan_units[0] != 0.0 || voice->lfo_pan_units[1] != 0.0)
-    set_pan(voice, (double)voice->pan_offset + pan);
+    set_pan(voice, (double)voice->pan_offset + voice->matrix_pan + pan);
 }
 
 /* A field this record type has, or `absent` where it does not have one. */
@@ -2111,6 +2111,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   voice->resonance_q = tvf_q(voice->resonance_base);
   voice->resonance_q_base = voice->resonance_q;
   voice->matrix_cutoff = 0.0;
+  voice->matrix_pan = 0.0;
   voice->matrix_pitch_ratio = 1.0;
 
   /* The filter envelope. It moves the cutoff PARAMETER, so its whole
@@ -2206,6 +2207,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     for (unsigned i = 0; i < 2u; ++i) {
       voice->lfo_base_cents[i] = voice->lfo_pitch_cents[i];
       voice->lfo_base_frequency[i] = voice->lfo[i].frequency;
+      voice->lfo_base_cutoff_units[i] = voice->lfo_cutoff_units[i];
     }
 
   /* FXM. MEASURED (`P-xxxx`, `structure/fxm_off`, `fxm_color_c0..c3`,
@@ -2339,22 +2341,50 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           the same depth; that gap is not recovered and not fitted.
      L1R  0.198 Hz per step, linear in hertz rather than in rate units, and
           clamped at 0 Hz - three points 5, 20, 63 at rate 64.
+     PAN  2 pan-table units of distance per step, both signs (`P-xxxx`, the
+          corpus `routing/matrix_dest_all_{pos,neg}` takes: at effective
+          depths 8.9, 17.9 and 26.8 the channel difference reads 18.6,
+          35.3, 53.3 units right and 17.8, 34.8, 51.9 left through the pan
+          table, 1.94-2.08 per step; 35.7 and above are hard). It adds to
+          the voice's own pan and the tone's pan LFO, and the sum is clamped
+          to the table once (`P-xxxx`, `pan_clamp`: tone pan 64, PAN +63 and
+          a pan LFO of +63 on a square stay hard right through both halves
+          at CC1 127, and at CC1 64 the bottom half lands on centre, 0.0 dB).
+     FL1  2.3 cutoff units per step, LINEAR, added to the tone's own filter
+          LFO swing (`P-xxxx`, `fl_law`/`fl_sum`: White Noise through LPF 86
+          resonance 80 under a key-triggered TRI at rate 64, the resonant
+          peak read at the triangle's tops and bottoms). The corner moves
+          0.41, 0.80, 1.61, 2.48 and 3.18 octaves at depths 2, 4, 8, 12 and
+          16, -8 the mirror of +8; read back through tvf_natural_hz, whose
+          static peak here lands within 1 % of the machine's, that is
+          2.20-2.36 units per step over twelve unclipped half-cycles, mean
+          2.29 - CUT's own 2.3 (`M-116`). Tone depths 16 and 32 with the
+          matrix at +-8 land on the sum of the two swings. It is not the
+          tone depth's own law (`M-114`), 0.31 octave at 16. Above 16 each
+          half of the swing clips against the resonant peak's ceiling or
+          the analysis floor, so the line is carried on there, not
+          measured.
+     FL2  the same on the second LFO, measured at 8 and +-16.
 
    PL2 and L2R are taken as PL1 and L1R on the second LFO, which is not
-   measured. MIX, CHO and REV (the sends), PAN, FL1/FL2, AL1/AL2 and
-   pL1/pL2 are NOT IMPLEMENTED: a slot routed to one does nothing. */
+   measured. MIX, CHO and REV (the sends), AL1/AL2 and pL1/pL2 are NOT
+   IMPLEMENTED: a slot routed to one does nothing. */
 const uint8_t kMatrixPch = 1u, kMatrixCut = 2u, kMatrixRes = 3u,
-  kMatrixLev = 4u, kMatrixPl1 = 9u, kMatrixPl2 = 10u, kMatrixL1r = 17u,
-  kMatrixL2r = 18u;
+  kMatrixLev = 4u, kMatrixPan = 5u, kMatrixPl1 = 9u, kMatrixPl2 = 10u,
+  kMatrixFl1 = 11u, kMatrixFl2 = 12u, kMatrixL1r = 17u, kMatrixL2r = 18u;
+const double kMatrixPanUnitsPerStep = 2.0;
+const double kMatrixFilterLfoUnitsPerStep = 2.3;
 
 void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
                               const double source[3])
 {
   if (!voice || !source || !voice->matrix_used)
     return;
-  double cents = 0.0, level = 0.0, cutoff = 0.0, resonance = 0.0;
+  double cents = 0.0, level = 0.0, cutoff = 0.0, resonance = 0.0, pan = 0.0;
   double lfoCents[2] = { 0.0, 0.0 }, lfoHz[2] = { 0.0, 0.0 };
-  bool moveLevel = false, moveResonance = false;
+  double lfoCutoff[2] = { 0.0, 0.0 };
+  bool moveLevel = false, moveResonance = false, movePan = false;
+  bool moveLfoCutoff = false;
   for (unsigned s = 0; s < 12u; ++s) {
     double d = voice->matrix_depth[s] * source[s / 4u];
     switch (voice->matrix_dest[s]) {
@@ -2362,6 +2392,16 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
     case kMatrixLev: level += d / 63.0; moveLevel = true; break;
     case kMatrixCut: cutoff += 2.3 * d; break;
     case kMatrixRes: resonance += 2.0 * d; moveResonance = true; break;
+    case kMatrixPan:
+      pan += kMatrixPanUnitsPerStep * d;
+      movePan = true;
+      break;
+    case kMatrixFl1:
+    case kMatrixFl2:
+      lfoCutoff[voice->matrix_dest[s] - kMatrixFl1] +=
+        kMatrixFilterLfoUnitsPerStep * d;
+      moveLfoCutoff = true;
+      break;
     case kMatrixPl1:
     case kMatrixPl2:
       lfoCents[voice->matrix_dest[s] - kMatrixPl1] +=
@@ -2388,6 +2428,16 @@ void jv1080_voice_set_matrix(struct XpJv1080Voice *voice,
     voice->lfo[i].frequency = hz < 0.0 ? 0.0 : hz;
     if (voice->lfo_pitch_cents[i] != 0.0)
       voice->lfo_active = true;
+    if (moveLfoCutoff && voice->filter_type) {
+      voice->lfo_cutoff_units[i] =
+        voice->lfo_base_cutoff_units[i] + lfoCutoff[i];
+      if (voice->lfo_cutoff_units[i] != 0.0)
+        voice->lfo_active = true;
+    }
+  }
+  if (movePan) {
+    voice->matrix_pan = pan;
+    set_pan(voice, (double)voice->pan_offset + pan);
   }
   if (voice->filter_type) {
     voice->matrix_cutoff = cutoff;

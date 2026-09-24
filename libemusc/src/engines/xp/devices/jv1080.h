@@ -161,8 +161,10 @@ struct XpJv1080Voice {
   double resonance_q_base;
   double lfo_base_cents[2];
   double lfo_base_frequency[2];
+  double lfo_base_cutoff_units[2];
   double matrix_pitch_ratio;
   double matrix_cutoff;
+  double matrix_pan;             /* pan-table distance the matrix adds */
 
   /* The decoded element, and where in it the read head is. */
   const int32_t *pcm;
