@@ -61,6 +61,10 @@ const unsigned kReverbFeedbackField = 0x2cu;
 /* The sixteen Voice Reserve bytes, one per part, 0-64 each
    (`04_protocol/sysex.md` `01 00 00 30-3F`). */
 const unsigned kVoiceReserveField = 0x30u;
+/* Default tempo, `01 00 00 2D-2E`: one byte assembled from two nibbles,
+   20-250 BPM; a value outside that range is discarded and the tempo in
+   force stands (`M-098`). */
+const unsigned kDefaultTempoField = 0x2du;
 /* REVERB TYPES 6 AND 7 ARE NOT TANKS. For them Reverb:Time is the DELAY
    LENGTH rather than the decay, and it is patched straight into nine PRAM
    ERAM address fields as `112*v + 0x2016` - the eight output taps plus
@@ -844,6 +848,10 @@ struct Engine {
   /* The performance common block, which carries this device's reverb
      parameters, and the reverb itself. */
   uint8_t common[kPerfCommonFields];
+  /* The tempo in force, which EXT SYNC LFOs count against. What sets it in
+     patch mode (the patch's own Default tempo, presumably) is not modelled:
+     only a performance common write moves it. */
+  double tempo_bpm;
   struct xp_reverb reverb;
   bool reverb_ready;
   uint8_t reverb_character;
@@ -2381,6 +2389,7 @@ void part_controls(const struct Engine *engine, unsigned part,
   out->tune_cents = 100.0 * p.rpn_coarse + p.rpn_fine;
   out->clock_seconds = (double)engine->frames / engine->output_rate;
   out->lfo_seed = (uint32_t)engine->serial;
+  out->tempo_bpm = engine->tempo_bpm;
   out->alternate_phase = p.alternate_next;
   matrix_sources(engine, p, out->matrix_source);
 }
@@ -2754,6 +2763,9 @@ bool engine_create(void **state, const struct xp_rom *rom,
      value in range, so what a factory reset leaves is not established. */
   engine->sys_ctrl[0] = 97u;
   engine->sys_ctrl[1] = 11u;
+  /* The manual's default for Default tempo; the unit's own power-on value
+     is not read back. */
+  engine->tempo_bpm = 120.0;
   power_on_parts(engine);
   *state = engine;
   return true;
@@ -3357,6 +3369,11 @@ bool engine_sysex_block(void *state, const uint8_t *address,
                              profile->packedPerformanceCommonGroup,
                              within, data, count, engine->common,
                              kPerfCommonFields);
+    if (within <= kDefaultTempoField && within + count > kDefaultTempoField) {
+      unsigned bpm = engine->common[kDefaultTempoField];
+      if (bpm >= 20u && bpm <= 250u)
+        engine->tempo_bpm = (double)bpm;
+    }
     reverb_refresh(engine);
     chorus_refresh(engine);
     efx_refresh(engine);

@@ -95,6 +95,8 @@ struct XpJv1080PartControls {
      takes its phase from, and a seed for the drawn LFO waveforms. */
   double clock_seconds;
   uint32_t lfo_seed;
+  /* The tempo an EXT SYNC LFO counts its clock pulses against, BPM. */
+  double tempo_bpm;
   /* The three matrix controllers' sources as they stand, 0..1. */
   double matrix_source[3];
   /* Which way this note's alternate pan throws: +1 on the part's first
@@ -211,10 +213,14 @@ struct XpJv1080Voice {
   double segment_remaining;      /* seconds left in this segment */
   double sample_period;
 
-  /* The filter, as a two-pole section. */
+  /* The filter, as a two-pole section: its direct-form coefficients, and
+     the state-variable realisation of the same transfer function that
+     runs it - g and k set the poles, m_hp/m_bp/m_lp mix the three outputs
+     into the numerator, s1/s2 are the two integrator states. */
   int filter_type;
   double b0, b1, b2, a1, a2;
-  double x1, x2, y1, y2;
+  double svf_g, svf_k, m_hp, m_bp, m_lp;
+  double s1, s2;
 
   /* The filter envelope, which moves the CUTOFF PARAMETER and not a
      frequency (`M-082`), so everything here is in cutoff units on the

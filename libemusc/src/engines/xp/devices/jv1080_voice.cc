@@ -857,6 +857,48 @@ double tvf_q(unsigned resonance)
    the filter envelope re-solves it while the note is sounding and
    restarting the section every millisecond would put a step in the output
    at every control block. */
+/* THE SECTION RUNS AS A STATE-VARIABLE FILTER. The coefficients above
+   define the transfer function; what realises it is a trapezoidal
+   state-variable section (the Simper form) whose poles and mix are solved
+   from them exactly, so for a held cutoff the response is the direct
+   form's to rounding. The two differ only while the coefficients move: a
+   direct form's state is the last outputs, and when a square LFO or a
+   step throws the corner from 1.5 kHz to 4 Hz in one control block that
+   state drives a transient hundreds of times full scale. The state here
+   is the two integrators', which carry over a coefficient change without
+   gaining energy. What structure the machine's own filter uses is not
+   known; this one is chosen because it cannot run away, which the
+   hardware plainly does not. On `tvf/fenv_depth_p63` the falling sweep
+   after the level peak reads within 1 dB of the hardware take, where the
+   direct form reads 9 to 10 dB high (`M-142`).
+
+   With s = (1/g)(z-1)/(z+1) on s^2 + k s + 1, the denominator is
+   z^2 + a1 z + a2 when g^2 = (1+a1+a2)/(1-a1+a2) and
+   g k = 4/(1-a1+a2) - 1 - g^2; the numerator b0 z^2 + b1 z + b2 is then
+   A/4 (b0-b1+b2) of the high-pass output, A/(2g) (b0-b2) of the band-pass
+   and A/(4g^2) (b0+b1+b2) of the low-pass, A = 4/(1-a1+a2). */
+void set_svf(struct XpJv1080Voice *voice)
+{
+  double lo = 1.0 + voice->a1 + voice->a2;
+  double hi = 1.0 - voice->a1 + voice->a2;
+  if (lo <= 0.0 || hi <= 0.0) {
+    /* Not a stable pole pair: no section this engine builds is one. */
+    voice->svf_g = 1.0;
+    voice->svf_k = 2.0;
+    voice->m_hp = voice->m_lp = 1.0;
+    voice->m_bp = 2.0;
+    return;
+  }
+  double g2 = lo / hi;
+  double g = std::sqrt(g2);
+  double big = 4.0 / hi;
+  voice->svf_g = g;
+  voice->svf_k = (big - 1.0 - g2) / g;
+  voice->m_hp = big * (voice->b0 - voice->b1 + voice->b2) / 4.0;
+  voice->m_bp = big * (voice->b0 - voice->b2) / (2.0 * g);
+  voice->m_lp = big * (voice->b0 + voice->b1 + voice->b2) / (4.0 * g2);
+}
+
 void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
                  double q, double rate, unsigned resonance)
 {
@@ -917,6 +959,7 @@ void set_biquad(struct XpJv1080Voice *voice, int type, double fc,
   }
   voice->a1 = a1;
   voice->a2 = a2;
+  set_svf(voice);
 }
 
 /* Where the filter envelope currently puts the cutoff parameter, clamped
@@ -938,6 +981,7 @@ void set_filter(struct XpJv1080Voice *voice, double rate)
   if (tvf_bypassed(voice->filter_type, cutoff, voice->resonance_value)) {
     voice->b0 = 1.0;
     voice->b1 = voice->b2 = voice->a1 = voice->a2 = 0.0;
+    set_svf(voice);
     return;
   }
   set_biquad(voice, voice->filter_type,
@@ -1244,6 +1288,49 @@ double velocity_curve_gain(unsigned curve, unsigned velocity)
 double lfo_rate_hz(unsigned value)
 {
   return 0.0494 * std::pow(2.0, (double)value / 14.13);
+}
+
+/* MEASURED (`M-099`, `M-103`): with EXT SYNC on (CLOCK or TAP, identical
+   while Tap control source is OFF) the rate field is a PERIOD in MIDI-clock
+   pulses, 24 to the quarter note at the tempo in force, value 0 fastest.
+   The points below are the measured counts; between them the count is
+   interpolated linearly and rounded to a whole pulse, which is not
+   measured - every measured count sits within 0.4 of an integer, but only
+   these seventeen settings were read. Value 0 is a fixed 40 ms at any
+   tempo, the free-run law's own 25 Hz ceiling. */
+const struct { unsigned value; double pulses; } kLfoSyncPulses[] = {
+  { 10, 5 }, { 20, 10 }, { 30, 15 }, { 32, 16 }, { 40, 20 }, { 50, 26 },
+  { 60, 36 }, { 64, 40 }, { 70, 46 }, { 80, 64 }, { 90, 84 }, { 96, 95 },
+  { 100, 111 }, { 110, 151 }, { 120, 192 }, { 127, 218 } };
+
+double lfo_sync_hz(unsigned value, double bpm)
+{
+  if (value == 0u)
+    return 25.0;
+  if (bpm <= 0.0)
+    bpm = 120.0;                 /* a caller that names no tempo */
+  const unsigned n = (unsigned)(sizeof kLfoSyncPulses / sizeof kLfoSyncPulses[0]);
+  double pulses;
+  if (value <= kLfoSyncPulses[0].value) {
+    /* Below the first measured point the count is taken as proportional to
+       the value, which the first five points (0.5 pulse per step) follow. */
+    pulses = kLfoSyncPulses[0].pulses * value / kLfoSyncPulses[0].value;
+  } else {
+    pulses = kLfoSyncPulses[n - 1].pulses;
+    for (unsigned i = 1; i < n; ++i)
+      if (value <= kLfoSyncPulses[i].value) {
+        const double v0 = kLfoSyncPulses[i - 1].value;
+        const double p0 = kLfoSyncPulses[i - 1].pulses;
+        pulses = p0 + (kLfoSyncPulses[i].pulses - p0) *
+          ((double)value - v0) / ((double)kLfoSyncPulses[i].value - v0);
+        break;
+      }
+  }
+  pulses = std::round(pulses);
+  if (pulses < 1.0)
+    pulses = 1.0;
+  double period = pulses * 60.0 / (24.0 * bpm);
+  return period < 0.040 ? 25.0 : 1.0 / period;
 }
 
 /* Interpolation through a table of (value, y) points, linear in y. */
@@ -1939,7 +2026,16 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       const uint8_t *f = tone + fields->lfoFirst[i];
       struct XpJv1080Lfo *lfo = voice->lfo + i;
       lfo->form = f[0] & 7u;
-      lfo->frequency = lfo_rate_hz(f[2]);
+      /* EXT SYNC (f[7]) follows the tempo in force: the performance's
+         Default tempo, not the program-changed patch's own - a PR-B 055
+         chord selected by program change inside a 120 BPM performance
+         reads 7.95 Hz from a rate-12 synced LFO, 6.04 pulses at 120 BPM
+         where the patch's 86 BPM would give a non-integer 4.33
+         (`M-142`). Clock
+         source MIDI (`M-103`) is not modelled: this engine keeps no
+         incoming clock. */
+      lfo->frequency = f[7] ? lfo_sync_hz(f[2], controls->tempo_bpm)
+                            : lfo_rate_hz(f[2]);
       lfo->offset = kOffsets[f[3] > 4u ? 2u : f[3]];
       lfo->delay = lfo_time_seconds(kLfoDelay, 7u, f[4]);
       lfo->fade_mode = f[5] & 3u;
@@ -1953,7 +2049,6 @@ bool jv1080_voice_start(const struct xp_rom *rom,
       lfo->held = (double)(lfo_random(&lfo->seed) >> 8) / 8388608.0 - 1.0;
       lfo->since_on = 0.0;
       lfo->since_off = -1.0;
-      /* EXT SYNC (f[7]) is not followed: this engine keeps no clock. */
       double pitch = (double)(int8_t)tone[fields->pitchLfoDepth + i];
       double filter = (double)(int8_t)tone[fields->filterLfoDepth + i];
       double amp = (double)(int8_t)tone[fields->ampLfoDepth + i];
@@ -2394,13 +2489,16 @@ double voice_tva(const struct XpJv1080Voice *voice, double sample)
 double voice_tvf(struct XpJv1080Voice *voice, double value)
 {
   if (voice->filter_type) {
-    double out = voice->b0 * value + voice->b1 * voice->x1 +
-      voice->b2 * voice->x2 - voice->a1 * voice->y1 - voice->a2 * voice->y2;
-    voice->x2 = voice->x1;
-    voice->x1 = value;
-    voice->y2 = voice->y1;
-    voice->y1 = out;
-    value = out;
+    const double g = voice->svf_g, k = voice->svf_k;
+    const double h1 = 1.0 / (1.0 + g * (g + k));
+    const double h2 = g * h1, h3 = g * h2;
+    const double v3 = value - voice->s2;
+    const double v1 = h1 * voice->s1 + h2 * v3;             /* band-pass */
+    const double v2 = voice->s2 + h2 * voice->s1 + h3 * v3; /* low-pass */
+    voice->s1 = 2.0 * v1 - voice->s1;
+    voice->s2 = 2.0 * v2 - voice->s2;
+    value = voice->m_hp * (value - k * v1 - v2) + voice->m_bp * v1 +
+      voice->m_lp * v2;
   }
 
   return value;

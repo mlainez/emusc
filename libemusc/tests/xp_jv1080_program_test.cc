@@ -1175,6 +1175,75 @@ int main(void)
     assert(steal(32, 0, 8) == stolen);
   }
 
+  /* EXT SYNC (`M-099`): PR-B 055 "Fooled Again" has one tone whose LFO 1
+     is a square at rate 12 with EXT SYNC on, moving its filter by depth
+     +63 and its pan by +63. Rate 12 is six clock pulses, so the level
+     swings with a 0.125 s period at the performance's default 120 BPM and
+     0.25 s at 60 BPM; a Default tempo whose nibbles make 255 is discarded.
+     The square throws the filter's corner several octaves in one control
+     block, which must not run the section away. */
+  {
+    auto sync = [&roms](const std::vector<uint8_t> &tempo) {
+      const uint8_t *chips[XP_WAVE_CHIP_COUNT];
+      size_t sizes[XP_WAVE_CHIP_COUNT];
+      for (unsigned i = 0; i < XP_WAVE_CHIP_COUNT; ++i) {
+        chips[i] = roms.waves[i].data();
+        sizes[i] = roms.waves[i].size();
+      }
+      EmuSC::Xp::Device *d = new EmuSC::Xp::Device();
+      assert(EmuSC::Xp::device_init_raw(d, roms.control.data(),
+                                        roms.control.size(), chips, sizes,
+                                        kRate, XP_WRAP_FULL_CARRY));
+      const uint8_t at[] = { 0x01, 0x00, 0x00, 0x2d };
+      for (size_t i = 0; i + 1 < tempo.size(); i += 2)
+        dt1(d, at, { tempo[i], tempo[i + 1] });
+      bank(d, 81, 1, 54);
+      midi(d, 0x90, 60, 100);
+      const size_t frames = (size_t)(1.5 * kRate);
+      std::vector<float> out(2 * frames);
+      EmuSC::Xp::device_render(d, out.data(), frames);
+      EmuSC::Xp::device_destroy(d);
+      delete d;
+      return out;
+    };
+    auto period = [](const std::vector<float> &x) {
+      const size_t hop = 64, skip = (size_t)(0.1 * kRate) / hop;
+      std::vector<double> e;
+      for (size_t i = 0; (i + 1) * hop * 2 <= x.size(); ++i) {
+        double s = 0.0;
+        for (size_t j = i * hop; j < (i + 1) * hop; ++j)
+          s += (double)x[2 * j] * x[2 * j] + (double)x[2 * j + 1] * x[2 * j + 1];
+        e.push_back(std::log(s + 1e-12));
+      }
+      e.erase(e.begin(), e.begin() + (long)skip);
+      double mean = 0.0;
+      for (double v : e)
+        mean += v / (double)e.size();
+      size_t best = 0;
+      double bestC = -1e300;
+      for (size_t lag = (size_t)(0.08 * kRate / hop);
+           lag < (size_t)(0.4 * kRate / hop); ++lag) {
+        double c = 0.0;
+        for (size_t i = 0; i + lag < e.size(); ++i)
+          c += (e[i] - mean) * (e[i + lag] - mean);
+        c /= (double)(e.size() - lag);
+        if (c > bestC) {
+          bestC = c;
+          best = lag;
+        }
+      }
+      return (double)best * hop / kRate;
+    };
+    std::vector<float> fast = sync({});
+    float peak = 0.0f;
+    for (float v : fast)
+      peak = std::max(peak, std::fabs(v));
+    assert(peak > 0.0f && peak < 1.0f);
+    assert(std::fabs(period(fast) - 0.125) < 0.006);
+    assert(std::fabs(period(sync({ 3, 12 })) - 0.25) < 0.012);
+    assert(sync({ 3, 12, 15, 15 }) == sync({ 3, 12 }));
+  }
+
   printf("ok\n");
   return 0;
 }
