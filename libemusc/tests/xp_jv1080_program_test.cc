@@ -1366,6 +1366,47 @@ int main(void)
     }
   }
 
+  /* Key assign SOLO, patch common 0x33: PR-A 001 on part 1 holds key 60,
+     then key 67 is struck. SOLO leaves nothing at key 60's fundamental and
+     key 67 as loud as POLY plays it; a second part on its own channel,
+     also holding key 60, keeps it whatever part 1's mode. */
+  {
+    auto power = [](const std::vector<float> &x, double hz) {
+      double w = 2.0 * M_PI * hz / kRate, re = 0.0, im = 0.0;
+      for (size_t i = 0; i < kFrames; ++i) {
+        double win = 0.5 - 0.5 * std::cos(2.0 * M_PI * (double)i / kFrames);
+        re += win * x[2 * i] * std::cos(w * (double)i);
+        im += win * x[2 * i] * std::sin(w * (double)i);
+      }
+      return re * re + im * im;
+    };
+    auto keys = [](uint8_t solo, bool layer) {
+      return [solo, layer](EmuSC::Xp::Device *d) {
+        part_record(d, 0, 0, 3, 0);
+        bank(d, 81, 0, 0);
+        common_field(d, 0x33, solo);
+        if (layer) {
+          part_record(d, 1, 0, 3, 0);
+          bank(d, 81, 0, 0, 1);
+          midi(d, 0x91, 60, 100);
+        } else {
+          midi(d, 0x90, 60, 100);
+        }
+      };
+    };
+    const double f60 = 440.0 * std::pow(2.0, -9.0 / 12.0);
+    const double f67 = 440.0 * std::pow(2.0, -2.0 / 12.0);
+    std::vector<float> poly = render(roms, keys(0, false), 0, 67);
+    std::vector<float> solo = render(roms, keys(1, false), 0, 67);
+    assert(power(poly, f60) > 0.0);
+    assert(power(solo, f60) < 1e-4 * power(poly, f60));
+    assert(std::fabs(10.0 * std::log10(power(solo, f67) /
+                                       power(poly, f67))) < 1.0);
+    std::vector<float> other = render(roms, keys(1, true), 0, 67);
+    assert(std::fabs(10.0 * std::log10(power(other, f60) /
+                                       power(poly, f60))) < 1.0);
+  }
+
   printf("ok\n");
   return 0;
 }

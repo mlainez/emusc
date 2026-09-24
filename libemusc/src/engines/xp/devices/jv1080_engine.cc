@@ -2974,6 +2974,37 @@ bool engine_note_on_jv(void *state, unsigned channel, unsigned key,
       : 12 * (int)(int8_t)engine->parts[part].common[profile->patchFieldOctaveShift];
     int shifted = (int)key + shift;
     unsigned sounded = shifted < 0 ? 0u : (shifted > 127 ? 127u : (unsigned)shifted);
+    /* SOLO, key assign mode 1 (patch common 0x33): one note per part, the
+       newest. MEASURED (`M-164`), `voice_allocation/key_assign_solo`,
+       keys 60, 64 and 67 struck 800 ms apart and all held: each note-on
+       replaces the note before it within ~4 ms with no gap in level, and
+       the older keys' note-offs, while the newest still sounds, change
+       nothing. The cut is the steal's own kill; the hardware's few
+       milliseconds of overlap are not reproduced.
+
+       SOLO LEGATO (0x34) DOES NOT STOP THE ATTACK when portamento is off.
+       MEASURED (`M-164`) on the `1_rise` hardware take, whose PR-B 009
+       Pick Bass is SOLO with Solo Legato on and portamento off: the
+       80-400 Hz level rises at each of its 142 overlapping note-ons by a
+       median 9.7 dB against 12.6 at its 277 detached ones, where a render
+       that restarts every note reads 11.7 and 13.9, and it rises as much
+       at overlaps over 40 ms (9.4 dB, 39 notes) as under 15 (9.8, 50). A
+       note that continued the sounding voice would not rise at all. So
+       the new note starts afresh here whatever 0x34 says.
+
+       NOT MEASURED: whether the machine also cuts a note already in its
+       release (here it does - the part keeps no voice of an older note),
+       what releasing the newest key does while an older one is still held,
+       and what Solo Legato does with portamento on. The part is the unit,
+       so a part layered on the same channel keeps its own notes. */
+    const uint16_t keyAssign = profile->patchFieldKeyAssign;
+    if (keyAssign != XP_VOICE_FIELD_NONE &&
+        engine->parts[part].common[keyAssign] != 0u)
+      for (unsigned i = 0; i < kMaxVoices; ++i) {
+        struct Voice *other = engine->voices + i;
+        if (other->allocated && other->part == part)
+          free_voice(other);
+      }
     /* MEASURED (`P-xxxx`, `velocity/vel_range_switch_on` and `_off`): with
        the patch's velocity range switch off, a tone ranged 40-90 sounds at
        every velocity from 8 to 127 (velocity 1 is at the take's floor on
