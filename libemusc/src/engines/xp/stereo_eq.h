@@ -122,6 +122,22 @@ bool stereo_eq_band_set(const struct xp_rom *rom,
 float stereo_eq_band_run(struct xp_stereo_eq_band *band, unsigned c,
                           float x);
 
+/* ONE SHELF, as the writers `0x0A0022CE` (low, `high` false) and
+ * `0x0A002372` (high) build it, for every other updater that calls them.
+ * Each writer takes three CRAM indices and a gain 0..30 (15 flat) and
+ * copies the triple at `block + 6 gain`; the block is chosen by the RAM
+ * byte 0x0901F874, which `upperCorner` stands for: nonzero selects
+ * 0x039802 (400 Hz) or 0x039976 (8 kHz), zero 0x039748 (200 Hz) or
+ * 0x0398BC (4 kHz) (FW-EXACT). The coefficients change and the state is
+ * kept, as the writers touch only CRAM. False, with `*s` left as it was,
+ * where the ROM lacks the table or the gain is past 30. */
+bool stereo_eq_shelf_set(const struct xp_rom *rom, bool high,
+                          bool upperCorner, uint8_t gain,
+                          struct xp_stereo_eq_shelf *s);
+
+/* One sample of `s` on state channel `c` (0 or 1). */
+float stereo_eq_shelf_run(struct xp_stereo_eq_shelf *s, unsigned c, float x);
+
 /* The effect, per channel: `inL`/`inR` the insert's input bus, `outL`/
  * `outR` its return, levelled. */
 void stereo_eq_process(struct xp_stereo_eq *eq, const float *inL,

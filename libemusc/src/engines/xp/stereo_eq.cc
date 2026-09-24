@@ -220,6 +220,27 @@ float stereo_eq_band_run(struct xp_stereo_eq_band *band, unsigned c, float x)
   return run_band(band, c, x);
 }
 
+bool stereo_eq_shelf_set(const struct xp_rom *rom, bool high,
+                          bool upperCorner, uint8_t gain,
+                          struct xp_stereo_eq_shelf *s)
+{
+  const uint8_t kMaxGain = 30u;
+  if (!rom || !rom->bytes || !s || gain > kMaxGain)
+    return false;
+  unsigned table = high ? (upperCorner ? kHighShelf8k : kHighShelf4k)
+                        : (upperCorner ? kLowShelf400 : kLowShelf200);
+  struct xp_stereo_eq_shelf built = *s;
+  if (!shelf(rom, table, gain, &built))
+    return false;
+  *s = built;
+  return true;
+}
+
+float stereo_eq_shelf_run(struct xp_stereo_eq_shelf *s, unsigned c, float x)
+{
+  return run_shelf(s, c, x);
+}
+
 void stereo_eq_clear(struct xp_stereo_eq *eq)
 {
   struct xp_stereo_eq_shelf *s[2] = { &eq->low_shelf, &eq->high_shelf };

@@ -162,11 +162,8 @@ const unsigned kEfxPatchBlockShift = 1u;
    ping-pong between them (`M-067`, confirmed independently by `M-091`'s
    Mode 0 = CROSS / 1 = NORMAL range fingerprint).
 
-   LOW GAIN AND HI GAIN ARE NOT IMPLEMENTED. They are a two-band shelving
-   EQ, and this device's filter topology is silicon (`U-R5-02`) with only a
-   nine-octave-band magnitude picture available to constrain it. Fitting
-   one would be a fit, not a recovery. They are read and ignored, which is
-   said here rather than left to be discovered. */
+   LOW GAIN AND HI GAIN are the shared output shelves, read from the ROM's
+   own shelf tables - see THE OUTPUT SHELVES below. */
 const unsigned kEfxTypeStereoDelay = 16u;
 /* THE NONLINEAR DRIVE FAMILY, types 2 OVERDRIVE and 3 DISTORTION (0-based
    1 and 2): one program, and the only difference between the two is the
@@ -208,8 +205,7 @@ bool efx_drive_type(unsigned type, unsigned *row)
 
    The delays read `0x0390C6`, whose entries are raw sample counts at
    32 kHz and which measures 1.0000 at all eight values over 200 to 1000 ms
-   (`M-067`). Low Gain and Hi Gain are read and ignored for the reason they
-   are on type 17. */
+   (`M-067`). Low Gain and Hi Gain are the output shelves (below). */
 const unsigned kEfxTypeTripleTap = 18u;
 /* TIME-CONTROL-DELAY (display 21). One delay line, one tap - slot 28 carries
    a single ERAM write and no static read, its tap being patched at runtime.
@@ -221,13 +217,15 @@ const unsigned kEfxTypeTripleTap = 18u;
    its constant by watching the delay glide in those takes, which is only
    possible if the swept byte is the delay.
 
-   THE REMAINING POSITIONS ARE THE LABEL PAGE'S AND ARE NOT INDIVIDUALLY
-   MEASURED - p3 Feedback, p4 Pan, p5 HF Damp, p6 Low Gain, p7 Hi Gain,
-   p8 Balance, p9 Level. The page is trusted here because its first two
-   entries are exactly where measurement found them, but it carries nine
-   labels for twelve slots, which is the same spare-slot condition that
-   makes type 17's page start at p2. Said plainly rather than presented as
-   measured.
+   p6 LOW GAIN AND p7 HI GAIN ARE READ OFF THE UPDATER `0x0A0051F0`, which
+   hands bytes 5 and 6 to the shelf writers (FW-EXACT, THE OUTPUT SHELVES
+   below). THE OTHER POSITIONS ARE THE LABEL PAGE'S AND ARE NOT
+   INDIVIDUALLY MEASURED - p3 Feedback, p4 Pan, p5 HF Damp, p8 Balance,
+   p9 Level. The page is trusted here because its first two entries and
+   the two gains are exactly where measurement and the updater put them,
+   but it carries nine labels for twelve slots, which is the same
+   spare-slot condition that makes type 17's page start at p2. Said
+   plainly rather than presented as measured.
 
    THE DELAY IS THE SETTLED VALUE ONLY. Accel makes the delay time a TARGET
    rather than a setting: the line glides to it over seconds, reading 680
@@ -537,6 +535,76 @@ const struct EfxModSpec *efx_mod_spec(unsigned type)
   for (unsigned i = 0; i < kEfxModSpecCount; ++i)
     if (kEfxModSpecs[i].type == type)
       return kEfxModSpecs + i;
+  return NULL;
+}
+
+/* THE OUTPUT SHELVES: LowGain and HiGain on the types that carry them.
+
+   ONE PAIR OF WRITERS SERVES THEM ALL. Every updater below hands its two
+   gain bytes to the shelf writers `0x0A0022CE` (low) and `0x0A002372`
+   (high) - the same two STEREO-EQ and ENHANCER use - once per channel,
+   and sets RAM 0x0901F874 to 1 before the low call and 0 before the high
+   one, so the corners are fixed at 400 Hz (0x039802) and 4 kHz (0x0398BC)
+   on every one of them (FW-EXACT, stereo_eq.h `stereo_eq_shelf_set`). The
+   byte positions are the updaters' own (FW-EXACT), and each agrees with
+   the 30-step ceilings `M-092` measured at those positions:
+
+     type  updater      low/high  CRAM (first; second call)
+     13    `0x0A003C28` p5 / p6   53..58; 68..73    SPACE-D
+     14/15 `0x0A003E5C` p8 / p9   72..77; 86..91    STEREO-CHORUS/FLANGER
+     17    `0x0A00452C` p8 / p9   25..30; 52..57    STEREO-DELAY
+     18    `0x0A0047F0` p9 / p10  59..64; 73..78    MODULATION-DELAY
+     19    `0x0A004AE4` p9 / p10  32..37; 47..52    TRIPLE-TAP-DELAY
+     21    `0x0A0051F0` p6 / p7   39..44; 52..57    TIME-CONTROL-DELAY
+     24    `0x0A005F00` p5 / p6   91..96; 81..86    REVERB
+
+   (display numbers). The writers also serve five types this engine does
+   not render - COMPRESSOR p5/p6, LIMITER p6/p7, STEP-FLANGER p7/p8,
+   FBK-PITCH-SHIFTER p7/p8, GATE-REVERB p4/p5 - and ENHANCER, which builds
+   its own (enhancer.h). HEXA-CHORUS, TREMOLO-CHORUS, QUADRUPLE-TAP-DELAY
+   and the compounds call neither writer and have no shelves.
+
+   WHERE THEY SIT. In each of these programs the shelf sections are the
+   last filter stage of each channel, after every delay-memory access, so
+   they are outside any feedback loop (FW-STRUCT: the coefficient index is
+   the instruction index; the opcodes are not decoded, `U-R5-02`). That
+   they shape the WHOLE return, dry side of the balance included, is
+   MEASURED: STEREO-DELAY ships with Balance 0, which is no wet at all
+   (`0x0394A0` row 0 is 0 wet, 1 dry, and the take's tick has no echo),
+   and its `efx_probe` noise burst still carries the factory shelves
+   (LowGain +4, HiGain +2 dB) - against the STEREO-EQ take as the
+   known-good reference through the same path, the residual matches the
+   two shelves to 0.04 dB mean and 0.19 dB worst over 60 Hz to 13 kHz,
+   where leaving them out misses by 0.82 dB mean. So they are run here
+   on the balanced, levelled return, ahead of the sends as the program's
+   own output stage is.
+
+   A DEDICATED CAPTURE (each type's own noise burst, both shelves driven
+   to their extremes, dry-only and factory-balance) confirms all eight
+   directly rather than by analogy to STEREO-DELAY: every dry-isolated
+   response matches the model to 0.03-0.10 dB mean, worst case 0.35 dB,
+   over 60 Hz-13 kHz - including REVERB (0.04/0.05 dB), whose own
+   factory-balance `efx_probe` reading (a different, wet-dominated take)
+   had earlier looked worse with the shelves than without; this isolated
+   capture resolves that in the shelves' favour. SPACE-D's
+   factory-balance figure is the one outlier (0.63 dB mean, 2.73 dB
+   worst) despite a clean dry reading (0.04/0.05 dB) - some interaction
+   with its own modulation at factory balance, not chased further. P-xxxx. */
+const uint8_t kEfxShelfFlat = 15u;
+struct EfxShelfSpec {
+  unsigned type;                /* 0-based */
+  unsigned low, high;           /* 0-based parameter bytes */
+};
+const struct EfxShelfSpec kEfxShelfSpecs[] = {
+  { 12u, 4u, 5u }, { 13u, 7u, 8u }, { 14u, 7u, 8u }, { 16u, 7u, 8u },
+  { 17u, 8u, 9u }, { 18u, 8u, 9u }, { 20u, 5u, 6u }, { 23u, 4u, 5u },
+};
+const struct EfxShelfSpec *efx_shelf_spec(unsigned type)
+{
+  for (unsigned i = 0;
+       i < sizeof kEfxShelfSpecs / sizeof *kEfxShelfSpecs; ++i)
+    if (kEfxShelfSpecs[i].type == type)
+      return kEfxShelfSpecs + i;
   return NULL;
 }
 
@@ -858,6 +926,14 @@ struct Engine {
   struct xp_spectrum efx_spectrum;
   struct xp_enhancer efx_enhancer;
   struct xp_phaser efx_phaser;
+  /* The output shelves (THE OUTPUT SHELVES), low then high, and the gains
+     they were built from - a gain past 30 is discarded and the previous
+     one kept, as on every other byte. `efx_shelf_type` is the type they
+     were built for; a type change clears their state. */
+  struct xp_stereo_eq_shelf efx_shelf[2];
+  uint8_t efx_shelf_gain[2];
+  uint8_t efx_shelf_type;
+  bool efx_shelf_on;
   float efx_wet;
   float efx_dry;
   float efx_level;
@@ -1625,9 +1701,9 @@ float efx_mod_shape(unsigned shape, double phase)
 
    WHAT IS NOT BUILT, and why rather than silently: p1 FILTER TYPE and p2
    CUTOFF are unmeasured, and the factory patch has the filter off; p7,
-   whose ceiling is 127 and whose factory value is 0, is unidentified; p8
-   and p9 are the low and high gains, inert at their factory 15. None of
-   them is guessed at here. */
+   whose ceiling is 127 and whose factory value is 0, is unidentified.
+   Neither is guessed at here. p8 and p9, the low and high gains, are the
+   output shelves (THE OUTPUT SHELVES). */
 void efx_modulated_refresh(struct Engine *engine)
 {
   const uint8_t *p = engine->efx_parameter;
@@ -2124,9 +2200,40 @@ void efx_phaser_refresh(struct Engine *engine)
   engine->efx_ready = true;
 }
 
+/* The output shelves for the type in force, or none. */
+void efx_shelf_refresh(struct Engine *engine)
+{
+  const struct EfxShelfSpec *spec = efx_shelf_spec(engine->efx_type);
+  bool same = engine->efx_shelf_on &&
+    engine->efx_shelf_type == engine->efx_type;
+  if (!same) {
+    std::memset(engine->efx_shelf, 0, sizeof engine->efx_shelf);
+    engine->efx_shelf_on = false;
+  }
+  if (!spec)
+    return;
+  const unsigned at[2] = { spec->low, spec->high };
+  for (unsigned k = 0; k < 2u; ++k) {
+    uint8_t g = engine->efx_parameter[at[k]];
+    if (!stereo_eq_shelf_set(&engine->rom, k == 1u, k == 0u, g,
+                             &engine->efx_shelf[k])) {
+      g = same ? engine->efx_shelf_gain[k] : (uint8_t)kEfxShelfFlat;
+      if (!stereo_eq_shelf_set(&engine->rom, k == 1u, k == 0u, g,
+                               &engine->efx_shelf[k])) {
+        engine->efx_shelf_on = false;
+        return;
+      }
+    }
+    engine->efx_shelf_gain[k] = g;
+  }
+  engine->efx_shelf_type = engine->efx_type;
+  engine->efx_shelf_on = true;
+}
+
 void efx_algorithm_refresh(struct Engine *engine)
 {
   engine->efx_ready = false;
+  efx_shelf_refresh(engine);
   if (engine->efx_type != kEfxTypePhaser)
     std::memset(&engine->efx_phaser, 0, sizeof engine->efx_phaser);
   if (engine->efx_type == kEfxTypePhaser) {
@@ -3441,6 +3548,20 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
           (engine->efx_wet * efxWetL[k] + engine->efx_dry * efxL[k]);
         float r = engine->efx_level *
           (engine->efx_wet * efxWetR[k] + engine->efx_dry * efxR[k]);
+        if (engine->efx_shelf_on)
+          for (unsigned s = 0; s < 2u; ++s) {
+            struct xp_stereo_eq_shelf *sh = &engine->efx_shelf[s];
+            /* Gain 15 is the triple (1, -a, a), an identity; it is run as
+               one, with the state kept on the signal it would have held,
+               so a factory-flat type renders exactly as it did. */
+            if (engine->efx_shelf_gain[s] == kEfxShelfFlat) {
+              sh->x1[0] = sh->y1[0] = l;
+              sh->x1[1] = sh->y1[1] = r;
+              continue;
+            }
+            l = stereo_eq_shelf_run(sh, 0, l);
+            r = stereo_eq_shelf_run(sh, 1, r);
+          }
         stereo[(done + k) * 2u] += engine->efx_output_level * l;
         stereo[(done + k) * 2u + 1u] += engine->efx_output_level * r;
         float mono = 0.5f * (l + r);
