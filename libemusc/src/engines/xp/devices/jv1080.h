@@ -364,10 +364,11 @@ double jv1080_filter_env_curve(unsigned curve, unsigned velocity);
 double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
                                  const uint8_t *record, unsigned velocity);
 
-/* Adds this voice's output into l/r. Returns false once it has finished,
+/* Adds this voice's output into l/r and, when `unpanned` is given, the same
+ * output before the pan into it. Returns false once it has finished,
  * having written whatever it had left. */
 bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
-                          size_t frames);
+                          size_t frames, float *unpanned = nullptr);
 
 }}  // namespace EmuSC::Xp
 #endif

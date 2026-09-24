@@ -2646,7 +2646,8 @@ double boost(double x, unsigned setting)
     : (y < -kBoostCeiling ? -kBoostCeiling : y);
 }
 
-bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
+bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames,
+                 float *unpanned)
 {
   struct XpJv1080Voice *v1 = v2->partner;
   const bool sweep1 = v1->filter_type && v1->cutoff_offset != 0.0;
@@ -2717,6 +2718,8 @@ bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
     }
     l[n] += (float)(value * v2->gain_left);
     r[n] += (float)(value * v2->gain_right);
+    if (unpanned)
+      unpanned[n] += (float)value;
     if (!v1->wave_done && !v1->envelope_done && !voice_advance(v1)) {
       v1->wave_done = true;
       v1->active = true;
@@ -2732,12 +2735,12 @@ bool render_pair(struct XpJv1080Voice *v2, float *l, float *r, size_t frames)
 }  // namespace
 
 bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
-                          size_t frames)
+                          size_t frames, float *unpanned)
 {
   if (!voice || !voice->active || !voice->pcm || !l || !r)
     return false;
   if (voice->partner && voice->structure >= 2u)
-    return render_pair(voice, l, r, frames);
+    return render_pair(voice, l, r, frames, unpanned);
 
   const bool sweeping = voice->filter_type && voice->cutoff_offset != 0.0;
   const bool lfoFilter = voice->filter_type &&
@@ -2753,6 +2756,8 @@ bool jv1080_voice_render(struct XpJv1080Voice *voice, float *l, float *r,
     double value = voice_tvf(voice, voice_tva(voice, sample));
     l[n] += (float)(value * voice->gain_left);
     r[n] += (float)(value * voice->gain_right);
+    if (unpanned)
+      unpanned[n] += (float)value;
     if (!voice_advance(voice))
       break;
   }

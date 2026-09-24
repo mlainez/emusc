@@ -2575,8 +2575,10 @@ struct Voice *start_record(struct Engine *engine, unsigned part,
 
 /* Render a voice through its tone delay: nothing until it is due, then the
    voice from that frame, and a postponed release at its own frame. False
-   once the voice has finished. */
-bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
+   once the voice has finished. `unpanned`, when given, receives the same
+   output before the pan. */
+bool render_voice(struct Voice *voice, float *l, float *r, size_t n,
+                  float *unpanned = nullptr)
 {
   size_t release = voice->release_in ? voice->release_in : SIZE_MAX;
   if (voice->release_in)
@@ -2601,7 +2603,7 @@ bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
     jv1080_voice_note_off(&voice->voice);
     return release == n ||
       jv1080_voice_render(&voice->voice, l + release, r + release,
-                          n - release);
+                          n - release, unpanned ? unpanned + release : nullptr);
   }
   size_t start = 0;
   if (voice->wait) {
@@ -2616,14 +2618,16 @@ bool render_voice(struct Voice *voice, float *l, float *r, size_t n)
   }
   if (release != SIZE_MAX && release <= n) {
     if (!jv1080_voice_render(&voice->voice, l + start, r + start,
-                             release - start))
+                             release - start,
+                             unpanned ? unpanned + start : nullptr))
       return false;
     jv1080_voice_note_off(&voice->voice);
     return release == n ||
       jv1080_voice_render(&voice->voice, l + release, r + release,
-                          n - release);
+                          n - release, unpanned ? unpanned + release : nullptr);
   }
-  return jv1080_voice_render(&voice->voice, l + start, r + start, n - start);
+  return jv1080_voice_render(&voice->voice, l + start, r + start, n - start,
+                             unpanned ? unpanned + start : nullptr);
 }
 
 /* THE PART IS NOT THE CHANNEL. Every part carries its own receive channel,
@@ -3472,6 +3476,7 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
   float right[kChunk];
   float vl[kChunk];
   float vr[kChunk];
+  float vc[kChunk];
   float send[kChunk];
   float csend[kChunk];
   float cwet[kChunk * 2u];
@@ -3537,15 +3542,29 @@ void jv_render_native(struct Engine *engine, float *stereo, size_t frames)
           (engine->chorus_ready && voice->chorus_send > 0.0f)) {
         std::memset(vl, 0, n * sizeof *vl);
         std::memset(vr, 0, n * sizeof *vr);
-        if (!render_voice(voice, vl, vr, n)) {
+        std::memset(vc, 0, n * sizeof *vc);
+        if (!render_voice(voice, vl, vr, n, vc)) {
           free_voice(voice);
         }
+        /* THE CHORUS SEND IS TAKEN BEFORE THE PAN. On the device a centred
+           voice's first chorus echo, at depth 0 and feedback 0, is 3.14 dB
+           above its own dry signal on both channels, on every depth-0 tick
+           of `chorus_fb/system_feedback_ticks` (`P-xxxx`). The pan is
+           constant-power, so a centred voice reaches each channel at
+           0.7071 of its unpanned level: a send taken before the pan
+           predicts +3.01 dB, and the post-pan mean of the two channels
+           predicts 0 dB. Only the centred case is measured; that an
+           off-centre voice sends the same is what "before the pan" means,
+           and no capture yet varies the pan with the chorus open. The
+           reverb send stays on the post-pan mean: its returns were
+           calibrated through it, and PAN-DLY's first repeat reads +2.7 dB
+           over the dry against the device's +3.0 that way. */
         for (size_t k = 0; k < n; ++k) {
           float mono = 0.5f * (vl[k] + vr[k]);
           left[k] += vl[k];
           right[k] += vr[k];
           send[k] += voice->reverb_send * mono;
-          csend[k] += voice->chorus_send * mono;
+          csend[k] += voice->chorus_send * vc[k];
         }
         sending = true;
         continue;
