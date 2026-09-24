@@ -403,6 +403,11 @@ double jv1080_filter_env_offset(const struct XpVoiceFieldMap *fields,
 double jv1080_tvf_response_db(int type, double cutoff, unsigned resonance,
                               double rate, double hz);
 
+/* The amplitude factor the TVA key bias (direction 0..3, point, level enum
+ * 0..14) puts on a note at `key`. */
+double jv1080_bias_gain(unsigned direction, unsigned point, unsigned level,
+                        unsigned key);
+
 /* The factor the A-ENV's velocity-time sensitivity (enum 0..14) puts on its
  * attack time at note-on velocity `velocity`. */
 double jv1080_amp_env_velocity_time_scale(unsigned enumValue,

@@ -1877,6 +1877,40 @@ double velocity_fade_gain(const struct XpVoiceFieldMap *fields,
   return g * g;
 }
 
+/* The TVA key bias, as a factor on the tone's level field before the
+   square law: the field reads (level/127)^2 (`M-029`), and the bias scales
+   its `level/127` by f = 1 + p * d / 12, clamped to 0..1, so the gain is
+   f^2. p is the level enum's percentage (-100, -70, -50, -40, -30, -20,
+   -10, 0, +10, +20, +30, +40, +50, +70, +100; `partial_schema.md`) and d
+   the key's distance past the point on the side the direction names:
+   LOWER below it, UPPER above it, LOWER&UPPER both, and ALL the signed
+   distance key - point, so the one slope rises through the point.
+
+   MEASURED (`M-046`, the eleven `tva/bias_*` takes, keys 24-108 in
+   octaves): -100 % mutes from one octave past the point on the named side
+   (UPPER above, LOWER below, L&U both, ALL above), +100 % on ALL mutes one
+   octave below, and +100 % on UPPER, LOWER and L&U changes nothing - no
+   key is ever louder than the unbiased tone, hence the clamp at 1.
+   MEASURED on an intermediate value (`P-xxxx`, TASK-435 `santur_keys`: GM
+   Santur's Gtr Harm A tone alone, UPPER, point 48, -50 %): -12.5 dB at key
+   60 and -29.6 at key 68 against the unbiased engine, where this law gives
+   -12.0 and -31.1; a slope linear in dB would give -20.8 at key 68. That p
+   counts per OCTAVE is the reading these points support, not a value
+   recovered from the ROM. The key is the note the record plays, octave
+   shift included and coarse tune not - which of the two the machine uses
+   is not measured. */
+double bias_gain(const struct XpVoiceFieldMap *fields, const uint8_t *record,
+                 unsigned key)
+{
+  if (fields->biasDirection == XP_VOICE_FIELD_NONE ||
+      fields->biasPoint == XP_VOICE_FIELD_NONE ||
+      fields->biasLevel == XP_VOICE_FIELD_NONE)
+    return 1.0;
+  return jv1080_bias_gain(record[fields->biasDirection],
+                          record[fields->biasPoint],
+                          record[fields->biasLevel], key);
+}
+
 /* The record's own gates. One that is off, or whose key range or velocity
    fade excludes this note, does not sound - which is not an error: a
    patch's four tones routinely split the keyboard between them. A record
@@ -1897,6 +1931,30 @@ bool record_sounds(const struct XpVoiceFieldMap *fields,
 double jv1080_filter_env_curve(unsigned curve, unsigned velocity)
 {
   return filter_env_curve_fraction(curve, (double)velocity);
+}
+
+double jv1080_bias_gain(unsigned direction, unsigned point, unsigned level,
+                        unsigned key)
+{
+  static const double kBiasPercent[15] = {
+    -100.0, -70.0, -50.0, -40.0, -30.0, -20.0, -10.0, 0.0,
+    10.0, 20.0, 30.0, 40.0, 50.0, 70.0, 100.0,
+  };
+  const double p = kBiasPercent[level > 14u ? 14u : level] / 100.0;
+  const double signedKeys = (double)key - (double)point;
+  double d = 0.0;
+  switch (direction & 3u) {
+  case 0u: d = signedKeys < 0.0 ? -signedKeys : 0.0; break;      /* LOWER */
+  case 1u: d = signedKeys > 0.0 ? signedKeys : 0.0; break;       /* UPPER */
+  case 2u: d = signedKeys < 0.0 ? -signedKeys : signedKeys; break;  /* L&U */
+  default: d = signedKeys; break;                                  /* ALL */
+  }
+  double f = 1.0 + p * d / 12.0;
+  if (f < 0.0)
+    f = 0.0;
+  if (f > 1.0)
+    f = 1.0;
+  return f * f;
 }
 
 double jv1080_amp_env_velocity_time_scale(unsigned enumValue,
@@ -2146,7 +2204,8 @@ bool jv1080_voice_start(const struct xp_rom *rom,
     sensed_velocity(velocity,
                     (int)(int8_t)(uint8_t)field_or(
                       fields, fields->ampVelocitySens, tone, 50u)));
-  voice->tone_level_gain = square_law_gain(tone[fields->level]);
+  voice->tone_level_gain = square_law_gain(tone[fields->level]) *
+    bias_gain(fields, tone, key);
   voice->outer_level_gain = square_law_gain(controls->patch_level) *
     square_law_gain(controls->part_level);
   voice->gain_levels = voice->tone_level_gain * voice->outer_level_gain;

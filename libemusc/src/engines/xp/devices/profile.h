@@ -184,6 +184,11 @@ struct XpVoiceFieldMap {
      the device's velocity curves it reads through. */
   uint16_t ampVelocitySens;
   uint16_t ampVelocityCurve;
+  /* The TVA key bias: direction 0 LOWER, 1 UPPER, 2 LOWER&UPPER, 3 ALL,
+     the break key, and the level enum 0..14 (7 neutral). */
+  uint16_t biasDirection;
+  uint16_t biasPoint;
+  uint16_t biasLevel;
   /* The two LFOs' eight fields each - waveform, key trigger, rate, level
      offset, delay, fade mode, fade time, external sync - from these
      indices on, and the first of each destination's two depths. */

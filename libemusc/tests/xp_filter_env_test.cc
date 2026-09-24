@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: CC0-1.0 */
 /*
  *  The JV-1080's filter envelope, the PKG section at the top of the cutoff
- *  range, and the amplitude envelope's velocity-time law, against the takes
- *  they were read from.
+ *  range, the amplitude envelope's velocity-time law and the TVA key bias,
+ *  against the takes they were read from.
  *
  *  None of this needs a ROM: what it checks is arithmetic over the measured
  *  tables, so it runs unskipped and a regression in the laws cannot hide
@@ -209,6 +209,56 @@ int main()
   /* The low-pass at the same settings is still the filter OFF. */
   assert(close_to(jv1080_tvf_response_db(1, 127.0, 0u, 32000.0, 12800.0),
                   0.0, 1e-9));
+
+  /* The TVA key bias. Fields at the schema's offsets, and none on a rhythm
+     note. */
+  assert(tone.biasDirection == 0x66u);
+  assert(tone.biasPoint == 0x67u);
+  assert(tone.biasLevel == 0x68u);
+  assert(rhythm.biasDirection == XP_VOICE_FIELD_NONE);
+  assert(rhythm.biasLevel == XP_VOICE_FIELD_NONE);
+  /* M-046's extremes, point 60, keys an octave apart: -100 % mutes one
+     octave past the point on the named side and leaves the point and the
+     other side alone; +100 % never lifts a key, and on ALL mutes one octave
+     below. Level 7 is flat everywhere. */
+  const double kMuted = 1e-12;
+  for (unsigned key : { 24u, 36u, 48u, 60u, 72u, 84u, 96u, 108u }) {
+    const bool above = key > 60u, below = key < 60u;
+    const bool farAbove = key >= 72u, farBelow = key <= 48u;
+    for (unsigned dir = 0; dir < 4u; ++dir)
+      assert(jv1080_bias_gain(dir, 60u, 7u, key) == 1.0);
+    /* LOWER, UPPER, L&U, ALL at -100 % */
+    assert((jv1080_bias_gain(0u, 60u, 0u, key) < kMuted) == farBelow);
+    assert((jv1080_bias_gain(1u, 60u, 0u, key) < kMuted) == farAbove);
+    assert((jv1080_bias_gain(2u, 60u, 0u, key) < kMuted) ==
+           (farAbove || farBelow));
+    assert((jv1080_bias_gain(3u, 60u, 0u, key) < kMuted) == farAbove);
+    if (!above)
+      assert(jv1080_bias_gain(1u, 60u, 0u, key) == 1.0);
+    if (!below)
+      assert(jv1080_bias_gain(0u, 60u, 0u, key) == 1.0);
+    /* +100 % */
+    for (unsigned dir = 0; dir < 3u; ++dir)
+      assert(jv1080_bias_gain(dir, 60u, 14u, key) == 1.0);
+    assert((jv1080_bias_gain(3u, 60u, 14u, key) < kMuted) == farBelow);
+    if (!below)
+      assert(jv1080_bias_gain(3u, 60u, 14u, key) == 1.0);
+  }
+  /* The hinge moves with the point (`tva/bias_point_036`, `_084`). */
+  assert(jv1080_bias_gain(3u, 36u, 0u, 36u) == 1.0);
+  assert(jv1080_bias_gain(3u, 36u, 0u, 48u) < kMuted);
+  assert(jv1080_bias_gain(3u, 84u, 0u, 84u) == 1.0);
+  assert(jv1080_bias_gain(3u, 84u, 0u, 96u) < kMuted);
+  /* An intermediate value (P-xxxx, TASK-435 `santur_keys`: UPPER, point
+     48, -50 %, GM Santur's Gtr Harm A tone alone against the unbiased
+     engine): -12.5 dB at key 60, -29.6 dB at key 68. The law's -12.0 and
+     -31.1 are held within 2 dB of the machine. */
+  const double db60 = 20.0 * std::log10(jv1080_bias_gain(1u, 48u, 2u, 60u));
+  const double db68 = 20.0 * std::log10(jv1080_bias_gain(1u, 48u, 2u, 68u));
+  assert(close_to(db60, -12.5, 2.0));
+  assert(close_to(db68, -29.6, 2.0));
+  /* Below the point an UPPER bias leaves the key alone. */
+  assert(jv1080_bias_gain(1u, 48u, 2u, 40u) == 1.0);
 
   std::printf("xp_filter_env_test: ok\n");
   return 0;
