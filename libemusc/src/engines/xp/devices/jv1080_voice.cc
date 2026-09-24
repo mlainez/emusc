@@ -2358,7 +2358,7 @@ void jv1080_voice_set_volume(struct XpJv1080Voice *voice, unsigned volume)
           law, the sum clamped to 0..1 - within 0.2 dB at tone levels 32, 64,
           96 and 127, both signs, at velocity sensitivity 0. Velocity
           scales the tone level BEFORE the sum and is not applied again
-          after it (`P-xxxx`, TASK-421: TASK-375's factory sweep, key 60,
+          after it (`M-159`, TASK-421: TASK-375's factory sweep, key 60,
           velocity 100, CC11 127 - on the 227 slots where the two orders
           differ, binned by predicted difference, level against the
           untouched slots reads -4.67 to -0.74 dB with velocity after the
