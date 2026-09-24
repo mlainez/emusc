@@ -368,7 +368,8 @@ This fork exists to reach the highest fidelity achievable on every supported dev
 - **`libemusc/` library:** LGPL-2.1-or-later (from upstream)
 - **New code in this fork:** Dedicated to the public domain under CC0 1.0
 
-See `libemusc/COPYING` and `README.md` in that directory for detailed attribution.
+See [`LICENSE.md`](LICENSE.md) for the full text of both licenses and
+exactly which paths each one covers.
 
 ---
 
