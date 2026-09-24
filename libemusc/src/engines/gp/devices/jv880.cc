@@ -309,8 +309,17 @@ static const RecordRomLayout JV880_RECORDS = {
 
   {
     // Patches. Internal at 0x08ce0, then Preset A and Preset B at +0x8000 each,
-    // 64 patches of 362 bytes per bank: a 12-byte name, a 26-byte common block,
-    // then four 84-byte tones.
+    // 64 patches of 362 bytes per bank: a 26-byte common block whose first 12
+    // bytes are the name, then four 84-byte tones.
+    //
+    // Common +0x0C..+0x13 is the patch's own chorus and reverb block, laid out
+    // as Performance Common's (scdb effect_schema.md). The effect drivers read
+    // it in Patch mode only; in Performance mode they read the Performance
+    // Common block, and a small edit to the patch's reverb type, level or time
+    // or its chorus type, level or depth leaves the oracle's render
+    // byte-identical. This port runs in Performance mode,
+    // so the bytes are not read. Each tone's dry level, reverb send and chorus
+    // send (+81, +82, +83) are, below.
     0x008ce0, 0x8000, 3, 64,
 
     // Program change alone reaches Internal 01-64; the presets are behind bank
