@@ -85,6 +85,8 @@ set(EMUSC_SOURCES
   engines/xp/delay.h
   engines/xp/drive.cc
   engines/xp/drive.h
+  engines/xp/dynamics.cc
+  engines/xp/dynamics.h
   engines/xp/enhancer.cc
   engines/xp/enhancer.h
   engines/xp/spectrum.cc
@@ -171,6 +173,7 @@ set(XP_JV1080_SOURCES
   engines/xp/devices/jv1080_voice.cc
   engines/xp/chorus.cc
   engines/xp/drive.cc
+  engines/xp/dynamics.cc
   engines/xp/efx.cc
   engines/xp/packed_rom.cc
   engines/xp/reverb.cc
@@ -272,6 +275,11 @@ if(BUILD_TESTING)
   xp_test(xp_efx_test ${XP_JV1080_SOURCES}
     engines/xp/devices/sc88.cc engines/xp/rom.cc)
   set_property(TEST xp_efx_test PROPERTY SKIP_RETURN_CODE 77)
+  # COMPRESSOR and LIMITER's level law against the machine's own steady
+  # levels, run on the effect alone; skipped without JV1080_CONTROL_ROM.
+  xp_test(xp_dynamics_test ${XP_JV1080_SOURCES}
+    engines/xp/devices/sc88.cc engines/xp/rom.cc)
+  set_property(TEST xp_dynamics_test PROPERTY SKIP_RETURN_CODE 77)
   # The filter envelope's measured tables and laws, checked as arithmetic:
   # no ROM is involved, so this one never reports skipped.
   xp_test(xp_filter_env_test ${XP_JV1080_SOURCES}
