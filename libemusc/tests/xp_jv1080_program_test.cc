@@ -815,17 +815,23 @@ int main(void)
     };
     /* LEV adds d/63 of full scale to the tone level's square law: at tone
        level 32, depth +16 at full CC1 is (0.0635 + 0.254) / 0.0635 = +13.98
-       dB, and nothing without CC1. */
-    auto lev = [&](uint8_t cc1) {
-      return energy(render(roms, [&, cc1](EmuSC::Xp::Device *d) {
+       dB, and nothing without CC1 - at velocity sensitivity 0, as `M-116`'s
+       bench reads it. Velocity scales the tone level before the sum: at
+       sensitivity +50 the note's velocity 100 makes the tone term 0.0635 *
+       0.620, and the same depth then gives +17.45 dB. */
+    auto lev = [&](uint8_t cc1, uint8_t sensWire) {
+      return energy(render(roms, [&, cc1, sensWire](EmuSC::Xp::Device *d) {
         bench(d);
         tone_field(d, 1, 0x65, 32);
+        tone_field(d, 1, 0x69, 0);
+        tone_field(d, 1, 0x6a, sensWire);
         tone_field(d, 1, 0x1d, 4);
         tone_field(d, 1, 0x1e, 63 + 16);
         midi(d, 0xb0, 1, cc1);
       }));
     };
-    assert(std::fabs(10.0 * std::log10(lev(127) / lev(0)) - 13.98) < 0.1);
+    assert(std::fabs(10.0 * std::log10(lev(127, 50) / lev(0, 50)) - 13.98) < 0.1);
+    assert(std::fabs(10.0 * std::log10(lev(127, 100) / lev(0, 100)) - 17.45) < 0.1);
     /* Controller 1 is CC1, fixed: PCH +20 at full CC1 is 0.31 * 400 = 124
        cents, and channel aftertouch does not move it. */
     auto pitch = [&](uint8_t slot, uint8_t status, uint8_t a, uint8_t b) {
@@ -862,6 +868,8 @@ int main(void)
     Setup lev32 = [&](EmuSC::Xp::Device *d) {
       bench(d);
       tone_field(d, 1, 0x65, 32);
+      tone_field(d, 1, 0x69, 0);
+      tone_field(d, 1, 0x6a, 50);
       tone_field(d, 1, 0x1d, 4);
       tone_field(d, 1, 0x1e, 63 + 16);
     };
