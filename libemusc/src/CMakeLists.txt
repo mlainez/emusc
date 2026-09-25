@@ -280,6 +280,22 @@ if(BUILD_TESTING)
     target_compile_options(gp_random_test PRIVATE -UNDEBUG)
   endif()
   add_test(NAME gp_random_test COMMAND gp_random_test)
+
+  # The filter laws take their tables, profile data and part parameters as
+  # arguments, so the test builds them itself and needs no ROM.
+  add_executable(gp_tvf_test ../tests/gp_tvf_test.cc
+    engines/gp/tvf_law.cc engines/gp/tvf_indexed_law.cc
+    engines/gp/tvf_cents_ratio_law.cc engines/gp/envelope.cc engines/gp/svf.cc
+    engines/gp/devices/jv880.cc engines/gp/devices/sc55.cc
+    engines/gp/devices/sc55mkii.cc engines/gp/devices/sound_canvas_default.cc)
+  target_include_directories(gp_tvf_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(gp_tvf_test PRIVATE emusc_dsp_tier)
+  if(MSVC)
+    target_compile_options(gp_tvf_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(gp_tvf_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME gp_tvf_test COMMAND gp_tvf_test)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
   # while checking nothing. The path is read from SC88_CONTROL_ROM by the
