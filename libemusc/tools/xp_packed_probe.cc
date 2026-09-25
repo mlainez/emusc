@@ -28,6 +28,7 @@
 #include "engines/xp/packed_rom.h"
 #include "engines/xp/rom.h"
 #include "engines/xp/wave.h"
+#include "engines/xp/wave_cache.h"
 
 #include "smf.h"
 #include "wav.h"
@@ -119,7 +120,6 @@ const double kRate = 44100.0;
 
 struct Playing {
   struct XpJv1080Voice voice;
-  std::vector<int32_t> pcm;
   int part;
   int key;
   bool used;
@@ -312,6 +312,7 @@ int main(int argc, char **argv)
                   patch.offset, name);
 
     std::vector<Playing> voices(patch.part_count);
+    struct xp_wave_cache cache = {};
     size_t sounding = 0;
     for (unsigned t = 0; t < patch.part_count; ++t) {
       uint8_t tone[XP_JV1080_TONE_FIELDS];
@@ -368,12 +369,9 @@ int main(int argc, char **argv)
       controls.part_pan = 64u;
       controls.volume = 127u;
       controls.key_shift = 0;
-      voices[t].pcm.assign(1u << 21, 0);
       voices[t].used = jv1080_voice_start(&rom, &profile->toneFields, tone, &controls,
                                            key, velocity, chips.banks,
-                                           chips.bankSizes,
-                                           voices[t].pcm.data(),
-                                           voices[t].pcm.size(), kRate,
+                                           chips.bankSizes, &cache, kRate,
                                            &voices[t].voice);
       if (voices[t].used)
         ++sounding;
@@ -395,6 +393,9 @@ int main(int argc, char **argv)
       jv1080_voice_render(&v.voice, l.data() + release, r.data() + release,
                            frames - release);
     }
+    for (auto &v : voices)
+      wave_cache_release(&cache, v.voice.pcm);
+    wave_cache_clear(&cache);
 
     double peak = 0.0;
     double sum = 0.0;
@@ -628,6 +629,7 @@ int main(int argc, char **argv)
        (`M-031`, `M-072`) and is not what this probe is checking. */
     std::vector<Playing> pool;
     pool.reserve(512);
+    struct xp_wave_cache cache = {};
     size_t cursor = 0;            /* frames already rendered */
     unsigned frames_written = 0;
     unsigned applied = 0;
@@ -706,7 +708,6 @@ int main(int argc, char **argv)
           Playing p;
           p.part = (int)channel;
           p.key = (int)key;
-          p.pcm.assign(1u << 19, 0);
           struct XpJv1080PartControls controls = {};
           controls.patch_level = common[channel][profile->patchFieldLevel];
           controls.patch_pan = common[channel][profile->patchFieldPan];
@@ -718,8 +719,7 @@ int main(int argc, char **argv)
             &rom, &profile->toneFields,
             tone[channel * XP_JV1080_TONES_PER_PATCH + t].data(),
             &controls, key, velocity,
-            chips.banks, chips.bankSizes, p.pcm.data(), p.pcm.size(), kRate,
-            &p.voice);
+            chips.banks, chips.bankSizes, &cache, kRate, &p.voice);
           if (p.used) {
             pool.push_back(std::move(p));
             ++started;
@@ -736,6 +736,9 @@ int main(int argc, char **argv)
       }
     }
     advance(frames);
+    for (auto &p : pool)
+      wave_cache_release(&cache, p.voice.pcm);
+    wave_cache_clear(&cache);
 
     double peak = 0.0;
     double sum = 0.0;

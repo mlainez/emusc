@@ -188,7 +188,8 @@ set(XP_JV1080_SOURCES
   engines/xp/rotary.cc
   engines/xp/spectrum.cc
   engines/xp/stereo_eq.cc
-  engines/xp/wave.cc)
+  engines/xp/wave.cc
+  engines/xp/wave_cache.cc)
 
 # XP-engine specific debug/analysis tools. Distinct from the multi-device
 # emusc-render in libemusc/tools/: that one renders through EmuSC::Synth's
@@ -238,7 +239,6 @@ if(BUILD_TESTING)
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/renderer.cc engines/xp/reverb.cc
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
-    engines/xp/wave_cache.cc
     )
 
   function(xp_test name)
@@ -257,8 +257,7 @@ if(BUILD_TESTING)
   endfunction()
 
   xp_test(xp_wave_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc)
-  xp_test(xp_wave_cache_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
-    engines/xp/wave_cache.cc)
+  xp_test(xp_wave_cache_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc)
   xp_test(xp_oscillator_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
   xp_test(xp_pan_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/pan.cc)
   xp_test(xp_reverb_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc)
