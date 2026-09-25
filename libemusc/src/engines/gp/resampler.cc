@@ -89,13 +89,27 @@ bool Resampler::get_next_sample(float &outL, float &outR)
   float accL = 0.0f;
   float accR = 0.0f;
 
-  for (int k = 0; k < TAPS; ++k) {
-    int n = k - HALF + 1;
-    int idx = (i + n) & RING_MASK;
+  // Tap k reads ring slot (start + k) & RING_MASK. The window wraps at most
+  // once (TAPS < RING): taps [0, split) read slot start + k, and taps
+  // [split, TAPS) read slot k - split from the top of the ring. Both loops
+  // run in ascending k, so each channel accumulates taps in order 0..TAPS-1.
+  const int start = (i - HALF + 1) & RING_MASK;
+  const int split = std::min(TAPS, RING - start);
+
+  const float *headL = _ringL.data() + start;
+  const float *headR = _ringR.data() + start;
+  for (int k = 0; k < split; ++k) {
     float c = row0[k] + pf * (row1[k] - row0[k]);
 
-    accL += _ringL[idx] * c;
-    accR += _ringR[idx] * c;
+    accL += headL[k] * c;
+    accR += headR[k] * c;
+  }
+
+  for (int k = split; k < TAPS; ++k) {
+    float c = row0[k] + pf * (row1[k] - row0[k]);
+
+    accL += _ringL[k - split] * c;
+    accR += _ringR[k - split] * c;
   }
 
   outL = accL;
