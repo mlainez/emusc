@@ -112,7 +112,9 @@ set(EMUSC_SOURCES
   engines/xp/tvf.cc
   engines/xp/tvf.h
   engines/xp/wave.cc
-  engines/xp/wave.h)
+  engines/xp/wave.h
+  engines/xp/wave_cache.cc
+  engines/xp/wave_cache.h)
 
 # A plain OBJECT library, not folded into EMUSC_SOURCES: a static archive
 # only pulls in a member when something already needs one of its symbols at
@@ -234,6 +236,7 @@ if(BUILD_TESTING)
     engines/xp/pan.cc engines/xp/pitch.cc
     engines/xp/renderer.cc engines/xp/reverb.cc
     engines/xp/rom.cc engines/xp/tva.cc engines/xp/tvf.cc
+    engines/xp/wave_cache.cc
     )
 
   function(xp_test name)
@@ -252,6 +255,8 @@ if(BUILD_TESTING)
   endfunction()
 
   xp_test(xp_wave_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc)
+  xp_test(xp_wave_cache_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc
+    engines/xp/wave_cache.cc)
   xp_test(xp_oscillator_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/oscillator.cc)
   xp_test(xp_pan_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/pan.cc)
   xp_test(xp_reverb_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/reverb.cc engines/xp/rom.cc)
