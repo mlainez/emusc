@@ -38,6 +38,8 @@ set(EMUSC_SOURCES
   engines/gp/partial.h
   engines/gp/pitch.cc
   engines/gp/pitch.h
+  engines/gp/random.cc
+  engines/gp/random.h
   engines/gp/resampler.cc
   engines/gp/resampler.h
   engines/gp/reverb.cc
@@ -259,6 +261,15 @@ if(BUILD_TESTING)
   xp_test(xp_delay_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/delay.cc engines/xp/reverb.cc engines/xp/rom.cc)
   xp_test(xp_eq_test ${XP_JV1080_SOURCES} engines/xp/devices/sc88.cc engines/xp/eq.cc engines/xp/rom.cc)
   xp_test(xp_output_test engines/xp/output.cc)
+
+  add_executable(gp_random_test ../tests/gp_random_test.cc engines/gp/random.cc)
+  target_include_directories(gp_random_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(MSVC)
+    target_compile_options(gp_random_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(gp_random_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME gp_random_test COMMAND gp_random_test)
   # This one checks the held ROM's own coefficient records, so it needs
   # the ROM; without it the test reports skipped rather than passing
   # while checking nothing. The path is read from SC88_CONTROL_ROM by the

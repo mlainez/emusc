@@ -20,6 +20,7 @@
 #include "tva.h"
 #include "velocity_curve.h"
 #include "ctrl_matrix.h"
+#include "random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,12 +42,12 @@ namespace EmuSC { namespace Gp {
 // Before the sentinel was introduced the same tones were nudged to hard LEFT.
 // Both are wrong in the same way - a fixed position where the device has none.
 //
-// std::rand() is deliberate rather than lazy: the engine never seeds it, so the
-// sequence is the C library's default and renders stay reproducible, which is
-// what keeps the corpus byte-identity check meaningful.
+// The draw comes from GpRandom, the engine's one seeded sequence, so renders
+// stay reproducible on every platform, which is what keeps the corpus
+// byte-identity check meaningful.
 static int jv_tone_pan(uint8_t stored)
 {
-  return stored == ControlRom::PANPOT_RANDOM ? (std::rand() % 128) : (int) stored;
+  return stored == ControlRom::PANPOT_RANDOM ? (GpRandom::next() % 128) : (int) stored;
 }
 
 
@@ -144,7 +145,7 @@ TVA::TVA(ControlRom &ctrlRom, uint8_t key, uint8_t velocity, int sampleIndex,
     (drumPan == 0 && !_LUT.hasJVPanLaw);      // 0 is random only where 0 cannot
                                               // be a real position: not the JV
   if (settings->get_param(PatchParam::PartPanpot, _partId) == 0 || drumRandom) {
-    _panpot = std::rand() % 128;
+    _panpot = GpRandom::next() % 128;
     _set_panpot_gains();
     _panpotLocked = true;
   }

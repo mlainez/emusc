@@ -46,6 +46,7 @@
 
 
 #include "wave_generator.h"
+#include "random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -263,7 +264,7 @@ int WaveGenerator::_generate_sample_hold(int rate)
   _accRate = (uint16_t) sum;
 
   if (overflow)
-    _random = (uint16_t) (rand() & 0xFFFF);
+    _random = (uint16_t) (GpRandom::next() & 0xFFFF);
 
   return _random;
 }
@@ -279,7 +280,7 @@ int WaveGenerator::_generate_random(int rate)
 
   if (overflow || _randomFirstRun) {
     _randomFirstRun = false;
-    _random = (uint16_t) (rand() & 0xFFFF);
+    _random = (uint16_t) (GpRandom::next() & 0xFFFF);
   }
 
   int result;

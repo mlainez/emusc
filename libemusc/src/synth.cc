@@ -19,6 +19,7 @@
 
 #include "synth.h"
 #include "engines/gp/part.h"
+#include "engines/gp/random.h"
 #include "engines/xp/device.h"
 #include "settings.h"
 
@@ -51,7 +52,7 @@ Synth::Synth(ControlRom &controlRom, WaveRom &waveRom, SoundMap map)
     _framesDelivered(0),
     _midiInputFree(0.0)
 {
-  srand (static_cast<unsigned>(time(0)));
+  GpRandom::seed(static_cast<uint32_t>(time(0)));
 
   _settings = new Settings(controlRom);
 
@@ -1094,6 +1095,12 @@ void Synth::set_audio_format(uint32_t sampleRate, uint8_t channels)
 std::string Synth::version(void)
 {
   return VERSION;
+}
+
+
+void Synth::seed_random(uint32_t seed)
+{
+  GpRandom::seed(seed);
 }
 
 
