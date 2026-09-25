@@ -9,6 +9,7 @@
 #include "rom.h"
 #include "tva.h"
 #include "tvf.h"
+#include "wave_cache.h"
 #include "devices/sc88.h"
 
 #include <stdbool.h>
@@ -53,6 +54,11 @@ struct xp_renderer {
      still gets skipped exactly as before. */
   float send_gain[128];
   bool send_ok[128];
+  /* Decoded PCM shared by every voice this renderer starts, owned by the
+     renderer and freed by renderer_destroy. A pointer so note-on, which
+     takes the renderer const, can still update it. Null only when its
+     allocation failed; note-on then decodes per voice. */
+  struct xp_wave_cache *wave_cache;
 };
 
 /* See send_gain/send_ok above. Keeps control_gain_q15's own bounds check
@@ -67,7 +73,12 @@ static inline bool xp_renderer_send_gain(
 }
 
 struct xp_render_component {
-  int32_t *pcm24;
+  /* One reference from the renderer's wave_cache_acquire. The buffer may be
+     shared with other components and is never written through; the
+     reference itself belongs to exactly one live component and is given
+     back through renderer_component_release. Copying a component moves the
+     reference, so the source's pointer must be cleared. */
+  const int32_t *pcm24;
   size_t pcm_count;
   struct xp_oscillator oscillator;
   uint32_t static_pitch_word;
@@ -276,6 +287,9 @@ bool renderer_init(struct xp_renderer *renderer, const uint8_t *controlRom,
                     size_t controlRomSize, const struct xp_wave_bank *banks,
                     size_t bankCount, double outputRate,
                     enum xp_fractional_wrap wrap);
+/* Frees the wave cache. Every voice and component started from this
+ * renderer must already have been released. */
+void renderer_destroy(struct xp_renderer *renderer);
 void renderer_set_levels(struct xp_renderer *renderer,
                           const struct xp_tva_levels *levels);
 void renderer_set_pan(struct xp_renderer *renderer,
@@ -356,7 +370,12 @@ bool renderer_note_on_drum(
   const struct xp_drum_overlay *overlay, uint8_t setup,
   struct xp_drum_note *note);
 
-void renderer_voice_destroy(struct xp_render_voice *voice);
+/* Gives a component's wave reference back to the renderer's cache and
+ * clears it. Safe on a component that holds none. */
+void renderer_component_release(const struct xp_renderer *renderer,
+                                 struct xp_render_component *component);
+void renderer_voice_destroy(const struct xp_renderer *renderer,
+                             struct xp_render_voice *voice);
 bool renderer_voice_active(const struct xp_render_voice *voice);
 
 /* Interleaved stereo dry output. No clipping is applied because XP summing

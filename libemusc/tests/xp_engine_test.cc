@@ -635,6 +635,7 @@ int main()
     }
   }
   engine_destroy(&engine);
+  renderer_destroy(&renderer);
 
   free(wave);
   free(control);

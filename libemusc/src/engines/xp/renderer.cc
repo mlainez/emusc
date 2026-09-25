@@ -121,7 +121,6 @@ bool noteOnTone(const struct xp_renderer *renderer,
     uint16_t keyFraction;
     uint32_t pitchWord;
     uint32_t pcmBase;
-    size_t capacity;
     int16_t tvfKeyModulation;
 
     /* Instrumentation: sound one component of a multi-component tone, so a
@@ -303,16 +302,9 @@ bool noteOnTone(const struct xp_renderer *renderer,
     bank = findBank(renderer, zone.descriptor.bank_select);
     if (!bank)
       goto fail;
-    pcmBase = zone.descriptor.address_a & ~UINT32_C(0x0f);
-    capacity = (size_t)(zone.descriptor.address_c - pcmBase) + 1;
-    if (capacity > SIZE_MAX / sizeof *renderComponent->pcm24)
-      goto fail;
-    renderComponent->pcm24 = (int32_t *)std::malloc(
-      capacity * sizeof *renderComponent->pcm24);
-    if (!renderComponent->pcm24 ||
-        !fce_decode_storage(xp_profile(&renderer->rom), bank->bytes,
-                             bank->size, &zone.descriptor,
-                             renderComponent->pcm24, capacity, &pcmBase,
+    if (!wave_cache_acquire(renderer->wave_cache, xp_profile(&renderer->rom),
+                             bank->bytes, bank->size, &zone.descriptor,
+                             &renderComponent->pcm24, &pcmBase,
                              &renderComponent->pcm_count))
       goto fail;
     /* Thirty descriptors are read at twice the rate, and the pitch word is
@@ -354,7 +346,7 @@ bool noteOnTone(const struct xp_renderer *renderer,
   return true;
 
 fail:
-  renderer_voice_destroy(voice);
+  renderer_voice_destroy(renderer, voice);
   return false;
 }
 
@@ -574,7 +566,18 @@ bool renderer_init(struct xp_renderer *renderer, const uint8_t *controlRom,
   renderer->tva_controls.secondary_attack = 64;
   renderer->tva_controls.part_decay = 64;
   renderer->tva_controls.secondary_decay = 64;
+  renderer->wave_cache =
+    (struct xp_wave_cache *)std::calloc(1, sizeof *renderer->wave_cache);
   return true;
+}
+
+void renderer_destroy(struct xp_renderer *renderer)
+{
+  if (!renderer)
+    return;
+  wave_cache_clear(renderer->wave_cache);
+  std::free(renderer->wave_cache);
+  renderer->wave_cache = nullptr;
 }
 
 void renderer_set_pan(struct xp_renderer *renderer,
@@ -623,12 +626,26 @@ void renderer_set_tvf_controls(struct xp_renderer *renderer,
   renderer->tvf_controls = *controls;
 }
 
-void renderer_voice_destroy(struct xp_render_voice *voice)
+void renderer_component_release(const struct xp_renderer *renderer,
+                                 struct xp_render_component *component)
+{
+  if (!component)
+    return;
+  /* Without the renderer there is no telling a cached buffer from a
+     private one, and freeing a cached one would free it under its cache:
+     a missing renderer leaks rather than risk that. */
+  if (renderer)
+    wave_cache_release(renderer->wave_cache, component->pcm24);
+  component->pcm24 = nullptr;
+}
+
+void renderer_voice_destroy(const struct xp_renderer *renderer,
+                             struct xp_render_voice *voice)
 {
   if (!voice)
     return;
   for (unsigned i = 0; i < XP_MAX_TONE_COMPONENTS; ++i)
-    std::free(voice->components[i].pcm24);
+    renderer_component_release(renderer, voice->components + i);
   std::memset(voice, 0, sizeof *voice);
 }
 
