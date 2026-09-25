@@ -168,6 +168,17 @@ exits if it fails. `dsound.dll` is loaded at runtime rather than linked, so
 the executable's DLL imports and its Windows 98 floor are unchanged. Underruns
 are reported on the console; raising `--latency` is the remedy.
 
+### Choosing --latency
+
+`--latency` trades response time for robustness. A deeper buffer rides out
+transient OS contention - dragging a window, disk I/O, a game loading a level -
+without an audible dropout, but every incoming MIDI event also sounds that much
+later, which matters for live playing and game audio. There is no universally
+right value: it depends on the CPU, the sound card and its driver's own
+buffering, and how much else competes for the CPU during a session. Start at
+the default, raise it until dropouts stop on your machine, and stop at the
+lowest value that plays cleanly.
+
 ### Runtime device switching
 
 Same mechanism as emuscd: type a device name at the console it's running in
