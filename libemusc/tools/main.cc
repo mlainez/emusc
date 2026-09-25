@@ -131,7 +131,7 @@ Rendering:
                          short of the file's full length (and of --tail) -
                          for quickly reproducing a symptom or comparing builds
                          without waiting out a whole song. Default: unlimited.
-  --seed N               Seed for libEmuSC's use of std::rand() (default: 1)
+  --seed N               Seed for libEmuSC's random source (default: 1)
   --bits 16|32           16-bit PCM or IEEE float32 samples (default: 16).
                          32 floors a decaying tail at about -101 dBFS lower
                          than 16 bits does, which matters when the top octave
@@ -468,10 +468,10 @@ int main(int argc, char **argv) {
   EmuSC::Synth::SoundMap map = (o.reset == "gm") ? EmuSC::Synth::SoundMap::GS_GM
                                                  : EmuSC::Synth::SoundMap::GS;
   EmuSC::Synth synth(*ctrl, *wave, map);
-  // Synth's constructor seeds std::rand() from the wall clock; libEmuSC then
-  // draws from std::rand() for random pan, random pitch and the sample-and-hold
+  // Synth's constructor seeds libEmuSC's random source from the wall clock;
+  // libEmuSC draws from it for random pan, random pitch and the sample-and-hold
   // LFO. Re-seed with a fixed value so the render is reproducible.
-  std::srand(o.seed);
+  EmuSC::Synth::seed_random(o.seed);
   if (o.max_voices_set) synth.set_max_voices(o.max_voices);
   synth.set_audio_format(o.rate, 2);   // also instantiates the 16 parts
 

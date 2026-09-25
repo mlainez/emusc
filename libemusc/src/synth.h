@@ -126,6 +126,12 @@ public:
   // Returns libEmuSC version as a string
   static std::string version(void);
 
+  // Seeds the process-wide sequence behind random pan, random pitch, Analog
+  // Feel and the random LFO waveforms. The constructor seeds it from the wall
+  // clock; call this after constructing to make a render reproducible. The
+  // same seed gives the same sequence on every platform.
+  static void seed_random(uint32_t seed);
+
   void set_part_instrument(uint8_t partId, uint8_t index, uint8_t bank);
 
   void add_part_midi_mod_callback(std::function<void(const int)> callback);
