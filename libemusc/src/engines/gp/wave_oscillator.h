@@ -78,8 +78,7 @@ private:
   std::function<void(void)> _firstRunCompleteCallback = NULL;
   bool _firstRunComplete;
 
-  float _fetch_sample(int index);
-  float _interpolate();
+  float _interpolate(const float *pcm, int lastSample);
 
   // _interpolationLUT scaled to [0, 1). Every Q12 entry fits a float's
   // mantissa and 4096 is a power of two, so each value is exact.

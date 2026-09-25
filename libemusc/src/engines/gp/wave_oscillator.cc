@@ -92,8 +92,12 @@ void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
   // overflow, so the scale commutes with the product's rounding.
   const float bendScale = pitchBend / 16384.0f;
 
+  // The decoded sample set never changes while a voice plays.
+  const float *pcm = _pcmSamples->data();
+  const int lastSample = static_cast<int>(_pcmSamples->size()) - 1;
+
   for (int i = 0; i < 256; i++) {
-    float output = _interpolate();
+    float output = _interpolate(pcm, lastSample);
     dryBus[i] = output;
 
     _phase += bendScale * pitch->get_phase_increment();
@@ -113,30 +117,21 @@ void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
 }
 
 
-float WaveOscillator::_fetch_sample(int index)
-{
-  // The clamp above is the real bounds guard; operator[] skips the redundant
-  // check .at() would otherwise repeat on every one of the 4 taps below.
-  index = std::clamp(index, 0, (int) _pcmSamples->size() - 1);
-  return (*_pcmSamples)[index];
-}
-
-
 // Interpolation algorithm is based on information from the Nuked-SC55 project
 // by nukeykt
-float WaveOscillator::_interpolate()
+float WaveOscillator::_interpolate(const float *pcm, int lastSample)
 {
-  int i = _index;
-  auto step = [&]() {
-    i++;
-    if (i > _sampleEnd)
-      i = _loopStart;
-  };
+  // Each tap wraps to the loop start past the sample end, then is clamped to
+  // the decoded sample set.
+  const int t0 = _index;
+  const int t1 = (t0 + 1 > _sampleEnd) ? _loopStart : t0 + 1;
+  const int t2 = (t1 + 1 > _sampleEnd) ? _loopStart : t1 + 1;
+  const int t3 = (t2 + 1 > _sampleEnd) ? _loopStart : t2 + 1;
 
-  float s0 = _fetch_sample(i);  step();
-  float s1 = _fetch_sample(i);  step();
-  float s2 = _fetch_sample(i);  step();
-  float s3 = _fetch_sample(i);
+  float s0 = pcm[std::clamp(t0, 0, lastSample)];
+  float s1 = pcm[std::clamp(t1, 0, lastSample)];
+  float s2 = pcm[std::clamp(t2, 0, lastSample)];
+  float s3 = pcm[std::clamp(t3, 0, lastSample)];
 
   // Hardware uses only the top 7 bits of the fractional phase.
   int r = static_cast<int>(_phase * 128.0f) & 127;
