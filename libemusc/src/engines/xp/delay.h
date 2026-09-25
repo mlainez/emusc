@@ -37,12 +37,24 @@ extern "C" {
  * labelled choice: the centre time is the delay's own period and is used.
  */
 
+/* One tap's read position `back` samples behind the write head, split
+ * when the parameters are set: the read index is `offset` behind the
+ * write head and `frac` weights the sample after it, which reproduces
+ * `pos - back` interpolation exactly because every step is exact in
+ * double. */
+struct xp_delay_tap {
+  size_t offset;
+  double frac;
+  bool on;
+};
+
 struct xp_delay {
   float *buf;
   size_t len;
   size_t pos;
   double output_rate;
   float centre_samples, left_samples, right_samples;
+  struct xp_delay_tap centre_tap, left_tap, right_tap;
   float centre_level, left_level, right_level;
   float overall, feedback;
   float pre_fb, pre_in, pre_state;
