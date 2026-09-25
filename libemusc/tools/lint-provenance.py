@@ -32,6 +32,18 @@
 # is left for whoever migrates the block to judge. A block that has any tag
 # is considered migrated as a whole.
 #
+# `ref` is checked for form only, never resolved. The ledgers behind the IDs
+# live outside this repository, in the sibling git repos ../scdb and
+# ../emusc-match relative to its root. Those are not submodules, so a
+# checkout may not have them:
+#   scdb/devices/<device>/11_validation/measurements.md         M-NNN, per device
+#   scdb/devices/<device>/12_implementation/implementation_divergences.md  D-NN
+#   emusc-match/PROVENANCE.md, TAINT-REGISTER.md, backlog/tasks/   P-, T-, TASK-
+# The link between those ledgers and this repo's comments is partial and still
+# being cross-checked. An ID with no ledger entry, or with an entry on another
+# subject, is not yet confirmed. It is not proven wrong. See AGENTS.md,
+# "Provenance annotations".
+#
 # Exit status is 1 on any error, and with --strict on any legacy block too.
 
 import argparse
@@ -216,7 +228,18 @@ def walk(paths):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(
+        description="Check @provenance tags and list untagged free-text "
+                    "evidence-class comments (format: AGENTS.md, "
+                    "'Provenance annotations').",
+        epilog="ref= values are checked for form only. Their ledgers live "
+               "outside this repo, in the sibling repos ../scdb "
+               "(devices/<device>/11_validation/measurements.md for M-, "
+               "12_implementation/implementation_divergences.md for D-) and "
+               "../emusc-match (PROVENANCE.md P-, TAINT-REGISTER.md T-, "
+               "backlog/tasks/ TASK-), which a checkout may not have. That "
+               "correlation is partial and still being cross-checked: a ref "
+               "with no matching entry there is unconfirmed, not wrong.")
     ap.add_argument("--strict", action="store_true",
                     help="also fail on comments that still need migrating")
     ap.add_argument("--summary", action="store_true",

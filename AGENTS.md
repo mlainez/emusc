@@ -267,6 +267,36 @@ it rests on, in one machine-checkable tag on its own comment line:
   name. Several refs are comma-separated, no spaces. Leave it out rather
   than write a placeholder such as `P-xxxx`.
 
+**Where `ref=` IDs are tracked, and how far to trust the lookup.** The
+ledgers behind the IDs are not in this repository. They live in two
+sibling projects, `../scdb` and `../emusc-match` relative to this
+repo's root. These are separate git repositories, not submodules, so a
+given checkout may not have them at all:
+
+- `scdb/devices/<device>/` (`jv880`, `jv1080`, `sc55`, `sc55mk2`,
+  `sc88`, `scc1`) keeps one research tree per device. Measurement ids
+  are in `11_validation/measurements.md` and belong to that device
+  (`M-018` in `devices/jv1080/` and `M-065` in `devices/jv880/` are
+  separate ledgers). Decision/divergence ids are in
+  `12_implementation/implementation_divergences.md` (`D-27`, `D-65` in
+  `devices/jv880/`). Paths such as `08_effects/dsp_program.md` in
+  comments are relative to a device's tree.
+- `emusc-match/PROVENANCE.md` holds `P-NNNN` entries,
+  `emusc-match/TAINT-REGISTER.md` holds `T-NNN` entries, and
+  `emusc-match/backlog/tasks/` holds `TASK-NNN` entries.
+
+The link between these ledgers and this repo's comments is partial,
+and cross-checking them is still in progress. Neither ledger is a
+complete 1:1 index of the IDs cited here. Some ledger entries are
+cited nowhere in this repo. Some IDs cited here have no confirmed
+matching entry yet, and a few cite a number whose ledger entry is
+about something else: comments here cite `P-0390` for the JV-880's
+TVF, while `emusc-match/PROVENANCE.md`'s `P-0390` is about the MT-32
+bank. A lookup that finds nothing, or finds a different subject, means
+the ref is not yet confirmed. It does not mean the ref is wrong. Treat
+it as an open question for whoever does the cross-checking, and never
+delete or rewrite a ref on the strength of a failed lookup alone.
+
 One tag states one claim. A comment whose parts rest on different
 evidence carries one tag per class (the analog output stage in
 `engines/gp/devices/jv880.cc` is `MEASURED` in its shape and `FITTED` in
