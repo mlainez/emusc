@@ -243,6 +243,12 @@ struct XpJv1080Voice {
   double segment_total;          /* this segment's own duration, seconds */
   double segment_remaining;      /* seconds left in this segment */
   double sample_period;
+  /* The level units the envelope last read through the level table and
+     the amplitude that read gave. A segment between two equal levels asks
+     for the same units on every sample. Zero units is zero amplitude, so
+     a zeroed voice starts with a matching pair. */
+  double envelope_units;
+  double envelope_units_amplitude;
 
   /* The filter, as a two-pole section: its direct-form coefficients, and
      the state-variable realisation of the same transfer function that

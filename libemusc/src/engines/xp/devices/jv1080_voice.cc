@@ -122,6 +122,26 @@ double pan_difference_asymmetric(double offset)
   return offset < 0.0 ? -m : m;
 }
 
+/* interpolate_points over the level table, read in place: this runs once
+   per sample per voice inside an envelope segment. */
+double amp_env_level_db(double units)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  if (units <= (double)kAmpEnvLevelTable[0].value)
+    return kAmpEnvLevelTable[0].db;
+  for (unsigned i = 1; i < count; ++i) {
+    const double x1 = kAmpEnvLevelTable[i].value;
+    if (units <= x1) {
+      const double x0 = kAmpEnvLevelTable[i - 1].value;
+      const double y0 = kAmpEnvLevelTable[i - 1].db;
+      const double t = (units - x0) / (x1 - x0);
+      return y0 + t * (kAmpEnvLevelTable[i].db - y0);
+    }
+  }
+  return kAmpEnvLevelTable[count - 1].db;
+}
+
 /* A level in the record's own 0-127 units as linear amplitude, through
    the level table, for any point between two values. Below the table's
    first entry, 8, the amplitude is taken as linear down to zero: that
@@ -133,12 +153,7 @@ double amp_env_units_amplitude(double units)
   const double first = kAmpEnvLevelTable[0].value;
   if (units < first)
     return std::pow(10.0, kAmpEnvLevelTable[0].db / 20.0) * units / first;
-  double xs[10], ys[10];
-  for (unsigned i = 0; i < 10; ++i) {
-    xs[i] = kAmpEnvLevelTable[i].value;
-    ys[i] = kAmpEnvLevelTable[i].db;
-  }
-  return std::pow(10.0, interpolate_points(xs, ys, 10u, units) / 20.0);
+  return std::pow(10.0, amp_env_level_db(units) / 20.0);
 }
 
 /* The inverse: where between 0 and 127 a linear amplitude stands. */
@@ -3024,7 +3039,11 @@ bool voice_envelope(struct XpJv1080Voice *voice)
       } else {
         double units = voice->segment_start +
           (voice->level_units[voice->segment] - voice->segment_start) * done;
-        voice->envelope = amp_env_units_amplitude(units);
+        if (units != voice->envelope_units) {
+          voice->envelope_units = units;
+          voice->envelope_units_amplitude = amp_env_units_amplitude(units);
+        }
+        voice->envelope = voice->envelope_units_amplitude;
       }
       voice->segment_remaining -= voice->sample_period;
     }
