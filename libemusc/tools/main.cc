@@ -70,10 +70,16 @@ drive emusc-render and another renderer with the same options):
                          no --out, nothing is written: audio only. Give both
                          to render a file and listen at the same time.
   --play                 Straight to the sound card as it renders - ALSA on
-                         Linux, WinMM on Windows - instead of relying on an
-                         OS or user MIDI player. Always 16-bit regardless of
+                         Linux, DirectSound or WinMM on Windows (see
+                         --audio-api) - instead of relying on an OS or user
+                         MIDI player. Always 16-bit regardless of
                          --bits/--float; paced by the audio device itself,
                          so this run takes as long as the song does.
+  --audio-api API        --play on Windows only: auto, dsound or winmm.
+                         auto (the default) uses DirectSound, falling back
+                         to WinMM with the reason on stderr if DirectSound
+                         cannot be opened; dsound or winmm uses that API
+                         alone, and its failure ends the run.
   --block N              --play only: audio frames per device write, same
                          meaning as emuscd's/emusc-winmidi's --block
                          (default: 2048)
@@ -170,6 +176,7 @@ struct Options {
   bool as_float = false;
   bool verbose = false;
   bool play = false;
+  std::string audio_api = "auto";
   unsigned block = 2048;
   unsigned latency = 200;
   bool max_voices_set = false;
@@ -238,6 +245,13 @@ Options parse_args(int argc, char **argv) {
     }
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--play")        o.play = true;
+#ifdef _WIN32
+    else if (a == "--audio-api") {
+      o.audio_api = need("--audio-api");
+      if (o.audio_api != "auto" && o.audio_api != "dsound" && o.audio_api != "winmm")
+        die(1, "--audio-api must be auto, dsound or winmm");
+    }
+#endif
     else if (a == "--block")       o.block = static_cast<unsigned>(std::stoul(need("--block")));
     else if (a == "--latency")     o.latency = static_cast<unsigned>(std::stoul(need("--latency")));
     else if (a == "--max-voices") {
@@ -552,7 +566,16 @@ int main(int argc, char **argv) {
     // audio device claims the sound card for a run that was going to fail
     // anyway.
     std::unique_ptr<AudioOut> audio_out;
-    if (o.play) audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
+    if (o.play) {
+#ifdef _WIN32
+      const AudioOut::Api api = o.audio_api == "dsound" ? AudioOut::Api::DSound
+                              : o.audio_api == "winmm"  ? AudioOut::Api::WinMM
+                                                        : AudioOut::Api::Auto;
+      audio_out.reset(new AudioOut(o.rate, o.block, o.latency, api));
+#else
+      audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
+#endif
+    }
 
     std::vector<int16_t> buf;
     std::vector<float> fbuf;

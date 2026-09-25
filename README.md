@@ -156,7 +156,8 @@ You can verify your ROM dumps match known-good versions by checking their SHA1 a
   - Configurable output rate and GM/GS reset mode
   - Reproducible output via fixed random seed
   - `--play`: straight to the sound card as it renders (ALSA on Linux,
-    WinMM on Windows), no OS or user MIDI player in the way; combine with
+    DirectSound or WinMM on Windows, see `--audio-api`), no OS or user MIDI
+    player in the way; combine with
     `--out` to render a file and listen at the same time
   
 - **`libemusc/tools/`** — Analysis and test utilities:
