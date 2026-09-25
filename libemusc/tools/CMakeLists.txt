@@ -10,7 +10,8 @@ set(LIBEMUSC_SOURCE_FILES "unknown")
 configure_file(version.h.in "${CMAKE_CURRENT_BINARY_DIR}/version.h" @ONLY)
 
 if(WIN32)
-  set(EMUSC_RENDER_AUDIO_OUT_SRC audio_out_winmm.cc)
+  set(EMUSC_RENDER_AUDIO_OUT_SRC audio_out_winmm.cc
+                                 audio_out_dsound.cc audio_out_dsound.h)
 else()
   find_package(ALSA REQUIRED)
   set(EMUSC_RENDER_AUDIO_OUT_SRC audio_out_alsa.cc)
