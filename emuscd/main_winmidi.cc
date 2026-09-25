@@ -24,6 +24,7 @@
 #include "../libemusc/src/control_rom.h"
 #include "../libemusc/src/wave_rom.h"
 #include "../libemusc/tools/mxcsr_ftz.h"
+#include "../libemusc/tools/win_realtime.h"
 #include "../libemusc/src/simple_mutex.h"
 
 using namespace emuscd;
@@ -239,6 +240,10 @@ public:
     // stop the daemon at all.
     _running = true;
     HANDLE stdinThread = CreateThread(nullptr, 0, &stdin_thread_proc, this, 0, nullptr);
+
+    // This thread alone refills the wave-out queue.
+    emusc_tools::SystemTimerResolution timerRes(1);
+    emusc_tools::raise_audio_thread_priority();
 
     std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
                  "or 'quit' to exit.\n");

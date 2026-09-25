@@ -5,6 +5,7 @@
 // this tool has nothing else to service while it waits.
 
 #include "audio_out.h"
+#include "win_realtime.h"
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -12,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 struct AudioOut::Impl {
@@ -20,6 +22,8 @@ struct AudioOut::Impl {
   std::vector<Buf> buffers;
   unsigned next = 0;
   unsigned blockFrames = 0;
+  // Released only after the destructor has drained the queue.
+  std::unique_ptr<emusc_tools::SystemTimerResolution> timerRes;
 };
 
 AudioOut::AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs)
@@ -40,6 +44,11 @@ AudioOut::AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs)
                  (unsigned) r);
     std::exit(4);
   }
+
+  // This tool is single-threaded: whichever thread constructs AudioOut is
+  // the one that renders and refills the wave-out queue in write().
+  _impl->timerRes.reset(new emusc_tools::SystemTimerResolution(1));
+  emusc_tools::raise_audio_thread_priority();
 
   // Same derivation as emusc-winmidi's own open_wave_out(): enough buffers of
   // blockFrames each to cover the requested latency, at least 2 so one can
