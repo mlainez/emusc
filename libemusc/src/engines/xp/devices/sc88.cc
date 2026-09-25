@@ -83,7 +83,8 @@ const struct XpDeviceProfile SC88_PROFILE = {
      same log-sine domain kXpTvfQUnity/kXpTvfOctaveUnits/XP_TVF_NYQUIST_WORD
      (devices/sc88.h) below decode (tvf_word_to_hz). */
   .baseTable = 0x78702u,
-  /* [FW-EXACT] The limit table is the filter's own topology, written down.
+  /* @provenance class=FW-EXACT devices=SC-88 ref=0x78802
+   * The limit table is the filter's own topology, written down.
    *
    * 0x78802 holds one cutoff ceiling per resonance index. Read in the base
    * table's domain - f = 2*sin(pi*fc/32000), the Chamberlin coefficient

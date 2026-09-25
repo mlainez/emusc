@@ -1065,6 +1065,8 @@ const DeviceProfile JV880_PROFILE = {
   // between 55/56, so the breakpoint is the last key of its zone.
   { 0xcb2c, true },
 
+  // @provenance class=MEASURED devices=JV-880 ref=D-65,M-065,M-067
+  // @provenance class=FITTED devices=JV-880 ref=D-65
   // The analog output stage (scdb devices/jv880 D-65, M-065, M-067).
   //
   // THIS IS A MEASURED DIVERGENCE OF THE CHIP-LEVEL REFERENCE FROM THE

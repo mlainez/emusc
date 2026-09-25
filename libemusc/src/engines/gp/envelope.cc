@@ -112,7 +112,8 @@ void Envelope::set_time_velocity_sensitivity(enum Type type, bool phase,
 
 
 // ---------------------------------------------------------------------------
-// The JV's envelope TIME-sense law (scdb devices/jv880 D-27, FW-EXACT).
+// @provenance class=FW-EXACT devices=JV-880 ref=D-27
+// The JV's envelope TIME-sense law (scdb devices/jv880 D-27).
 //
 // Each JV envelope block carries three 0-14 nibbles, 7 neutral: "T1 velocity",
 // "T4 velocity" and "time KF". The firmware's rate routines - ROM1 0x1E48 for

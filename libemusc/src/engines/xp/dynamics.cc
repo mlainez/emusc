@@ -36,7 +36,8 @@ const uint8_t kLimiterMax[XP_LIMITER_PARAMETERS] =
 /* The 9-bit level registers take a table word shifted right four. */
 const double kRegisterUnity = 512.0;
 
-/* THE THRESHOLD, MEASURED (`P-xxxx`, `closing/efx_sweep_10_limiter`).
+/* @provenance class=MEASURED devices=JV-1080 ref=closing/efx_sweep_10_limiter
+   THE THRESHOLD (`closing/efx_sweep_10_limiter`).
 
    The ROM `Sine` at key 60, flat voice, tone level 127, into the LIMITER
    at Ratio 3, PostGain 2, Threshold stepped 0 / 32 / 64 / 95 / 127, reads

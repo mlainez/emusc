@@ -832,8 +832,9 @@ void TVA::_compose_static_level(void)
   const auto &T = _LUT.JVLevel;
   const LevelLaw &L = _settings->device()->level;
 
+  // @provenance class=FW-EXACT devices=JV-880 ref=D-28
   // The level index, formed the way the firmware forms @0x9a1e and then reads
-  // it back (scdb D-28, FW-EXACT throughout).
+  // it back (scdb D-28).
   //
   // A PATCH part multiplies the Performance part level by the patch's own level
   // byte and shifts down 7 (ROM1 0x4641-0x4648). The RHYTHM part - part 8 of a
