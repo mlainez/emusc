@@ -57,7 +57,8 @@ inline constexpr double kXpStaticAmplitudeRate = 679.0 / 64.0;
 inline constexpr uint16_t kXpLfoMaxIncrement = UINT16_C(0x28f6);
 inline constexpr int32_t kXpLfoSlewStep = INT32_C(0x1c2);
 
-/* [FW-EXACT] TVF-Q current is the companion word << 2, i.e.
+/* @provenance class=FW-EXACT devices=SC-88
+   TVF-Q current is the companion word << 2, i.e.
    resonance_index << 11, and one unit of damping is 131072 - that is,
    q = resonance_index / 64.
 
@@ -69,7 +70,7 @@ inline constexpr int32_t kXpLfoSlewStep = INT32_C(0x1c2);
    SC-55's own two stability tables fix to a rounding unit in P-0130 and
    P-0131) is the value the SC-88's ROM asks for too.
 
-   [FW-EXACT] The TVF-F register is a log-frequency word in the XP pitch
+   The TVF-F register is a log-frequency word in the XP pitch
    register's own domain. `07_synthesis/pitch.md` has the pitch word at
    16384 units per octave, 18 bits, unity playback at 0x38000; routine
    67a8 forms TVF-F as the same 18-bit high/low pair in the same scratch

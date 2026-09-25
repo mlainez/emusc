@@ -175,7 +175,8 @@ struct ToneFieldMap
   int      fxm;
 };
 
-// The per-tone controller matrix's arithmetic (scdb D-79, FW-EXACT: the
+// @provenance class=FW-EXACT devices=JV-880 ref=D-79,ROM1:0x617F
+// The per-tone controller matrix's arithmetic (scdb D-79: the
 // contribution helper at ROM1 0x617F, the scale at ROM1 0x620E and the twelve
 // destination accumulators the note-on builder at ROM1 0x56B0-0x617C fills).
 //

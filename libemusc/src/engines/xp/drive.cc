@@ -30,7 +30,8 @@ const unsigned kDriveSlotType = 1u;  /* OVERDRIVE; DISTORTION loads the same slo
 
 /* THE INPUT DC BLOCKER: the rate word of the slot image's input block.
 
-   WHAT IS IN THE ROM (FW-EXACT). CRAM 7..10 of slot 29's image read
+   @provenance class=FW-EXACT devices=JV-1080
+   WHAT IS IN THE ROM. CRAM 7..10 of slot 29's image read
    0x1FF0 0x0009 0x3FE0 0x0009, ahead of S1 at 14. The same four words sit
    near the head of 25 of the 32 programs in the EFX bank - twice, one per
    channel, in slots 1, 2, 10, 15, 16, 19 and 20 - and they are CRAM

@@ -94,6 +94,66 @@ be written for. If a name change would make the answer to "does this
 file mention a device by name" go from yes to no with no loss of
 information, that is the rename to make.
 
+## Provenance annotations
+
+Much of this codebase's behaviour rests on evidence of very different
+strength - a table read straight out of a firmware dump, a law fitted to
+recordings of one owner's unit, a formula borrowed from someone else's
+project. A comment that states such a law says which kind of evidence
+it rests on, in one machine-checkable tag on its own comment line:
+
+```
+// @provenance class=MEASURED devices=JV-1080 ref=M-018
+/* @provenance class=FW-EXACT devices=SC-88 ref=0x78802
+   ...prose explaining the law and the evidence... */
+```
+
+- `class` (required) is exactly one of this closed set:
+  - `FW-EXACT` - read from, or reproducing, a dumped firmware or ROM's
+    own code or data; nothing is inferred beyond what the bytes say.
+  - `DOCUMENTED` - taken from a published first-party document (a
+    service manual's schematic or parts list, an owner's manual), not
+    recovered from code or audio.
+  - `MEASURED` - read off recordings of the real device or a
+    chip-level reference, with no free parameters chosen to make the
+    engine match.
+  - `FITTED` - parameters chosen so that *this engine's* output lands on
+    the measurement; they carry the engine's own remaining error.
+  - `CREDITED` - taken from a third party's work (another emulator,
+    published research) and not yet independently confirmed here.
+  - `UNVERIFIED` - believed, but with no evidence yet, or with evidence
+    that has not been checked against the device.
+- `devices` (required) is a comma-separated list, no spaces, of the
+  devices the evidence was gathered on or the law applies to, spelled as
+  the model name (`SC-55`, `SC-55mkII`, `JV-880`, `SC-88`, `JV-1080`). A
+  law measured on one device and assumed for another lists only the one
+  it was measured on; the assumption belongs in the prose.
+- `ref` (optional) points at the evidence, in whatever scheme already
+  names it: a measurement id (`M-018`), a provenance-log entry
+  (`P-0390`), a research-corpus decision (`D-27`), a taint-register
+  entry (`T-008`), a ROM address (`ROM1:0x617F`, `0x78802`), a capture
+  name. Several refs are comma-separated, no spaces. Leave it out rather
+  than write a placeholder such as `P-xxxx`.
+
+One tag states one claim. A comment whose parts rest on different
+evidence carries one tag per class (the analog output stage in
+`engines/gp/devices/jv880.cc` is `MEASURED` in its shape and `FITTED` in
+its numbers). The tag supplements the prose, it does not replace it: the
+reasoning, the numbers and their residuals stay in the comment.
+
+**Provenance tags are exempt from "never name a device".** A `devices=`
+list is documentation of where evidence came from, not logic: no code
+reads it, so it creates none of the coupling the naming rule exists to
+prevent, and it may appear in any file, generic or not.
+
+`libemusc/tools/lint-provenance.py` checks every tag (a `class` outside
+the set, a missing or malformed `devices`, an unknown key, a placeholder
+`ref`) and lists every comment that still states its evidence class in
+free text (`FW-EXACT`, `MEASURED`, `` `FIT` ``, `[DOCUMENT]`, ...)
+without a tag, as needing migration. `--summary` prints the per-file
+count of those; `--strict` makes them fail the run. New and edited
+comments use the tag.
+
 ## License headers
 
 A new file's header depends on where its content actually came from,

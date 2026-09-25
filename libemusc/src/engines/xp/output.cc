@@ -96,7 +96,8 @@ extern "C" const unsigned XP_OUTPUT_RESPONSE_SECTIONS = 0;
    [MEASURED]. It is the converter, not the chip, so it is here and not in
    the engine. Delete it the day libEmuSC's SC-88 path emits at 32 kHz and
    reconstructs properly, because then it is already in the signal. */
-/* THE ANALOG BOARD, read off the schematic and not fitted to anything.
+/* @provenance class=DOCUMENTED devices=SC-88 ref=SC-88-service-manual:p15
+   THE ANALOG BOARD, read off the schematic and not fitted to anything.
 
    Roland's SC-88 Service Manual (Jun. 1994), page 15, CIRCUIT DIAGRAM
    (ANALOG, SWITCH, TRANS, PHONES HOLDER), "SC-88 ANALOG & POWER SUPPLY
@@ -148,7 +149,7 @@ extern "C" const unsigned XP_OUTPUT_RESPONSE_SECTIONS = 0;
    those same recordings sit 18 to 27 dB below an unfiltered hold from
    17 to 20 kHz while the single-note archive's sit within 1 dB of it.
 
-   [DOCUMENT], a tier above [MEASURED]: component values read off
+   DOCUMENTED, a tier above MEASURED: component values read off
    Roland's published service manual, not recovered from audio.
    The poles are folded into the hold FIR's design target below rather
    than run as biquads: all five sit above the engine's own Nyquist,
