@@ -38,6 +38,7 @@
 #include "../../control_rom.h"
 #include "pitch.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -77,8 +78,13 @@ private:
   std::function<void(void)> _firstRunCompleteCallback = NULL;
   bool _firstRunComplete;
 
-  float _fetch_sample(int index);
-  float _interpolate();
+  // Called once per output sample; defined inline in wave_oscillator.cc so it
+  // folds into get_sample_set()'s loop instead of costing a call per sample.
+  inline float _interpolate(const float *pcm, int lastSample);
+
+  // _interpolationLUT scaled to [0, 1). Every Q12 entry fits a float's
+  // mantissa and 4096 is a power of two, so each value is exact.
+  static const std::array<std::array<float, 128>, 3> _interpolationCoeffs;
 
   // Lookup table from the Nuked-SC55 project by nukeykt
   static constexpr uint16_t _interpolationLUT[3][128] = {{

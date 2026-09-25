@@ -39,18 +39,34 @@ double xp(uint16_t raw)
   return (double)value * (double)(1u << kXpCoefficientShift[raw >> 14]) / 8192.0;
 }
 
-float tap(const struct xp_delay *dl, double back)
+void set_tap(const struct xp_delay *dl, float samples,
+             struct xp_delay_tap *t)
 {
+  t->on = samples > 0.0;
+  if (!t->on)
+    return;
+  double back = samples;
   if (back < 1.0)
     back = 1.0;
   if (back > (double)(dl->len - 2u))
     back = (double)(dl->len - 2u);
-  double read = (double)dl->pos - back;
-  while (read < 0.0)
-    read += (double)dl->len;
-  size_t i0 = (size_t)read;
-  double frac = read - (double)i0;
+  size_t whole = (size_t)back;
+  double fraction = back - (double)whole;
+  if (fraction > 0.0) {
+    t->offset = whole + 1u;
+    t->frac = 1.0 - fraction;
+  } else {
+    t->offset = whole;
+    t->frac = 0.0;
+  }
+}
+
+float tap(const struct xp_delay *dl, const struct xp_delay_tap *t)
+{
+  size_t i0 = dl->pos >= t->offset ? dl->pos - t->offset
+                                   : dl->pos + dl->len - t->offset;
   size_t i1 = i0 + 1u >= dl->len ? 0u : i0 + 1u;
+  double frac = t->frac;
   return (float)((1.0 - frac) * dl->buf[i0] + frac * dl->buf[i1]);
 }
 
@@ -132,6 +148,7 @@ bool delay_set_params(const struct xp_rom *rom, struct xp_delay *dl,
   unsigned centreUnits = centreWord - 0x8000u;
   double scale = dl->output_rate / (profile->delayUnitsPerMs * 1000.0);
   dl->centre_samples = (float)((double)centreUnits * scale);
+  set_tap(dl, dl->centre_samples, &dl->centre_tap);
 
   for (unsigned i = 0; i < 2; ++i) {
     uint8_t r = v[2 + i];
@@ -144,10 +161,13 @@ bool delay_set_params(const struct xp_rom *rom, struct xp_delay *dl,
       if (units > profile->delayMaxUnits)
         units = profile->delayMaxUnits;
     }
-    if (i == 0)
+    if (i == 0) {
       dl->left_samples = (float)((double)units * scale);
-    else
+      set_tap(dl, dl->left_samples, &dl->left_tap);
+    } else {
       dl->right_samples = (float)((double)units * scale);
+      set_tap(dl, dl->right_samples, &dl->right_tap);
+    }
   }
 
   /* `64*p` read as an XP coefficient is p/128 */
@@ -174,9 +194,9 @@ void delay_process(struct xp_delay *dl, const float *send, float *stereo,
     float x = send[k];
     dl->pre_state = dl->pre_in * x + dl->pre_fb * dl->pre_state;
     x = dl->pre_state;
-    float c = dl->centre_samples > 0.0 ? tap(dl, dl->centre_samples) : 0.0f;
-    float l = dl->left_samples > 0.0 ? tap(dl, dl->left_samples) : 0.0f;
-    float r = dl->right_samples > 0.0 ? tap(dl, dl->right_samples) : 0.0f;
+    float c = dl->centre_tap.on ? tap(dl, &dl->centre_tap) : 0.0f;
+    float l = dl->left_tap.on ? tap(dl, &dl->left_tap) : 0.0f;
+    float r = dl->right_tap.on ? tap(dl, &dl->right_tap) : 0.0f;
     /* Which tap closes the loop is not recovered; the centre time is the
        delay's own period, so it is the one used. */
     dl->buf[dl->pos] = x + dl->feedback * c;

@@ -27,6 +27,7 @@
 #include "pitch.h"
 #include "ctrl_matrix.h"
 #include "velocity_curve.h"
+#include "random.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -79,7 +80,7 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
     _afNoise(0), _afTickPhase(false),
     // Seeded per voice from a monotonic counter so that every voice and every
     // note gets its own sequence while the render stays reproducible - the
-    // counter is the only state here; std::rand() is folded in below only on a
+    // counter is the only state here; a GpRandom draw is folded in below only on a
     // patch that uses Analog Feel, so a render's seed varies the drift.
     _afRng(0x2545F491u + 0x9E3779B9u * ++_afSeedCounter),
     _lfo1FadeComplete(false),
@@ -95,7 +96,7 @@ Pitch::Pitch(ControlRom &ctrlRom, uint16_t instrumentIndex, int partialId,
   // from the per-voice seed before the first sample. Nothing here touches a
   // patch with Analog Feel 0, which keeps every Sound Canvas render bit-exact.
   if (_afDepth) {
-    _afRng ^= 2654435761u * (uint32_t) std::rand();
+    _afRng ^= 2654435761u * (uint32_t) GpRandom::next();
     if (!_afRng) _afRng = 0x9E3779B9u;
     for (int i = 0; i < 256; i++)
       _af_tick();
@@ -523,7 +524,7 @@ void Pitch::_init_envelope(uint8_t velocity)
   _portaBasePitch[_pbpIndex] += (_instPartial.finePitch - 0x40) * 10;
   _portaBasePitch[_pbpIndex] = std::max(0, _portaBasePitch[_pbpIndex]);
 
-  int8_t rnd = static_cast<int8_t>((std::rand() % 0xffff) >> 8);
+  int8_t rnd = static_cast<int8_t>((GpRandom::next() % 0xffff) >> 8);
   int16_t delta = ((rnd < 0 ? -rnd : rnd) * _instPartial.randPitch + 0x80) >> 8;
   _portaBasePitch[_pbpIndex] += (rnd < 0 ? -delta : delta) * 10;
   _phaseLevel[4] += (rnd < 0 ? -delta : delta) * 10;
@@ -950,7 +951,7 @@ void Pitch::_jv_init(uint8_t velocity)
   // kept in @0x995A[v]). The full +/- r is measured, not assumed: twelve dry
   // hits of Preset B key 56 (r = 100) span 137 cents on the reference and
   // twelve of key 38 (r = 50) span 73, both beyond what +/- r/2 allows. The
-  // engine's own seeded rand() is the source, as for the Sound Canvas random
+  // engine's own seeded GpRandom is the source, as for the Sound Canvas random
   // pitch and random pan.
   // FXM: the rate the oscillator alternates onto, from ROM2 0x581C indexed by
   // depth + 1 (scdb D-80). Off, or without the table, the multiplier is unity
@@ -969,7 +970,7 @@ void Pitch::_jv_init(uint8_t velocity)
   if (_instPartial.JVRandomPitchIdx && _LUT.hasJVRandomPitch) {
     const int idx = std::min<int>(_instPartial.JVRandomPitchIdx, 15);
     const int r = _LUT.JVRandomPitch[idx - 1];
-    const int d = std::rand() & 0x1ffff;
+    const int d = GpRandom::next() & 0x1ffff;
     const int mag = ((d & 0xffff) * r) >> 16;
     _jvRandCents10 = ((d & 0x10000) ? -mag : mag) * 10;
   }

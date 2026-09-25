@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.12)
 project(emuscd LANGUAGES CXX)
 
 if(WIN32)
-  add_executable(emusc-winmidi main_winmidi.cc)
+  add_executable(emusc-winmidi main_winmidi.cc audio_out_dsound.cc audio_out_dsound.h)
   target_link_libraries(emusc-winmidi PRIVATE emusc_static win9x_compat winmm)
   set_target_properties(emusc-winmidi PROPERTIES CXX_STANDARD 17 CXX_EXTENSIONS OFF)
   install(TARGETS emusc-winmidi DESTINATION bin)

@@ -100,7 +100,7 @@ static void test_held_rom(char **paths)
   assert(voice.components[0].tvf.resonance_interpolation == 0x095f);
   assert(renderer_render(&voice, output, 16) == 16);
   assert(renderer_voice_active(&voice));
-  renderer_voice_destroy(&voice);
+  renderer_voice_destroy(&renderer, &voice);
   assert(engine_init(&engine, &renderer));
   assert(engine_note_on(&engine, 0, 0, 0, 60, 100, 0,
                              XP_SAME_NOTE_FULL_MULTI, 1.0f));
@@ -110,6 +110,7 @@ static void test_held_rom(char **paths)
   assert(energy > 0.0);
   assert(engine_note_off(&engine, 0, 60));
   engine_destroy(&engine);
+  renderer_destroy(&renderer);
   for (i = 0; i < 4; ++i)
     free(chips[i]);
   free(control);
@@ -221,7 +222,7 @@ int main()
   memset(&voice, 0, sizeof voice);
   assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 110));
   assert(voice.component_count == 1);
-  renderer_voice_destroy(&voice);
+  renderer_voice_destroy(&renderer, &voice);
   control[0x40000 + 34 + 0x6c] = 0;
   control[0x40000 + 34 + 0x6d] = 127;
 
@@ -249,18 +250,18 @@ int main()
     memset(&probe, 0, sizeof probe);
     assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     flat = probe.components[0].static_pitch_word;
-    renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&renderer, &probe);
     put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 1000);
     memset(&probe, 0, sizeof probe);
     assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     with_raw = probe.components[0].static_pitch_word;
-    renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&renderer, &probe);
     put16(control + SC88_TEST_KEY_TABLE + 72 * 2, 0);
     put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 1000);
     memset(&probe, 0, sizeof probe);
     assert(renderer_note_on(&renderer, &probe, 0, 0, 72, 100));
     with_transformed = probe.components[0].static_pitch_word;
-    renderer_voice_destroy(&probe);
+    renderer_voice_destroy(&renderer, &probe);
     put16(control + SC88_TEST_KEY_TABLE + 66 * 2, 0);
     /* The entry at the raw key moves the word by its own value; the entry
        at the transformed key is not read at all. Both are asserted, so a
@@ -304,7 +305,7 @@ int main()
         else
           assert(half == here);
       }
-      renderer_voice_destroy(&probe);
+      renderer_voice_destroy(&renderer, &probe);
     }
   }
 
@@ -357,7 +358,7 @@ int main()
   assert(output[2] > output[0]);
   assert(output[2] == output[3]);
   assert(!renderer_voice_active(&voice));
-  renderer_voice_destroy(&voice);
+  renderer_voice_destroy(&renderer, &voice);
 
   {
     const struct xp_pan_controls hard_left = {64, 1};
@@ -366,7 +367,7 @@ int main()
     assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
     assert(renderer_render(&voice, output, 1) == 1);
     assert(output[0] > 0.0f && output[1] == 0.0f);
-    renderer_voice_destroy(&voice);
+    renderer_voice_destroy(&renderer, &voice);
   }
 
   {
@@ -375,8 +376,9 @@ int main()
     renderer_set_levels(&renderer, &muted);
     assert(renderer_note_on(&renderer, &voice, 0, 0, 60, 100));
     assert(voice.components[0].static_gain_q17 == 0);
-    renderer_voice_destroy(&voice);
+    renderer_voice_destroy(&renderer, &voice);
   }
+  renderer_destroy(&renderer);
   free(wave);
   free(control);
 

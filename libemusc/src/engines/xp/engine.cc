@@ -246,7 +246,7 @@ void freeSlot(struct xp_engine *engine, uint8_t slotIndex, bool prepend)
       }
     }
   }
-  std::free(slot->component.pcm24);
+  renderer_component_release(engine->renderer, &slot->component);
   std::memset(slot, 0, sizeof *slot);
   slot->note = XP_ENGINE_NONE;
   if (prepend) {
@@ -411,8 +411,8 @@ void stopVoice(struct xp_engine *engine, uint8_t slotIndex)
     stop->component = slot->component;
     stop->component.static_gain_current_q17 = current;
     stop->component.static_gain_q17 = 0;
-    /* The decoded sample moves with the voice; the slot must not free the
-       buffer the ramp is still reading. */
+    /* The wave reference moves with the voice; the slot must not release
+       the buffer the ramp is still reading. */
     slot->component.pcm24 = nullptr;
     stop->active = true;
     return;
@@ -1035,10 +1035,12 @@ void engine_destroy(struct xp_engine *engine)
     return;
   for (unsigned i = 0; i < XP_ENGINE_SLOT_COUNT; ++i)
     if (engine->slots[i].allocated)
-      std::free(engine->slots[i].component.pcm24);
+      renderer_component_release(engine->renderer,
+                                 &engine->slots[i].component);
   for (unsigned i = 0; i < XP_ENGINE_STOPPING_COUNT; ++i)
     if (engine->stopping[i].active)
-      std::free(engine->stopping[i].component.pcm24);
+      renderer_component_release(engine->renderer,
+                                 &engine->stopping[i].component);
   std::memset(engine, 0, sizeof *engine);
 }
 
@@ -1127,7 +1129,7 @@ bool engine_note_on(struct xp_engine *engine, uint8_t part,
   uint8_t noteIndex = popNote(engine);
   if (noteIndex == XP_ENGINE_NONE ||
       engine->free_slot_count < voice.component_count) {
-    renderer_voice_destroy(&voice);
+    renderer_voice_destroy(engine->renderer, &voice);
     return false;
   }
   struct xp_engine_note *note = engine->notes + noteIndex;
@@ -1434,7 +1436,7 @@ void engine_render_with_send(struct xp_engine *engine, float *stereo,
       if (!registerQ17 || !stop->component.active ||
           !oscillator_next(&stop->component.oscillator, &sample)) {
         /* The register has arrived at zero, or the sample ran out first. */
-        std::free(stop->component.pcm24);
+        renderer_component_release(engine->renderer, &stop->component);
         std::memset(stop, 0, sizeof *stop);
         continue;
       }

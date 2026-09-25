@@ -127,7 +127,11 @@ Rendering:
                          in GM mode, and none leaves it in its own power-on
                          patch mode (one patch on channel 1).
   --tail SECONDS         Silence rendered after the last MIDI event (default: 2)
-  --seed N               Seed for libEmuSC's use of std::rand() (default: 1)
+  --max-seconds SECONDS  Stop after this much output audio, cutting the render
+                         short of the file's full length (and of --tail) -
+                         for quickly reproducing a symptom or comparing builds
+                         without waiting out a whole song. Default: unlimited.
+  --seed N               Seed for libEmuSC's random source (default: 1)
   --bits 16|32           16-bit PCM or IEEE float32 samples (default: 16).
                          32 floors a decaying tail at about -101 dBFS lower
                          than 16 bits does, which matters when the top octave
@@ -160,6 +164,7 @@ struct Options {
   uint32_t rate = 0;
   std::string reset = "gs";
   double tail = 2.0;
+  double max_seconds = 0.0;   // 0 = unlimited
   unsigned seed = 1;
   double gain_db = 0.0;
   bool as_float = false;
@@ -221,6 +226,7 @@ Options parse_args(int argc, char **argv) {
     else if (a == "--rate")        o.rate = static_cast<uint32_t>(std::stoul(need("--rate")));
     else if (a == "--reset")       o.reset = need("--reset");
     else if (a == "--tail")        o.tail = std::stod(need("--tail"));
+    else if (a == "--max-seconds") o.max_seconds = std::stod(need("--max-seconds"));
     else if (a == "--seed")        o.seed = static_cast<unsigned>(std::stoul(need("--seed")));
     else if (a == "--gain-db")     o.gain_db = std::stod(need("--gain-db"));
     else if (a == "--float")       o.as_float = true;
@@ -279,6 +285,7 @@ Options parse_args(int argc, char **argv) {
   if (o.reset != "gm" && o.reset != "gs" && o.reset != "none")
     die(1, "--reset must be gm, gs or none");
   if (o.tail < 0) die(1, "--tail must be >= 0");
+  if (o.max_seconds < 0) die(1, "--max-seconds must be >= 0");
   if (o.block < 1) die(1, "--block must be >= 1");
   if (o.max_voices_set && o.max_voices < 1)
     die(1, "--max-voices must be >= 1");
@@ -461,10 +468,10 @@ int main(int argc, char **argv) {
   EmuSC::Synth::SoundMap map = (o.reset == "gm") ? EmuSC::Synth::SoundMap::GS_GM
                                                  : EmuSC::Synth::SoundMap::GS;
   EmuSC::Synth synth(*ctrl, *wave, map);
-  // Synth's constructor seeds std::rand() from the wall clock; libEmuSC then
-  // draws from std::rand() for random pan, random pitch and the sample-and-hold
+  // Synth's constructor seeds libEmuSC's random source from the wall clock;
+  // libEmuSC draws from it for random pan, random pitch and the sample-and-hold
   // LFO. Re-seed with a fixed value so the render is reproducible.
-  std::srand(o.seed);
+  EmuSC::Synth::seed_random(o.seed);
   if (o.max_voices_set) synth.set_max_voices(o.max_voices);
   synth.set_audio_format(o.rate, 2);   // also instantiates the 16 parts
 
@@ -516,6 +523,10 @@ int main(int argc, char **argv) {
 
   uint64_t tail_frames = static_cast<uint64_t>(std::llround(o.tail * o.rate));
   uint64_t total_frames = (sched.empty() ? 0 : last_event_frame + 1) + tail_frames;
+  if (o.max_seconds > 0) {
+    uint64_t max_frames = static_cast<uint64_t>(std::llround(o.max_seconds * o.rate));
+    if (max_frames < total_frames) total_frames = max_frames;
+  }
 
   std::string timeBase = midi.smpte ? "SMPTE time base"
                                      : std::to_string(midi.ppqn) + " ppqn";

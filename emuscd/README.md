@@ -88,6 +88,16 @@ emuscd --pcm hw:1
 `--list-pcm` shows what's available; ALSA's own `ALSA_CARD` environment
 variable still works too.
 
+### Audio output API
+
+WinMM `waveOut` is the default everywhere. `--audio-api dsound` selects
+DirectSound instead: one looping secondary buffer, kept `--latency` ms ahead
+of the play cursor (more if the driver or the scheduler's timer granularity
+needs it), with the primary buffer set to the stream's own rate so the mixer
+does not resample. `dsound.dll` is loaded only when this is asked for, so the
+executable's DLL imports and its Windows 98 floor are unchanged. Underruns are
+reported on the console; raising `--latency` is the remedy.
+
 ### Runtime device switching
 
 While emuscd is running, type a device name at its stdin to switch, or
@@ -125,9 +135,12 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 ```
 --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
 --midi-in N          MIDI input device index (default: 0)
---wave-out N         Wave output device index (default: system default)
+--audio-api API      Audio output API: winmm or dsound (default: winmm)
+--wave-out N         WinMM wave output device index (default: system default)
+--dsound-out N       DirectSound output device index (default: system default)
 --list-midi-in       List MIDI input devices and exit
---list-wave-out      List wave output devices and exit
+--list-wave-out      List WinMM wave output devices and exit
+--list-dsound-out    List DirectSound output devices and exit
 --rom-dir DIR        Directory holding device ROM files (default:
                       %EMUSCD_ROM_DIR%, or .\roms if unset)
 --rate HZ            Audio sample rate (default: 48000)
@@ -139,6 +152,16 @@ emusc-winmidi.exe --device sc88 --midi-in 1
                      own README for details)
 --help               Show full help
 ```
+
+### Audio output API
+
+WinMM `waveOut` is the default everywhere. `--audio-api dsound` selects
+DirectSound instead: one looping secondary buffer, kept `--latency` ms ahead
+of the play cursor (more if the driver or the scheduler's timer granularity
+needs it), with the primary buffer set to the stream's own rate so the mixer
+does not resample. `dsound.dll` is loaded only when this is asked for, so the
+executable's DLL imports and its Windows 98 floor are unchanged. Underruns are
+reported on the console; raising `--latency` is the remedy.
 
 ### Runtime device switching
 

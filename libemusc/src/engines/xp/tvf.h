@@ -84,7 +84,7 @@ struct xp_tvf_audio_state {
   /* g's own memo: a pure function of the rounded word (see
      tvf_audio_process_provisional), so a repeat word - the common case,
      since the register glides in steps far coarser than one word per
-     sample - reuses it instead of paying exp2+asin+sin again.
+     sample - reuses it without touching the shared coefficient table.
      tvf_audio_reset's memset leaves memo_valid false, which is correct:
      word 0 is a real, distinct key, not "no memo yet". */
   uint32_t memo_word;
@@ -197,7 +197,27 @@ void tvf_advance_registers(struct xp_tvf_registers *registers,
  * own rate. Slope from the ROM, anchor inferred - see tvf.cc. */
 double tvf_word_to_hz(uint32_t word);
 
+/* The filter coefficient g for every TVF-F word below XP_TVF_NYQUIST_WORD
+ * at one host rate. Every word a voice can reach is in that range: the
+ * register is a 16-bit limit-clamped value, at most 0x7fff, shifted left
+ * three. g is a pure function of the word and the rate, so an entry is
+ * computed by the same code as an uncached coefficient the first time any
+ * voice asks for it and read back from then on - the same value, not an
+ * approximation of it. 0 marks an entry not yet computed; no word yields a
+ * g of 0. One table per Device, since the rate is fixed per Device. */
+struct xp_tvf_coefficients {
+  double rate;
+  float *g;
+};
+
+/* Allocates the XP_TVF_NYQUIST_WORD-entry table (1 MiB). */
+bool tvf_coefficients_init(struct xp_tvf_coefficients *coefficients,
+                           double rate);
+void tvf_coefficients_destroy(struct xp_tvf_coefficients *coefficients);
+
 void tvf_audio_reset(struct xp_tvf_audio_state *state);
+/* user is the Device's struct xp_tvf_coefficients, or NULL for the chip's
+ * own rate with nothing cached across voices. */
 float tvf_audio_process_provisional(void *user, struct xp_tvf_audio_state *state,
                                      const struct xp_tvf_registers *registers,
                                      double periodFraction, float input);

@@ -19,11 +19,13 @@
 #include <string>
 #include <vector>
 
+#include "audio_out_dsound.h"
 #include "common.h"
 #include "../libemusc/src/synth.h"
 #include "../libemusc/src/control_rom.h"
 #include "../libemusc/src/wave_rom.h"
 #include "../libemusc/tools/mxcsr_ftz.h"
+#include "../libemusc/tools/win_realtime.h"
 #include "../libemusc/src/simple_mutex.h"
 
 using namespace emuscd;
@@ -37,9 +39,14 @@ const char *USAGE =
 "  --device NAME       Device to emulate (default: sc88)\n"
 "                       Supported: sc55, sc55mkii, sc88, jv880, jv1080\n"
 "  --midi-in N          MIDI input device index (default: 0)\n"
-"  --wave-out N         Wave output device index (default: system default)\n"
+"  --audio-api API      Audio output API: winmm or dsound (default: winmm)\n"
+"  --wave-out N         WinMM wave output device index (default: system\n"
+"                        default)\n"
+"  --dsound-out N       DirectSound output device index (default: system\n"
+"                        default)\n"
 "  --list-midi-in       List MIDI input devices and exit\n"
-"  --list-wave-out      List wave output devices and exit\n"
+"  --list-wave-out      List WinMM wave output devices and exit\n"
+"  --list-dsound-out    List DirectSound output devices and exit\n"
 "  --rom-dir DIR        Directory holding device ROM files (default:\n"
 "                        %EMUSCD_ROM_DIR%, or .\\roms if unset)\n"
 "  --rate HZ            Audio sample rate (default: 48000)\n"
@@ -98,7 +105,8 @@ class WinMidiDaemon {
 public:
   WinMidiDaemon(const std::string &dev, const std::string &romDir,
                 int midiInId, int waveOutId, unsigned rate, unsigned block,
-                unsigned latencyMs, double gainDb)
+                unsigned latencyMs, double gainDb, bool useDSound,
+                int dsoundOutId)
       : _sampleRate(rate), _blockFrames(block), _romDir(romDir),
         _gainLin(gain_db_to_linear(gainDb)) {
     InitializeCriticalSection(&_midiLock);
@@ -109,10 +117,12 @@ public:
       std::exit(2);
     }
     open_midi_in(midiInId);
-    open_wave_out(waveOutId, latencyMs);
+    if (useDSound) open_dsound(dsoundOutId, latencyMs);
+    else open_wave_out(waveOutId, latencyMs);
   }
 
   ~WinMidiDaemon() {
+    _dsound.reset();
     if (_hMidiIn) { midiInStop(_hMidiIn); midiInReset(_hMidiIn); midiInClose(_hMidiIn); }
     if (_hWaveOut) { waveOutReset(_hWaveOut); waveOutClose(_hWaveOut); }
     DeleteCriticalSection(&_midiLock);
@@ -231,6 +241,12 @@ public:
                  _sampleRate, numBuffers, _blockFrames);
   }
 
+  void open_dsound(int id, unsigned latencyMs) {
+    _dsound = DSoundOut::open(id, _sampleRate, _blockFrames, latencyMs,
+                              &dsound_fill, this);
+    if (!_dsound) std::exit(1);
+  }
+
   void run() {
     // _running must already be true before the stdin thread starts: its own
     // loop checks the same flag first thing, and if it started running
@@ -239,6 +255,10 @@ public:
     // stop the daemon at all.
     _running = true;
     HANDLE stdinThread = CreateThread(nullptr, 0, &stdin_thread_proc, this, 0, nullptr);
+
+    // This thread alone refills the wave-out queue.
+    emusc_tools::SystemTimerResolution timerRes(1);
+    emusc_tools::raise_audio_thread_priority();
 
     std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
                  "or 'quit' to exit.\n");
@@ -255,6 +275,7 @@ public:
       drain_midi_queue();
       drain_sysex();
       pump_wave_buffers();
+      if (_dsound) _dsound->pump();
       Sleep(1);
     }
 
@@ -267,14 +288,20 @@ public:
 private:
   struct WaveBuffer { WAVEHDR hdr; std::vector<int16_t> data; };
 
-  void fill_buffer(WaveBuffer &b) {
-    for (unsigned i = 0; i < _blockFrames; i++) {
+  void render_frames(int16_t *dst, unsigned frames) {
+    for (unsigned i = 0; i < frames; i++) {
       float l = 0.0f, r = 0.0f;
       if (_synth) _synth->get_next_frame(l, r);
       apply_gain(l, r, _gainLin);
-      b.data[i * 2]     = to_i16(l);
-      b.data[i * 2 + 1] = to_i16(r);
+      dst[i * 2]     = to_i16(l);
+      dst[i * 2 + 1] = to_i16(r);
     }
+  }
+
+  void fill_buffer(WaveBuffer &b) { render_frames(b.data.data(), _blockFrames); }
+
+  static void dsound_fill(void *self, int16_t *dst, unsigned frames) {
+    static_cast<WinMidiDaemon *>(self)->render_frames(dst, frames);
   }
 
   void pump_wave_buffers() {
@@ -384,6 +411,7 @@ private:
   HMIDIIN _hMidiIn = nullptr;
   HWAVEOUT _hWaveOut = nullptr;
   std::vector<WaveBuffer> _buffers;
+  std::unique_ptr<DSoundOut> _dsound;
 
   CRITICAL_SECTION _midiLock;
   std::vector<MidiEvt> _midiQueue;
@@ -405,6 +433,8 @@ int main(int argc, char **argv) {
   std::string romDir;
   int midiInId = 0;
   int waveOutId = -1;
+  int dsoundOutId = -1;
+  bool useDSound = false;
   unsigned rate = 48000;
   unsigned block = 256;
   unsigned latency = 20;
@@ -423,12 +453,24 @@ int main(int argc, char **argv) {
     else if (a == "--rom-dir")       romDir = need("--rom-dir");
     else if (a == "--midi-in")       midiInId = std::stoi(need("--midi-in"));
     else if (a == "--wave-out")      waveOutId = std::stoi(need("--wave-out"));
+    else if (a == "--dsound-out")    dsoundOutId = std::stoi(need("--dsound-out"));
+    else if (a == "--audio-api") {
+      std::string api = need("--audio-api");
+      if (api == "winmm") useDSound = false;
+      else if (api == "dsound") useDSound = true;
+      else {
+        std::fprintf(stderr, "emusc-winmidi: --audio-api must be winmm or "
+                     "dsound\n");
+        return 1;
+      }
+    }
     else if (a == "--rate")          rate = static_cast<unsigned>(std::stoul(need("--rate")));
     else if (a == "--block")         block = static_cast<unsigned>(std::stoul(need("--block")));
     else if (a == "--latency")       latency = static_cast<unsigned>(std::stoul(need("--latency")));
     else if (a == "--gain-db")       gainDb = std::stod(need("--gain-db"));
     else if (a == "--list-midi-in")  { list_midi_in_devices(); return 0; }
     else if (a == "--list-wave-out") { list_wave_out_devices(); return 0; }
+    else if (a == "--list-dsound-out") return DSoundOut::list_devices() ? 0 : 1;
     else if (a == "--help" || a == "-h") { std::printf("%s", USAGE); return 0; }
     else {
       std::fprintf(stderr, "emusc-winmidi: unknown option '%s'\n", a.c_str());
@@ -448,7 +490,8 @@ int main(int argc, char **argv) {
 
   if (romDir.empty()) romDir = default_rom_dir();
 
-  WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency, gainDb);
+  WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency, gainDb,
+                       useDSound, dsoundOutId);
   daemon.run();
   return 0;
 }
