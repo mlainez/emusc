@@ -180,10 +180,12 @@ struct Device {
   uint8_t eq_low_frequency, eq_low_gain;
   uint8_t eq_high_frequency, eq_high_gain;
   uint8_t system_mode;
+  double output_rate;
   /* The filter's cutoff is a fraction of the sound chip's own 32 kHz,
      so the coefficient has to be recomputed for whatever rate the
-     caller renders at; the transfer function is handed this. */
-  double output_rate;
+     caller renders at; the transfer function is handed this table of
+     coefficients at output_rate. */
+  struct xp_tvf_coefficients tvf_coefficients;
   /* SysEx writes that parsed correctly but name an address this
      implementation does not act on. Counted rather than dropped quietly,
      so a render can say what it ignored. */
