@@ -52,6 +52,12 @@ set(EMUSC_SOURCES
   engines/gp/tva.h
   engines/gp/tvf.cc
   engines/gp/tvf.h
+  engines/gp/tvf_cents_ratio_law.cc
+  engines/gp/tvf_cents_ratio_law.h
+  engines/gp/tvf_indexed_law.cc
+  engines/gp/tvf_indexed_law.h
+  engines/gp/tvf_law.cc
+  engines/gp/tvf_law.h
   engines/gp/wave_generator.cc
   engines/gp/wave_generator.h
   engines/gp/wave_oscillator.cc
