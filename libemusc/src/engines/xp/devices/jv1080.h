@@ -331,15 +331,19 @@ struct XpJv1080Voice {
 
 struct xp_rom;
 struct xp_packed_record;
+struct xp_wave_cache;
 
 namespace EmuSC { namespace Xp {
 
 /* Set a voice up to play one tone. `tone` is the tone's 130 decoded bytes -
  * the form the packed record decodes to, and the same form the device's own
  * SysEx tone frames carry - and patchLevel/patchPan are the patch common's.
- * `banks` are the eight descrambled 1 MiB wave banks. The element is decoded
- * into `pcm`, which must outlive the voice; false means this tone does not
- * sound for this key and velocity, which is not an error.
+ * `banks` are the eight descrambled 1 MiB wave banks. The element's decoded
+ * PCM comes from `cache` (wave_cache_acquire; null decodes a private copy)
+ * and is `voice->pcm`, which the caller gives back with exactly one
+ * wave_cache_release(cache, voice->pcm) once the voice is done with it.
+ * False means this tone does not sound for this key and velocity, which is
+ * not an error, and holds no PCM.
  */
 bool jv1080_voice_start(const struct xp_rom *rom,
                          const struct XpVoiceFieldMap *fields,
@@ -348,7 +352,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
-                         int32_t *pcm, size_t capacity,
+                         struct xp_wave_cache *cache,
                          double outputRate, struct XpJv1080Voice *voice);
 
 /* Decode one patch's tone into `tone` (130 bytes) and its patch common's
@@ -358,9 +362,9 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
                         uint8_t *tone, unsigned *patchLevel,
                         unsigned *patchPan);
 
-/* How many decoded samples this tone needs at this key, so a caller can
- * size the buffer jv1080_voice_start decodes into. False where the tone
- * does not sound, the same cases jv1080_voice_start refuses. `keyShift`
+/* How many decoded samples this tone reads at this key, without decoding
+ * them. False where the tone does not sound, the same cases
+ * jv1080_voice_start refuses short of a failed decode. `keyShift`
  * is the part's key shift, which jv1080_voice_start reads from its
  * controls: both move the zone the key selects. */
 bool jv1080_voice_span(const struct xp_rom *rom,

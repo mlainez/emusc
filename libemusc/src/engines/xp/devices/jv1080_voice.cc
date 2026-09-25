@@ -24,6 +24,7 @@
 #include "../common/constants.h"
 #include "../packed_rom.h"
 #include "../rom.h"
+#include "../wave_cache.h"
 
 #include <cmath>
 #include <cstring>
@@ -2167,12 +2168,12 @@ bool jv1080_voice_start(const struct xp_rom *rom,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
-                         int32_t *pcm, size_t capacity,
+                         struct xp_wave_cache *cache,
                          double outputRate, struct XpJv1080Voice *voice)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !fields || !tone || !controls || !banks || !bankSizes ||
-      !pcm || !voice ||
+      !voice ||
       key > 127u || velocity > 127u || velocity == 0u || outputRate <= 0.0)
     return false;
   std::memset(voice, 0, sizeof *voice);
@@ -2187,18 +2188,21 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* Decode the element. The whole span is decoded at note-on rather than
      streamed: the accumulator is differential, so a sample's value depends
      on every delta before it in the block, and a probe that holds the span
-     is simpler than one that reseeds. */
-  size_t needed = (size_t)(element.bank_end - (element.bank_start & ~0x0fu)) + 1u;
-  if (needed > capacity)
+     is simpler than one that reseeds. The span is the one fce_decode_storage
+     decodes for a descriptor from bank_start to bank_end - the 16-sample
+     block holding bank_start through bank_end - which is what the cache
+     keys on. */
+  struct xp_wave_descriptor span;
+  std::memset(&span, 0, sizeof span);
+  span.address_a = element.bank_start;
+  span.address_c = element.bank_end;
+  const int32_t *pcm = nullptr;
+  uint32_t base = 0;
+  size_t needed = 0;
+  if (!wave_cache_acquire(cache, profile, banks[element.bank],
+                          bankSizes[element.bank], &span, &pcm, &base,
+                          &needed))
     return false;
-  struct xp_fce_decoder decoder;
-  if (!fce_decoder_reset(profile, &decoder, element.bank_start))
-    return false;
-  uint32_t base = element.bank_start & ~UINT32_C(0x0f);
-  for (size_t i = 0; i < needed; ++i)
-    if (!fce_decoder_read(&decoder, banks[element.bank],
-                          bankSizes[element.bank], pcm + i))
-      return false;
 
   voice->pcm = pcm;
   voice->pcm_count = needed;
@@ -2279,8 +2283,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      0 cents, but every element sitting at its own offset - from -23 to
      +48 cents in this song alone - so the parts disagree with each other. */
   rootHz *= std::pow(2.0, -((double)element.fine_tune - 1024.0) / 1024.0 / 12.0);
-  if (rootHz <= 0.0)
+  if (rootHz <= 0.0) {
+    wave_cache_release(cache, voice->pcm);
+    voice->pcm = nullptr;
     return false;
+  }
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
   /* THE PLAYBACK CEILING: a wave is never read faster than four times its
      own rate, two octaves above the root its zone was recorded at,

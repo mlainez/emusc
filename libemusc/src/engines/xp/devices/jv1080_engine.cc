@@ -24,6 +24,7 @@
  */
 #include "jv1080.h"
 #include "jv1080_resample.h"
+#include "../wave_cache.h"
 #include "../reverb.h"
 #include "../chorus.h"
 #include "../drive.h"
@@ -725,8 +726,8 @@ struct Part {
 
 struct Voice {
   struct XpJv1080Voice voice;
-  int32_t *pcm;
-  size_t capacity;
+  /* Where voice.pcm came from, and where free_voice gives it back. */
+  struct xp_wave_cache *wave_cache;
   uint64_t serial;
   uint8_t part;
   uint8_t key;
@@ -940,6 +941,8 @@ struct Engine {
   struct xp_rom rom;
   const uint8_t *banks[XP_WAVE_BANK_COUNT];
   size_t bank_sizes[XP_WAVE_BANK_COUNT];
+  /* Decoded element PCM, shared by every voice reading the same span. */
+  struct xp_wave_cache wave_cache;
   /* The rate everything below runs at: the machine's own 32 kHz, whatever
      the host asks for. `resampler` carries it to the host's rate; at a
      32 kHz host there is none and the engine's frames are the host's. */
@@ -1091,9 +1094,9 @@ void free_voice(struct Voice *voice)
     free_voice(other);
   }
   voice->pair_feed = false;
-  std::free(voice->pcm);
-  voice->pcm = nullptr;
-  voice->capacity = 0;
+  wave_cache_release(voice->wave_cache, voice->voice.pcm);
+  voice->voice.pcm = nullptr;
+  voice->wave_cache = nullptr;
   voice->allocated = false;
   voice->key_down = false;
   voice->delay_mode = 0u;
@@ -2632,21 +2635,16 @@ struct Voice *start_record(struct Engine *engine, unsigned part,
     return nullptr;
   /* The decode is differential, so a sample's value depends on every delta
      before it in the block and the element's span is decoded whole at
-     note-on rather than streamed. The sibling engine's renderer does the
-     same thing for the same reason. */
-  int32_t *pcm = (int32_t *)std::malloc(samples * sizeof *pcm);
-  if (!pcm)
-    return nullptr;
+     note-on rather than streamed, through the same decoded-PCM cache the
+     sibling engine's renderer shares between its voices. */
   struct XpJv1080PartControls controls;
   part_controls(engine, part, &controls);
   if (!jv1080_voice_start(&engine->rom, fields, bytes, &controls, sounded,
-                          velocity, engine->banks, engine->bank_sizes, pcm,
-                          samples, engine->output_rate, &voice->voice)) {
-    std::free(pcm);
+                          velocity, engine->banks, engine->bank_sizes,
+                          &engine->wave_cache, engine->output_rate,
+                          &voice->voice))
     return nullptr;
-  }
-  voice->pcm = pcm;
-  voice->capacity = samples;
+  voice->wave_cache = &engine->wave_cache;
   voice->serial = ++engine->serial;
   voice->part = (uint8_t)part;
   voice->reverb_send = 0.0f;
@@ -2982,6 +2980,7 @@ void engine_free(void *state)
     return;
   for (unsigned i = 0; i < kMaxVoices; ++i)
     free_voice(engine->voices + i);
+  wave_cache_clear(&engine->wave_cache);
   if (engine->reverb_ready)
     reverb_destroy(&engine->reverb);
   if (engine->chorus_ready)
