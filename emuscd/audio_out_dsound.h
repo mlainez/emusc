@@ -4,8 +4,8 @@
  * This file consists entirely of AI-generated code without direct human
  * authorship and is dedicated to the public domain under CC0 1.0.
  *
- *  DirectSound output for emusc-winmidi (--audio-api dsound), the alternative
- *  to its built-in WinMM waveOut ring.
+ *  DirectSound output for emusc-winmidi (its default --audio-api auto, or
+ *  --audio-api dsound), the alternative to its built-in WinMM waveOut ring.
  */
 
 #pragma once
@@ -23,7 +23,7 @@ namespace emuscd {
 //
 // dsound.dll and ole32.dll are loaded at runtime rather than linked, so the
 // executable's import table is unchanged by this backend's presence and a
-// system without DirectSound only fails when --audio-api dsound is asked for.
+// system without DirectSound can still start, with open() returning nullptr.
 class DSoundOut {
 public:
   // Renders exactly `frames` interleaved 16-bit stereo frames into `dst`.
