@@ -70,17 +70,33 @@ drive emusc-render and another renderer with the same options):
                          no --out, nothing is written: audio only. Give both
                          to render a file and listen at the same time.
   --play                 Straight to the sound card as it renders - ALSA on
-                         Linux, WinMM on Windows - instead of relying on an
-                         OS or user MIDI player. Always 16-bit regardless of
+                         Linux, DirectSound or WinMM on Windows (see
+                         --audio-api) - instead of relying on an OS or user
+                         MIDI player. Always 16-bit regardless of
                          --bits/--float; paced by the audio device itself,
                          so this run takes as long as the song does.
+  --audio-api API        --play on Windows only: auto, dsound or winmm.
+                         auto (the default) uses DirectSound, falling back
+                         to WinMM with the reason on stderr if DirectSound
+                         cannot be opened; dsound or winmm uses that API
+                         alone, and its failure ends the run.
   --block N              --play only: audio frames per device write, same
                          meaning as emuscd's/emusc-winmidi's --block
-                         (default: 2048)
+                         (default: 2048). If raising --latency alone does
+                         not stop dropouts, try a larger block as well.
   --latency MS           --play only: requested output buffer depth, same
-                         meaning as emuscd's/emusc-winmidi's --latency.
-                         Raise this (and --block) if playback breaks up on
-                         slow hardware (default: 200)
+                         meaning as emuscd's/emusc-winmidi's --latency
+                         (default: 500). The right value depends on the
+                         machine - CPU speed, sound card and driver, and how
+                         much else competes for the CPU (window dragging,
+                         disk I/O) - so expect to tune it: if playback drops
+                         out, raise it in steps until it stops (heavy
+                         desktop activity on slow hardware can need around
+                         1000); if nothing drops out and playback starts
+                         too slowly for your taste, lower it. A larger value
+                         only delays the first sound: this is file playback,
+                         not live MIDI input, so nothing during playback
+                         depends on it.
   --max-voices N         caps simultaneous voices below the loaded device's
                          real polyphony (24 SC-55, 28 SC-55mkII/JV-880, 64
                          SC-88/JV-1080), trading polyphony for headroom on
@@ -170,8 +186,9 @@ struct Options {
   bool as_float = false;
   bool verbose = false;
   bool play = false;
+  std::string audio_api = "auto";
   unsigned block = 2048;
-  unsigned latency = 200;
+  unsigned latency = 500;
   bool max_voices_set = false;
   unsigned max_voices = 0;
 };
@@ -238,6 +255,13 @@ Options parse_args(int argc, char **argv) {
     }
     else if (a == "--verbose")     o.verbose = true;
     else if (a == "--play")        o.play = true;
+#ifdef _WIN32
+    else if (a == "--audio-api") {
+      o.audio_api = need("--audio-api");
+      if (o.audio_api != "auto" && o.audio_api != "dsound" && o.audio_api != "winmm")
+        die(1, "--audio-api must be auto, dsound or winmm");
+    }
+#endif
     else if (a == "--block")       o.block = static_cast<unsigned>(std::stoul(need("--block")));
     else if (a == "--latency")     o.latency = static_cast<unsigned>(std::stoul(need("--latency")));
     else if (a == "--max-voices") {
@@ -552,7 +576,16 @@ int main(int argc, char **argv) {
     // audio device claims the sound card for a run that was going to fail
     // anyway.
     std::unique_ptr<AudioOut> audio_out;
-    if (o.play) audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
+    if (o.play) {
+#ifdef _WIN32
+      const AudioOut::Api api = o.audio_api == "dsound" ? AudioOut::Api::DSound
+                              : o.audio_api == "winmm"  ? AudioOut::Api::WinMM
+                                                        : AudioOut::Api::Auto;
+      audio_out.reset(new AudioOut(o.rate, o.block, o.latency, api));
+#else
+      audio_out.reset(new AudioOut(o.rate, o.block, o.latency));
+#endif
+    }
 
     std::vector<int16_t> buf;
     std::vector<float> fbuf;
@@ -594,15 +627,22 @@ int main(int argc, char **argv) {
                      onB, trackPort.size());
     }
 
-    // --play real-time headroom: printed periodically so a render that
-    // cannot keep up shows exactly when it falls behind, rather than just
-    // sounding increasingly delayed with no way to tell why. "window" is
-    // since the last report, "overall" is since playback started - a
-    // steadily healthy window ratio with a falling overall ratio means an
-    // early one-time stall (e.g. ROM load) rather than a sustained deficit.
-    const auto play_start = std::chrono::steady_clock::now();
-    auto window_start = play_start;
-    uint64_t window_start_frame = 0;
+    // --play CPU utilization: the share of wall-clock time spent computing
+    // audio, as opposed to blocked in AudioOut::write() waiting for the
+    // device to drain. Audio produced per wall-clock second cannot measure
+    // headroom here, since the device paces the loop to real time however
+    // fast the CPU is; busy time is a subset of elapsed time, so this reads
+    // 0-100%, low meaning spare capacity and near 100% meaning none.
+    // "window" is since the last report, "overall" since playback started.
+    // Only whole blocks are timed (one clock read at the start and end of
+    // each block's compute), keeping the instrumentation itself negligible.
+    // Without --play, render_start instead measures a clean, unthrottled
+    // render speed at the end (see the "wrote N frames" report below).
+    using clock = std::chrono::steady_clock;
+    const auto render_start = clock::now();
+    auto window_start = render_start;
+    auto block_start = render_start;
+    clock::duration window_busy{}, overall_busy{};
 
     // Samples at full scale, counted here on what the tool writes rather
     // than taken from the library's own report: anything that rounds to
@@ -669,25 +709,28 @@ int main(int argc, char **argv) {
         play_buf.push_back(to_i16(l));
         play_buf.push_back(to_i16(r));
         if (play_buf.size() >= 2 * (size_t) o.block) {
+          const auto compute_end = clock::now();
+          window_busy += compute_end - block_start;
+          overall_busy += compute_end - block_start;
+
           audio_out->write(play_buf.data(), play_buf.size() / 2);
           play_buf.clear();
 
-          const auto now = std::chrono::steady_clock::now();
+          const auto now = clock::now();
+          block_start = now;
           if (now - window_start >= std::chrono::seconds(2)) {
-            const double window_wall =
-              std::chrono::duration<double>(now - window_start).count();
-            const double window_audio =
-              (double)(fr + 1 - window_start_frame) / o.rate;
-            const double overall_wall =
-              std::chrono::duration<double>(now - play_start).count();
-            const double overall_audio = (double)(fr + 1) / o.rate;
+            using secs = std::chrono::duration<double>;
+            const double window_pct = 100.0 * secs(window_busy).count() /
+                                      secs(now - window_start).count();
+            const double overall_pct = 100.0 * secs(overall_busy).count() /
+                                       secs(now - render_start).count();
             std::fprintf(stderr,
-                         "emusc-render: --play: window %.0f%% real-time, "
-                         "overall %.0f%% real-time\n",
-                         100.0 * window_audio / window_wall,
-                         100.0 * overall_audio / overall_wall);
+                         "emusc-render: --play: CPU busy %.0f%% of wall "
+                         "time (window), %.0f%% (overall); lower = more "
+                         "headroom\n",
+                         window_pct, overall_pct);
             window_start = now;
-            window_start_frame = fr + 1;
+            window_busy = clock::duration{};
           }
         }
       }
@@ -696,11 +739,30 @@ int main(int argc, char **argv) {
       if (!buf.empty()) wav->write(buf.data(), buf.size() / 2);
       if (!fbuf.empty()) wav->write(fbuf.data(), fbuf.size() / 2);
       wav->close();
-      std::fprintf(stderr,
-                   "emusc-render: wrote %llu frames to %s; libEmuSC reported "
-                   "%u clipped samples\n",
-                   (unsigned long long) wav->frames(), o.out.c_str(),
-                   synth.get_num_clipped_samples(false));
+      if (audio_out) {
+        // --play already forces this render to take as long as the song
+        // does, so a render-speed ratio here would just repeat that -
+        // see the periodic CPU utilization report above instead.
+        std::fprintf(stderr,
+                     "emusc-render: wrote %llu frames to %s; libEmuSC "
+                     "reported %u clipped samples\n",
+                     (unsigned long long) wav->frames(), o.out.c_str(),
+                     synth.get_num_clipped_samples(false));
+      } else {
+        // No --play, so nothing paced this loop to real time: the ratio
+        // below is a clean measure of how much CPU headroom this render
+        // actually has.
+        const double render_wall = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - render_start).count();
+        const double audio_seconds = (double) wav->frames() / o.rate;
+        std::fprintf(stderr,
+                     "emusc-render: wrote %llu frames to %s in %.3f s "
+                     "(%.2fx real-time); libEmuSC reported %u clipped "
+                     "samples\n",
+                     (unsigned long long) wav->frames(), o.out.c_str(),
+                     render_wall, audio_seconds / render_wall,
+                     synth.get_num_clipped_samples(false));
+      }
     }
     if (full_scale)
       std::fprintf(stderr,

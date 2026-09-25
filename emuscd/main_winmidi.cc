@@ -10,6 +10,7 @@
 #include <mmsystem.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -39,7 +40,10 @@ const char *USAGE =
 "  --device NAME       Device to emulate (default: sc88)\n"
 "                       Supported: sc55, sc55mkii, sc88, jv880, jv1080\n"
 "  --midi-in N          MIDI input device index (default: 0)\n"
-"  --audio-api API      Audio output API: winmm or dsound (default: winmm)\n"
+"  --audio-api API      Audio output API: auto, winmm or dsound (default:\n"
+"                        auto - DirectSound, falling back to WinMM if it\n"
+"                        cannot be opened; winmm/dsound force one, and a\n"
+"                        forced dsound that fails exits instead)\n"
 "  --wave-out N         WinMM wave output device index (default: system\n"
 "                        default)\n"
 "  --dsound-out N       DirectSound output device index (default: system\n"
@@ -51,7 +55,13 @@ const char *USAGE =
 "                        %EMUSCD_ROM_DIR%, or .\\roms if unset)\n"
 "  --rate HZ            Audio sample rate (default: 48000)\n"
 "  --block N            Audio frames per wave buffer (default: 256)\n"
-"  --latency MS         Requested output buffer size (default: 20)\n"
+"  --latency MS         Requested output buffer size (default: 20). A larger\n"
+"                        value trades response time for robustness against\n"
+"                        transient OS contention (window dragging, disk I/O):\n"
+"                        raise it if you hear dropouts, but every MIDI event\n"
+"                        then sounds that much later. The right value depends\n"
+"                        on the machine - CPU, sound driver, what else runs -\n"
+"                        so find the lowest that plays cleanly on yours.\n"
 "  --gain-db DB         Output gain in dB, linear multiplier 10^(DB/20)\n"
 "                        applied to the final samples (default: 0, no\n"
 "                        change - a listening-convenience knob only)\n"
@@ -71,6 +81,8 @@ const char *USAGE =
 // API does on the Linux side (main.cc's handle_seq_event) - neither backend
 // does its own byte-level MIDI parsing.
 struct MidiEvt { uint8_t status, d1, d2; };
+
+enum class AudioApi { Auto, WinMM, DSound };
 
 inline MidiEvt unpack_midi_message(DWORD_PTR dwParam1) {
   DWORD packed = static_cast<DWORD>(dwParam1);
@@ -105,7 +117,7 @@ class WinMidiDaemon {
 public:
   WinMidiDaemon(const std::string &dev, const std::string &romDir,
                 int midiInId, int waveOutId, unsigned rate, unsigned block,
-                unsigned latencyMs, double gainDb, bool useDSound,
+                unsigned latencyMs, double gainDb, AudioApi api,
                 int dsoundOutId)
       : _sampleRate(rate), _blockFrames(block), _romDir(romDir),
         _gainLin(gain_db_to_linear(gainDb)) {
@@ -117,8 +129,13 @@ public:
       std::exit(2);
     }
     open_midi_in(midiInId);
-    if (useDSound) open_dsound(dsoundOutId, latencyMs);
-    else open_wave_out(waveOutId, latencyMs);
+    if (api == AudioApi::WinMM || !open_dsound(dsoundOutId, latencyMs)) {
+      if (api == AudioApi::DSound) std::exit(1);
+      if (api == AudioApi::Auto)
+        std::fprintf(stderr, "emusc-winmidi: DirectSound unavailable (reason "
+                     "above); falling back to WinMM\n");
+      open_wave_out(waveOutId, latencyMs);
+    }
   }
 
   ~WinMidiDaemon() {
@@ -241,10 +258,12 @@ public:
                  _sampleRate, numBuffers, _blockFrames);
   }
 
-  void open_dsound(int id, unsigned latencyMs) {
+  // Returns false, with the reason already printed, if DirectSound could not
+  // be opened.
+  bool open_dsound(int id, unsigned latencyMs) {
     _dsound = DSoundOut::open(id, _sampleRate, _blockFrames, latencyMs,
                               &dsound_fill, this);
-    if (!_dsound) std::exit(1);
+    return _dsound != nullptr;
   }
 
   void run() {
@@ -262,6 +281,7 @@ public:
 
     std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
                  "or 'quit' to exit.\n");
+    reset_utilization_window();
     while (_running) {
       if (_deviceChangeRequested.exchange(false)) {
         std::string dev;
@@ -270,12 +290,14 @@ public:
           dev = _requestedDevice;
         }
         load_device(dev);
+        reset_utilization_window();
       }
 
       drain_midi_queue();
       drain_sysex();
       pump_wave_buffers();
       if (_dsound) _dsound->pump();
+      report_utilization();
       Sleep(1);
     }
 
@@ -286,9 +308,12 @@ public:
   }
 
 private:
+  using Clock = std::chrono::steady_clock;
+
   struct WaveBuffer { WAVEHDR hdr; std::vector<int16_t> data; };
 
   void render_frames(int16_t *dst, unsigned frames) {
+    const Clock::time_point start = Clock::now();
     for (unsigned i = 0; i < frames; i++) {
       float l = 0.0f, r = 0.0f;
       if (_synth) _synth->get_next_frame(l, r);
@@ -296,6 +321,30 @@ private:
       dst[i * 2]     = to_i16(l);
       dst[i * 2 + 1] = to_i16(r);
     }
+    _renderBusy += Clock::now() - start;
+  }
+
+  void reset_utilization_window() {
+    _renderBusy = Clock::duration::zero();
+    _windowStart = Clock::now();
+  }
+
+  // Share of wall-clock time spent synthesizing, printed every ~2 s. Only
+  // render_frames() counts as busy: both backends pace this loop by waiting
+  // on the audio device, so a ratio of audio produced to time elapsed would
+  // sit near 100% whatever the spare capacity, while this one falls as
+  // headroom grows. Time the thread is preempted mid-render still counts as
+  // busy, so under heavy contention the figure overstates emulator load.
+  void report_utilization() {
+    const Clock::time_point now = Clock::now();
+    const Clock::duration window = now - _windowStart;
+    if (window < std::chrono::seconds(2)) return;
+    std::fprintf(stderr, "emusc-winmidi: CPU utilization %.1f%% (share of time "
+                 "spent synthesizing; lower means more headroom)\n",
+                 100.0 * std::chrono::duration<double>(_renderBusy).count() /
+                   std::chrono::duration<double>(window).count());
+    _renderBusy = Clock::duration::zero();
+    _windowStart = now;
   }
 
   void fill_buffer(WaveBuffer &b) { render_frames(b.data.data(), _blockFrames); }
@@ -404,6 +453,9 @@ private:
   float _gainLin = 1.0f;
   std::atomic<bool> _running{false};
 
+  Clock::duration _renderBusy{};
+  Clock::time_point _windowStart;
+
   std::unique_ptr<EmuSC::ControlRom> _ctrlRom;
   std::unique_ptr<EmuSC::WaveRom> _waveRom;
   std::unique_ptr<EmuSC::Synth> _synth;
@@ -434,7 +486,7 @@ int main(int argc, char **argv) {
   int midiInId = 0;
   int waveOutId = -1;
   int dsoundOutId = -1;
-  bool useDSound = false;
+  AudioApi audioApi = AudioApi::Auto;
   unsigned rate = 48000;
   unsigned block = 256;
   unsigned latency = 20;
@@ -456,11 +508,12 @@ int main(int argc, char **argv) {
     else if (a == "--dsound-out")    dsoundOutId = std::stoi(need("--dsound-out"));
     else if (a == "--audio-api") {
       std::string api = need("--audio-api");
-      if (api == "winmm") useDSound = false;
-      else if (api == "dsound") useDSound = true;
+      if (api == "auto") audioApi = AudioApi::Auto;
+      else if (api == "winmm") audioApi = AudioApi::WinMM;
+      else if (api == "dsound") audioApi = AudioApi::DSound;
       else {
-        std::fprintf(stderr, "emusc-winmidi: --audio-api must be winmm or "
-                     "dsound\n");
+        std::fprintf(stderr, "emusc-winmidi: --audio-api must be auto, winmm "
+                     "or dsound\n");
         return 1;
       }
     }
@@ -491,7 +544,7 @@ int main(int argc, char **argv) {
   if (romDir.empty()) romDir = default_rom_dir();
 
   WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency, gainDb,
-                       useDSound, dsoundOutId);
+                       audioApi, dsoundOutId);
   daemon.run();
   return 0;
 }

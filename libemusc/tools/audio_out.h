@@ -5,8 +5,9 @@
 //
 // One implementation per platform, audio_out_alsa.cc or audio_out_winmm.cc,
 // selected by CMakeLists.txt exactly like emuscd/main.cc vs
-// emuscd/main_winmidi.cc - so this header and its caller stay free of
-// platform #ifdefs.
+// emuscd/main_winmidi.cc. Windows has two output APIs to choose between
+// (WinMM, and DirectSound in audio_out_dsound.cc), so its constructor alone
+// takes that choice.
 
 #ifndef EMUSC_RENDER_AUDIO_OUT_H
 #define EMUSC_RENDER_AUDIO_OUT_H
@@ -22,7 +23,15 @@ public:
   // total output buffer depth in milliseconds. Exits the process with code
   // 4 on failure, matching this tool's own die() for every other
   // unrecoverable startup error.
+#ifdef _WIN32
+  // Auto tries DirectSound and falls back to WinMM, saying why on stderr,
+  // if DirectSound cannot be opened; only a WinMM failure is then fatal.
+  // WinMM and DSound use that API alone, and any failure of it is fatal.
+  enum class Api { Auto, WinMM, DSound };
+  AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs, Api api);
+#else
   AudioOut(unsigned rate, unsigned blockFrames, unsigned latencyMs);
+#endif
   ~AudioOut();
 
   AudioOut(const AudioOut &) = delete;
