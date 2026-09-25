@@ -119,7 +119,7 @@ void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
 
 // Interpolation algorithm is based on information from the Nuked-SC55 project
 // by nukeykt
-float WaveOscillator::_interpolate(const float *pcm, int lastSample)
+inline float WaveOscillator::_interpolate(const float *pcm, int lastSample)
 {
   // Each tap wraps to the loop start past the sample end, then is clamped to
   // the decoded sample set.

@@ -78,7 +78,9 @@ private:
   std::function<void(void)> _firstRunCompleteCallback = NULL;
   bool _firstRunComplete;
 
-  float _interpolate(const float *pcm, int lastSample);
+  // Called once per output sample; defined inline in wave_oscillator.cc so it
+  // folds into get_sample_set()'s loop instead of costing a call per sample.
+  inline float _interpolate(const float *pcm, int lastSample);
 
   // _interpolationLUT scaled to [0, 1). Every Q12 entry fits a float's
   // mantissa and 4096 is a power of two, so each value is exact.
