@@ -10,6 +10,7 @@
 #include <mmsystem.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -280,6 +281,7 @@ public:
 
     std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
                  "or 'quit' to exit.\n");
+    reset_utilization_window();
     while (_running) {
       if (_deviceChangeRequested.exchange(false)) {
         std::string dev;
@@ -288,12 +290,14 @@ public:
           dev = _requestedDevice;
         }
         load_device(dev);
+        reset_utilization_window();
       }
 
       drain_midi_queue();
       drain_sysex();
       pump_wave_buffers();
       if (_dsound) _dsound->pump();
+      report_utilization();
       Sleep(1);
     }
 
@@ -304,9 +308,12 @@ public:
   }
 
 private:
+  using Clock = std::chrono::steady_clock;
+
   struct WaveBuffer { WAVEHDR hdr; std::vector<int16_t> data; };
 
   void render_frames(int16_t *dst, unsigned frames) {
+    const Clock::time_point start = Clock::now();
     for (unsigned i = 0; i < frames; i++) {
       float l = 0.0f, r = 0.0f;
       if (_synth) _synth->get_next_frame(l, r);
@@ -314,6 +321,30 @@ private:
       dst[i * 2]     = to_i16(l);
       dst[i * 2 + 1] = to_i16(r);
     }
+    _renderBusy += Clock::now() - start;
+  }
+
+  void reset_utilization_window() {
+    _renderBusy = Clock::duration::zero();
+    _windowStart = Clock::now();
+  }
+
+  // Share of wall-clock time spent synthesizing, printed every ~2 s. Only
+  // render_frames() counts as busy: both backends pace this loop by waiting
+  // on the audio device, so a ratio of audio produced to time elapsed would
+  // sit near 100% whatever the spare capacity, while this one falls as
+  // headroom grows. Time the thread is preempted mid-render still counts as
+  // busy, so under heavy contention the figure overstates emulator load.
+  void report_utilization() {
+    const Clock::time_point now = Clock::now();
+    const Clock::duration window = now - _windowStart;
+    if (window < std::chrono::seconds(2)) return;
+    std::fprintf(stderr, "emusc-winmidi: CPU utilization %.1f%% (share of time "
+                 "spent synthesizing; lower means more headroom)\n",
+                 100.0 * std::chrono::duration<double>(_renderBusy).count() /
+                   std::chrono::duration<double>(window).count());
+    _renderBusy = Clock::duration::zero();
+    _windowStart = now;
   }
 
   void fill_buffer(WaveBuffer &b) { render_frames(b.data.data(), _blockFrames); }
@@ -421,6 +452,9 @@ private:
   std::string _romDir;
   float _gainLin = 1.0f;
   std::atomic<bool> _running{false};
+
+  Clock::duration _renderBusy{};
+  Clock::time_point _windowStart;
 
   std::unique_ptr<EmuSC::ControlRom> _ctrlRom;
   std::unique_ptr<EmuSC::WaveRom> _waveRom;

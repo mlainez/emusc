@@ -179,6 +179,11 @@ buffering, and how much else competes for the CPU during a session. Start at
 the default, raise it until dropouts stop on your machine, and stop at the
 lowest value that plays cleanly.
 
+Every ~2 seconds a `CPU utilization N%` line reports the share of wall-clock
+time spent synthesizing audio, excluding time spent waiting on the audio
+device. Lower means more headroom; a figure approaching 100% means the machine
+is close to not keeping up.
+
 ### Runtime device switching
 
 Same mechanism as emuscd: type a device name at the console it's running in
