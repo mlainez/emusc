@@ -86,11 +86,17 @@ WaveOscillator::WaveOscillator(ControlRom::Sample *ctrlSample,
 void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
                                     std::array<float, 256> &dryBus)
 {
+  // Scaling by 2^-14 before rather than after the multiply is exact: pitchBend
+  // is a positive 2^(semitones/12) factor and the phase increment a positive
+  // ratio, both far from the float range where the product could underflow or
+  // overflow, so the scale commutes with the product's rounding.
+  const float bendScale = pitchBend / 16384.0f;
+
   for (int i = 0; i < 256; i++) {
     float output = _interpolate();
     dryBus[i] = output;
 
-    _phase += pitchBend * pitch->get_phase_increment() / 16384.0f;
+    _phase += bendScale * pitch->get_phase_increment();
     while (_phase >= 1.0f) {
       _phase -= 1.0f;
 
