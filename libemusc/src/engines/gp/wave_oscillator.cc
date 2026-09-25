@@ -25,6 +25,36 @@
 namespace EmuSC { namespace Gp {
 
 
+namespace {
+
+constexpr std::array<std::array<float, 128>, 3>
+q12_to_float(const uint16_t (&lut)[3][128])
+{
+  std::array<std::array<float, 128>, 3> coeffs{};
+  for (int c = 0; c < 3; c++)
+    for (int r = 0; r < 128; r++)
+      coeffs[c][r] = static_cast<float>(lut[c][r]) / 4096.0f;
+  return coeffs;
+}
+
+constexpr bool
+q12_round_trips(const std::array<std::array<float, 128>, 3> &coeffs,
+                const uint16_t (&lut)[3][128])
+{
+  for (int c = 0; c < 3; c++)
+    for (int r = 0; r < 128; r++)
+      if (coeffs[c][r] * 4096.0f != static_cast<float>(lut[c][r]))
+        return false;
+  return true;
+}
+
+}  // namespace
+
+
+constexpr std::array<std::array<float, 128>, 3>
+WaveOscillator::_interpolationCoeffs = q12_to_float(_interpolationLUT);
+
+
 WaveOscillator::WaveOscillator(ControlRom::Sample *ctrlSample,
                                std::vector<float> *pcmSamples,
                                std::function<void(void)> cb)
@@ -105,10 +135,11 @@ float WaveOscillator::_interpolate()
   // Hardware uses only the top 7 bits of the fractional phase.
   int r = static_cast<int>(_phase * 128.0f) & 127;
 
-  constexpr float q = 1.0f / 4096.0f;
-  float c0 = _interpolationLUT[0][r] * q;
-  float c1 = _interpolationLUT[1][r] * q;
-  float c2 = _interpolationLUT[2][r] * q;
+  static_assert(q12_round_trips(_interpolationCoeffs, _interpolationLUT),
+                "Q12 interpolation coefficients must convert to float exactly");
+  float c0 = _interpolationCoeffs[0][r];
+  float c1 = _interpolationCoeffs[1][r];
+  float c2 = _interpolationCoeffs[2][r];
 
   return s0 + c0 * (s1 - s0) + c1 * (s2 - s1) + c2 * (s3 - s2);
 }
