@@ -249,6 +249,14 @@ struct XpJv1080Voice {
      a zeroed voice starts with a matching pair. */
   double envelope_units;
   double envelope_units_amplitude;
+  /* EMUSC_LEGACY_DSP_FAST carries the level read between exact reads by
+     one ratio per sample, valid inside one segment and one interval of the
+     level table. Declared in both tiers: the struct crosses the engine's
+     boundary, and its size must not depend on a build option. */
+  double envelope_ratio;
+  unsigned envelope_ratio_interval;
+  unsigned envelope_ratio_countdown;
+  bool envelope_ratio_valid;
 
   /* The filter, as a two-pole section: its direct-form coefficients, and
      the state-variable realisation of the same transfer function that

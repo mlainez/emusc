@@ -157,6 +157,63 @@ double amp_env_units_amplitude(double units)
   return std::pow(10.0, amp_env_level_db(units) / 20.0);
 }
 
+#ifdef EMUSC_LEGACY_DSP_FAST
+/* Samples between two exact level reads: a millisecond at the engine's
+   own 32 kHz. */
+const unsigned kEnvelopeResyncSamples = 32u;
+
+/* Which interval of the level table `units` falls in: i for
+   (value[i-1], value[i]], 0 at or below the first entry and the table's
+   count above the last. Inside one interval the level is linear in dB, so
+   a segment moving linearly in units moves by one ratio per sample. */
+unsigned amp_env_level_interval(double units)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  if (units <= (double)kAmpEnvLevelTable[0].value)
+    return 0u;
+  for (unsigned i = 1; i < count; ++i)
+    if (units <= (double)kAmpEnvLevelTable[i].value)
+      return i;
+  return count;
+}
+
+/* amp_env_units_amplitude for a voice in a moving segment: the exact read
+   once per kEnvelopeResyncSamples and whenever the interval changes, and
+   in between the last read scaled by the segment's constant ratio. `step`
+   is the segment's change in units per sample. Below the table and above
+   it there is no pow() to remove, and those reads stay exact. */
+double amp_env_units_amplitude_carried(struct XpJv1080Voice *voice,
+                                       double units, double step)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  const unsigned interval = amp_env_level_interval(units);
+  if (voice->envelope_ratio_valid && voice->envelope_ratio_countdown &&
+      interval == voice->envelope_ratio_interval) {
+    --voice->envelope_ratio_countdown;
+    return voice->envelope_units_amplitude * voice->envelope_ratio;
+  }
+  const double amplitude = amp_env_units_amplitude(units);
+  if (interval == 0u || interval >= count) {
+    voice->envelope_ratio_valid = false;
+    return amplitude;
+  }
+  if (!voice->envelope_ratio_valid ||
+      interval != voice->envelope_ratio_interval) {
+    const double dbPerUnit =
+      (kAmpEnvLevelTable[interval].db - kAmpEnvLevelTable[interval - 1u].db) /
+      ((double)kAmpEnvLevelTable[interval].value -
+       (double)kAmpEnvLevelTable[interval - 1u].value);
+    voice->envelope_ratio = std::pow(10.0, dbPerUnit * step / 20.0);
+    voice->envelope_ratio_interval = interval;
+    voice->envelope_ratio_valid = true;
+  }
+  voice->envelope_ratio_countdown = kEnvelopeResyncSamples - 1u;
+  return amplitude;
+}
+#endif
+
 /* The inverse: where between 0 and 127 a linear amplitude stands. */
 double amp_env_amplitude_units(double amplitude)
 {
@@ -2869,6 +2926,7 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
   voice->segment_start = amp_env_amplitude_units(voice->envelope);
   voice->segment_total = amp_env_segment_seconds(voice->time[3]);
   voice->segment_remaining = voice->segment_total;
+  voice->envelope_ratio_valid = false;
   /* The filter envelope releases on the same note-off, from wherever it
      had reached, to its own level 4. */
   if (voice->cutoff_offset != 0.0)
@@ -3037,6 +3095,7 @@ bool voice_envelope(struct XpJv1080Voice *voice)
         voice->segment_total =
           amp_env_segment_seconds(voice->time[voice->segment]);
         voice->segment_remaining = voice->segment_total;
+        voice->envelope_ratio_valid = false;
       } else {
         voice->segment = 4u;   /* holding the sustain level */
         if (voice->pending_release || voice->release_at_sustain) {
@@ -3059,8 +3118,16 @@ bool voice_envelope(struct XpJv1080Voice *voice)
         double units = voice->segment_start +
           (voice->level_units[voice->segment] - voice->segment_start) * done;
         if (units != voice->envelope_units) {
-          voice->envelope_units = units;
+#ifdef EMUSC_LEGACY_DSP_FAST
+          voice->envelope_units_amplitude = amp_env_units_amplitude_carried(
+            voice, units, voice->segment_total > 0.0
+              ? (voice->level_units[voice->segment] - voice->segment_start) *
+                  voice->sample_period / voice->segment_total
+              : 0.0);
+#else
           voice->envelope_units_amplitude = amp_env_units_amplitude(units);
+#endif
+          voice->envelope_units = units;
         }
         voice->envelope = voice->envelope_units_amplitude;
       }
