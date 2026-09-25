@@ -92,6 +92,21 @@ void list_wave_out_devices() {
   }
 }
 
+// Holds a timeBeginPeriod() request for its lifetime. timeEndPeriod() must
+// only balance a request that succeeded.
+class SystemTimerResolution {
+public:
+  explicit SystemTimerResolution(UINT ms)
+      : _ms(ms), _active(timeBeginPeriod(ms) == TIMERR_NOERROR) {}
+  ~SystemTimerResolution() { if (_active) timeEndPeriod(_ms); }
+  SystemTimerResolution(const SystemTimerResolution &) = delete;
+  SystemTimerResolution &operator=(const SystemTimerResolution &) = delete;
+
+private:
+  UINT _ms;
+  bool _active;
+};
+
 }  // namespace
 
 class WinMidiDaemon {
@@ -239,6 +254,15 @@ public:
     // stop the daemon at all.
     _running = true;
     HANDLE stdinThread = CreateThread(nullptr, 0, &stdin_thread_proc, this, 0, nullptr);
+
+    // The loop's Sleep(1) otherwise rounds up to the default system timer
+    // tick (~10-15.6 ms), which can exceed the whole wave-buffer queue.
+    SystemTimerResolution timerRes(1);
+
+    // This thread alone refills the wave-out queue. Process-wide
+    // REALTIME_PRIORITY_CLASS is deliberately avoided: on the single-core
+    // target it would starve the OS and the game this runs alongside.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 
     std::fprintf(stderr, "emusc-winmidi running. Type a device name to switch, "
                  "or 'quit' to exit.\n");
