@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <climits>
+#include <cstdlib>
 
 namespace EmuSC { namespace Xp {
 
@@ -219,6 +220,42 @@ double tvf_word_to_hz(uint32_t word)
   if (sine >= 1.0)
     return 0.5 * kXpNativeRate;
   return (kXpNativeRate / 3.14159265358979323846) * std::asin(sine);
+}
+
+namespace {
+
+/* The coefficient the ROM's word already is. At the chip's own rate this
+   is 2 * exp2((word - 0x40000)/16384) exactly - the sine is taken out of
+   the word by tvf_word_to_hz and put straight back - and at any other host
+   rate it is the same analog corner retuned to that rate, which is the
+   only part of this that is a choice. */
+double coefficientForWord(uint32_t word, double rate)
+{
+  double cutoff = tvf_word_to_hz(word);
+  double nyquist = rate * 0.5;
+  if (cutoff > nyquist * 0.99)
+    cutoff = nyquist * 0.99;
+  return 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+}
+
+}  // namespace
+
+bool tvf_coefficients_init(struct xp_tvf_coefficients *coefficients,
+                           double rate)
+{
+  if (!coefficients)
+    return false;
+  coefficients->rate = rate;
+  coefficients->g = (float *)std::calloc(XP_TVF_NYQUIST_WORD, sizeof(float));
+  return coefficients->g != nullptr;
+}
+
+void tvf_coefficients_destroy(struct xp_tvf_coefficients *coefficients)
+{
+  if (!coefficients)
+    return;
+  std::free(coefficients->g);
+  coefficients->g = nullptr;
 }
 
 /* `0x6ad0`..`0x6aff`. The matrix's cached word is a controller reading,
@@ -612,22 +649,24 @@ float tvf_audio_process_provisional(void *user, struct xp_tvf_audio_state *state
     /* g is a pure function of wordInt at a fixed host rate, and the host
        rate is set once per Device and never changes mid-render (it comes
        from renderer->tvf_audio_user, wired up once at device init) - so
-       memoizing on wordInt alone, per voice, is exact, not an
-       approximation of the rate-dependent case. */
+       memoizing on wordInt alone, per voice, and tabulating on it per
+       Device are exact, not an approximation of the rate-dependent case.
+       Only (float)g reaches the filter below, so a table of floats holds
+       everything the double carried that matters. */
     if (state->memo_valid && state->memo_word == wordInt) {
       g = state->memo_g;
     } else {
-      /* The coefficient the ROM's word already is. At the chip's own rate
-         this is 2 * exp2((word - 0x40000)/16384) exactly - the sine is
-         taken out of the word by tvf_word_to_hz and put straight back -
-         and at any other host rate it is the same analog corner retuned
-         to that rate, which is the only part of this that is a choice. */
-      double rate = user ? *(const double *)user : kXpNativeRate;
-      double cutoff = tvf_word_to_hz(wordInt);
-      double nyquist = rate * 0.5;
-      if (cutoff > nyquist * 0.99)
-        cutoff = nyquist * 0.99;
-      g = 2.0 * std::sin(3.14159265358979323846 * cutoff / rate);
+      struct xp_tvf_coefficients *table = (struct xp_tvf_coefficients *)user;
+      if (table && table->g && wordInt < XP_TVF_NYQUIST_WORD) {
+        float entry = table->g[wordInt];
+        if (entry == 0.0f) {
+          entry = (float)coefficientForWord(wordInt, table->rate);
+          table->g[wordInt] = entry;
+        }
+        g = entry;
+      } else {
+        g = coefficientForWord(wordInt, table ? table->rate : kXpNativeRate);
+      }
       state->memo_word = wordInt;
       state->memo_g = g;
       state->memo_valid = true;

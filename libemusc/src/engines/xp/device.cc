@@ -210,9 +210,11 @@ bool initCommon(Device *device, const uint8_t *controlRom,
     goto fail;
   device->output_rate = outputRate;
   output_init(&device->output, outputRate);
+  if (!tvf_coefficients_init(&device->tvf_coefficients, outputRate))
+    goto fail;
   renderer_set_tvf_audio_transfer(&device->renderer,
                                    tvf_audio_process_provisional,
-                                   &device->output_rate);
+                                   &device->tvf_coefficients);
   if (!chorus_init(&device->chorus, outputRate, profile))
     goto fail;
   if (!delay_init(&device->delay, outputRate, profile))
@@ -699,6 +701,7 @@ void device_destroy(Device *device)
     engine_destroy(&device->engine);
   }
   reverb_destroy(&device->reverb);
+  tvf_coefficients_destroy(&device->tvf_coefficients);
   std::free(device->send_bus);
   std::free(device->chorus_bus);
   std::free(device->delay_bus);

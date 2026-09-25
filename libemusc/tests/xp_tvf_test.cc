@@ -43,9 +43,64 @@ static void check_anchor(void)
          0.5 * tvf_word_to_hz(0x3c000));
 }
 
+/* Three samples of a step through one word's filter, on fresh state so the
+   per-voice memo never answers for it. The second output is f*f, so these
+   carry the coefficient itself rather than a clamp of it: resonance at the
+   damping floor bounds f only above 1.93, which no word reaches below
+   0.415 fs. */
+static void step_response(void *user, uint32_t word, float out[3])
+{
+  struct xp_tvf_registers registers;
+  struct xp_tvf_audio_state audio;
+  std::memset(&registers, 0, sizeof registers);
+  registers.frequency_current = word;
+  registers.frequency_target = word;
+  registers.resonance_current = 6554;
+  tvf_audio_reset(&audio);
+  for (unsigned n = 0; n < 3; ++n)
+    out[n] = tvf_audio_process_provisional(user, &audio, &registers, 0.0,
+                                           1.0f);
+}
+
+/* The shared coefficient table answers every word the register can hold
+   exactly as the uncached computation does, both on the call that fills an
+   entry and on every call that reads it back; and no word at any plausible
+   host rate computes to the 0 that marks an entry empty. */
+static void check_coefficient_table(void)
+{
+  const uint32_t lastWord = UINT32_C(0x7fff) << 3;
+  struct xp_tvf_coefficients table;
+  assert(tvf_coefficients_init(&table, 32000.0));
+  for (uint32_t word = 0; word <= lastWord; ++word) {
+    float direct[3], filled[3], cached[3];
+    step_response(NULL, word, direct);
+    step_response(&table, word, filled);
+    assert(table.g[word] != 0.0f);
+    step_response(&table, word, cached);
+    assert(std::memcmp(direct, filled, sizeof direct) == 0);
+    assert(std::memcmp(direct, cached, sizeof direct) == 0);
+  }
+  tvf_coefficients_destroy(&table);
+  assert(table.g == NULL);
+
+  static const double rates[] = {8000.0, 44100.0, 48000.0, 192000.0};
+  for (double rate : rates) {
+    assert(tvf_coefficients_init(&table, rate));
+    for (uint32_t word = 0; word <= lastWord; ++word) {
+      float filled[3], cached[3];
+      step_response(&table, word, filled);
+      assert(table.g[word] != 0.0f);
+      step_response(&table, word, cached);
+      assert(std::memcmp(filled, cached, sizeof filled) == 0);
+    }
+    tvf_coefficients_destroy(&table);
+  }
+}
+
 int main()
 {
   check_anchor();
+  check_coefficient_table();
 
   static const uint8_t vectors[16] = {
     0x00, 0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0xff,
