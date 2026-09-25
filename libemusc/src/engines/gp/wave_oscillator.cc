@@ -25,6 +25,36 @@
 namespace EmuSC { namespace Gp {
 
 
+namespace {
+
+constexpr std::array<std::array<float, 128>, 3>
+q12_to_float(const uint16_t (&lut)[3][128])
+{
+  std::array<std::array<float, 128>, 3> coeffs{};
+  for (int c = 0; c < 3; c++)
+    for (int r = 0; r < 128; r++)
+      coeffs[c][r] = static_cast<float>(lut[c][r]) / 4096.0f;
+  return coeffs;
+}
+
+constexpr bool
+q12_round_trips(const std::array<std::array<float, 128>, 3> &coeffs,
+                const uint16_t (&lut)[3][128])
+{
+  for (int c = 0; c < 3; c++)
+    for (int r = 0; r < 128; r++)
+      if (coeffs[c][r] * 4096.0f != static_cast<float>(lut[c][r]))
+        return false;
+  return true;
+}
+
+}  // namespace
+
+
+constexpr std::array<std::array<float, 128>, 3>
+WaveOscillator::_interpolationCoeffs = q12_to_float(_interpolationLUT);
+
+
 WaveOscillator::WaveOscillator(ControlRom::Sample *ctrlSample,
                                std::vector<float> *pcmSamples,
                                std::function<void(void)> cb)
@@ -56,11 +86,21 @@ WaveOscillator::WaveOscillator(ControlRom::Sample *ctrlSample,
 void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
                                     std::array<float, 256> &dryBus)
 {
+  // Scaling by 2^-14 before rather than after the multiply is exact: pitchBend
+  // is a positive 2^(semitones/12) factor and the phase increment a positive
+  // ratio, both far from the float range where the product could underflow or
+  // overflow, so the scale commutes with the product's rounding.
+  const float bendScale = pitchBend / 16384.0f;
+
+  // The decoded sample set never changes while a voice plays.
+  const float *pcm = _pcmSamples->data();
+  const int lastSample = static_cast<int>(_pcmSamples->size()) - 1;
+
   for (int i = 0; i < 256; i++) {
-    float output = _interpolate();
+    float output = _interpolate(pcm, lastSample);
     dryBus[i] = output;
 
-    _phase += pitchBend * pitch->get_phase_increment() / 16384.0f;
+    _phase += bendScale * pitch->get_phase_increment();
     while (_phase >= 1.0f) {
       _phase -= 1.0f;
 
@@ -77,38 +117,30 @@ void WaveOscillator::get_sample_set(Pitch *pitch, float pitchBend,
 }
 
 
-float WaveOscillator::_fetch_sample(int index)
-{
-  // The clamp above is the real bounds guard; operator[] skips the redundant
-  // check .at() would otherwise repeat on every one of the 4 taps below.
-  index = std::clamp(index, 0, (int) _pcmSamples->size() - 1);
-  return (*_pcmSamples)[index];
-}
-
-
 // Interpolation algorithm is based on information from the Nuked-SC55 project
 // by nukeykt
-float WaveOscillator::_interpolate()
+inline float WaveOscillator::_interpolate(const float *pcm, int lastSample)
 {
-  int i = _index;
-  auto step = [&]() {
-    i++;
-    if (i > _sampleEnd)
-      i = _loopStart;
-  };
+  // Each tap wraps to the loop start past the sample end, then is clamped to
+  // the decoded sample set.
+  const int t0 = _index;
+  const int t1 = (t0 + 1 > _sampleEnd) ? _loopStart : t0 + 1;
+  const int t2 = (t1 + 1 > _sampleEnd) ? _loopStart : t1 + 1;
+  const int t3 = (t2 + 1 > _sampleEnd) ? _loopStart : t2 + 1;
 
-  float s0 = _fetch_sample(i);  step();
-  float s1 = _fetch_sample(i);  step();
-  float s2 = _fetch_sample(i);  step();
-  float s3 = _fetch_sample(i);
+  float s0 = pcm[std::clamp(t0, 0, lastSample)];
+  float s1 = pcm[std::clamp(t1, 0, lastSample)];
+  float s2 = pcm[std::clamp(t2, 0, lastSample)];
+  float s3 = pcm[std::clamp(t3, 0, lastSample)];
 
   // Hardware uses only the top 7 bits of the fractional phase.
   int r = static_cast<int>(_phase * 128.0f) & 127;
 
-  constexpr float q = 1.0f / 4096.0f;
-  float c0 = _interpolationLUT[0][r] * q;
-  float c1 = _interpolationLUT[1][r] * q;
-  float c2 = _interpolationLUT[2][r] * q;
+  static_assert(q12_round_trips(_interpolationCoeffs, _interpolationLUT),
+                "Q12 interpolation coefficients must convert to float exactly");
+  float c0 = _interpolationCoeffs[0][r];
+  float c1 = _interpolationCoeffs[1][r];
+  float c2 = _interpolationCoeffs[2][r];
 
   return s0 + c0 * (s1 - s0) + c1 * (s2 - s1) + c2 * (s3 - s2);
 }
