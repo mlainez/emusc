@@ -390,29 +390,72 @@ const double kAmpEnvAttackShape[15] = {
    machine does not have at all, where the reflected read's partial set is
    the machine's, 9418-9422 against 9416-9419. Both reproduce identically
    from two different kits, the same element through two banks. */
-double cycle_sample(const struct XpJv1080Voice *voice, long long index)
+/* The ping-pong cycle of a voice whose loop lies inside its decoded span,
+   with what every read of it shares worked out once. */
+struct PingPongCycle {
+  const int32_t *pcm;
+  long long first;
+  long long last;
+  long long span;
+  long long cycle;
+  double turn;
+};
+
+bool ping_pong_cycle(const struct XpJv1080Voice *voice,
+                     struct PingPongCycle *c)
 {
   if (voice->loop_last >= voice->pcm_count ||
       voice->loop_last < voice->loop_first)
-    return 0.0;
-  long long first = (long long)voice->loop_first;
-  long long last = (long long)voice->loop_last;
-  long long span = last - first + 1;
-  long long cycle = 2 * span;
-  index %= cycle;
-  if (index < 0)
+    return false;
+  c->pcm = voice->pcm;
+  c->first = (long long)voice->loop_first;
+  c->last = (long long)voice->loop_last;
+  c->span = c->last - c->first + 1;
+  c->cycle = 2 * c->span;
+  c->turn = (double)voice->pcm[voice->loop_last];
+  return true;
+}
+
+/* `index` reduced into [0, cycle). Every per-sample caller passes an index
+   at most one cycle outside it, where one add or subtract is the
+   remainder; the division is kept for any other index. */
+long long cycle_wrap(long long index, long long cycle)
+{
+  if (index < 0) {
     index += cycle;
-  double turn = (double)voice->pcm[voice->loop_last];
-  if (index >= span) {
-    long long at = first + (index - span);
-    if (at < 0 || (size_t)at >= voice->pcm_count)
-      return turn;
-    return (double)voice->pcm[(size_t)at];
+    if (index < 0) {
+      index %= cycle;
+      if (index < 0)
+        index += cycle;
+    }
+  } else if (index >= cycle) {
+    index -= cycle;
+    if (index >= cycle)
+      index %= cycle;
   }
-  long long at = last - 1 - index;
-  if (at < first || at < 0 || (size_t)at >= voice->pcm_count)
-    return turn;                 /* the invariant's own answer at b-1 */
-  return 2.0 * turn - (double)voice->pcm[(size_t)at];
+  return index;
+}
+
+/* `index` in [0, cycle). The forward pass reads loop_first..loop_last and
+   the reflected one loop_last-1 down to loop_first-1, all inside the
+   decoded span but for loop_first-1, which is the invariant's own answer,
+   the turn value. */
+double cycle_value(const struct PingPongCycle *c, long long index)
+{
+  if (index >= c->span)
+    return (double)c->pcm[(size_t)(c->first + (index - c->span))];
+  long long at = c->last - 1 - index;
+  if (at < c->first)
+    return c->turn;
+  return 2.0 * c->turn - (double)c->pcm[(size_t)at];
+}
+
+double cycle_sample(const struct XpJv1080Voice *voice, long long index)
+{
+  struct PingPongCycle c;
+  if (!ping_pong_cycle(voice, &c))
+    return 0.0;
+  return cycle_value(&c, cycle_wrap(index, c.cycle));
 }
 
 double wave_tap(const struct XpJv1080Voice *voice, size_t index, int offset,
@@ -2885,10 +2928,15 @@ bool voice_wave(struct XpJv1080Voice *voice, double *out)
        interpolator reads across it exactly as it reads anywhere else. */
     long long c0 = (long long)voice->position;
     frac = voice->position - (double)c0;
-    v0 = cycle_sample(voice, c0);
-    v1 = cycle_sample(voice, c0 + 1);
-    vBack = cycle_sample(voice, c0 - 1);
-    vFwd = cycle_sample(voice, c0 + 2);
+    struct PingPongCycle c;
+    if (ping_pong_cycle(voice, &c)) {
+      v0 = cycle_value(&c, cycle_wrap(c0, c.cycle));
+      v1 = cycle_value(&c, cycle_wrap(c0 + 1, c.cycle));
+      vBack = cycle_value(&c, cycle_wrap(c0 - 1, c.cycle));
+      vFwd = cycle_value(&c, cycle_wrap(c0 + 2, c.cycle));
+    } else {
+      v0 = v1 = vBack = vFwd = 0.0;
+    }
   } else {
   size_t i0 = (size_t)voice->position;
   /* The loop's last sample is a valid read head position - its partner
