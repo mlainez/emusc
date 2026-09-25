@@ -243,6 +243,20 @@ struct XpJv1080Voice {
   double segment_total;          /* this segment's own duration, seconds */
   double segment_remaining;      /* seconds left in this segment */
   double sample_period;
+  /* The level units the envelope last read through the level table and
+     the amplitude that read gave. A segment between two equal levels asks
+     for the same units on every sample. Zero units is zero amplitude, so
+     a zeroed voice starts with a matching pair. */
+  double envelope_units;
+  double envelope_units_amplitude;
+  /* EMUSC_LEGACY_DSP_FAST carries the level read between exact reads by
+     one ratio per sample, valid inside one segment and one interval of the
+     level table. Declared in both tiers: the struct crosses the engine's
+     boundary, and its size must not depend on a build option. */
+  double envelope_ratio;
+  unsigned envelope_ratio_interval;
+  unsigned envelope_ratio_countdown;
+  bool envelope_ratio_valid;
 
   /* The filter, as a two-pole section: its direct-form coefficients, and
      the state-variable realisation of the same transfer function that
@@ -251,6 +265,7 @@ struct XpJv1080Voice {
   int filter_type;
   double b0, b1, b2, a1, a2;
   double svf_g, svf_k, m_hp, m_bp, m_lp;
+  double svf_h1, svf_h2, svf_h3;   /* set_svf's, from g and k */
   double s1, s2;
 
   /* The filter envelope, which moves the CUTOFF PARAMETER and not a
@@ -325,15 +340,19 @@ struct XpJv1080Voice {
 
 struct xp_rom;
 struct xp_packed_record;
+struct xp_wave_cache;
 
 namespace EmuSC { namespace Xp {
 
 /* Set a voice up to play one tone. `tone` is the tone's 130 decoded bytes -
  * the form the packed record decodes to, and the same form the device's own
  * SysEx tone frames carry - and patchLevel/patchPan are the patch common's.
- * `banks` are the eight descrambled 1 MiB wave banks. The element is decoded
- * into `pcm`, which must outlive the voice; false means this tone does not
- * sound for this key and velocity, which is not an error.
+ * `banks` are the eight descrambled 1 MiB wave banks. The element's decoded
+ * PCM comes from `cache` (wave_cache_acquire; null decodes a private copy)
+ * and is `voice->pcm`, which the caller gives back with exactly one
+ * wave_cache_release(cache, voice->pcm) once the voice is done with it.
+ * False means this tone does not sound for this key and velocity, which is
+ * not an error, and holds no PCM.
  */
 bool jv1080_voice_start(const struct xp_rom *rom,
                          const struct XpVoiceFieldMap *fields,
@@ -342,7 +361,7 @@ bool jv1080_voice_start(const struct xp_rom *rom,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
-                         int32_t *pcm, size_t capacity,
+                         struct xp_wave_cache *cache,
                          double outputRate, struct XpJv1080Voice *voice);
 
 /* Decode one patch's tone into `tone` (130 bytes) and its patch common's
@@ -352,9 +371,9 @@ bool jv1080_patch_tone(const struct xp_rom *rom,
                         uint8_t *tone, unsigned *patchLevel,
                         unsigned *patchPan);
 
-/* How many decoded samples this tone needs at this key, so a caller can
- * size the buffer jv1080_voice_start decodes into. False where the tone
- * does not sound, the same cases jv1080_voice_start refuses. `keyShift`
+/* How many decoded samples this tone reads at this key, without decoding
+ * them. False where the tone does not sound, the same cases
+ * jv1080_voice_start refuses short of a failed decode. `keyShift`
  * is the part's key shift, which jv1080_voice_start reads from its
  * controls: both move the zone the key selects. */
 bool jv1080_voice_span(const struct xp_rom *rom,

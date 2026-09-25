@@ -24,6 +24,7 @@
 #include "../common/constants.h"
 #include "../packed_rom.h"
 #include "../rom.h"
+#include "../wave_cache.h"
 
 #include <cmath>
 #include <cstring>
@@ -122,6 +123,26 @@ double pan_difference_asymmetric(double offset)
   return offset < 0.0 ? -m : m;
 }
 
+/* interpolate_points over the level table, read in place: this runs once
+   per sample per voice inside an envelope segment. */
+double amp_env_level_db(double units)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  if (units <= (double)kAmpEnvLevelTable[0].value)
+    return kAmpEnvLevelTable[0].db;
+  for (unsigned i = 1; i < count; ++i) {
+    const double x1 = kAmpEnvLevelTable[i].value;
+    if (units <= x1) {
+      const double x0 = kAmpEnvLevelTable[i - 1].value;
+      const double y0 = kAmpEnvLevelTable[i - 1].db;
+      const double t = (units - x0) / (x1 - x0);
+      return y0 + t * (kAmpEnvLevelTable[i].db - y0);
+    }
+  }
+  return kAmpEnvLevelTable[count - 1].db;
+}
+
 /* A level in the record's own 0-127 units as linear amplitude, through
    the level table, for any point between two values. Below the table's
    first entry, 8, the amplitude is taken as linear down to zero: that
@@ -133,13 +154,65 @@ double amp_env_units_amplitude(double units)
   const double first = kAmpEnvLevelTable[0].value;
   if (units < first)
     return std::pow(10.0, kAmpEnvLevelTable[0].db / 20.0) * units / first;
-  double xs[10], ys[10];
-  for (unsigned i = 0; i < 10; ++i) {
-    xs[i] = kAmpEnvLevelTable[i].value;
-    ys[i] = kAmpEnvLevelTable[i].db;
-  }
-  return std::pow(10.0, interpolate_points(xs, ys, 10u, units) / 20.0);
+  return std::pow(10.0, amp_env_level_db(units) / 20.0);
 }
+
+#ifdef EMUSC_LEGACY_DSP_FAST
+/* Samples between two exact level reads: a millisecond at the engine's
+   own 32 kHz. */
+const unsigned kEnvelopeResyncSamples = 32u;
+
+/* Which interval of the level table `units` falls in: i for
+   (value[i-1], value[i]], 0 at or below the first entry and the table's
+   count above the last. Inside one interval the level is linear in dB, so
+   a segment moving linearly in units moves by one ratio per sample. */
+unsigned amp_env_level_interval(double units)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  if (units <= (double)kAmpEnvLevelTable[0].value)
+    return 0u;
+  for (unsigned i = 1; i < count; ++i)
+    if (units <= (double)kAmpEnvLevelTable[i].value)
+      return i;
+  return count;
+}
+
+/* amp_env_units_amplitude for a voice in a moving segment: the exact read
+   once per kEnvelopeResyncSamples and whenever the interval changes, and
+   in between the last read scaled by the segment's constant ratio. `step`
+   is the segment's change in units per sample. Below the table and above
+   it there is no pow() to remove, and those reads stay exact. */
+double amp_env_units_amplitude_carried(struct XpJv1080Voice *voice,
+                                       double units, double step)
+{
+  const unsigned count =
+    (unsigned)(sizeof kAmpEnvLevelTable / sizeof kAmpEnvLevelTable[0]);
+  const unsigned interval = amp_env_level_interval(units);
+  if (voice->envelope_ratio_valid && voice->envelope_ratio_countdown &&
+      interval == voice->envelope_ratio_interval) {
+    --voice->envelope_ratio_countdown;
+    return voice->envelope_units_amplitude * voice->envelope_ratio;
+  }
+  const double amplitude = amp_env_units_amplitude(units);
+  if (interval == 0u || interval >= count) {
+    voice->envelope_ratio_valid = false;
+    return amplitude;
+  }
+  if (!voice->envelope_ratio_valid ||
+      interval != voice->envelope_ratio_interval) {
+    const double dbPerUnit =
+      (kAmpEnvLevelTable[interval].db - kAmpEnvLevelTable[interval - 1u].db) /
+      ((double)kAmpEnvLevelTable[interval].value -
+       (double)kAmpEnvLevelTable[interval - 1u].value);
+    voice->envelope_ratio = std::pow(10.0, dbPerUnit * step / 20.0);
+    voice->envelope_ratio_interval = interval;
+    voice->envelope_ratio_valid = true;
+  }
+  voice->envelope_ratio_countdown = kEnvelopeResyncSamples - 1u;
+  return amplitude;
+}
+#endif
 
 /* The inverse: where between 0 and 127 a linear amplitude stands. */
 double amp_env_amplitude_units(double amplitude)
@@ -390,29 +463,72 @@ const double kAmpEnvAttackShape[15] = {
    machine does not have at all, where the reflected read's partial set is
    the machine's, 9418-9422 against 9416-9419. Both reproduce identically
    from two different kits, the same element through two banks. */
-double cycle_sample(const struct XpJv1080Voice *voice, long long index)
+/* The ping-pong cycle of a voice whose loop lies inside its decoded span,
+   with what every read of it shares worked out once. */
+struct PingPongCycle {
+  const int32_t *pcm;
+  long long first;
+  long long last;
+  long long span;
+  long long cycle;
+  double turn;
+};
+
+bool ping_pong_cycle(const struct XpJv1080Voice *voice,
+                     struct PingPongCycle *c)
 {
   if (voice->loop_last >= voice->pcm_count ||
       voice->loop_last < voice->loop_first)
-    return 0.0;
-  long long first = (long long)voice->loop_first;
-  long long last = (long long)voice->loop_last;
-  long long span = last - first + 1;
-  long long cycle = 2 * span;
-  index %= cycle;
-  if (index < 0)
+    return false;
+  c->pcm = voice->pcm;
+  c->first = (long long)voice->loop_first;
+  c->last = (long long)voice->loop_last;
+  c->span = c->last - c->first + 1;
+  c->cycle = 2 * c->span;
+  c->turn = (double)voice->pcm[voice->loop_last];
+  return true;
+}
+
+/* `index` reduced into [0, cycle). Every per-sample caller passes an index
+   at most one cycle outside it, where one add or subtract is the
+   remainder; the division is kept for any other index. */
+long long cycle_wrap(long long index, long long cycle)
+{
+  if (index < 0) {
     index += cycle;
-  double turn = (double)voice->pcm[voice->loop_last];
-  if (index >= span) {
-    long long at = first + (index - span);
-    if (at < 0 || (size_t)at >= voice->pcm_count)
-      return turn;
-    return (double)voice->pcm[(size_t)at];
+    if (index < 0) {
+      index %= cycle;
+      if (index < 0)
+        index += cycle;
+    }
+  } else if (index >= cycle) {
+    index -= cycle;
+    if (index >= cycle)
+      index %= cycle;
   }
-  long long at = last - 1 - index;
-  if (at < first || at < 0 || (size_t)at >= voice->pcm_count)
-    return turn;                 /* the invariant's own answer at b-1 */
-  return 2.0 * turn - (double)voice->pcm[(size_t)at];
+  return index;
+}
+
+/* `index` in [0, cycle). The forward pass reads loop_first..loop_last and
+   the reflected one loop_last-1 down to loop_first-1, all inside the
+   decoded span but for loop_first-1, which is the invariant's own answer,
+   the turn value. */
+double cycle_value(const struct PingPongCycle *c, long long index)
+{
+  if (index >= c->span)
+    return (double)c->pcm[(size_t)(c->first + (index - c->span))];
+  long long at = c->last - 1 - index;
+  if (at < c->first)
+    return c->turn;
+  return 2.0 * c->turn - (double)c->pcm[(size_t)at];
+}
+
+double cycle_sample(const struct XpJv1080Voice *voice, long long index)
+{
+  struct PingPongCycle c;
+  if (!ping_pong_cycle(voice, &c))
+    return 0.0;
+  return cycle_value(&c, cycle_wrap(index, c.cycle));
 }
 
 double wave_tap(const struct XpJv1080Voice *voice, size_t index, int offset,
@@ -952,6 +1068,16 @@ double tvf_q(unsigned resonance)
    g k = 4/(1-a1+a2) - 1 - g^2; the numerator b0 z^2 + b1 z + b2 is then
    A/4 (b0-b1+b2) of the high-pass output, A/(2g) (b0-b2) of the band-pass
    and A/(4g^2) (b0+b1+b2) of the low-pass, A = 4/(1-a1+a2). */
+/* The trapezoidal integrators' three gains, a function of g and k alone,
+   so they change here rather than per sample. */
+void set_svf_gains(struct XpJv1080Voice *voice)
+{
+  const double g = voice->svf_g, k = voice->svf_k;
+  voice->svf_h1 = 1.0 / (1.0 + g * (g + k));
+  voice->svf_h2 = g * voice->svf_h1;
+  voice->svf_h3 = g * voice->svf_h2;
+}
+
 void set_svf(struct XpJv1080Voice *voice)
 {
   double lo = 1.0 + voice->a1 + voice->a2;
@@ -960,6 +1086,7 @@ void set_svf(struct XpJv1080Voice *voice)
     /* Not a stable pole pair: no section this engine builds is one. */
     voice->svf_g = 1.0;
     voice->svf_k = 2.0;
+    set_svf_gains(voice);
     voice->m_hp = voice->m_lp = 1.0;
     voice->m_bp = 2.0;
     return;
@@ -969,6 +1096,7 @@ void set_svf(struct XpJv1080Voice *voice)
   double big = 4.0 / hi;
   voice->svf_g = g;
   voice->svf_k = (big - 1.0 - g2) / g;
+  set_svf_gains(voice);
   voice->m_hp = big * (voice->b0 - voice->b1 + voice->b2) / 4.0;
   voice->m_bp = big * (voice->b0 - voice->b2) / (2.0 * g);
   voice->m_lp = big * (voice->b0 + voice->b1 + voice->b2) / (4.0 * g2);
@@ -2109,12 +2237,12 @@ bool jv1080_voice_start(const struct xp_rom *rom,
                          unsigned key, unsigned velocity,
                          const uint8_t *const banks[XP_WAVE_BANK_COUNT],
                          const size_t bankSizes[XP_WAVE_BANK_COUNT],
-                         int32_t *pcm, size_t capacity,
+                         struct xp_wave_cache *cache,
                          double outputRate, struct XpJv1080Voice *voice)
 {
   const struct XpDeviceProfile *profile = xp_profile(rom);
   if (!rom || !fields || !tone || !controls || !banks || !bankSizes ||
-      !pcm || !voice ||
+      !voice ||
       key > 127u || velocity > 127u || velocity == 0u || outputRate <= 0.0)
     return false;
   std::memset(voice, 0, sizeof *voice);
@@ -2129,18 +2257,21 @@ bool jv1080_voice_start(const struct xp_rom *rom,
   /* Decode the element. The whole span is decoded at note-on rather than
      streamed: the accumulator is differential, so a sample's value depends
      on every delta before it in the block, and a probe that holds the span
-     is simpler than one that reseeds. */
-  size_t needed = (size_t)(element.bank_end - (element.bank_start & ~0x0fu)) + 1u;
-  if (needed > capacity)
+     is simpler than one that reseeds. The span is the one fce_decode_storage
+     decodes for a descriptor from bank_start to bank_end - the 16-sample
+     block holding bank_start through bank_end - which is what the cache
+     keys on. */
+  struct xp_wave_descriptor span;
+  std::memset(&span, 0, sizeof span);
+  span.address_a = element.bank_start;
+  span.address_c = element.bank_end;
+  const int32_t *pcm = nullptr;
+  uint32_t base = 0;
+  size_t needed = 0;
+  if (!wave_cache_acquire(cache, profile, banks[element.bank],
+                          bankSizes[element.bank], &span, &pcm, &base,
+                          &needed))
     return false;
-  struct xp_fce_decoder decoder;
-  if (!fce_decoder_reset(profile, &decoder, element.bank_start))
-    return false;
-  uint32_t base = element.bank_start & ~UINT32_C(0x0f);
-  for (size_t i = 0; i < needed; ++i)
-    if (!fce_decoder_read(&decoder, banks[element.bank],
-                          bankSizes[element.bank], pcm + i))
-      return false;
 
   voice->pcm = pcm;
   voice->pcm_count = needed;
@@ -2221,8 +2352,11 @@ bool jv1080_voice_start(const struct xp_rom *rom,
      0 cents, but every element sitting at its own offset - from -23 to
      +48 cents in this song alone - so the parts disagree with each other. */
   rootHz *= std::pow(2.0, -((double)element.fine_tune - 1024.0) / 1024.0 / 12.0);
-  if (rootHz <= 0.0)
+  if (rootHz <= 0.0) {
+    wave_cache_release(cache, voice->pcm);
+    voice->pcm = nullptr;
     return false;
+  }
   voice->increment = (keyHz / rootHz) * (kXpNativeRate / outputRate);
   /* THE PLAYBACK CEILING: a wave is never read faster than four times its
      own rate, two octaves above the root its zone was recorded at,
@@ -2792,6 +2926,7 @@ void jv1080_voice_release(struct XpJv1080Voice *voice)
   voice->segment_start = amp_env_amplitude_units(voice->envelope);
   voice->segment_total = amp_env_segment_seconds(voice->time[3]);
   voice->segment_remaining = voice->segment_total;
+  voice->envelope_ratio_valid = false;
   /* The filter envelope releases on the same note-off, from wherever it
      had reached, to its own level 4. */
   if (voice->cutoff_offset != 0.0)
@@ -2885,10 +3020,15 @@ bool voice_wave(struct XpJv1080Voice *voice, double *out)
        interpolator reads across it exactly as it reads anywhere else. */
     long long c0 = (long long)voice->position;
     frac = voice->position - (double)c0;
-    v0 = cycle_sample(voice, c0);
-    v1 = cycle_sample(voice, c0 + 1);
-    vBack = cycle_sample(voice, c0 - 1);
-    vFwd = cycle_sample(voice, c0 + 2);
+    struct PingPongCycle c;
+    if (ping_pong_cycle(voice, &c)) {
+      v0 = cycle_value(&c, cycle_wrap(c0, c.cycle));
+      v1 = cycle_value(&c, cycle_wrap(c0 + 1, c.cycle));
+      vBack = cycle_value(&c, cycle_wrap(c0 - 1, c.cycle));
+      vFwd = cycle_value(&c, cycle_wrap(c0 + 2, c.cycle));
+    } else {
+      v0 = v1 = vBack = vFwd = 0.0;
+    }
   } else {
   size_t i0 = (size_t)voice->position;
   /* The loop's last sample is a valid read head position - its partner
@@ -2955,6 +3095,7 @@ bool voice_envelope(struct XpJv1080Voice *voice)
         voice->segment_total =
           amp_env_segment_seconds(voice->time[voice->segment]);
         voice->segment_remaining = voice->segment_total;
+        voice->envelope_ratio_valid = false;
       } else {
         voice->segment = 4u;   /* holding the sustain level */
         if (voice->pending_release || voice->release_at_sustain) {
@@ -2976,7 +3117,19 @@ bool voice_envelope(struct XpJv1080Voice *voice)
       } else {
         double units = voice->segment_start +
           (voice->level_units[voice->segment] - voice->segment_start) * done;
-        voice->envelope = amp_env_units_amplitude(units);
+        if (units != voice->envelope_units) {
+#ifdef EMUSC_LEGACY_DSP_FAST
+          voice->envelope_units_amplitude = amp_env_units_amplitude_carried(
+            voice, units, voice->segment_total > 0.0
+              ? (voice->level_units[voice->segment] - voice->segment_start) *
+                  voice->sample_period / voice->segment_total
+              : 0.0);
+#else
+          voice->envelope_units_amplitude = amp_env_units_amplitude(units);
+#endif
+          voice->envelope_units = units;
+        }
+        voice->envelope = voice->envelope_units_amplitude;
       }
       voice->segment_remaining -= voice->sample_period;
     }
@@ -2996,9 +3149,8 @@ double voice_tva(const struct XpJv1080Voice *voice, double sample)
 double voice_tvf(struct XpJv1080Voice *voice, double value)
 {
   if (voice->filter_type) {
-    const double g = voice->svf_g, k = voice->svf_k;
-    const double h1 = 1.0 / (1.0 + g * (g + k));
-    const double h2 = g * h1, h3 = g * h2;
+    const double k = voice->svf_k;
+    const double h1 = voice->svf_h1, h2 = voice->svf_h2, h3 = voice->svf_h3;
     const double v3 = value - voice->s2;
     const double v1 = h1 * voice->s1 + h2 * v3;             /* band-pass */
     const double v2 = voice->s2 + h2 * voice->s1 + h3 * v3; /* low-pass */
