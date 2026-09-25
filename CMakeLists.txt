@@ -20,6 +20,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 
+# Link-time optimization for Release builds, on every target defined below:
+# the libraries, and the tools and tests that compile engine sources directly.
+# Rendered output is byte-identical with and without it on the native GCC and
+# MinGW 32-bit toolchains. A toolchain with EMUSC_BASELINE_CHECK set is left
+# out: that check disassembles the library's objects, which under LTO hold
+# only compiler IR and would pass without checking anything.
+option(EMUSC_LTO "Enable link-time optimization for Release builds" ON)
+get_property(EMUSC_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT EMUSC_LTO)
+  message(STATUS "Link-time optimization: disabled (EMUSC_LTO=OFF)")
+elseif(EMUSC_BASELINE_CHECK)
+  message(STATUS "Link-time optimization: disabled (toolchain sets EMUSC_BASELINE_CHECK)")
+elseif(EMUSC_MULTI_CONFIG OR CMAKE_BUILD_TYPE STREQUAL "Release")
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT EMUSC_IPO_SUPPORTED OUTPUT EMUSC_IPO_OUTPUT)
+  if(EMUSC_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    message(STATUS "Link-time optimization: enabled for Release")
+  else()
+    message(STATUS "Link-time optimization: not supported by this toolchain")
+  endif()
+endif()
+
 add_subdirectory(libemusc)
 
 # emuscd/ holds the realtime MIDI daemon for both platforms it's built on:
