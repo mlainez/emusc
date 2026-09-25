@@ -78,7 +78,7 @@ Measure every optimization independently before combining it, using dense live-M
 
 ### Lossless/default gate
 
-- Byte-identical rendered WAV output for the existing SC-55, SC-55mkII, JV-880, and SC-88 reference corpus at 32, 44.1, and 48 kHz.
+- Byte-identical rendered WAV output for the existing SC-55, SC-55mkII, JV-880, SC-88, and JV-1080 reference corpus at 32, 44.1, and 48 kHz. JV-1080 was previously missing from this list despite sharing the XP engine with SC-88 and having since received its own optimization work; unlike the other four devices' demo content, no official Roland JV-1080 demo-disk material is in use here, so any JV-1080 corpus material must itself be confirmed free of redistribution concerns before being treated as a stable, reusable reference set.
 - Identical event timing, voice allocation/lifetime, frame count, and deterministic output.
 - All existing unit, integration, determinism, and audio comparison tests pass.
 - Retain only changes with a repeatable performance improvement or a clearly demonstrated removal of expensive operations from a hot path.

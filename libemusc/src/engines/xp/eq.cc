@@ -10,7 +10,8 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* The XP coefficient law: fourteen signed bits with thirteen fractional,
+/* @provenance class=CREDITED devices=SC-88 ref=T-008
+   The XP coefficient law: fourteen signed bits with thirteen fractional,
    scaled by the two-bit exponent the top bits carry. At the centre gain
    the low 200 Hz record is `5000 2162 1e9e`, which decodes to exactly
    1, -0.956787 and +0.956787 - the identity eq.md describes.

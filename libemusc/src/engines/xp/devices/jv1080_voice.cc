@@ -33,7 +33,8 @@ namespace EmuSC { namespace Xp {
 
 namespace {
 
-/* MEASURED (`M-018`): the A-ENV's level field is its own table, not the
+/* @provenance class=MEASURED devices=JV-1080 ref=M-018
+   The A-ENV's level field is its own table, not the
    level fields' square law - the two differ by 10.08 dB at worst. These are
    the eleven points, in dB relative to value 127, read with all four times
    at zero so the note is a rectangle at one level and the envelope is
@@ -50,7 +51,8 @@ const struct { uint8_t value; double db; } kAmpEnvLevelTable[] = {
   { 112u,  -5.86 }, { 127u,   0.00 },
 };
 
-/* MEASURED (`M-015`, `M-023`): pan is a constant-power law, antisymmetric
+/* @provenance class=MEASURED devices=JV-1080 ref=M-015,M-023
+   Pan is a constant-power law, antisymmetric
    about value 64, and the tone and part fields index one table. These are
    the measured channel differences in dB at each distance from centre,
    after the 0.97 dB that belongs to the capture interface was cancelled by
@@ -239,7 +241,8 @@ double pan_difference_db(int offset)
   return pan_difference_asymmetric((double)offset);
 }
 
-/* MEASURED (`M-009`, `M-019`, `M-048`): one square-law table, indexed by
+/* @provenance class=MEASURED devices=JV-1080 ref=M-009,M-019,M-048
+   One square-law table, indexed by
    five different fields - tone level, patch level, part level, tone output
    level and CC7 - to a worst deviation of 0.41 dB and often under 0.15.
    `gain = (value/127)^2`. */
@@ -571,7 +574,8 @@ double amp_env_attack_shape(double done)
   return a + (b - a) * f;
 }
 
-/* MEASURED (`M-035`): wave gain is exactly the display enum,
+/* @provenance class=MEASURED devices=JV-1080 ref=M-035
+   Wave gain is exactly the display enum,
    -6 / 0 / +6 / +12 dB, within 0.06 dB. */
 double wave_gain(unsigned raw)
 {

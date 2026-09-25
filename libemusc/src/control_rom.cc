@@ -1649,9 +1649,10 @@ void ControlRom::_init_device_lookup_tables(void)
   // by kmIndex + key, so it must cover the whole key range.
   // KeyMapper is read two different ways and its neutral differs between them.
   // tva.cc and pitch.cc take a BYTE and want 0 (no bias, no key follow), but
-  // tvf.cc takes a 16-BIT value and computes ((km - 0x4000) * cofkf) >> 8, so
-  // zero there is a large NEGATIVE key follow that slams the cutoff shut - it
-  // cost 35 dB and made the filter unusable. 0x4000 is its centre.
+  // tvf_indexed_law.cc takes a 16-BIT value and computes
+  // ((km - 0x4000) * cofkf) >> 8, so zero there is a large NEGATIVE key follow
+  // that slams the cutoff shut - it cost 35 dB and made the filter unusable.
+  // 0x4000 is its centre.
   //
   // So the table carries both: a zero region the byte readers use, and a
   // 0x4000-filled region that KeyMapperIndex points the TVF reader at.
@@ -1662,11 +1663,12 @@ void ControlRom::_init_device_lookup_tables(void)
     t.KeyMapper[i]     = 0x40;          // 0x4000 big-endian, the centre
     t.KeyMapper[i + 1] = 0x00;
   }
-  // tvf.cc indexes this table as KeyMapperIndex[48 + TVFCFKeyFlwC]
+  // tvf_indexed_law.cc indexes this table as KeyMapperIndex[48 + TVFCFKeyFlwC]
   for (int i = 48; i < 64; i++) t.KeyMapperIndex[i] = 256;
 
-  // Velocity curves: identity, so velocity passes through unshaped. tvf.cc
-  // bounds-checks this one by size, so a single 128-entry curve is enough.
+  // Velocity curves: identity, so velocity passes through unshaped.
+  // tvf_indexed_law.cc bounds-checks this one by size, so a single 128-entry
+  // curve is enough.
   t.VelocityCurves.resize(128);
   for (int i = 0; i < 128; i++) t.VelocityCurves[i] = (uint8_t) i;
 

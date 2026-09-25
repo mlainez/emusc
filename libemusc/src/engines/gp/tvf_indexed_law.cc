@@ -1,0 +1,678 @@
+/*  
+ *  This file is part of libEmuSC, a Sound Canvas emulator library
+ *  Copyright (C) 2022-2026  Håkon Skjelten
+ *
+ *  libEmuSC is free software: you can redistribute it and/or modify it
+ *  under the terms of the GNU Lesser General Public License as published
+ *  by the Free Software Foundation, either version 2.1 of the License, or
+ *  (at your option) any later version.
+ *
+ *  libEmuSC is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with libEmuSC. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+// TVF - Time Variant Filter
+// The Sound Canvas is using a 2nd. order low or high pass filter for TVF.
+// The "TVF Type" variable in partial definitions specifies the filter type or
+// whether the TVF filter is disabled.
+
+// If TVF filter is enabled, the "TVF Cutoff Frequency" in partial definition
+// sets the base cutoff frequency, and envelope values are modifiers to this
+// base frequency. The significance of the TVF Envelope on the cutoff frequency
+// is controlled by the TVF Envelope Depth parameter.
+
+// Cutoff Freq Key Follow scales filter freq with LUT index = "ROM / 10" keys.
+// The Cutoff Freq Key Follow Direction has 4 modes:
+//   0 => Adjust all keys with center on key 64
+//   1 => Only adjust keys > C4
+//   2 => Only adjust keys > C7
+//   3 => Only adjust keys < C7
+
+// To calculate the filter resonance there are two calculations needed:
+//  * Read resonance value from partial def. in ROM and add 2x SysEx value
+//  * Calculate the correct index and read the value from LUT.TVFResonanceFreq
+// Whichever of the two values are lowest will be used for calculating the
+// resonance from the LUT.Resonance lookup table.
+
+
+#include "tvf_indexed_law.h"
+#include "velocity_curve.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <limits>
+
+
+namespace EmuSC { namespace Gp {
+
+
+IndexedTvfLaw::IndexedTvfLaw(ControlRom::InstPartial &instPartial,
+                             uint8_t key, uint8_t velocity,
+                             ControlRom::LookupTables &LUT,
+                             const TvfCutoffLaw &cutoffLaw,
+                             TvfPartControls &controls,
+                             const TvfLfoInputs &lfo, SVF &svf)
+  : TvfLaw(LUT),
+    _LUT(LUT),
+    _instPartial(instPartial),
+    _cutoffLaw(cutoffLaw),
+    _controls(controls),
+    _lfo1FadeComplete(false),
+    _lfo2FadeComplete(false),
+    _lfo1Depth(0),                 // _init_envelope() below scales _lfo1Depth
+    _lfo2Depth(0),                 // by the LFO fade and _iterate_phase()
+                                   // reads both, all before the first
+                                   // _update_lfo_depth() call
+    _resonance(0x40),
+    _envLevel(0),
+    _envLevelMode(0xff00),
+    _prevEnvLevel(0),
+    _coFreq{},
+    _key(key)
+{
+  _lfo = lfo;
+
+  _velocity = _get_velocity_from_vcurve(velocity);
+
+  // TODO: RENAME TO _cofKeyFollow? Any relation to timeKeyFollow?
+  _keyFollow = _get_cof_key_follow(_instPartial.TVFCFKeyFlw - 0x40);
+  _coFreqVSens = _read_cutoff_freq_vel_sens(_instPartial.TVFCOFVSens - 0x40);
+  _envDepth = _LUT.TVFEnvDepth[_instPartial.TVFEnvDepth];
+
+  _init_freq_and_res();
+  _init_envelope();
+
+  update(lfo, svf);
+}
+
+
+// TODO: Add suport for Cutoff freq V-sens
+// TVF consists of two values: Filter cutoff frequency and resonance.
+// The cutoff frequency is controlled by the envelope generator and have a
+// "mode" variable controlling how the frequency values are interpolated /
+// smoothed across and inside control loops of 256 samples. Resonance is a more
+// static variable controlled by instrument definition and SySEx messsages.
+void IndexedTvfLaw::apply_sample_set(SVF &svf, std::array<float, 256> &dryBus)
+{
+  _smooth_cutoff();
+
+  for (int i = 0; i < 256; i++) {
+    svf.set_cutoff_freq(_coFreq[i]);
+    dryBus[i] = svf.process_sample(dryBus[i]);
+  }
+}
+
+
+// The cutoff frequency moves inside the control period, it does not step at
+// the period boundary.  Measured (PROVENANCE.md P-0134): a cutoff step of 50
+// semitones, driven from the part parameter half-way through a held note,
+// takes about 6.3 ms on the reference and under 1 ms on this engine, which
+// applied the whole step at the first sample of the next period.
+//
+// The mode _iterate_phase() writes carries the speed of that move in its low
+// byte, in the encoding slew_calc.h documents.  Two speeds land on the first
+// sample and hold:
+//   0x00  the level did not change this period (written as the mode 0xff00)
+//   0xaf  "fast to target, land exactly and pin", which _iterate_phase()
+//         writes for a segment of zero duration - including a note's first
+//         control period.  The TVA's equivalent was measured at about 0.5 ms
+//         (P-0062), and the arithmetic in slew_calc.h gives about 1 ms here;
+//         both are shorter than the 8 ms period, so they are taken as
+//         immediate.
+// Every other speed is treated as a linear ramp across the period.  That is
+// the same simplification TVA::_smooth() makes for the TVA envelope, and it
+// keeps the settled cutoff exactly at the value _iterate_phase() computed,
+// which is what the reference's steady state measures at; the reference's
+// per-sample shape inside the period is finer than the measurement resolves.
+void IndexedTvfLaw::_smooth_cutoff(void)
+{
+  int speed = _envLevelMode & 0xff;
+
+  if (speed == 0x00 || speed == 0xaf || _envLevel == _prevEnvLevel) {
+    _coFreq.fill(_envLevel);
+    return;
+  }
+
+  float level = _prevEnvLevel;
+  float step = (_envLevel - _prevEnvLevel) / 256.0f;
+  for (int i = 0; i < 256; i++) {
+    level += step;
+    _coFreq[i] = (int) level;
+  }
+
+  _coFreq[255] = _envLevel;                  // land exactly on the target
+}
+
+
+// Run regularly for every 256 samples @32k sample rate => 125Hz
+void IndexedTvfLaw::update(const TvfLfoInputs &lfo, SVF &svf)
+{
+  _lfo = lfo;
+
+  // Update LFO depth parameters based on fade-in status
+  if (!_lfo1FadeComplete)
+    _update_lfo_depth(1);
+  if (!_lfo2FadeComplete)
+    _update_lfo_depth(2);
+
+  _iterate_phase();
+
+  // Update filter coefficients.  The cutoff is set per sample by
+  // _smooth_cutoff() from apply_sample_set(); the resonance is a control-rate
+  // parameter and moves one step per period (_iterate_phase()).
+  svf.set_resonance(_resonance);
+}
+
+
+void IndexedTvfLaw::_update_lfo_depth(int lfo)
+{
+  if (lfo == 1) {
+    if (_lfo.lfo1.fade != UINT16_MAX) {
+      _lfo1Depth = (_lfo.lfo1.fade *
+		    _LUT.LFOTVFDepth[_instPartial.TVFLFO1Depth & 0x7f]) >> 16;
+    } else {
+      _lfo1Depth = _LUT.LFOTVFDepth[_instPartial.TVFLFO1Depth & 0x7f];
+      _lfo1FadeComplete = true;
+    }
+
+  } else if (lfo == 2) {
+    if (_lfo.lfo2.fade != UINT16_MAX) {
+      _lfo2Depth = (_lfo.lfo2.fade *
+		    _LUT.LFOTVFDepth[_instPartial.TVFLFO2Depth & 0x7f]) >> 16;
+    } else {
+      _lfo2Depth = _LUT.LFOTVFDepth[_instPartial.TVFLFO2Depth & 0x7f];
+      _lfo2FadeComplete = true;
+    }
+  }
+}
+
+
+void IndexedTvfLaw::_init_envelope(void)
+{
+  _phaseLevel[0] = 0x40;
+  _phaseLevel[1] = _instPartial.TVFEnvL1;
+  _phaseLevel[2] = _instPartial.TVFEnvL2;
+  _phaseLevel[3] = _instPartial.TVFEnvL3;
+  _phaseLevel[4] = _instPartial.TVFEnvL4;
+  _phaseLevel[5] = _instPartial.TVFEnvL5;
+
+  _phaseTime[0] = 0;                                     // Never used
+  _phaseTime[1] = _instPartial.TVFEnvT1 & 0x7F;
+  _phaseTime[2] = _instPartial.TVFEnvT2 & 0x7F;
+  _phaseTime[3] = _instPartial.TVFEnvT3 & 0x7F;
+  _phaseTime[4] = _instPartial.TVFEnvT4 & 0x7F;
+  _phaseTime[5] = _instPartial.TVFEnvT5 & 0x7F;
+
+  // Adjust time for Envelope Time Key Follow including Envelope Time Key Preset
+  set_time_key_follow(Envelope::Type::TVF, 0, _key,
+                      _instPartial.TVFETKeyF14 - 0x40, _instPartial.TVFETKeyFP14);
+  set_time_key_follow(Envelope::Type::TVF, 1, _key,
+                      _instPartial.TVFETKeyF5 - 0x40, _instPartial.TVFETKeyFP5);
+
+  // Adjust time for Envelope Time Velocity Sensitivity
+  set_time_velocity_sensitivity(Envelope::Type::TVF, 0,
+                                _instPartial.TVFETVSens12 - 0x40, _velocity);
+  set_time_velocity_sensitivity(Envelope::Type::TVF, 1,
+                                _instPartial.TVFETVSens35 - 0x40, _velocity);
+
+  // The JV's own time sense (scdb D-27), the same law as the TVA's on the
+  // filter envelope's own three nibbles.
+  set_jv_time_sense(_instPartial.TVFJVVelT1, _instPartial.TVFJVVelT4,
+                    _instPartial.TVFJVTimeKF, _key, _velocity,
+                    _instPartial.JVDelayKeyOff != 0);
+
+  // Initialization run in Phase=Off and with manually update LFO1 depth
+  _lfo1Depth = (_lfo.lfo1.fade * _lfo1Depth) >> 16;
+  _iterate_phase();
+
+  _init_new_phase(Phase::Attack1);
+}
+
+
+int IndexedTvfLaw::_get_velocity_from_vcurve(uint8_t velocity)
+{
+  // See the note in TVA::_get_velocity_from_vcurve: a single-curve bank means
+  // the device does its own velocity shaping and the selector is not an index.
+  const size_t curveCount = _LUT.VelocityCurves.size() / 128;
+  const unsigned int curve = (curveCount > 1) ? _instPartial.TVFCOFVelCur : 0;
+
+  unsigned int address = curve * 128 + velocity;
+  if (address > _LUT.VelocityCurves.size()) {
+    std::fprintf(stderr, "libEmuSC internal error: Illegal velocity curve used\n");
+    return 0;
+  }
+
+  return _LUT.VelocityCurves[address];
+}
+
+
+int IndexedTvfLaw::_read_cutoff_freq_vel_sens(int cofvsROM)
+{
+  int v = 127 - _velocity;
+  int res = 0x7fff;
+  if (cofvsROM != 0)
+    res -= ((v * _LUT.TVFCutoffVSens[std::abs(cofvsROM)]) & 0xffff);
+
+  return res;
+}
+
+
+int IndexedTvfLaw::_get_level_init(int level)
+{
+  int depth = (_envDepth * _coFreqVSens) * 2;
+  int scale = _LUT.TVFEnvScale[std::clamp(std::abs(level - 0x40), 0, 63)];
+  int tmp = (scale * ((depth & 0xffff0000) >> 16)) * 2;
+  int res = ((tmp & 0x0000ff00) >> 8) + ((tmp & 0x00ff0000) >> 8);
+
+  if (level >= 0x40)
+    res += _keyFollow;
+  else
+    res = _keyFollow - res;
+
+  return res;
+}
+
+
+void IndexedTvfLaw::_init_freq_and_res(void)
+{
+  _L1Init = _get_level_init(_instPartial.TVFEnvL1);
+  _L2Init = _get_level_init(_instPartial.TVFEnvL2);
+  _L3Init = _get_level_init(_instPartial.TVFEnvL3);
+  _L4Init = _get_level_init(_instPartial.TVFEnvL4);
+  _L5Init = _get_level_init(_instPartial.TVFEnvL5);
+
+  int envLevelMax = _keyFollow;
+  envLevelMax = std::max(envLevelMax, _L1Init);
+  envLevelMax = std::max(envLevelMax, _L2Init);
+  envLevelMax = std::max(envLevelMax, _L3Init);
+  envLevelMax = std::max(envLevelMax, _L4Init);
+  envLevelMax = std::max(envLevelMax, _L5Init);
+
+  // Whether a positive TVF Cutoff Frequency raises the partial's base cutoff is
+  // per-device: see TvfCutoffLaw. The fit behind it is P-0133 - the mkII's
+  // cutoff runs +2 -> +2.1, +8 -> +8.2, +16 -> +15.7, +32 -> +30.3, +40 -> +39.6
+  // cutoff steps and then saturates, while the mk1 stays within 0.1 of its base
+  // for every value from +2 to +63.
+  const TvfCutoffLaw &law = _cutoffLaw;
+  int tm3 = _controls.patch_param(PatchParam::TVFCutoffFreq) - 0x40;
+  bool cofOffsetRaises = law.offsetRaises;
+  tm3 = std::clamp(tm3, -0x32, law.offsetMax);
+  int bptm3 = (tm3 < 0 || cofOffsetRaises) ? _instPartial.TVFBaseFlt + tm3
+                                           : _instPartial.TVFBaseFlt;
+  // _iterate_phase() clamps the same sum to 0x7f before it uses it
+  // (accCoFreq); this one did not, so a large positive offset ran the
+  // resonance lookup off the end of the cutoff table while the cutoff itself
+  // stopped at 0x7f.
+  bptm3 = std::min(bptm3, 0x7f);
+
+  int cofIndex = std::clamp(envLevelMax + (bptm3 << 8), 0, 0x7fff);
+  cofIndex = std::min(cofIndex + 0xff, 0x7fff);
+
+  // The cutoff this filter can reach is capped in _iterate_phase() at the
+  // coefficient 0xe600, which is cutoff index 120.3; _cutoffCeiling is the
+  // first table index above that cap.  Reading TVFResonanceFreq above it
+  // asks what resonance a cutoff the filter never uses would allow, and the
+  // table answers 0 there, so the damping index collapses to its floor of 8
+  // and the filter rings where the reference does not.  Measured
+  // (PROVENANCE.md P-0161) on five tones whose filter is static, at keys 24,
+  // 36 and 60: with the part parameter driven past that point the
+  // reference's damping index settles at 10, which is TVFResonanceFreq at
+  // _cutoffCeiling exactly, not at 8.
+  //
+  // Only the offset is held back, never the partial's own base and envelope:
+  // with no positive offset cofIndex is already cofIndexNoOffset, so this is
+  // a no-op there, and the SC-55 generation - which ignores positive offsets
+  // altogether (P-0133) - is untouched.
+  int cofIndexNoOffset =
+    std::clamp(envLevelMax + (_instPartial.TVFBaseFlt << 8), 0, 0x7fff);
+  cofIndexNoOffset = std::min(cofIndexNoOffset + 0xff, 0x7fff);
+  int cutoffIdx = std::min(cofIndex >> 8,
+                           std::max(cofIndexNoOffset >> 8, _cutoffCeiling));
+
+  int cof = _LUT.TVFCutoffFreq[cutoffIdx];
+  int rfIndex = (2 * cof) + 0xff;
+  rfIndex = rfIndex > 0xffff ? 0xff00 : rfIndex;
+  _resIndexFreq = _LUT.TVFResonanceFreq[(rfIndex >> 8)];
+
+  int tm4 = _controls.patch_param(PatchParam::TVFResonance) - 0x40;
+  tm4 = std::clamp(tm4, -0x32, 0x32);
+  _resonance = std::min(_instPartial.TVFResonance - (tm4 * 2), _resIndexFreq);
+  _resonance = std::max(_resonance, 0);
+}
+
+
+int IndexedTvfLaw::_get_cof_key_follow(int cofkfROM)
+{
+  int kmIndex = _LUT.KeyMapperIndex[48 + _instPartial.TVFCFKeyFlwC] - _LUT.KeyMapperOffset;
+  int km = static_cast<int>(_native_endian_uint16((uint8_t *) &_LUT.KeyMapper[kmIndex + _key * 2]));
+  int cofkf = _LUT.TVFCutoffFreqKF[std::abs(cofkfROM)];
+  int res = ((km - 0x4000) * cofkf) >> 8;
+
+  if (cofkfROM < 0)
+    return  -res;
+
+  return res;
+}
+
+
+uint16_t IndexedTvfLaw::_native_endian_uint16(uint8_t *ptr)
+{
+  if (_le_native())
+    return (ptr[0] << 8 | ptr[1]);
+
+  return (ptr[1] << 8 | ptr[0]);
+}
+
+
+void IndexedTvfLaw::_iterate_phase(void)
+{
+  if (_phasePosition >= 0xffff) {
+    if (_phase == Phase::Attack1) {
+      _init_new_phase(Phase::Attack2);
+    } else if (_phase == Phase::Attack2) {
+      _init_new_phase(Phase::Decay1);
+    } else if (_phase == Phase::Decay1) {
+      _init_new_phase(Phase::Decay2);
+    } else if (_phase == Phase::Decay2) {
+      _init_new_phase(Phase::Sustain);
+    } else if (_phase == Phase::Release) {
+      _phase = Phase::Terminated;
+      return;
+    }
+  }
+
+  int segmentCurveIndex = 0;
+
+  if (_phase == Phase::Init) {                    // Initialization run
+    _ipLevelInit = _keyFollow & 0xffff;
+
+  } else if (_phase == Phase::Sustain) {          // Sustain phase
+    _phaseRemainder = 0;
+    segmentCurveIndex = 8;
+
+  } else if (_phaseDuration <= _instantTicks) {               // Very short phase duration
+    _phasePosition = 0xffff;
+    segmentCurveIndex = _phaseDuration;
+    _ipLevelInit = _currentLevelInit & 0xffff;
+
+  } else {                                        // Normal phase duration
+    _phaseStepSize = (8 << 16) / _phaseDuration;
+    segmentCurveIndex = 8;
+
+    int loadScale = 1;    // TODO: Move to central location (Settings?) for
+                          //       coordination between notes
+    int step = loadScale + _phaseRemainder;
+    _phaseRemainder = 0;
+
+    int mul = _phaseStepSize * step;
+    int phaseStepDelta = (mul >> 16);
+    int phaseAccInc = (mul & 0xffff) + _phasePosition;
+
+    if (phaseAccInc > 0xffff) {
+      phaseAccInc &= 0xffff;
+      phaseStepDelta += 1;
+    }
+
+    if (phaseStepDelta != 0) {
+      if (phaseAccInc < 0xffff)
+        phaseStepDelta -= 1;
+
+      _phaseRemainder = (phaseStepDelta / _phaseStepSize) & 0xffff;
+      _phasePosition = 0xffff;
+
+      _ipLevelInit = _currentLevelInit & 0xffff;
+
+    } else {
+      _phasePosition = phaseAccInc;
+
+      // Interpolation of Level Init values
+      int prev = _prevLevelInit & 0xffff;
+      int curr = _currentLevelInit & 0xffff;
+      int phase = _phasePosition;
+
+      if (prev == curr) {
+        _ipLevelInit = prev;
+
+      } else if ((prev ^ curr) & 0x8000) {        // Different signs
+        int16_t absPrev = std::abs(prev);
+        int16_t absCurr = std::abs(curr);
+        int16_t mag = std::abs(absCurr - absPrev);
+        if (mag < 0) mag = std::numeric_limits<int16_t>::max();
+
+        int16_t scaled = (int16_t) ((uint32_t(uint16_t(mag)) * phase) >> 16);
+        int16_t magResult = (absCurr >= absPrev) ? absPrev + scaled : absPrev - scaled;
+        _ipLevelInit = (curr < 0) ? -magResult : magResult;
+
+      } else {                                    // Same signs
+        int16_t mag = std::abs(curr - prev);
+        if (mag < 0) mag = std::numeric_limits<int16_t>::max();
+
+        int16_t scaled = (int16_t) ((uint32_t(uint16_t(mag)) * phase) >> 16);
+        _ipLevelInit = (curr >= prev) ? prev + scaled : prev - scaled;
+      }
+    }
+  }
+
+  // See _init_freq_and_res(): only the mkII generation lets the parameter
+  // raise the cutoff above the partial's own base (PROVENANCE.md P-0133)
+  const TvfCutoffLaw &law = _cutoffLaw;
+  int tmCF = _controls.patch_param(PatchParam::TVFCutoffFreq);
+  bool cofOffsetRaises = law.offsetRaises;
+  tmCF = std::clamp(tmCF, 0xe, law.paramMax);
+  int accCoFreq = std::clamp(_instPartial.TVFBaseFlt + (tmCF - 0x40), 0,
+                             cofOffsetRaises ? 0x7f
+                                             : (int) _instPartial.TVFBaseFlt);
+
+  uint16_t accDepth = _ipLevelInit + (accCoFreq << 8);
+  accDepth = (uint16_t) std::clamp((int) accDepth, 0, (int) INT16_MAX);
+
+  int accCutoffCtrl = _controls.controller(Settings::ControllerParam::TVFCutoff);
+
+  accDepth = (uint16_t) std::clamp((int) accDepth + std::abs(accCutoffCtrl), 0, (int) INT16_MAX);
+
+  // This is how far the "TVF envelope" goes
+  _envelopeOut = accDepth >> 8;
+
+  // Add LFO modulations to cutoff frequency
+  int lfoDepth = std::abs(_lfo1Depth +
+                          _controls.controller(Settings::ControllerParam::LFO1TVFDepth));
+  lfoDepth = std::min(lfoDepth, 0x1800);
+  int lfoProd = (_lfo.lfo1.value << 1) * lfoDepth;
+  int lfoMod = (lfoProd + 0x8000) >> 16;
+  accDepth = (uint16_t) std::clamp((int) accDepth + lfoMod, 0, (int) INT16_MAX);
+
+  lfoDepth = std::abs(_lfo2Depth +
+                      _controls.controller(Settings::ControllerParam::LFO2TVFDepth));
+  lfoDepth = std::min(lfoDepth, 0x1800);
+  lfoProd = int32_t(_lfo.lfo2.value << 1) * lfoDepth;
+  lfoMod = (lfoProd + 0x8000) >> 16;
+  accDepth = (uint16_t) std::clamp((int) accDepth + lfoMod, 0, (int) INT16_MAX);
+
+  int tmRes = _controls.patch_param(PatchParam::TVFResonance) - 0x40;
+  tmRes = std::clamp(_instPartial.TVFResonance - tmRes * 2,
+                     0, _resIndexFreq);
+
+  if ((tmRes & 0xff) != _resonance) {
+    if ((tmRes & 0xff) < _resonance)
+      _resonance -= 1;
+    else
+      _resonance += 1;
+
+    int resFreqIndex = std::min(_envLevel + 0xff, 0xff00);
+    int resFreq = _LUT.TVFResonanceFreq[resFreqIndex >> 8];
+    _resonance = std::min(_resonance, resFreq);
+  }
+
+  int ipCoFreq;
+  int coFreq1 = _LUT.TVFCutoffFreq[(accDepth >> 8)];
+
+  if (accDepth == 0) {
+    ipCoFreq = coFreq1;
+
+  } else {
+    int coFreq2 = _LUT.TVFCutoffFreq[(accDepth >> 8) + 1];
+    ipCoFreq = coFreq1 + (((coFreq2 - coFreq1) * (accDepth & 0xff)) >> 8);
+  }
+
+  ipCoFreq *= 2;
+  _resonance = std::max(_resonance, 8);
+
+  int res = _LUT.TVFResonance[_resonance] << 8;
+  if (res < ipCoFreq)
+    ipCoFreq = res;
+
+  ipCoFreq = std::min(ipCoFreq, 0xe600);
+
+  _prevEnvLevel = _envLevel;
+  _envLevel = ipCoFreq;
+
+  int intEnvValue = _envLevel;
+  if (_envLevel == _prevEnvLevel) {
+    _envLevelMode = 0xff00;
+    return;
+
+  } else if (_envLevel > _prevEnvLevel) {
+    intEnvValue &= 0xff00;
+    if (intEnvValue == (_prevEnvLevel & 0xff00)) {
+      intEnvValue += 0x100;
+      intEnvValue = std::max(intEnvValue,
+                             _LUT.TVFCutoffFreq[_resonance] << 8);
+    }
+  }
+
+  intEnvValue = std::min(intEnvValue, 0xe600);
+
+  if (segmentCurveIndex == 0) {
+    _envLevelMode = (intEnvValue & 0xff00) | 0xaf;  // Env. segment acc. preload
+    return;
+  }
+
+  int segmentStepIndex = _LUT.EnvSegmentCurve[segmentCurveIndex];
+  int phaseAccumulator = _envLevel - _prevEnvLevel;
+  if (phaseAccumulator < 0) phaseAccumulator = -phaseAccumulator;
+
+  for (int i = 0; i < 8; i++) {
+    uint16_t prev = phaseAccumulator;
+    phaseAccumulator <<= 1;
+    if (prev & 0x8000)
+      break;
+
+    segmentStepIndex --;
+  }
+
+  if (segmentStepIndex < 0) {
+    segmentStepIndex = 0;
+    phaseAccumulator >>= 1;
+  }
+
+  int tvfLow = (phaseAccumulator >> 8) & 0xff;
+  tvfLow = ((tvfLow >> 3) + 1) >> 1;
+  tvfLow |= _LUT.EnvSegmentStep[segmentStepIndex];
+
+  _envLevelMode = (intEnvValue & 0xff00) + tvfLow;
+}
+
+
+void IndexedTvfLaw::_init_new_phase(enum Phase newPhase)
+{
+  if (newPhase == Phase::Terminated) {
+    std::fprintf(stderr, "libEmuSC: Internal error, envelope in illegal state\n");
+    return;
+
+  } else if (newPhase == Phase::Attack1) {
+    _prevLevelInit = _ipLevelInit;                // Output from pre-run
+    _currentLevelInit = _L1Init;
+
+    _currentEnvTime = _phaseTime[static_cast<int>(newPhase)];
+
+    _phaseStartValue = _phaseLevel[static_cast<int>(_phase)];
+    _phaseEndValue = _phaseLevel[static_cast<int>(newPhase)];
+
+  } else if (newPhase == Phase::Attack2) {
+    _prevLevelInit = _L1Init;
+    _currentLevelInit = _L2Init;
+
+    _currentEnvTime = _phaseTime[static_cast<int>(newPhase)];
+
+    _phaseStartValue = _phaseLevel[static_cast<int>(_phase)];
+    _phaseEndValue = _phaseLevel[static_cast<int>(newPhase)];
+
+  } else if (newPhase == Phase::Decay1) {
+    _prevLevelInit = _L2Init;
+    _currentLevelInit = _L3Init;
+
+    _currentEnvTime = _phaseTime[static_cast<int>(newPhase)];
+
+    _phaseStartValue = _phaseLevel[static_cast<int>(_phase)];
+    _phaseEndValue = _phaseLevel[static_cast<int>(newPhase)];
+
+  } else if (newPhase == Phase::Decay2) {
+    _prevLevelInit = _L3Init;
+    _currentLevelInit = _L4Init;
+
+    _currentEnvTime = _phaseTime[static_cast<int>(newPhase)];
+
+    _phaseStartValue = _phaseLevel[static_cast<int>(_phase)];
+    _phaseEndValue = _phaseLevel[static_cast<int>(newPhase)];
+
+  } else if (newPhase == Phase::Sustain) {
+    _phase = newPhase;
+
+    if (_envLevel == 0)
+      _finished = true;
+
+    return;
+
+  } else if (newPhase == Phase::Release) {
+    _prevLevelInit = _ipLevelInit;
+    _currentLevelInit = _L5Init;
+    _currentEnvTime = _phaseTime[static_cast<int>(newPhase)];
+
+    _phaseStartValue = _envLevel >> 8;  //_envLevelMode; // (_envLevelMode >> 8);
+    _phaseEndValue = _phaseLevel[static_cast<int>(newPhase)];
+  }
+
+  _phaseDuration = _phaseTime[static_cast<int>(newPhase)];
+
+  // TODO: Add test for PD#4 on TVF envelopes
+  if (newPhase == Phase::Attack1 || newPhase == Phase::Attack2) {
+    _phaseDuration +=
+      (_controls.patch_param(PatchParam::TVFAEnvAttack) - 0x40) * 2;
+
+  } else if (newPhase == Phase::Decay1 || newPhase == Phase::Decay2) {
+    _phaseDuration +=
+      (_controls.patch_param(PatchParam::TVFAEnvDecay) - 0x40) * 2;
+
+  } else if (newPhase == Phase::Release) {
+    _phaseDuration +=
+      (_controls.patch_param(PatchParam::TVFAEnvRelease) - 0x40) * 2;
+  }
+
+  _phaseDuration = _LUT.envelopeTime[std::clamp(_phaseDuration, 0, 127)];
+  _phaseDuration = _jv_time_sense(_phaseDuration, newPhase);
+  _phasePosition = 0;
+  _phaseRemainder = 0;
+
+  // Correct phase duration for Time Key Follow
+  if (newPhase != Phase::Release)
+    _phaseDuration = (_phaseDuration * _timeKeyFlwT1T4) >> 8;
+  else
+    _phaseDuration = (_phaseDuration * _timeKeyFlwT5) >> 8;
+
+  // Correct phase duration for Time Velocity Sensitivity
+  if (newPhase == Phase::Attack1 || newPhase == Phase::Attack2)
+    _phaseDuration = (_phaseDuration * _timeVelSensT1T2) >> 8;
+  else
+    _phaseDuration = (_phaseDuration * _timeVelSensT3T5) >> 8;
+
+
+  _phase = newPhase;
+}
+
+}}  // namespace EmuSC::Gp

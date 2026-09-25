@@ -1,4 +1,4 @@
-/*  
+/*
  *  This file is part of libEmuSC, a Sound Canvas emulator library
  *  Copyright (C) 2022-2026  Håkon Skjelten
  *
@@ -22,9 +22,8 @@
 
 
 #include "svf.h"
+#include "tvf_law.h"
 #include "../../control_rom.h"
-#include "../../device_profile.h"
-#include "envelope.h"
 #include "../../settings.h"
 #include "wave_generator.h"
 
@@ -35,7 +34,9 @@
 namespace EmuSC { namespace Gp {
 
 
-class TVF : public Envelope
+// The partial's filter: the state-variable filter core, and the law that
+// drives its coefficients, chosen once from the device profile's TvfLawKind.
+class TVF
 {
 public:
   // jvCtrlAcc is the per-tone controller matrix's twelve destination
@@ -49,136 +50,46 @@ public:
       Settings *settings, int8_t partId, const int *jvCtrlAcc = nullptr);
   ~TVF();
 
-  void apply(float *sample);
   void apply_sample_set(std::array<float, 256> &dryBus);
   void update(void);
 
   void note_off(uint8_t releaseVelocity = 64);
 
+  // The filter envelope's current level, for the part callback. 0 while the
+  // filter is disabled.
+  int get_envelope_value(void)
+  { return _law ? _law->get_envelope_value() : 0; }
+
 private:
-  const int *_jvCtrlAcc = nullptr;
+  // A part's live parameters, read from Settings for the law.
+  class PartControls : public TvfPartControls
+  {
+  public:
+    PartControls(Settings *settings, int8_t partId)
+      : _settings(settings), _partId(partId) {}
 
-  // A segment this short or shorter snaps instantly. The Sound Canvas's value;
-  // the JV's filter chain does not use it - it takes its segment durations from
-  // the device's own millisecond table and a duration of 0 there IS the skip.
-  int _instantTicks = 8;
+    uint8_t patch_param(enum PatchParam pp) override
+    { return _settings->get_param(pp, _partId); }
+    int controller(enum Settings::ControllerParam cp) override
+    { return _settings->get_acc_control_param(cp, _partId); }
 
-
-  uint32_t _sampleRate;
+  private:
+    Settings *_settings;
+    int8_t _partId;
+  };
 
   WaveGenerator *_LFO1;
   WaveGenerator *_LFO2;
 
-  bool _lfo1FadeComplete;
-  bool _lfo2FadeComplete;
-  int _lfo1Depth;
-  int _lfo2Depth;
+  PartControls _controls;
 
-  ControlRom::LookupTables &_LUT;
-  ControlRom::InstPartial &_instPartial;
-
-  int _L1Init;
-  int _L2Init;
-  int _L3Init;
-  int _L4Init;
-  int _L5Init;
-
-  int _ipLevelInit;
-
-  int _currentEnvTime;
-  int _currentLevelInit;
-  int _prevLevelInit;
-
-  int _coFreqIndex;
-
-  int _resIndexFreq;
-  int _resIndexUsed;
-
-  // First cutoff-table index whose coefficient exceeds the 0xe600 cap that
-  // _iterate_phase() applies, i.e. the first index the filter cannot reach.
-  // constexpr, not const: std::max takes its arguments by reference, which
-  // odr-uses this and so needs a definition. Without one the library links only
-  // as a shared object, where an undefined symbol is tolerated, and every
-  // static link of libEmuSC fails to resolve it.
-  static constexpr int _cutoffCeiling = 121;
-
-  int _resonance;
-
-  int _envDepth;
-
-  int _envLevel;
-  int _envLevelMode;
-  int _prevEnvLevel;
-
-  std::array<int, 256> _coFreq;    // Cutoff frequency for each sample
-
-  uint8_t _key;
-  int _velocity;
-
-  int _coFreqVSens;
-
-  int _keyFollow;
-
+  // Both null when the partial's filter is disabled; otherwise both set.
   SVF *_svf;
+  TvfLaw *_law;
 
-  Settings *_settings;
-  int8_t _partId;
-
-  // ---- The JV family's chain (PROVENANCE.md P-0390) ----------------------
-  //
-  // A different arithmetic, not the same one with different constants: this one
-  // accumulates every modulation in CENTS, exponentiates the total and
-  // multiplies the tone's base coefficient by it, then hands the two 16-bit
-  // words the firmware computes straight to the filter. TvfLawKind picks between
-  // the two chains the way LevelLawKind picks between the two level laws.
-  bool _jv;
-  const TvfJvLaw *_jvLaw;
-
-  int _jvTickCount;        // control periods since the last envelope tick
-  int _jvDecrement;        // envelope accumulator step for the current segment
-  int _jvEnvLevel;         // envelope output, 0 .. 0x7f00
-  int _jvEnvDepth;         // TVF-ENV Depth, scaled and signed
-  int _jvVelAtten;         // velocity attenuation of the envelope level
-  int _jvKeyFollow;        // key follow offset in cents
-  int _jvLfo1Depth;        // LFO -> TVF depths, scaled and signed
-  int _jvLfo2Depth;
-  int _jvCutoff;           // the tone's base cutoff, 0..127
-  int _jvResTarget;        // the resonance the tone asks for
-  int _jvRes;              // the resonance after the per-tick slew
-  int _jvWord;             // the chip's cutoff coefficient at this tick's end,
-  int _jvWordPrev;         // and at its start, between which it moves
-  int _jvChipTarget;       // the high byte the CPU transmitted, where it stops
-  int _jvRampStep;         // this tick's signed movement before that stop
-  int _jvLastTarget;       // the CPU's last transmitted target, -1 before any
-  float _jvQ1;             // damping, already in the filter's own units
-  int _jvRampPos;          // samples into the move between the two words
-
-  void _jv_init(uint8_t velocity);
-  void _jv_iterate(void);
-  void _jv_next_phase(void);
-  void _jv_apply_sample_set(std::array<float, 256> &dryBus);
+  TvfLfoInputs _lfo_inputs(void);
 
   TVF();
-
-  int _get_velocity_from_vcurve(uint8_t velocity);
-
-  void _init_envelope(void);
-  void _init_freq_and_res(void);
-
-  void _update_lfo_depth(int lfo);
-
-  int _get_cof_key_follow(int cofkfROM);
-  int _get_level_init(int level);
-
-  int _read_cutoff_freq_vel_sens(int cofvsROM);
-
-  inline bool _le_native(void) { uint16_t n = 1; return (*(uint8_t *) & n); }
-  uint16_t _native_endian_uint16(uint8_t *ptr);
-
-  void _init_new_phase(enum Phase newPhase);
-  void _iterate_phase(void);
-
-  void _smooth_cutoff(void);
 };
 
 }}  // namespace EmuSC::Gp
