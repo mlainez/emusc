@@ -698,6 +698,7 @@ void device_destroy(Device *device)
   } else if (device->initialized) {
     engine_destroy(&device->engine);
   }
+  renderer_destroy(&device->renderer);
   reverb_destroy(&device->reverb);
   std::free(device->send_bus);
   std::free(device->chorus_bus);
