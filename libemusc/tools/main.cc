@@ -82,11 +82,21 @@ drive emusc-render and another renderer with the same options):
                          alone, and its failure ends the run.
   --block N              --play only: audio frames per device write, same
                          meaning as emuscd's/emusc-winmidi's --block
-                         (default: 2048)
+                         (default: 2048). If raising --latency alone does
+                         not stop dropouts, try a larger block as well.
   --latency MS           --play only: requested output buffer depth, same
-                         meaning as emuscd's/emusc-winmidi's --latency.
-                         Raise this (and --block) if playback breaks up on
-                         slow hardware (default: 200)
+                         meaning as emuscd's/emusc-winmidi's --latency
+                         (default: 500). The right value depends on the
+                         machine - CPU speed, sound card and driver, and how
+                         much else competes for the CPU (window dragging,
+                         disk I/O) - so expect to tune it: if playback drops
+                         out, raise it in steps until it stops (heavy
+                         desktop activity on slow hardware can need around
+                         1000); if nothing drops out and playback starts
+                         too slowly for your taste, lower it. A larger value
+                         only delays the first sound: this is file playback,
+                         not live MIDI input, so nothing during playback
+                         depends on it.
   --max-voices N         caps simultaneous voices below the loaded device's
                          real polyphony (24 SC-55, 28 SC-55mkII/JV-880, 64
                          SC-88/JV-1080), trading polyphony for headroom on
@@ -178,7 +188,7 @@ struct Options {
   bool play = false;
   std::string audio_api = "auto";
   unsigned block = 2048;
-  unsigned latency = 200;
+  unsigned latency = 500;
   bool max_voices_set = false;
   unsigned max_voices = 0;
 };
