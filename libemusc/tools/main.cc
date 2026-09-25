@@ -594,20 +594,22 @@ int main(int argc, char **argv) {
                      onB, trackPort.size());
     }
 
-    // --play real-time headroom: printed periodically so a render that
-    // cannot keep up shows exactly when it falls behind, rather than just
-    // sounding increasingly delayed with no way to tell why. "window" is
-    // since the last report, "overall" is since playback started - a
-    // steadily healthy window ratio with a falling overall ratio means an
-    // early one-time stall (e.g. ROM load) rather than a sustained deficit.
-    // Without --play, this same timestamp instead measures a clean,
-    // unthrottled render speed at the end (see the "wrote N frames" report
-    // below) - --play's own ratio can never read far above 100%, since the
-    // audio device only ever drains buffers in real time regardless of how
-    // much faster the CPU could produce them.
-    const auto render_start = std::chrono::steady_clock::now();
+    // --play CPU utilization: the share of wall-clock time spent computing
+    // audio, as opposed to blocked in AudioOut::write() waiting for the
+    // device to drain. Audio produced per wall-clock second cannot measure
+    // headroom here, since the device paces the loop to real time however
+    // fast the CPU is; busy time is a subset of elapsed time, so this reads
+    // 0-100%, low meaning spare capacity and near 100% meaning none.
+    // "window" is since the last report, "overall" since playback started.
+    // Only whole blocks are timed (one clock read at the start and end of
+    // each block's compute), keeping the instrumentation itself negligible.
+    // Without --play, render_start instead measures a clean, unthrottled
+    // render speed at the end (see the "wrote N frames" report below).
+    using clock = std::chrono::steady_clock;
+    const auto render_start = clock::now();
     auto window_start = render_start;
-    uint64_t window_start_frame = 0;
+    auto block_start = render_start;
+    clock::duration window_busy{}, overall_busy{};
 
     // Samples at full scale, counted here on what the tool writes rather
     // than taken from the library's own report: anything that rounds to
@@ -674,25 +676,28 @@ int main(int argc, char **argv) {
         play_buf.push_back(to_i16(l));
         play_buf.push_back(to_i16(r));
         if (play_buf.size() >= 2 * (size_t) o.block) {
+          const auto compute_end = clock::now();
+          window_busy += compute_end - block_start;
+          overall_busy += compute_end - block_start;
+
           audio_out->write(play_buf.data(), play_buf.size() / 2);
           play_buf.clear();
 
-          const auto now = std::chrono::steady_clock::now();
+          const auto now = clock::now();
+          block_start = now;
           if (now - window_start >= std::chrono::seconds(2)) {
-            const double window_wall =
-              std::chrono::duration<double>(now - window_start).count();
-            const double window_audio =
-              (double)(fr + 1 - window_start_frame) / o.rate;
-            const double overall_wall =
-              std::chrono::duration<double>(now - render_start).count();
-            const double overall_audio = (double)(fr + 1) / o.rate;
+            using secs = std::chrono::duration<double>;
+            const double window_pct = 100.0 * secs(window_busy).count() /
+                                      secs(now - window_start).count();
+            const double overall_pct = 100.0 * secs(overall_busy).count() /
+                                       secs(now - render_start).count();
             std::fprintf(stderr,
-                         "emusc-render: --play: window %.0f%% real-time, "
-                         "overall %.0f%% real-time\n",
-                         100.0 * window_audio / window_wall,
-                         100.0 * overall_audio / overall_wall);
+                         "emusc-render: --play: CPU busy %.0f%% of wall "
+                         "time (window), %.0f%% (overall); lower = more "
+                         "headroom\n",
+                         window_pct, overall_pct);
             window_start = now;
-            window_start_frame = fr + 1;
+            window_busy = clock::duration{};
           }
         }
       }
@@ -704,7 +709,7 @@ int main(int argc, char **argv) {
       if (audio_out) {
         // --play already forces this render to take as long as the song
         // does, so a render-speed ratio here would just repeat that -
-        // see the periodic window/overall report above instead.
+        // see the periodic CPU utilization report above instead.
         std::fprintf(stderr,
                      "emusc-render: wrote %llu frames to %s; libEmuSC "
                      "reported %u clipped samples\n",
@@ -713,7 +718,7 @@ int main(int argc, char **argv) {
       } else {
         // No --play, so nothing paced this loop to real time: the ratio
         // below is a clean measure of how much CPU headroom this render
-        // actually has, unlike --play's own report (see above).
+        // actually has.
         const double render_wall = std::chrono::duration<double>(
           std::chrono::steady_clock::now() - render_start).count();
         const double audio_seconds = (double) wav->frames() / o.rate;
