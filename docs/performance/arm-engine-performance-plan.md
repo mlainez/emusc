@@ -134,6 +134,36 @@ Retain only changes whose benefit survives repeated runs.
 5. Consider exact runtime-dispatched ARM32 NEON or ARM64 Advanced SIMD kernels
    only for remaining measured hotspots outside the SSE1 plan.
 
+## Multi-core (out of scope here, but measured and worth its own plan)
+
+Real hardware measurement on a Raspberry Pi 2 v1.1 (4x Cortex-A7 @ 900 MHz),
+recorded in `rpi2-headroom-2026-09-25.md`: both `emuscd` and `emusc-render`
+are single-threaded (`Threads: 1` for the whole process lifetime, confirmed
+via `/proc/<pid>/status` during a live run), and SC-88 and JV-1080 each
+saturate their one core (measured 99-100% and 93-100% busy respectively on
+real demo songs) while 2-3 other cores on the same board sit idle throughout.
+
+This is a different kind of change from everything else in this plan: it is
+not lossless in the sense above (accumulation order across threads has to be
+fixed and documented to keep byte-identical output, not merely preserved by
+construction), it is not ARM-specific, and it is not a small item alongside
+the toolchain/PGO/cache work here. It deserves its own plan rather than a
+line item in this one. What is worth carrying over from the measurement:
+
+- The natural split is per-voice/per-partial (GP and XP already look
+  structured that way from their symbol names), not per-effect: the global
+  reverb/chorus bus is a small, inherently serial stage after mixdown.
+- Nobody has profiled *where* SC-88/JV-1080 time actually goes yet. Amdahl's
+  law means the achievable speedup depends entirely on how much of the
+  measured cost is per-voice DSP versus the serial effects bus — that
+  profiling has to happen before threading work is designed, not after.
+- Whatever reduction order is chosen (e.g. per-thread partial buffers summed
+  in a fixed index order) becomes a new invariant this plan's byte-identical
+  gate would also need to cover once it lands.
+- The payoff is real, though: SC-88 and JV-1080 are exactly the two devices
+  this plan's own baseline hardware cannot hold realtime on today, and they
+  are exactly the two a voice-parallel split would help most.
+
 ## Assumptions
 
 - `cmake/toolchain-linux-armhf.cmake` and
