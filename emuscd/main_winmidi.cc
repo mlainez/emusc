@@ -39,7 +39,10 @@ const char *USAGE =
 "  --device NAME       Device to emulate (default: sc88)\n"
 "                       Supported: sc55, sc55mkii, sc88, jv880, jv1080\n"
 "  --midi-in N          MIDI input device index (default: 0)\n"
-"  --audio-api API      Audio output API: winmm or dsound (default: winmm)\n"
+"  --audio-api API      Audio output API: auto, winmm or dsound (default:\n"
+"                        auto - DirectSound, falling back to WinMM if it\n"
+"                        cannot be opened; winmm/dsound force one, and a\n"
+"                        forced dsound that fails exits instead)\n"
 "  --wave-out N         WinMM wave output device index (default: system\n"
 "                        default)\n"
 "  --dsound-out N       DirectSound output device index (default: system\n"
@@ -71,6 +74,8 @@ const char *USAGE =
 // API does on the Linux side (main.cc's handle_seq_event) - neither backend
 // does its own byte-level MIDI parsing.
 struct MidiEvt { uint8_t status, d1, d2; };
+
+enum class AudioApi { Auto, WinMM, DSound };
 
 inline MidiEvt unpack_midi_message(DWORD_PTR dwParam1) {
   DWORD packed = static_cast<DWORD>(dwParam1);
@@ -105,7 +110,7 @@ class WinMidiDaemon {
 public:
   WinMidiDaemon(const std::string &dev, const std::string &romDir,
                 int midiInId, int waveOutId, unsigned rate, unsigned block,
-                unsigned latencyMs, double gainDb, bool useDSound,
+                unsigned latencyMs, double gainDb, AudioApi api,
                 int dsoundOutId)
       : _sampleRate(rate), _blockFrames(block), _romDir(romDir),
         _gainLin(gain_db_to_linear(gainDb)) {
@@ -117,8 +122,13 @@ public:
       std::exit(2);
     }
     open_midi_in(midiInId);
-    if (useDSound) open_dsound(dsoundOutId, latencyMs);
-    else open_wave_out(waveOutId, latencyMs);
+    if (api == AudioApi::WinMM || !open_dsound(dsoundOutId, latencyMs)) {
+      if (api == AudioApi::DSound) std::exit(1);
+      if (api == AudioApi::Auto)
+        std::fprintf(stderr, "emusc-winmidi: DirectSound unavailable (reason "
+                     "above); falling back to WinMM\n");
+      open_wave_out(waveOutId, latencyMs);
+    }
   }
 
   ~WinMidiDaemon() {
@@ -241,10 +251,12 @@ public:
                  _sampleRate, numBuffers, _blockFrames);
   }
 
-  void open_dsound(int id, unsigned latencyMs) {
+  // Returns false, with the reason already printed, if DirectSound could not
+  // be opened.
+  bool open_dsound(int id, unsigned latencyMs) {
     _dsound = DSoundOut::open(id, _sampleRate, _blockFrames, latencyMs,
                               &dsound_fill, this);
-    if (!_dsound) std::exit(1);
+    return _dsound != nullptr;
   }
 
   void run() {
@@ -434,7 +446,7 @@ int main(int argc, char **argv) {
   int midiInId = 0;
   int waveOutId = -1;
   int dsoundOutId = -1;
-  bool useDSound = false;
+  AudioApi audioApi = AudioApi::Auto;
   unsigned rate = 48000;
   unsigned block = 256;
   unsigned latency = 20;
@@ -456,11 +468,12 @@ int main(int argc, char **argv) {
     else if (a == "--dsound-out")    dsoundOutId = std::stoi(need("--dsound-out"));
     else if (a == "--audio-api") {
       std::string api = need("--audio-api");
-      if (api == "winmm") useDSound = false;
-      else if (api == "dsound") useDSound = true;
+      if (api == "auto") audioApi = AudioApi::Auto;
+      else if (api == "winmm") audioApi = AudioApi::WinMM;
+      else if (api == "dsound") audioApi = AudioApi::DSound;
       else {
-        std::fprintf(stderr, "emusc-winmidi: --audio-api must be winmm or "
-                     "dsound\n");
+        std::fprintf(stderr, "emusc-winmidi: --audio-api must be auto, winmm "
+                     "or dsound\n");
         return 1;
       }
     }
@@ -491,7 +504,7 @@ int main(int argc, char **argv) {
   if (romDir.empty()) romDir = default_rom_dir();
 
   WinMidiDaemon daemon(device, romDir, midiInId, waveOutId, rate, block, latency, gainDb,
-                       useDSound, dsoundOutId);
+                       audioApi, dsoundOutId);
   daemon.run();
   return 0;
 }

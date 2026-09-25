@@ -90,13 +90,15 @@ variable still works too.
 
 ### Audio output API
 
-WinMM `waveOut` is the default everywhere. `--audio-api dsound` selects
-DirectSound instead: one looping secondary buffer, kept `--latency` ms ahead
-of the play cursor (more if the driver or the scheduler's timer granularity
-needs it), with the primary buffer set to the stream's own rate so the mixer
-does not resample. `dsound.dll` is loaded only when this is asked for, so the
-executable's DLL imports and its Windows 98 floor are unchanged. Underruns are
-reported on the console; raising `--latency` is the remedy.
+DirectSound is the default (`--audio-api auto`): one looping secondary
+buffer, kept `--latency` ms ahead of the play cursor (more if the driver or
+the scheduler's timer granularity needs it), with the primary buffer set to
+the stream's own rate so the mixer does not resample. If DirectSound cannot be
+opened, the reason is printed and WinMM `waveOut` is used instead.
+`--audio-api winmm` forces WinMM; `--audio-api dsound` forces DirectSound and
+exits if it fails. `dsound.dll` is loaded at runtime rather than linked, so
+the executable's DLL imports and its Windows 98 floor are unchanged. Underruns
+are reported on the console; raising `--latency` is the remedy.
 
 ### Runtime device switching
 
@@ -135,7 +137,8 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 ```
 --device NAME       Device to emulate (default: sc88); sc55, sc55mkii, sc88, jv880, jv1080
 --midi-in N          MIDI input device index (default: 0)
---audio-api API      Audio output API: winmm or dsound (default: winmm)
+--audio-api API      Audio output API: auto, winmm or dsound (default: auto,
+                     DirectSound with WinMM fallback)
 --wave-out N         WinMM wave output device index (default: system default)
 --dsound-out N       DirectSound output device index (default: system default)
 --list-midi-in       List MIDI input devices and exit
@@ -155,13 +158,15 @@ emusc-winmidi.exe --device sc88 --midi-in 1
 
 ### Audio output API
 
-WinMM `waveOut` is the default everywhere. `--audio-api dsound` selects
-DirectSound instead: one looping secondary buffer, kept `--latency` ms ahead
-of the play cursor (more if the driver or the scheduler's timer granularity
-needs it), with the primary buffer set to the stream's own rate so the mixer
-does not resample. `dsound.dll` is loaded only when this is asked for, so the
-executable's DLL imports and its Windows 98 floor are unchanged. Underruns are
-reported on the console; raising `--latency` is the remedy.
+DirectSound is the default (`--audio-api auto`): one looping secondary
+buffer, kept `--latency` ms ahead of the play cursor (more if the driver or
+the scheduler's timer granularity needs it), with the primary buffer set to
+the stream's own rate so the mixer does not resample. If DirectSound cannot be
+opened, the reason is printed and WinMM `waveOut` is used instead.
+`--audio-api winmm` forces WinMM; `--audio-api dsound` forces DirectSound and
+exits if it fails. `dsound.dll` is loaded at runtime rather than linked, so
+the executable's DLL imports and its Windows 98 floor are unchanged. Underruns
+are reported on the console; raising `--latency` is the remedy.
 
 ### Runtime device switching
 

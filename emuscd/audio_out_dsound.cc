@@ -80,7 +80,7 @@ struct DSoundLib {
     dll = LoadLibraryA("dsound.dll");
     if (!dll) {
       std::fprintf(stderr, "emusc-winmidi: dsound.dll not found - DirectSound "
-                   "is not installed; use --audio-api winmm\n");
+                   "is not installed\n");
       return false;
     }
     create = load_proc<DirectSoundCreateFn>(dll, "DirectSoundCreate");
