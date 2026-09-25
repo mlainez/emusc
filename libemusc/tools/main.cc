@@ -600,8 +600,13 @@ int main(int argc, char **argv) {
     // since the last report, "overall" is since playback started - a
     // steadily healthy window ratio with a falling overall ratio means an
     // early one-time stall (e.g. ROM load) rather than a sustained deficit.
-    const auto play_start = std::chrono::steady_clock::now();
-    auto window_start = play_start;
+    // Without --play, this same timestamp instead measures a clean,
+    // unthrottled render speed at the end (see the "wrote N frames" report
+    // below) - --play's own ratio can never read far above 100%, since the
+    // audio device only ever drains buffers in real time regardless of how
+    // much faster the CPU could produce them.
+    const auto render_start = std::chrono::steady_clock::now();
+    auto window_start = render_start;
     uint64_t window_start_frame = 0;
 
     // Samples at full scale, counted here on what the tool writes rather
@@ -679,7 +684,7 @@ int main(int argc, char **argv) {
             const double window_audio =
               (double)(fr + 1 - window_start_frame) / o.rate;
             const double overall_wall =
-              std::chrono::duration<double>(now - play_start).count();
+              std::chrono::duration<double>(now - render_start).count();
             const double overall_audio = (double)(fr + 1) / o.rate;
             std::fprintf(stderr,
                          "emusc-render: --play: window %.0f%% real-time, "
@@ -696,11 +701,30 @@ int main(int argc, char **argv) {
       if (!buf.empty()) wav->write(buf.data(), buf.size() / 2);
       if (!fbuf.empty()) wav->write(fbuf.data(), fbuf.size() / 2);
       wav->close();
-      std::fprintf(stderr,
-                   "emusc-render: wrote %llu frames to %s; libEmuSC reported "
-                   "%u clipped samples\n",
-                   (unsigned long long) wav->frames(), o.out.c_str(),
-                   synth.get_num_clipped_samples(false));
+      if (audio_out) {
+        // --play already forces this render to take as long as the song
+        // does, so a render-speed ratio here would just repeat that -
+        // see the periodic window/overall report above instead.
+        std::fprintf(stderr,
+                     "emusc-render: wrote %llu frames to %s; libEmuSC "
+                     "reported %u clipped samples\n",
+                     (unsigned long long) wav->frames(), o.out.c_str(),
+                     synth.get_num_clipped_samples(false));
+      } else {
+        // No --play, so nothing paced this loop to real time: the ratio
+        // below is a clean measure of how much CPU headroom this render
+        // actually has, unlike --play's own report (see above).
+        const double render_wall = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - render_start).count();
+        const double audio_seconds = (double) wav->frames() / o.rate;
+        std::fprintf(stderr,
+                     "emusc-render: wrote %llu frames to %s in %.3f s "
+                     "(%.2fx real-time); libEmuSC reported %u clipped "
+                     "samples\n",
+                     (unsigned long long) wav->frames(), o.out.c_str(),
+                     render_wall, audio_seconds / render_wall,
+                     synth.get_num_clipped_samples(false));
+      }
     }
     if (full_scale)
       std::fprintf(stderr,
