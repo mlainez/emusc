@@ -1011,6 +1011,16 @@ double tvf_q(unsigned resonance)
    g k = 4/(1-a1+a2) - 1 - g^2; the numerator b0 z^2 + b1 z + b2 is then
    A/4 (b0-b1+b2) of the high-pass output, A/(2g) (b0-b2) of the band-pass
    and A/(4g^2) (b0+b1+b2) of the low-pass, A = 4/(1-a1+a2). */
+/* The trapezoidal integrators' three gains, a function of g and k alone,
+   so they change here rather than per sample. */
+void set_svf_gains(struct XpJv1080Voice *voice)
+{
+  const double g = voice->svf_g, k = voice->svf_k;
+  voice->svf_h1 = 1.0 / (1.0 + g * (g + k));
+  voice->svf_h2 = g * voice->svf_h1;
+  voice->svf_h3 = g * voice->svf_h2;
+}
+
 void set_svf(struct XpJv1080Voice *voice)
 {
   double lo = 1.0 + voice->a1 + voice->a2;
@@ -1019,6 +1029,7 @@ void set_svf(struct XpJv1080Voice *voice)
     /* Not a stable pole pair: no section this engine builds is one. */
     voice->svf_g = 1.0;
     voice->svf_k = 2.0;
+    set_svf_gains(voice);
     voice->m_hp = voice->m_lp = 1.0;
     voice->m_bp = 2.0;
     return;
@@ -1028,6 +1039,7 @@ void set_svf(struct XpJv1080Voice *voice)
   double big = 4.0 / hi;
   voice->svf_g = g;
   voice->svf_k = (big - 1.0 - g2) / g;
+  set_svf_gains(voice);
   voice->m_hp = big * (voice->b0 - voice->b1 + voice->b2) / 4.0;
   voice->m_bp = big * (voice->b0 - voice->b2) / (2.0 * g);
   voice->m_lp = big * (voice->b0 + voice->b1 + voice->b2) / (4.0 * g2);
@@ -3070,9 +3082,8 @@ double voice_tva(const struct XpJv1080Voice *voice, double sample)
 double voice_tvf(struct XpJv1080Voice *voice, double value)
 {
   if (voice->filter_type) {
-    const double g = voice->svf_g, k = voice->svf_k;
-    const double h1 = 1.0 / (1.0 + g * (g + k));
-    const double h2 = g * h1, h3 = g * h2;
+    const double k = voice->svf_k;
+    const double h1 = voice->svf_h1, h2 = voice->svf_h2, h3 = voice->svf_h3;
     const double v3 = value - voice->s2;
     const double v1 = h1 * voice->s1 + h2 * v3;             /* band-pass */
     const double v2 = voice->s2 + h2 * voice->s1 + h3 * v3; /* low-pass */

@@ -257,6 +257,7 @@ struct XpJv1080Voice {
   int filter_type;
   double b0, b1, b2, a1, a2;
   double svf_g, svf_k, m_hp, m_bp, m_lp;
+  double svf_h1, svf_h2, svf_h3;   /* set_svf's, from g and k */
   double s1, s2;
 
   /* The filter envelope, which moves the CUTOFF PARAMETER and not a
